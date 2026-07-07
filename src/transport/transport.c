@@ -188,6 +188,48 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t length, size_t* read_len)
+{
+    ssize_t rc = 0;
+
+    if (!transport || transport->fd < 0 || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (transport->tls_active)
+    {
+        int tls_rc = 0;
+        if (length > INT_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.peek.start", "length=%llu", (unsigned long long)length);
+        tls_rc = SSL_peek(transport->tls, data, (int)length);
+        if (tls_rc <= 0)
+            return rdp_transport_tls_status(transport->tls, tls_rc);
+        if (read_len)
+            *read_len = (size_t)tls_rc;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.peek.done", "read=%d", tls_rc);
+        return LIBRDP_STATUS_OK;
+    }
+
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.peek.start", "length=%llu", (unsigned long long)length);
+    rc = recv(transport->fd, data, length, MSG_PEEK);
+    if (rc == 0)
+    {
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.eof", "length=0");
+        return LIBRDP_STATUS_CLOSED;
+    }
+    if (rc < 0)
+    {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            return LIBRDP_STATUS_AGAIN;
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+
+    if (read_len)
+        *read_len = (size_t)rc;
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.peek.done", "read=%llu", (unsigned long long)rc);
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len)
 {
     ssize_t rc = 0;

@@ -5,6 +5,7 @@
 #include "graphics/bitmap.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
+#include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -258,6 +259,50 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     return rdp_x224_parse_data(parsed.payload, parsed.payload_len, pdu, pdu_len);
 }
 
+static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, rdp_buffer* packet)
+{
+    uint8_t header[3];
+    uint16_t total = 0;
+    size_t header_len = 2;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_free(packet);
+    rdp_buffer_init(packet);
+
+    status = rdp_transport_read_exact(&session->transport, header, 2);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((header[1] & 0x80u) != 0)
+    {
+        status = rdp_transport_read_exact(&session->transport, header + 2, 1);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        total = (uint16_t)(((uint16_t)(header[1] & 0x7fu) << 8) | header[2]);
+        header_len = 3;
+    }
+    else
+    {
+        total = header[1];
+    }
+    if (total < header_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    status = rdp_buffer_append(packet, header, header_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_reserve(packet, total);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    packet->length = total;
+    status = rdp_transport_read_exact(&session->transport, packet->data + header_len, (size_t)total - header_len);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_hexdump("rdp.fastpath.pdu", packet->data, packet->length);
+    return status;
+}
+
 static librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms)
 {
     uint8_t header[6];
@@ -363,6 +408,48 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
                         rect->width,
                         rect->height);
     }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet)
+{
+    rdp_fastpath_update_list updates;
+    uint16_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_fastpath_parse_updates(packet->data, packet->length, &updates);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    for (i = 0; i < updates.count; i++)
+    {
+        const rdp_fastpath_update* update = &updates.updates[i];
+
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.fastpath.update",
+                        "code=%u fragmentation=%u compression=%u payload_len=%u",
+                        update->update_code,
+                        update->fragmentation,
+                        update->compression,
+                        (unsigned)update->data_len);
+        if (update->update_code == RDP_FASTPATH_UPDATE_BITMAP)
+        {
+            rdp_bitmap_update bitmap;
+
+            if (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || update->compression != 0)
+                return LIBRDP_STATUS_UNSUPPORTED;
+            status = rdp_bitmap_parse_fastpath_update(update->data, update->data_len, &bitmap);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_apply_bitmap_update(session, &bitmap);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
+        }
+    }
+
     return LIBRDP_STATUS_OK;
 }
 
@@ -1158,6 +1245,37 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
     }
     if ((revents & POLLIN) != 0)
     {
+        uint8_t first_byte = 0;
+        size_t peeked = 0;
+
+        status = rdp_transport_peek(&session->transport, &first_byte, 1, &peeked);
+        if (status == LIBRDP_STATUS_CLOSED)
+        {
+            rdp_buffer_free(&packet);
+            return librdp_session_disconnect(session);
+        }
+        if (status != LIBRDP_STATUS_OK || peeked != 1)
+        {
+            rdp_buffer_free(&packet);
+            return rdp_session_fail(session, status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_IO_ERROR : status);
+        }
+        if (first_byte != 3)
+        {
+            status = rdp_session_read_fastpath_packet(session, &packet);
+            if (status == LIBRDP_STATUS_CLOSED)
+            {
+                rdp_buffer_free(&packet);
+                return librdp_session_disconnect(session);
+            }
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_process_fastpath_packet(session, &packet);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            goto done;
+        }
         const uint8_t* pdu = NULL;
         size_t pdu_len = 0;
         rdp_mcs_send_data_indication indication;
@@ -1287,6 +1405,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         }
     }
 
+done:
     rdp_buffer_free(&packet);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.done", "status=idle");
     return LIBRDP_STATUS_OK;

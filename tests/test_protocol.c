@@ -299,6 +299,15 @@ static int test_path_security_license_channels(void)
         1,    2,    3,    4,    5,    6,    7,    8,
         9,    10,   11,   12,   13,   14,   15,   16
     };
+    const uint8_t fast_bitmap_update[] = {
+        0x00, 0x2b, 0x01, 0x26, 0x00,
+        0x01, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x02, 0x00, 0x02, 0x00, 0x20, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        1,    2,    3,    4,    5,    6,    7,    8,
+        9,    10,   11,   12,   13,   14,   15,   16
+    };
     const uint8_t license[] = {
         0xff, 0x03, 0x12, 0x00,
         1, 0, 0, 0,
@@ -438,6 +447,7 @@ static int test_path_security_license_channels(void)
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     rdp_fastpath_header fast;
+    rdp_fastpath_update_list fast_updates;
     rdp_slowpath_share_control_header slow_header;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_data_pdu data_pdu;
@@ -557,6 +567,18 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_fastpath_parse_header(fast_long, sizeof(fast_long), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 8 && fast.header_length == 3 && fast.long_length);
     PCHECK(rdp_fastpath_parse_header(fast_long, 2, &fast) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update), &fast_updates) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(fast_updates.count == 1 && fast_updates.updates[0].update_code == RDP_FASTPATH_UPDATE_BITMAP &&
+           fast_updates.updates[0].fragmentation == RDP_FASTPATH_FRAGMENT_SINGLE &&
+           fast_updates.updates[0].compression == 0 && fast_updates.updates[0].data_len == 38);
+    PCHECK(rdp_bitmap_parse_fastpath_update(fast_updates.updates[0].data,
+                                            fast_updates.updates[0].data_len,
+                                            &bitmap_update) == LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1 && bitmap_update.rects[0].data_len == 16);
+    PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update) - 1u, &fast_updates) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_UNSUPPORTED);
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);

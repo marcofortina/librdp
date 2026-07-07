@@ -30,5 +30,6 @@ typedef struct rdp_bitmap_update
 } rdp_bitmap_update;
 
 librdp_status rdp_bitmap_parse_update(const void* data, size_t length, rdp_bitmap_update* update);
+librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, rdp_bitmap_update* update);
 
 #endif

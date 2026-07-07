@@ -127,6 +127,8 @@ int test_transport(void)
     TCHECK(rdp_transport_wait(&transport, 0, POLLIN, NULL) == LIBRDP_STATUS_TIMEOUT);
     TCHECK(write(pair[1], "abc", 3) == 3);
     TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_peek(&transport, data, 2, &got) == LIBRDP_STATUS_OK);
+    TCHECK(got == 2 && memcmp(data, "ab", 2) == 0);
     TCHECK(rdp_transport_read_exact(&transport, data, 3) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "abc", 3) == 0);
 

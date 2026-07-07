@@ -26,6 +26,7 @@ librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, 
 librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host);
 librdp_status rdp_transport_get_tls_public_key(rdp_transport* transport, rdp_buffer* public_key);
 librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short events, short* revents);
+librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t length, size_t* read_len);
 librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len);
 librdp_status rdp_transport_write(rdp_transport* transport, const void* data, size_t length, size_t* written_len);
 librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, size_t length);
