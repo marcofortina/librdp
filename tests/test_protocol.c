@@ -299,6 +299,11 @@ static int test_path_security_license_channels(void)
         1,    2,    3,    4,    5,    6,    7,    8,
         9,    10,   11,   12,   13,   14,   15,   16
     };
+    const uint8_t bitmap_24_data[] = {
+        1, 2, 3, 4, 5, 6,
+        7, 8, 9, 10, 11, 12
+    };
+    const uint8_t bitmap_16_data[] = {0x00, 0xf8, 0xe0, 0x07};
     const uint8_t fast_bitmap_update[] = {
         0x00, 0x2b, 0x01, 0x26, 0x00,
         0x01, 0x00,
@@ -455,6 +460,7 @@ static int test_path_security_license_channels(void)
     rdp_slowpath_save_session_info save_info;
     rdp_bitmap_update bitmap_update;
     rdp_bitmap_update_header bitmap_header;
+    rdp_bitmap_rect bitmap_rect;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_clipboard_packet cb;
@@ -477,6 +483,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_mouse_input;
     rdp_buffer client_refresh_rect;
     rdp_buffer client_suppress_output;
+    rdp_buffer decoded_bitmap;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
     rdp_buffer ntlm_authenticate;
@@ -510,6 +517,7 @@ static int test_path_security_license_channels(void)
     uint32_t key_offset = 0;
     uint32_t error_info = 0;
     uint8_t signature[8];
+    size_t decoded_stride = 0;
     size_t i = 0;
     uint16_t confirm_source_len = 0;
     uint16_t confirm_caps_len = 0;
@@ -552,6 +560,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_mouse_input);
     rdp_buffer_init(&client_refresh_rect);
     rdp_buffer_init(&client_suppress_output);
+    rdp_buffer_init(&decoded_bitmap);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_authenticate);
@@ -603,6 +612,34 @@ static int test_path_security_license_channels(void)
     PCHECK(bitmap_update.count == 1);
     PCHECK(bitmap_update.rects[0].width == 2 && bitmap_update.rects[0].height == 2);
     PCHECK(bitmap_update.rects[0].bits_per_pixel == 32 && bitmap_update.rects[0].data_len == 16);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_update.rects[0], &decoded_bitmap, &decoded_stride) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 9 &&
+           decoded_bitmap.data[1] == 10 && decoded_bitmap.data[2] == 11 && decoded_bitmap.data[3] == 12);
+    memset(&bitmap_rect, 0, sizeof(bitmap_rect));
+    bitmap_rect.width = 2;
+    bitmap_rect.height = 2;
+    bitmap_rect.dest_right = 1;
+    bitmap_rect.dest_bottom = 1;
+    bitmap_rect.bits_per_pixel = 24;
+    bitmap_rect.data = bitmap_24_data;
+    bitmap_rect.data_len = sizeof(bitmap_24_data);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 7 &&
+           decoded_bitmap.data[1] == 8 && decoded_bitmap.data[2] == 9 && decoded_bitmap.data[3] == 0xff);
+    memset(&bitmap_rect, 0, sizeof(bitmap_rect));
+    bitmap_rect.width = 2;
+    bitmap_rect.height = 1;
+    bitmap_rect.dest_right = 1;
+    bitmap_rect.bits_per_pixel = 16;
+    bitmap_rect.data = bitmap_16_data;
+    bitmap_rect.data_len = sizeof(bitmap_16_data);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 && decoded_bitmap.data[0] == 0 && decoded_bitmap.data[1] == 0 &&
+           decoded_bitmap.data[2] == 255 && decoded_bitmap.data[4] == 0 && decoded_bitmap.data[5] == 255 &&
+           decoded_bitmap.data[6] == 0);
+    bitmap_rect.flags = 1;
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
@@ -1062,6 +1099,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&x509_chain);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
+    rdp_buffer_free(&decoded_bitmap);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);

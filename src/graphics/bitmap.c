@@ -2,6 +2,7 @@
 
 #include "common/stream.h"
 
+#include <limits.h>
 #include <string.h>
 
 static librdp_status rdp_bitmap_parse_rectangles(rdp_stream* stream, uint16_t count, rdp_bitmap_update* update)
@@ -90,4 +91,83 @@ librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, 
     if (rdp_stream_read_u16_le(&stream, &count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return rdp_bitmap_parse_rectangles(&stream, count, update);
+}
+
+static uint8_t rdp_scale_5_to_8(uint16_t value)
+{
+    return (uint8_t)((value * 255u + 15u) / 31u);
+}
+
+static uint8_t rdp_scale_6_to_8(uint16_t value)
+{
+    return (uint8_t)((value * 255u + 31u) / 63u);
+}
+
+librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buffer* output, size_t* stride)
+{
+    uint16_t row = 0;
+    uint16_t column = 0;
+    size_t src_stride = 0;
+    size_t dst_stride = 0;
+    size_t dst_size = 0;
+    uint16_t bytes_per_pixel = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!rect || !output || !stride)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rect->flags != 0 || (rect->bits_per_pixel != 16 && rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (rect->width == 0 || rect->height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    bytes_per_pixel = (uint16_t)(rect->bits_per_pixel / 8u);
+    if ((size_t)rect->width > SIZE_MAX / bytes_per_pixel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    src_stride = (size_t)rect->width * bytes_per_pixel;
+    if ((size_t)rect->height > SIZE_MAX / src_stride || rect->data_len < src_stride * rect->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    dst_stride = (size_t)rect->width * 4u;
+    if ((size_t)rect->height > SIZE_MAX / dst_stride)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    dst_size = dst_stride * rect->height;
+
+    status = rdp_buffer_reserve(output, dst_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    output->length = dst_size;
+
+    for (row = 0; row < rect->height; row++)
+    {
+        const uint8_t* src = rect->data + ((size_t)(rect->height - 1u - row) * src_stride);
+        uint8_t* dst = output->data + ((size_t)row * dst_stride);
+
+        if (rect->bits_per_pixel == 32)
+        {
+            memcpy(dst, src, dst_stride);
+        }
+        else if (rect->bits_per_pixel == 24)
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                dst[(size_t)column * 4u + 0u] = src[(size_t)column * 3u + 0u];
+                dst[(size_t)column * 4u + 1u] = src[(size_t)column * 3u + 1u];
+                dst[(size_t)column * 4u + 2u] = src[(size_t)column * 3u + 2u];
+                dst[(size_t)column * 4u + 3u] = 0xffu;
+            }
+        }
+        else
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                uint16_t pixel = (uint16_t)(src[(size_t)column * 2u] | ((uint16_t)src[(size_t)column * 2u + 1u] << 8));
+                dst[(size_t)column * 4u + 0u] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
+                dst[(size_t)column * 4u + 1u] = rdp_scale_6_to_8((uint16_t)((pixel >> 5) & 0x003fu));
+                dst[(size_t)column * 4u + 2u] = rdp_scale_5_to_8((uint16_t)((pixel >> 11) & 0x001fu));
+                dst[(size_t)column * 4u + 3u] = 0xffu;
+            }
+        }
+    }
+
+    *stride = dst_stride;
+    return LIBRDP_STATUS_OK;
 }

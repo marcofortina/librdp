@@ -396,27 +396,23 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
     for (i = 0; i < update->count; i++)
     {
         const rdp_bitmap_rect* rect = &update->rects[i];
-        uint32_t row = 0;
         size_t stride = 0;
+        rdp_buffer pixels;
+        librdp_status status = LIBRDP_STATUS_OK;
 
-        if (rect->bits_per_pixel != 32 || rect->flags != 0)
-            return LIBRDP_STATUS_UNSUPPORTED;
-        stride = (size_t)rect->width * 4u;
-        if ((size_t)rect->height > SIZE_MAX / stride || rect->data_len < stride * rect->height)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        for (row = 0; row < rect->height; row++)
-        {
-            const uint8_t* src = rect->data + ((size_t)(rect->height - 1u - row) * stride);
-            librdp_status status = librdp_surface_blit_bgra32(session->surface,
-                                                              rect->dest_left,
-                                                              (uint32_t)rect->dest_top + row,
-                                                              rect->width,
-                                                              1,
-                                                              src,
-                                                              stride);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
-        }
+        rdp_buffer_init(&pixels);
+        status = rdp_bitmap_decode_rect_bgra32(rect, &pixels, &stride);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_surface_blit_bgra32(session->surface,
+                                                rect->dest_left,
+                                                rect->dest_top,
+                                                rect->width,
+                                                rect->height,
+                                                pixels.data,
+                                                stride);
+        rdp_buffer_free(&pixels);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
         {
             librdp_event event;
             event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
