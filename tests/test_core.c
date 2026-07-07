@@ -1,0 +1,290 @@
+#include <librdp/librdp.h>
+
+#include "common/buffer.h"
+#include "common/stream.h"
+#include "common/trace.h"
+#include "input/input.h"
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define CHECK(expr)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+        {                                                                                                              \
+            fprintf(stderr, "check failed %s:%d: %s\n", __FILE__, __LINE__, #expr);                                    \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
+
+typedef struct event_counter
+{
+    int states;
+    int surfaces;
+    int keys;
+    int mouse;
+    int disconnected;
+} event_counter;
+
+static void on_event(librdp_session* session, const librdp_event* event, void* user_data)
+{
+    event_counter* counter = (event_counter*)user_data;
+    (void)session;
+
+    if (!event || !counter)
+        return;
+
+    switch (event->type)
+    {
+        case LIBRDP_EVENT_STATE_CHANGED:
+            counter->states++;
+            break;
+        case LIBRDP_EVENT_SURFACE_INVALIDATED:
+            counter->surfaces++;
+            break;
+        case LIBRDP_EVENT_KEY_SENT:
+            counter->keys++;
+            break;
+        case LIBRDP_EVENT_MOUSE_SENT:
+            counter->mouse++;
+            break;
+        case LIBRDP_EVENT_DISCONNECTED:
+            counter->disconnected++;
+            break;
+        default:
+            break;
+    }
+}
+
+static int capture_stderr(void (*fn)(void), char* out, size_t out_len)
+{
+    int pipe_fds[2] = {-1, -1};
+    int saved = -1;
+    ssize_t got = 0;
+
+    if (pipe(pipe_fds) != 0)
+        return 0;
+    saved = dup(STDERR_FILENO);
+    if (saved < 0)
+        return 0;
+    if (dup2(pipe_fds[1], STDERR_FILENO) < 0)
+        return 0;
+    close(pipe_fds[1]);
+
+    fn();
+    fflush(stderr);
+
+    if (dup2(saved, STDERR_FILENO) < 0)
+        return 0;
+    close(saved);
+
+    got = read(pipe_fds[0], out, out_len - 1);
+    close(pipe_fds[0]);
+    if (got < 0)
+        got = 0;
+    out[got] = '\0';
+    return 1;
+}
+
+static void trace_default_event(void)
+{
+    rdp_trace_reset_for_tests();
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.test", "value=1");
+}
+
+static void trace_enabled_event(void)
+{
+    setenv("LIBRDP_TRACE_CLIENT", "yes", 1);
+    rdp_trace_reset_for_tests();
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.test", "value=1");
+    unsetenv("LIBRDP_TRACE_CLIENT");
+}
+
+static void trace_protocol_hexdump(void)
+{
+    const uint8_t bytes[] = {0x41, 0x42, 0x00, 0x43};
+    setenv("LIBRDP_TRACE_PROTOCOL", "ON", 1);
+    setenv("LIBRDP_TRACE_HEX_BYTES", "2", 1);
+    rdp_trace_reset_for_tests();
+    rdp_trace_hexdump("rdp.fastpath.pdu", bytes, sizeof(bytes));
+    unsetenv("LIBRDP_TRACE_PROTOCOL");
+    unsetenv("LIBRDP_TRACE_HEX_BYTES");
+}
+
+static int test_trace(void)
+{
+    char output[2048];
+
+    CHECK(rdp_trace_parse_bool_value("1"));
+    CHECK(rdp_trace_parse_bool_value("true"));
+    CHECK(rdp_trace_parse_bool_value("TRUE"));
+    CHECK(rdp_trace_parse_bool_value("yes"));
+    CHECK(rdp_trace_parse_bool_value("YES"));
+    CHECK(rdp_trace_parse_bool_value("on"));
+    CHECK(rdp_trace_parse_bool_value("ON"));
+    CHECK(!rdp_trace_parse_bool_value("0"));
+    CHECK(!rdp_trace_parse_bool_value("maybe"));
+    CHECK(rdp_trace_parse_hex_limit_value("32") == 32);
+    CHECK(rdp_trace_parse_hex_limit_value("bad") == 0);
+    CHECK(rdp_trace_parse_hex_limit_value("") == 0);
+
+    unsetenv("LIBRDP_TRACE_CLIENT");
+    CHECK(capture_stderr(trace_default_event, output, sizeof(output)));
+    CHECK(output[0] == '\0');
+
+    CHECK(capture_stderr(trace_enabled_event, output, sizeof(output)));
+    CHECK(strstr(output, "librdp trace seq=1 ") != NULL);
+    CHECK(strstr(output, "category=client event=client.test") != NULL);
+    CHECK(strstr(output, "message=\"value=1\"") != NULL);
+
+    setenv("LIBRDP_TRACE_TRANSPORT", "1", 1);
+    rdp_trace_reset_for_tests();
+    CHECK(rdp_trace_enabled(RDP_TRACE_TRANSPORT));
+    CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
+    unsetenv("LIBRDP_TRACE_TRANSPORT");
+
+    CHECK(capture_stderr(trace_protocol_hexdump, output, sizeof(output)));
+    CHECK(strstr(output, "category=protocol event=rdp.fastpath.pdu") != NULL);
+    CHECK(strstr(output, "payload_len=4 dumped=2 hex=4142 ascii=\"AB\"") != NULL);
+    return 0;
+}
+
+static int test_buffer_stream(void)
+{
+    rdp_buffer buffer;
+    rdp_stream stream;
+    uint8_t u8 = 0;
+    uint16_t u16 = 0;
+    uint32_t u32 = 0;
+    const uint8_t* raw = NULL;
+
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_buffer_append_u8(&buffer, 0x11) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u16_le(&buffer, 0x2233) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u16_be(&buffer, 0x4455) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&buffer, 0x66778899u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_be(&buffer, 0xaabbccddu) == LIBRDP_STATUS_OK);
+    CHECK(buffer.length == 13);
+
+    rdp_stream_init(&stream, buffer.data, buffer.length);
+    CHECK(rdp_stream_read_u8(&stream, &u8) == LIBRDP_STATUS_OK && u8 == 0x11);
+    CHECK(rdp_stream_read_u16_le(&stream, &u16) == LIBRDP_STATUS_OK && u16 == 0x2233);
+    CHECK(rdp_stream_read_u16_be(&stream, &u16) == LIBRDP_STATUS_OK && u16 == 0x4455);
+    CHECK(rdp_stream_read_u32_le(&stream, &u32) == LIBRDP_STATUS_OK && u32 == 0x66778899u);
+    CHECK(rdp_stream_read_u32_be(&stream, &u32) == LIBRDP_STATUS_OK && u32 == 0xaabbccddu);
+    CHECK(rdp_stream_read_u8(&stream, &u8) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    CHECK(rdp_buffer_consume(&buffer, 3) == LIBRDP_STATUS_OK);
+    CHECK(buffer.length == 10);
+    rdp_stream_init(&stream, buffer.data, buffer.length);
+    CHECK(rdp_stream_read_bytes(&stream, &raw, 2) == LIBRDP_STATUS_OK);
+    CHECK(raw[0] == 0x44 && raw[1] == 0x55);
+    CHECK(rdp_stream_skip(&stream, 100) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
+static int test_settings_surface_input_session(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_settings* copy = NULL;
+    librdp_surface* surface = NULL;
+    librdp_session* session = NULL;
+    const librdp_surface* session_surface = NULL;
+    uint8_t pixels[16] = {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
+    };
+    const uint8_t* out = NULL;
+    uint16_t flags = 0;
+    librdp_key_event key = {30, LIBRDP_KEY_PRESSED};
+    librdp_mouse_event mouse = {10, 11, LIBRDP_MOUSE_BUTTON_LEFT, LIBRDP_MOUSE_PRESSED};
+    event_counter counter;
+
+    memset(&counter, 0, sizeof(counter));
+
+    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
+    CHECK(strcmp(librdp_status_string((librdp_status)-1000), "unknown") == 0);
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_port(settings) == 3389);
+    CHECK(librdp_settings_width(settings) == 1024);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_domain(settings, "domain") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, 3390) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 64, 48) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_TLS) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_desktop_size(settings, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_security_mode(settings, (librdp_security_mode)99) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    copy = librdp_settings_clone(settings);
+    CHECK(copy != NULL);
+    CHECK(strcmp(librdp_settings_target(copy), "127.0.0.1") == 0);
+    CHECK(strcmp(librdp_settings_username(copy), "user") == 0);
+    CHECK(strcmp(librdp_settings_domain(copy), "domain") == 0);
+    CHECK(librdp_settings_security_mode(copy) == LIBRDP_SECURITY_TLS);
+
+    surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+    CHECK(librdp_surface_stride(surface) == 16);
+    CHECK(librdp_surface_blit_bgra32(surface, 1, 1, 2, 2, pixels, 8) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_blit_bgra32(surface, 3, 3, 2, 2, pixels, 8) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    out = librdp_surface_pixels(surface);
+    CHECK(out[((size_t)1 * 16) + 4] == 1);
+    CHECK(librdp_surface_resize(surface, 2, 2) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_width(surface) == 2);
+    CHECK(librdp_surface_pixels_mut(surface) != NULL);
+    librdp_surface_free(surface);
+
+    CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0);
+    key.state = LIBRDP_KEY_RELEASED;
+    CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0x8000u);
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && (flags & 0x9000u) == 0x9000u);
+
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(counter.states == 2);
+    CHECK(counter.surfaces == 1);
+    session_surface = librdp_session_get_surface(session);
+    CHECK(session_surface != NULL);
+    CHECK(librdp_surface_width(session_surface) == 64);
+    CHECK(librdp_session_run_once(session, 0) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    key.state = LIBRDP_KEY_PRESSED;
+    CHECK(librdp_session_send_key(session, &key) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_send_mouse(session, &mouse) == LIBRDP_STATUS_OK);
+    CHECK(counter.keys == 1);
+    CHECK(counter.mouse == 1);
+    CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
+    CHECK(counter.surfaces == 2);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(counter.disconnected == 1);
+    librdp_session_free(session);
+
+    librdp_settings_free(copy);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+int main(void)
+{
+    if (test_trace() != 0)
+        return 1;
+    if (test_buffer_stream() != 0)
+        return 1;
+    if (test_settings_surface_input_session() != 0)
+        return 1;
+    return 0;
+}
