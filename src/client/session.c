@@ -1,5 +1,6 @@
 #include <librdp/session.h>
 
+#include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
@@ -27,6 +28,7 @@
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
+#define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 
 typedef struct rdp_session_dynamic_channel
 {
@@ -43,6 +45,10 @@ struct librdp_session
     rdp_transport transport;
     uint16_t mcs_user_id;
     uint16_t dynamic_channel_id;
+    uint32_t display_control_channel_id;
+    uint8_t display_control_channel_id_bytes;
+    uint8_t display_control_ready;
+    rdp_display_control_caps display_control_caps;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     uint32_t share_id;
     librdp_session_state state;
@@ -164,6 +170,27 @@ static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
     return status;
 }
 
+static librdp_status rdp_session_send_dynamic_channel_data(librdp_session* session,
+                                                           uint32_t channel_id,
+                                                           uint8_t channel_id_bytes,
+                                                           const void* data,
+                                                           size_t data_len,
+                                                           const char* event)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data || !event || session->dynamic_channel_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&response);
+    status = rdp_dynamic_channel_write_data(&response, channel_id, channel_id_bytes, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_channel_pdu(session, session->dynamic_channel_id, &response, event);
+    rdp_buffer_free(&response);
+    return status;
+}
+
 static rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_session* session, uint32_t channel_id)
 {
     size_t i = 0;
@@ -220,6 +247,41 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
                                               const uint8_t** pdu,
                                               size_t* pdu_len,
                                               const char* event);
+
+static librdp_status rdp_session_send_display_control_layout(librdp_session* session,
+                                                             uint32_t width,
+                                                             uint32_t height)
+{
+    rdp_display_control_monitor monitor;
+    rdp_buffer layout;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->display_control_ready || session->display_control_channel_id_bytes == 0)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_buffer_init(&layout);
+    status = rdp_display_control_make_single_monitor(&monitor, width, height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_display_control_write_monitor_layout(&layout, &monitor, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       session->display_control_channel_id,
+                                                       session->display_control_channel_id_bytes,
+                                                       layout.data,
+                                                       layout.length,
+                                                       "client.display_control.layout_sent");
+    rdp_buffer_free(&layout);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.display_control.layout_sent",
+                        "dvc_channel_id=%u width=%u height=%u",
+                        session->display_control_channel_id,
+                        width,
+                        height);
+    return status;
+}
 
 static librdp_status rdp_session_join_mcs_channel(librdp_session* session,
                                                   uint16_t channel_id,
@@ -490,6 +552,16 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             return status;
         trace_name_len = request.name_len > 120u ? 120u : request.name_len;
         name_len = (int)trace_name_len;
+        if (request.name_len == sizeof(RDP_SESSION_DISPLAY_CONTROL_NAME) - 1u &&
+            memcmp(request.name, RDP_SESSION_DISPLAY_CONTROL_NAME, request.name_len) == 0)
+        {
+            session->display_control_channel_id = request.channel_id;
+            session->display_control_channel_id_bytes = request.channel_id_bytes;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.display_control.channel",
+                            "dvc_channel_id=%u",
+                            request.channel_id);
+        }
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.drdynvc.create",
                         "channel_id=%u name=%.*s status=0",
@@ -515,20 +587,12 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                         (unsigned)data_pdu.data_len);
         if (entry && strcmp(entry->name, "ECHO") == 0)
         {
-            rdp_buffer response;
-
-            rdp_buffer_init(&response);
-            status = rdp_dynamic_channel_write_data(&response,
-                                                    data_pdu.channel_id,
-                                                    data_pdu.channel_id_bytes,
-                                                    data_pdu.data,
-                                                    data_pdu.data_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_write_channel_pdu(session,
-                                                       session->dynamic_channel_id,
-                                                       &response,
-                                                       "client.drdynvc.echo");
-            rdp_buffer_free(&response);
+            status = rdp_session_send_dynamic_channel_data(session,
+                                                           data_pdu.channel_id,
+                                                           data_pdu.channel_id_bytes,
+                                                           data_pdu.data,
+                                                           data_pdu.data_len,
+                                                           "client.drdynvc.echo");
             if (status != LIBRDP_STATUS_OK)
                 return status;
             rdp_trace_event(RDP_TRACE_CLIENT,
@@ -536,6 +600,28 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u payload_len=%u",
                             data_pdu.channel_id,
                             (unsigned)data_pdu.data_len);
+        }
+        else if (entry && strcmp(entry->name, RDP_SESSION_DISPLAY_CONTROL_NAME) == 0)
+        {
+            rdp_display_control_caps caps;
+
+            status = rdp_display_control_parse_caps(data_pdu.data, data_pdu.data_len, &caps);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            session->display_control_caps = caps;
+            session->display_control_ready = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.display_control.caps",
+                            "dvc_channel_id=%u max_monitors=%u area_a=%u area_b=%u",
+                            data_pdu.channel_id,
+                            caps.max_num_monitors,
+                            caps.max_monitor_area_factor_a,
+                            caps.max_monitor_area_factor_b);
+            status = rdp_session_send_display_control_layout(session,
+                                                             librdp_surface_width(session->surface),
+                                                             librdp_surface_height(session->surface));
+            if (status != LIBRDP_STATUS_OK)
+                return status;
         }
     }
     else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
@@ -553,7 +639,16 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                         close_pdu.channel_id,
                         entry ? entry->name : "");
         if (entry)
+        {
+            if (entry->channel_id == session->display_control_channel_id)
+            {
+                session->display_control_channel_id = 0;
+                session->display_control_channel_id_bytes = 0;
+                session->display_control_ready = 0;
+                memset(&session->display_control_caps, 0, sizeof(session->display_control_caps));
+            }
             entry->active = 0;
+        }
     }
     else
     {
@@ -564,7 +659,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                         (unsigned)channel_packet->payload_len);
     }
 
-    return LIBRDP_STATUS_OK;
+    return status;
 }
 
 static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
@@ -904,6 +999,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     session->share_id = 0;
     session->dynamic_channel_id = 0;
+    session->display_control_channel_id = 0;
+    session->display_control_channel_id_bytes = 0;
+    session->display_control_ready = 0;
+    memset(&session->display_control_caps, 0, sizeof(session->display_control_caps));
     memset(session->dynamic_channels, 0, sizeof(session->dynamic_channels));
 
     status = rdp_transport_connect(&session->transport,
@@ -1816,11 +1915,16 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
     event.data.surface.width = width;
     event.data.surface.height = height;
     rdp_session_emit(session, &event);
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.display_control.layout.local",
-                    "width=%u height=%u wire=not_sent",
-                    width,
-                    height);
+    status = rdp_session_send_display_control_layout(session, width, height);
+    if (status == LIBRDP_STATUS_STATE)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.display_control.layout.local",
+                        "width=%u height=%u wire=not_sent",
+                        width,
+                        height);
+        status = LIBRDP_STATUS_OK;
+    }
     return LIBRDP_STATUS_OK;
 }
 

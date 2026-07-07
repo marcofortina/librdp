@@ -1,4 +1,5 @@
 #include "channels/virtual_channel.h"
+#include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
@@ -348,6 +349,13 @@ static int test_path_security_license_channels(void)
     const uint8_t dyn_create[] = {0x18, 0x07, 'E', 'C', 'H', 'O', 0};
     const uint8_t dyn_data[] = {0x30, 0x07, 0xaa, 0xbb, 0xcc};
     const uint8_t dyn_close[] = {0x40, 0x07};
+    const uint8_t display_caps[] = {
+        5, 0, 0, 0,
+        20, 0, 0, 0,
+        16, 0, 0, 0,
+        0, 32, 0, 0,
+        0, 32, 0, 0
+    };
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -495,6 +503,8 @@ static int test_path_security_license_channels(void)
     rdp_dynamic_channel_create_request dyn_create_request;
     rdp_dynamic_channel_data_pdu dyn_data_pdu;
     rdp_dynamic_channel_close_pdu dyn_close_pdu;
+    rdp_display_control_caps display_parsed_caps;
+    rdp_display_control_monitor display_monitor;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
     rdp_credssp_state cred_state;
@@ -1008,6 +1018,34 @@ static int test_path_security_license_channels(void)
     PCHECK(dyn_response.length == sizeof(dyn_data) && memcmp(dyn_response.data, dyn_data, sizeof(dyn_data)) == 0);
     PCHECK(rdp_dynamic_channel_parse_close(dyn_close, sizeof(dyn_close), &dyn_close_pdu) == LIBRDP_STATUS_OK);
     PCHECK(dyn_close_pdu.channel_id == 7 && dyn_close_pdu.channel_id_bytes == 1);
+    PCHECK(rdp_display_control_parse_caps(display_caps,
+                                          sizeof(display_caps),
+                                          &display_parsed_caps) == LIBRDP_STATUS_OK);
+    PCHECK(display_parsed_caps.max_num_monitors == 16 &&
+           display_parsed_caps.max_monitor_area_factor_a == 8192 &&
+           display_parsed_caps.max_monitor_area_factor_b == 8192);
+    PCHECK(rdp_display_control_parse_caps(display_caps,
+                                          sizeof(display_caps) - 1u,
+                                          &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_display_control_make_single_monitor(&display_monitor, 801, 199) == LIBRDP_STATUS_OK);
+    PCHECK(display_monitor.flags == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
+           display_monitor.width == 800 &&
+           display_monitor.height == 200 &&
+           display_monitor.desktop_scale_factor == 100);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 56 &&
+           test_read_u32_le(dyn_response.data) == RDP_DISPLAY_CONTROL_PDU_MONITOR_LAYOUT &&
+           test_read_u32_le(dyn_response.data + 4) == 56 &&
+           test_read_u32_le(dyn_response.data + 8) == RDP_DISPLAY_CONTROL_MONITOR_LAYOUT_SIZE &&
+           test_read_u32_le(dyn_response.data + 12) == 1 &&
+           test_read_u32_le(dyn_response.data + 16) == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
+           test_read_u32_le(dyn_response.data + 28) == 800 &&
+           test_read_u32_le(dyn_response.data + 32) == 200);
+    display_monitor.width = 801;
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==
