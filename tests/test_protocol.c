@@ -7,6 +7,7 @@
 #include "common/buffer.h"
 #include "common/stream.h"
 #include "graphics/bitmap.h"
+#include "graphics/clearcodec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/capabilities.h"
@@ -513,6 +514,40 @@ static int test_path_security_license_channels(void)
         0x0a, 0x00, 0x00, 0x00,
         0x42, 0x00
     };
+    const uint8_t clear_residual_bitmap[] = {
+        0x00, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x02, 0x03, 0x04
+    };
+    const uint8_t clear_raw_subcodec_bitmap[] = {
+        0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x19, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x0c, 0x00, 0x00, 0x00,
+        0x00,
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12
+    };
+    const uint8_t clear_bands_bitmap[] = {
+        0x00, 0x02,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0xff
+    };
+    const uint8_t clear_glyph_hit[] = {
+        0x03, 0x03,
+        0x00, 0x00
+    };
     const uint8_t graphics_start_frame[] = {
         0x0b, 0x00, 0x00, 0x00,
         0x10, 0x00, 0x00, 0x00,
@@ -694,6 +729,9 @@ static int test_path_security_license_channels(void)
     rdp_graphics_start_frame graphics_start;
     rdp_graphics_end_frame graphics_end;
     rdp_graphics_decompressor graphics_decompressor;
+    rdp_clearcodec_stream clear_stream;
+    rdp_clearcodec_composite_payload clear_payload;
+    rdp_clearcodec_subcodec clear_subcodec;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
     rdp_credssp_state cred_state;
@@ -718,6 +756,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer graphics_decoded;
     rdp_buffer graphics_reset_pdu;
     rdp_buffer decoded_bitmap;
+    rdp_buffer clear_pixels;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
     rdp_buffer ntlm_authenticate;
@@ -801,6 +840,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&graphics_decoded);
     rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&decoded_bitmap);
+    rdp_buffer_init(&clear_pixels);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_authenticate);
@@ -1472,6 +1512,83 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_reset.width == 1024 &&
            graphics_reset.height == 768 &&
            graphics_reset.monitor_count == 0);
+    PCHECK(rdp_clearcodec_parse_stream(clear_residual_bitmap,
+                                       sizeof(clear_residual_bitmap),
+                                       &clear_stream) == LIBRDP_STATUS_OK);
+    PCHECK(clear_stream.flags == 0 &&
+           clear_stream.seq_number == 0 &&
+           clear_stream.payload_len == 16);
+    PCHECK(rdp_clearcodec_parse_composite_payload(clear_stream.payload,
+                                                  clear_stream.payload_len,
+                                                  &clear_payload) == LIBRDP_STATUS_OK);
+    PCHECK(clear_payload.residual_len == 4 &&
+           clear_payload.bands_len == 0 &&
+           clear_payload.subcodec_len == 0);
+    PCHECK(rdp_clearcodec_decode_bitmap(clear_residual_bitmap,
+                                        sizeof(clear_residual_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 &&
+           clear_pixels.length == 16 &&
+           clear_pixels.data[0] == 1 &&
+           clear_pixels.data[1] == 2 &&
+           clear_pixels.data[2] == 3 &&
+           clear_pixels.data[3] == 0xff &&
+           clear_pixels.data[12] == 1 &&
+           clear_pixels.data[15] == 0xff);
+    clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_parse_stream(clear_raw_subcodec_bitmap,
+                                       sizeof(clear_raw_subcodec_bitmap),
+                                       &clear_stream) == LIBRDP_STATUS_OK);
+    PCHECK(clear_stream.seq_number == 1);
+    PCHECK(rdp_clearcodec_parse_composite_payload(clear_stream.payload,
+                                                  clear_stream.payload_len,
+                                                  &clear_payload) == LIBRDP_STATUS_OK);
+    PCHECK(clear_payload.subcodec_len == 25);
+    PCHECK(rdp_clearcodec_parse_subcodec(clear_payload.subcodec,
+                                         clear_payload.subcodec_len,
+                                         &clear_subcodec) == LIBRDP_STATUS_OK);
+    PCHECK(clear_subcodec.x == 0 &&
+           clear_subcodec.y == 0 &&
+           clear_subcodec.width == 2 &&
+           clear_subcodec.height == 2 &&
+           clear_subcodec.bitmap_data_len == 12 &&
+           clear_subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RAW);
+    PCHECK(rdp_clearcodec_decode_bitmap(clear_raw_subcodec_bitmap,
+                                        sizeof(clear_raw_subcodec_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.data[0] == 1 &&
+           clear_pixels.data[2] == 3 &&
+           clear_pixels.data[4] == 4 &&
+           clear_pixels.data[6] == 6 &&
+           clear_pixels.data[8] == 7 &&
+           clear_pixels.data[10] == 9 &&
+           clear_pixels.data[12] == 10 &&
+           clear_pixels.data[14] == 12);
+    clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_decode_bitmap(clear_bands_bitmap,
+                                        sizeof(clear_bands_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_clearcodec_parse_stream(clear_glyph_hit,
+                                       sizeof(clear_glyph_hit),
+                                       &clear_stream) == LIBRDP_STATUS_OK);
+    PCHECK((clear_stream.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0 &&
+           clear_stream.has_glyph_index &&
+           clear_stream.payload_len == 0);
+    PCHECK(rdp_clearcodec_decode_bitmap(clear_glyph_hit,
+                                        sizeof(clear_glyph_hit),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==
@@ -1653,6 +1770,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
     rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_free(&clear_pixels);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);

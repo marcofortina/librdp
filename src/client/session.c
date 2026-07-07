@@ -8,6 +8,7 @@
 #include "client/settings_internal.h"
 #include "common/trace.h"
 #include "graphics/bitmap.h"
+#include "graphics/clearcodec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/fastpath.h"
@@ -1024,28 +1025,75 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_wire_to_surface_1(pdu, header.pdu_length, &wire);
             if (status != LIBRDP_STATUS_OK)
                 break;
-            if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED)
+            if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED ||
+                wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC)
             {
                 rdp_session_graphics_surface* surface = rdp_session_graphics_surface_find(session, wire.surface_id);
+                int rendered = 0;
 
                 if (!surface)
                 {
                     status = LIBRDP_STATUS_PROTOCOL_ERROR;
                     break;
                 }
-                status = rdp_session_graphics_surface_write_wire(session, surface, &wire);
-                if (status != LIBRDP_STATUS_OK)
-                    break;
-                rdp_trace_event(RDP_TRACE_CLIENT,
-                                "client.graphics.wire_to_surface",
-                                "dvc_channel_id=%u surface_id=%u codec_id=%u x=%u y=%u width=%u height=%u",
-                                channel_id,
-                                wire.surface_id,
-                                wire.codec_id,
-                                wire.dest_rect.left,
-                                wire.dest_rect.top,
-                                (unsigned)(wire.dest_rect.right - wire.dest_rect.left),
-                                (unsigned)(wire.dest_rect.bottom - wire.dest_rect.top));
+                if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED)
+                {
+                    status = rdp_session_graphics_surface_write_wire(session, surface, &wire);
+                    if (status != LIBRDP_STATUS_OK)
+                        break;
+                    rendered = 1;
+                }
+                else
+                {
+                    rdp_buffer decoded_bitmap;
+                    size_t decoded_stride = 0;
+                    uint16_t width = (uint16_t)(wire.dest_rect.right - wire.dest_rect.left);
+                    uint16_t height = (uint16_t)(wire.dest_rect.bottom - wire.dest_rect.top);
+
+                    rdp_buffer_init(&decoded_bitmap);
+                    status = rdp_clearcodec_decode_bitmap(wire.bitmap_data,
+                                                          wire.bitmap_data_length,
+                                                          width,
+                                                          height,
+                                                          &decoded_bitmap,
+                                                          &decoded_stride);
+                    if (status == LIBRDP_STATUS_OK)
+                        status = rdp_session_graphics_surface_write_bgra(session,
+                                                                         surface,
+                                                                         wire.dest_rect.left,
+                                                                         wire.dest_rect.top,
+                                                                         width,
+                                                                         height,
+                                                                         decoded_bitmap.data,
+                                                                         decoded_stride,
+                                                                         0);
+                    rdp_buffer_free(&decoded_bitmap);
+                    if (status == LIBRDP_STATUS_UNSUPPORTED)
+                    {
+                        rdp_trace_event(RDP_TRACE_CLIENT,
+                                        "client.graphics.clearcodec.unsupported",
+                                        "dvc_channel_id=%u surface_id=%u payload_len=%u",
+                                        channel_id,
+                                        wire.surface_id,
+                                        wire.bitmap_data_length);
+                        status = LIBRDP_STATUS_OK;
+                    }
+                    if (status != LIBRDP_STATUS_OK)
+                        break;
+                    if (decoded_stride != 0)
+                        rendered = 1;
+                }
+                if (rendered)
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.graphics.wire_to_surface",
+                                    "dvc_channel_id=%u surface_id=%u codec_id=%u x=%u y=%u width=%u height=%u",
+                                    channel_id,
+                                    wire.surface_id,
+                                    wire.codec_id,
+                                    wire.dest_rect.left,
+                                    wire.dest_rect.top,
+                                    (unsigned)(wire.dest_rect.right - wire.dest_rect.left),
+                                    (unsigned)(wire.dest_rect.bottom - wire.dest_rect.top));
             }
             else
             {
