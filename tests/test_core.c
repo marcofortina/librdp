@@ -4,6 +4,7 @@
 #include "common/stream.h"
 #include "common/trace.h"
 #include "input/input.h"
+#include "security/security.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -129,6 +130,210 @@ static int write_exact_fd(int fd, const void* data, size_t length)
     return 1;
 }
 
+static int append_ber_length(rdp_buffer* buffer, size_t length)
+{
+    if (length < 0x80u)
+        return rdp_buffer_append_u8(buffer, (uint8_t)length) == LIBRDP_STATUS_OK;
+    if (length <= 0xffu)
+        return rdp_buffer_append_u8(buffer, 0x81) == LIBRDP_STATUS_OK &&
+               rdp_buffer_append_u8(buffer, (uint8_t)length) == LIBRDP_STATUS_OK;
+    if (length <= 0xffffu)
+        return rdp_buffer_append_u8(buffer, 0x82) == LIBRDP_STATUS_OK &&
+               rdp_buffer_append_u16_be(buffer, (uint16_t)length) == LIBRDP_STATUS_OK;
+    return 0;
+}
+
+static int append_per_length(rdp_buffer* buffer, size_t length)
+{
+    if (length > 0x7fffu)
+        return 0;
+    if (length > 0x7fu)
+        return rdp_buffer_append_u16_be(buffer, (uint16_t)(length | 0x8000u)) == LIBRDP_STATUS_OK;
+    return rdp_buffer_append_u8(buffer, (uint8_t)length) == LIBRDP_STATUS_OK;
+}
+
+static int append_gcc_block(rdp_buffer* buffer, uint16_t type, const rdp_buffer* payload)
+{
+    size_t total = 0;
+
+    if (!buffer || !payload)
+        return 0;
+    total = payload->length + 4u;
+    if (total > 0xffffu)
+        return 0;
+    return rdp_buffer_append_u16_le(buffer, type) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(buffer, (uint16_t)total) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append(buffer, payload->data, payload->length) == LIBRDP_STATUS_OK;
+}
+
+static int build_server_connect_response(rdp_buffer* out, int encrypted)
+{
+    static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
+    static const uint8_t key[] = {'M', 'c', 'D', 'n'};
+    static const uint8_t server_random[32] = {
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
+    };
+    static const uint8_t server_certificate[] = {
+        0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
+        0x00, 0x04, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0xeb, 0x63, 0x25, 0x72, 0xe3, 0xeb, 0x4e, 0x15, 0x13, 0x3c, 0x7b, 0x9c,
+        0x5c, 0x66, 0x61, 0x89, 0x0f, 0x7f, 0x79, 0x1a, 0x93, 0x75, 0x9c, 0xe2,
+        0x98, 0xeb, 0xa5, 0xa6, 0x73, 0xd2, 0xc7, 0x14, 0x2c, 0x5a, 0x57, 0x10,
+        0x48, 0x3b, 0x04, 0x69, 0xaf, 0x52, 0x86, 0x58, 0xe3, 0xf7, 0x05, 0xcf,
+        0x22, 0x0f, 0x6e, 0x25, 0x41, 0xe0, 0x3a, 0x26, 0x62, 0x2f, 0x31, 0xcf,
+        0xd5, 0x97, 0xd3, 0xa0, 0x93, 0x73, 0x4c, 0x9b, 0xc1, 0x9c, 0x2a, 0x30,
+        0x66, 0x7f, 0x61, 0x25, 0x67, 0xab, 0xd3, 0xe7, 0xe2, 0x7f, 0x5e, 0x57,
+        0x2a, 0x3a, 0x2b, 0x9c, 0x4f, 0x4e, 0x2c, 0xba, 0x8e, 0xf0, 0x93, 0x29,
+        0x3f, 0xf7, 0xca, 0x9e, 0x46, 0xd4, 0x1e, 0x11, 0x96, 0x84, 0xef, 0x2d,
+        0xa9, 0x57, 0x3d, 0x8b, 0x9b, 0x27, 0x90, 0x5b, 0x98, 0x9d, 0x5b, 0x80,
+        0x64, 0x24, 0x76, 0xc0, 0xba, 0x8d, 0xe4, 0xb2, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
+    rdp_buffer core;
+    rdp_buffer security;
+    rdp_buffer network;
+    rdp_buffer blocks;
+    rdp_buffer gcc;
+    rdp_buffer content;
+    rdp_buffer mcs;
+    size_t total = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&core);
+    rdp_buffer_init(&security);
+    rdp_buffer_init(&network);
+    rdp_buffer_init(&blocks);
+    rdp_buffer_init(&gcc);
+    rdp_buffer_init(&content);
+    rdp_buffer_init(&mcs);
+
+    ok = rdp_buffer_append_u32_le(&core, 0x00080004u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&core, 0) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&core, 0) == LIBRDP_STATUS_OK &&
+         append_gcc_block(&blocks, 0x0c01u, &core);
+    if (ok)
+    {
+        ok = rdp_buffer_append_u32_le(&security, encrypted ? RDP_SECURITY_METHOD_128BIT : 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&security, encrypted ? 3u : 0) == LIBRDP_STATUS_OK;
+        if (ok && encrypted)
+            ok = rdp_buffer_append_u32_le(&security, (uint32_t)sizeof(server_random)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append_u32_le(&security, (uint32_t)sizeof(server_certificate)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append(&security, server_random, sizeof(server_random)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append(&security, server_certificate, sizeof(server_certificate)) == LIBRDP_STATUS_OK;
+        if (ok)
+            ok = append_gcc_block(&blocks, 0x0c02u, &security);
+    }
+    if (ok)
+        ok = rdp_buffer_append_u16_le(&network, 1003) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&network, 1) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&network, 1004) == LIBRDP_STATUS_OK &&
+             append_gcc_block(&blocks, 0x0c03u, &network);
+
+    if (ok)
+        ok = rdp_buffer_append_u8(&gcc, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&gcc, oid, sizeof(oid)) == LIBRDP_STATUS_OK &&
+             append_per_length(&gcc, blocks.length + 14u) &&
+             rdp_buffer_append_u8(&gcc, 0x14) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&gcc, 3) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 1) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 42) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 1) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 0xc0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&gcc, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&gcc, key, sizeof(key)) == LIBRDP_STATUS_OK &&
+             append_per_length(&gcc, blocks.length) &&
+             rdp_buffer_append(&gcc, blocks.data, blocks.length) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&content, 0x0a) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&content, 0x01) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&content, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&content, 0x04) == LIBRDP_STATUS_OK &&
+             append_ber_length(&content, gcc.length) &&
+             rdp_buffer_append(&content, gcc.data, gcc.length) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&mcs, 0x7f) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&mcs, 0x66) == LIBRDP_STATUS_OK &&
+             append_ber_length(&mcs, content.length) &&
+             rdp_buffer_append(&mcs, content.data, content.length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok && total <= 0xffffu)
+        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&content);
+    rdp_buffer_free(&gcc);
+    rdp_buffer_free(&blocks);
+    rdp_buffer_free(&network);
+    rdp_buffer_free(&security);
+    rdp_buffer_free(&core);
+    return ok;
+}
+
+static int read_security_payload(const uint8_t* input, size_t input_len, const uint8_t** payload, size_t* payload_len)
+{
+    size_t pos = 0;
+    size_t length = 0;
+
+    if (!input || input_len < 14 || !payload || !payload_len)
+        return 0;
+    pos = 4;
+    if (input[pos++] != 0x02 || input[pos++] != 0xf0 || input[pos++] != 0x80)
+        return 0;
+    if (input[pos++] != 0x64)
+        return 0;
+    pos += 5;
+    if (pos >= input_len)
+        return 0;
+    length = input[pos++];
+    if ((length & 0x80u) != 0)
+    {
+        if (pos >= input_len)
+            return 0;
+        length = ((length & 0x7fu) << 8) | input[pos++];
+    }
+    if (length > input_len - pos)
+        return 0;
+    *payload = input + pos;
+    *payload_len = length;
+    return 1;
+}
+
+static int validate_security_exchange(const uint8_t* input, size_t input_len)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    uint32_t random_len = 0;
+
+    if (!read_security_payload(input, input_len, &payload, &payload_len) || payload_len < 16)
+        return 0;
+    random_len = (uint32_t)payload[4] | ((uint32_t)payload[5] << 8) | ((uint32_t)payload[6] << 16) |
+                 ((uint32_t)payload[7] << 24);
+    return payload[0] == RDP_SEC_EXCHANGE_PKT && payload[1] == 0 && payload[2] == 0 && payload[3] == 0 &&
+           random_len == 136u && payload_len == 144u;
+}
+
+static int validate_encrypted_client_info(const uint8_t* input, size_t input_len)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    uint8_t flags = (uint8_t)(RDP_SEC_INFO_PKT | RDP_SEC_ENCRYPT);
+
+    if (!read_security_payload(input, input_len, &payload, &payload_len) || payload_len < 20)
+        return 0;
+    return payload[0] == flags && payload[1] == 0 && payload[2] == 0 && payload[3] == 0;
+}
+
 static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
 {
     uint16_t total = 0;
@@ -146,7 +351,7 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
     return 1;
 }
 
-static int start_handshake_server(uint16_t* port, pid_t* child_pid)
+static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -184,22 +389,12 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
     {
         uint8_t input[4096];
         size_t input_len = 0;
+        rdp_buffer mcs_response;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
             0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x02, 0x00, 0x08, 0x00,
             0x00, 0x00, 0x00, 0x00
-        };
-        const uint8_t mcs_response[] = {
-            0x03, 0x00, 0x00, 0x4b,
-            0x02, 0xf0, 0x80,
-            0x7f, 0x66, 0x41, 0x0a, 0x01, 0x00, 0x04, 0x3c,
-            0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01, 0x34, 0x14, 0x00, 0x03, 0x01,
-            0x2a, 0x00, 0x01, 0xc0, 0x00, 'M',  'c',  'D',  'n',  0x26,
-            0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x03, 0x0c, 0x0a, 0x00, 0xeb, 0x03, 0x01, 0x00,
-            0xec, 0x03
         };
         const uint8_t attach_confirm[] = {
             0x03, 0x00, 0x00, 0x0b,
@@ -218,12 +413,15 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
         };
         struct timespec ts;
         int client = accept(fd, NULL, NULL);
+        rdp_buffer_init(&mcs_response);
         if (client >= 0)
         {
+            if (!build_server_connect_response(&mcs_response, encrypted))
+                _exit(1);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, response, sizeof(response));
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
-            (void)write_exact_fd(client, mcs_response, sizeof(mcs_response));
+            (void)write_exact_fd(client, mcs_response.data, mcs_response.length);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, attach_confirm, sizeof(attach_confirm));
@@ -232,11 +430,20 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, join_global_confirm, sizeof(join_global_confirm));
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            if (encrypted)
+            {
+                if (!validate_security_exchange(input, input_len))
+                    _exit(2);
+                if (!read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                    !validate_encrypted_client_info(input, input_len))
+                    _exit(3);
+            }
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);
             close(client);
         }
+        rdp_buffer_free(&mcs_response);
         close(fd);
         _exit(0);
     }
@@ -362,6 +569,7 @@ static int test_settings_surface_input_session(void)
     event_counter counter;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
+    int child_status = 0;
 
     memset(&counter, 0, sizeof(counter));
 
@@ -409,7 +617,7 @@ static int test_settings_surface_input_session(void)
 
     session = librdp_session_new(settings);
     CHECK(session != NULL);
-    CHECK(start_handshake_server(&test_port, &server_pid));
+    CHECK(start_handshake_server(&test_port, &server_pid, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);
     session = librdp_session_new(settings);
@@ -435,7 +643,29 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.disconnected == 1);
     librdp_session_free(session);
     if (server_pid > 0)
-        (void)waitpid(server_pid, NULL, 0);
+    {
+        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+        CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    }
+
+    memset(&counter, 0, sizeof(counter));
+    server_pid = -1;
+    child_status = 0;
+    CHECK(start_handshake_server(&test_port, &server_pid, 1));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(counter.states == 2);
+    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    librdp_session_free(session);
+    if (server_pid > 0)
+    {
+        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+        CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    }
 
     librdp_settings_free(copy);
     librdp_settings_free(settings);
