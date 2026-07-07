@@ -1449,7 +1449,11 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
     event.data.surface.width = width;
     event.data.surface.height = height;
     rdp_session_emit(session, &event);
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.display_control.layout_sent", "width=%u height=%u", width, height);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.display_control.layout.local",
+                    "width=%u height=%u wire=not_sent",
+                    width,
+                    height);
     return LIBRDP_STATUS_OK;
 }
 
