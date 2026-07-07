@@ -2,8 +2,16 @@
 
 #include "common/stream.h"
 
+#include <openssl/core_names.h>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/params.h>
+#include <openssl/rand.h>
+
 #include <ctype.h>
+#include <limits.h>
 #include <string.h>
+#include <time.h>
 
 #define RDP_NTLM_NEGOTIATE_UNICODE 0x00000001u
 #define RDP_NTLM_REQUEST_TARGET 0x00000004u
@@ -17,6 +25,31 @@
 #define RDP_NTLM_NEGOTIATE_128 0x20000000u
 #define RDP_NTLM_NEGOTIATE_KEY_EXCH 0x40000000u
 #define RDP_NTLM_NEGOTIATE_56 0x80000000u
+
+typedef struct rdp_ntlm_rc4_context
+{
+    uint8_t s[256];
+    uint8_t i;
+    uint8_t j;
+} rdp_ntlm_rc4_context;
+
+typedef struct rdp_md4_context
+{
+    uint32_t state[4];
+    uint64_t total_len;
+    uint8_t block[64];
+    size_t block_len;
+} rdp_md4_context;
+
+static uint16_t rdp_read_u16_le_bytes(const uint8_t* data)
+{
+    return (uint16_t)(data[0] | ((uint16_t)data[1] << 8));
+}
+
+static uint32_t rdp_read_u32_le_bytes(const uint8_t* data)
+{
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
 
 librdp_status rdp_credssp_begin(bool enabled, rdp_credssp_state* state)
 {
@@ -178,6 +211,407 @@ static librdp_status rdp_ntlm_write_security_buffer(rdp_buffer* buffer, size_t l
                : LIBRDP_STATUS_NO_MEMORY;
 }
 
+static librdp_status rdp_buffer_append_u64_le(rdp_buffer* buffer, uint64_t value)
+{
+    uint8_t bytes[8];
+    size_t i = 0;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < sizeof(bytes); i++)
+        bytes[i] = (uint8_t)((value >> (i * 8u)) & 0xffu);
+    return rdp_buffer_append(buffer, bytes, sizeof(bytes));
+}
+
+static librdp_status rdp_append_utf16le_ascii(rdp_buffer* buffer, const char* text, int uppercase)
+{
+    size_t i = 0;
+    size_t length = rdp_ascii_token_len(text);
+
+    if (!buffer || (!text && length > 0) || length > 0x7fffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < length; i++)
+    {
+        uint8_t ch = (uint8_t)text[i];
+        librdp_status status = LIBRDP_STATUS_OK;
+        if (uppercase)
+            ch = (uint8_t)toupper(ch);
+        status = rdp_buffer_append_u16_le(buffer, ch);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_rotl32(uint32_t value, uint8_t bits)
+{
+    return (value << bits) | (value >> (32u - bits));
+}
+
+static void rdp_md4_init(rdp_md4_context* context)
+{
+    if (!context)
+        return;
+    context->state[0] = 0x67452301u;
+    context->state[1] = 0xefcdab89u;
+    context->state[2] = 0x98badcfeu;
+    context->state[3] = 0x10325476u;
+    context->total_len = 0;
+    context->block_len = 0;
+}
+
+static void rdp_md4_step_f(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
+{
+    *a = rdp_rotl32(*a + ((b & c) | (~b & d)) + x, s);
+}
+
+static void rdp_md4_step_g(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
+{
+    *a = rdp_rotl32(*a + ((b & c) | (b & d) | (c & d)) + x + 0x5a827999u, s);
+}
+
+static void rdp_md4_step_h(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
+{
+    *a = rdp_rotl32(*a + (b ^ c ^ d) + x + 0x6ed9eba1u, s);
+}
+
+static void rdp_md4_process(rdp_md4_context* context, const uint8_t block[64])
+{
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+    uint32_t d = 0;
+    uint32_t x[16];
+    size_t i = 0;
+
+    if (!context || !block)
+        return;
+    for (i = 0; i < 16u; i++)
+        x[i] = rdp_read_u32_le_bytes(block + (i * 4u));
+
+    a = context->state[0];
+    b = context->state[1];
+    c = context->state[2];
+    d = context->state[3];
+
+    rdp_md4_step_f(&a, b, c, d, x[0], 3);
+    rdp_md4_step_f(&d, a, b, c, x[1], 7);
+    rdp_md4_step_f(&c, d, a, b, x[2], 11);
+    rdp_md4_step_f(&b, c, d, a, x[3], 19);
+    rdp_md4_step_f(&a, b, c, d, x[4], 3);
+    rdp_md4_step_f(&d, a, b, c, x[5], 7);
+    rdp_md4_step_f(&c, d, a, b, x[6], 11);
+    rdp_md4_step_f(&b, c, d, a, x[7], 19);
+    rdp_md4_step_f(&a, b, c, d, x[8], 3);
+    rdp_md4_step_f(&d, a, b, c, x[9], 7);
+    rdp_md4_step_f(&c, d, a, b, x[10], 11);
+    rdp_md4_step_f(&b, c, d, a, x[11], 19);
+    rdp_md4_step_f(&a, b, c, d, x[12], 3);
+    rdp_md4_step_f(&d, a, b, c, x[13], 7);
+    rdp_md4_step_f(&c, d, a, b, x[14], 11);
+    rdp_md4_step_f(&b, c, d, a, x[15], 19);
+
+    rdp_md4_step_g(&a, b, c, d, x[0], 3);
+    rdp_md4_step_g(&d, a, b, c, x[4], 5);
+    rdp_md4_step_g(&c, d, a, b, x[8], 9);
+    rdp_md4_step_g(&b, c, d, a, x[12], 13);
+    rdp_md4_step_g(&a, b, c, d, x[1], 3);
+    rdp_md4_step_g(&d, a, b, c, x[5], 5);
+    rdp_md4_step_g(&c, d, a, b, x[9], 9);
+    rdp_md4_step_g(&b, c, d, a, x[13], 13);
+    rdp_md4_step_g(&a, b, c, d, x[2], 3);
+    rdp_md4_step_g(&d, a, b, c, x[6], 5);
+    rdp_md4_step_g(&c, d, a, b, x[10], 9);
+    rdp_md4_step_g(&b, c, d, a, x[14], 13);
+    rdp_md4_step_g(&a, b, c, d, x[3], 3);
+    rdp_md4_step_g(&d, a, b, c, x[7], 5);
+    rdp_md4_step_g(&c, d, a, b, x[11], 9);
+    rdp_md4_step_g(&b, c, d, a, x[15], 13);
+
+    rdp_md4_step_h(&a, b, c, d, x[0], 3);
+    rdp_md4_step_h(&d, a, b, c, x[8], 9);
+    rdp_md4_step_h(&c, d, a, b, x[4], 11);
+    rdp_md4_step_h(&b, c, d, a, x[12], 15);
+    rdp_md4_step_h(&a, b, c, d, x[2], 3);
+    rdp_md4_step_h(&d, a, b, c, x[10], 9);
+    rdp_md4_step_h(&c, d, a, b, x[6], 11);
+    rdp_md4_step_h(&b, c, d, a, x[14], 15);
+    rdp_md4_step_h(&a, b, c, d, x[1], 3);
+    rdp_md4_step_h(&d, a, b, c, x[9], 9);
+    rdp_md4_step_h(&c, d, a, b, x[5], 11);
+    rdp_md4_step_h(&b, c, d, a, x[13], 15);
+    rdp_md4_step_h(&a, b, c, d, x[3], 3);
+    rdp_md4_step_h(&d, a, b, c, x[11], 9);
+    rdp_md4_step_h(&c, d, a, b, x[7], 11);
+    rdp_md4_step_h(&b, c, d, a, x[15], 15);
+
+    context->state[0] += a;
+    context->state[1] += b;
+    context->state[2] += c;
+    context->state[3] += d;
+}
+
+static void rdp_md4_update(rdp_md4_context* context, const uint8_t* data, size_t length)
+{
+    size_t offset = 0;
+
+    if (!context || (!data && length > 0))
+        return;
+    context->total_len += length;
+    if (context->block_len > 0)
+    {
+        size_t needed = sizeof(context->block) - context->block_len;
+        size_t take = length < needed ? length : needed;
+        if (take > 0)
+            memcpy(context->block + context->block_len, data, take);
+        context->block_len += take;
+        offset += take;
+        if (context->block_len == sizeof(context->block))
+        {
+            rdp_md4_process(context, context->block);
+            context->block_len = 0;
+        }
+    }
+    while (length - offset >= sizeof(context->block))
+    {
+        rdp_md4_process(context, data + offset);
+        offset += sizeof(context->block);
+    }
+    if (offset < length)
+    {
+        context->block_len = length - offset;
+        memcpy(context->block, data + offset, context->block_len);
+    }
+}
+
+static void rdp_md4_final(rdp_md4_context* context, uint8_t digest[16])
+{
+    uint8_t pad[64];
+    uint8_t length_bytes[8];
+    uint64_t bits = 0;
+    size_t pad_len = 0;
+    size_t i = 0;
+
+    if (!context || !digest)
+        return;
+    memset(pad, 0, sizeof(pad));
+    pad[0] = 0x80;
+    pad_len = context->block_len < 56u ? 56u - context->block_len : 120u - context->block_len;
+    bits = context->total_len * 8u;
+    for (i = 0; i < sizeof(length_bytes); i++)
+        length_bytes[i] = (uint8_t)((bits >> (i * 8u)) & 0xffu);
+    rdp_md4_update(context, pad, pad_len);
+    rdp_md4_update(context, length_bytes, sizeof(length_bytes));
+    for (i = 0; i < 4u; i++)
+    {
+        digest[(i * 4u) + 0u] = (uint8_t)(context->state[i] & 0xffu);
+        digest[(i * 4u) + 1u] = (uint8_t)((context->state[i] >> 8) & 0xffu);
+        digest[(i * 4u) + 2u] = (uint8_t)((context->state[i] >> 16) & 0xffu);
+        digest[(i * 4u) + 3u] = (uint8_t)((context->state[i] >> 24) & 0xffu);
+    }
+}
+
+static librdp_status rdp_md4_digest(const uint8_t* data, size_t length, uint8_t digest[16])
+{
+    rdp_md4_context context;
+
+    if ((!data && length > 0) || !digest)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_md4_init(&context);
+    rdp_md4_update(&context, data, length);
+    rdp_md4_final(&context, digest);
+    OPENSSL_cleanse(&context, sizeof(context));
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_hmac_md5_parts(const uint8_t* key,
+                                        size_t key_len,
+                                        const uint8_t* a,
+                                        size_t a_len,
+                                        const uint8_t* b,
+                                        size_t b_len,
+                                        const uint8_t* c,
+                                        size_t c_len,
+                                        uint8_t output[16])
+{
+    EVP_MAC* mac = NULL;
+    EVP_MAC_CTX* context = NULL;
+    OSSL_PARAM params[2];
+    size_t out_len = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!key || (!a && a_len > 0) || (!b && b_len > 0) || (!c && c_len > 0) || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
+    if (!mac)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    context = EVP_MAC_CTX_new(mac);
+    if (!context)
+    {
+        EVP_MAC_free(mac);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, "MD5", 0);
+    params[1] = OSSL_PARAM_construct_end();
+    if (EVP_MAC_init(context, key, key_len, params) != 1)
+        goto out;
+    if (a_len > 0 && EVP_MAC_update(context, a, a_len) != 1)
+        goto out;
+    if (b_len > 0 && EVP_MAC_update(context, b, b_len) != 1)
+        goto out;
+    if (c_len > 0 && EVP_MAC_update(context, c, c_len) != 1)
+        goto out;
+    if (EVP_MAC_final(context, output, &out_len, 16u) != 1 || out_len != 16u)
+        goto out;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MAC_CTX_free(context);
+    EVP_MAC_free(mac);
+    return status;
+}
+
+static void rdp_ntlm_rc4_init(rdp_ntlm_rc4_context* context, const uint8_t* key, size_t key_len)
+{
+    size_t i = 0;
+    uint8_t j = 0;
+
+    if (!context || !key || key_len == 0)
+        return;
+    for (i = 0; i < 256u; i++)
+        context->s[i] = (uint8_t)i;
+    for (i = 0; i < 256u; i++)
+    {
+        uint8_t tmp = 0;
+        j = (uint8_t)(j + context->s[i] + key[i % key_len]);
+        tmp = context->s[i];
+        context->s[i] = context->s[j];
+        context->s[j] = tmp;
+    }
+    context->i = 0;
+    context->j = 0;
+}
+
+static void rdp_ntlm_rc4_crypt(rdp_ntlm_rc4_context* context, uint8_t* data, size_t length)
+{
+    size_t i = 0;
+
+    if (!context || (!data && length > 0))
+        return;
+    for (i = 0; i < length; i++)
+    {
+        uint8_t tmp = 0;
+        uint8_t index = 0;
+        context->i = (uint8_t)(context->i + 1u);
+        context->j = (uint8_t)(context->j + context->s[context->i]);
+        tmp = context->s[context->i];
+        context->s[context->i] = context->s[context->j];
+        context->s[context->j] = tmp;
+        index = (uint8_t)(context->s[context->i] + context->s[context->j]);
+        data[i] ^= context->s[index];
+    }
+}
+
+static librdp_status rdp_ntlm_random_bytes(uint8_t* output, size_t length)
+{
+    if ((!output && length > 0) || length > INT_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length == 0)
+        return LIBRDP_STATUS_OK;
+    return RAND_bytes(output, (int)length) == 1 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static uint64_t rdp_ntlm_filetime_now(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+        return 0;
+    return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + ((uint64_t)ts.tv_nsec / 100ull);
+}
+
+static int rdp_ntlm_target_info_has_eol(const uint8_t* data, size_t length)
+{
+    size_t offset = 0;
+
+    if (!data && length > 0)
+        return 0;
+    while (offset + 4u <= length)
+    {
+        uint16_t av_id = rdp_read_u16_le_bytes(data + offset);
+        uint16_t av_len = rdp_read_u16_le_bytes(data + offset + 2u);
+        offset += 4u;
+        if (av_id == 0 && av_len == 0)
+            return 1;
+        if ((size_t)av_len > length - offset)
+            return 0;
+        offset += av_len;
+    }
+    return 0;
+}
+
+static uint32_t rdp_ntlm_authenticate_flags(const rdp_ntlm_challenge* challenge)
+{
+    const uint32_t supported = RDP_NTLM_NEGOTIATE_UNICODE | RDP_NTLM_REQUEST_TARGET | RDP_NTLM_NEGOTIATE_SIGN |
+                               RDP_NTLM_NEGOTIATE_SEAL | RDP_NTLM_NEGOTIATE_NTLM |
+                               RDP_NTLM_NEGOTIATE_ALWAYS_SIGN | RDP_NTLM_NEGOTIATE_EXTENDED_SESSION |
+                               RDP_NTLM_NEGOTIATE_TARGET_INFO | RDP_NTLM_NEGOTIATE_VERSION |
+                               RDP_NTLM_NEGOTIATE_128 | RDP_NTLM_NEGOTIATE_KEY_EXCH | RDP_NTLM_NEGOTIATE_56;
+
+    if (!challenge)
+        return 0;
+    return challenge->flags & supported;
+}
+
+static librdp_status rdp_ntlm_append_auth_domain(rdp_buffer* buffer,
+                                                 const rdp_ntlm_challenge* challenge,
+                                                 const char* domain)
+{
+    if (!buffer || !challenge)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (domain && domain[0] != '\0')
+        return rdp_append_utf16le_ascii(buffer, domain, 0);
+    if (challenge->target_name_len > 0)
+        return rdp_buffer_append(buffer, challenge->target_name, challenge->target_name_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_ntlm_v2_hash(const char* username,
+                                      const char* password,
+                                      const uint8_t* target,
+                                      size_t target_len,
+                                      uint8_t hash[16])
+{
+    rdp_buffer password_utf16;
+    rdp_buffer identity;
+    uint8_t nt_hash[16];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!username || !password || (!target && target_len > 0) || !hash)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&password_utf16);
+    rdp_buffer_init(&identity);
+
+    status = rdp_append_utf16le_ascii(&password_utf16, password, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_md4_digest(password_utf16.data, password_utf16.length, nt_hash);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_append_utf16le_ascii(&identity, username, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&identity, target, target_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_hmac_md5_parts(nt_hash, sizeof(nt_hash), identity.data, identity.length, NULL, 0, NULL, 0, hash);
+
+    if (password_utf16.data)
+        OPENSSL_cleanse(password_utf16.data, password_utf16.length);
+    if (identity.data)
+        OPENSSL_cleanse(identity.data, identity.length);
+    OPENSSL_cleanse(nt_hash, sizeof(nt_hash));
+    rdp_buffer_free(&identity);
+    rdp_buffer_free(&password_utf16);
+    return status;
+}
+
 librdp_status rdp_credssp_write_ntlm_negotiate(rdp_buffer* buffer, const char* workstation, const char* domain)
 {
     static const uint8_t signature[] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
@@ -277,6 +711,292 @@ librdp_status rdp_credssp_write_spnego_ntlm_negotiate(rdp_buffer* buffer,
     rdp_buffer_free(&mech_types);
     rdp_buffer_free(&oid_seq);
     rdp_buffer_free(&oid_list);
+    return status;
+}
+
+librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
+                                                  const rdp_ntlm_challenge* challenge,
+                                                  const char* username,
+                                                  const char* password,
+                                                  const char* domain,
+                                                  const char* workstation,
+                                                  uint64_t timestamp,
+                                                  const uint8_t client_challenge[8],
+                                                  const uint8_t exported_session_key[16],
+                                                  rdp_ntlm_authenticate_result* result)
+{
+    static const uint8_t signature[] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
+    static const uint8_t version[] = {10, 0, 0, 0, 0, 0, 0, 15};
+    const size_t payload_offset = 72u;
+    rdp_buffer domain_name;
+    rdp_buffer user_name;
+    rdp_buffer workstation_name;
+    rdp_buffer blob;
+    rdp_buffer lm_response;
+    rdp_buffer nt_response;
+    rdp_buffer encrypted_key;
+    uint8_t nonce[8];
+    uint8_t ntlm_v2_hash[16];
+    uint8_t nt_proof[16];
+    uint8_t lm_proof[16];
+    uint8_t session_base_key[16];
+    uint8_t session_key[16];
+    uint32_t flags = 0;
+    size_t lm_offset = 0;
+    size_t nt_offset = 0;
+    size_t domain_offset = 0;
+    size_t user_offset = 0;
+    size_t workstation_offset = 0;
+    size_t key_offset = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !challenge || !username || !password ||
+        (challenge->target_name_len > 0 && !challenge->target_name) ||
+        (challenge->target_info_len > 0 && !challenge->target_info))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&domain_name);
+    rdp_buffer_init(&user_name);
+    rdp_buffer_init(&workstation_name);
+    rdp_buffer_init(&blob);
+    rdp_buffer_init(&lm_response);
+    rdp_buffer_init(&nt_response);
+    rdp_buffer_init(&encrypted_key);
+    memset(nonce, 0, sizeof(nonce));
+    memset(ntlm_v2_hash, 0, sizeof(ntlm_v2_hash));
+    memset(nt_proof, 0, sizeof(nt_proof));
+    memset(lm_proof, 0, sizeof(lm_proof));
+    memset(session_base_key, 0, sizeof(session_base_key));
+    memset(session_key, 0, sizeof(session_key));
+
+    flags = rdp_ntlm_authenticate_flags(challenge);
+    if ((flags & RDP_NTLM_NEGOTIATE_UNICODE) == 0 || (flags & RDP_NTLM_NEGOTIATE_NTLM) == 0 ||
+        (flags & RDP_NTLM_NEGOTIATE_EXTENDED_SESSION) == 0)
+    {
+        status = LIBRDP_STATUS_UNSUPPORTED;
+        goto out;
+    }
+
+    if (timestamp == 0)
+        timestamp = rdp_ntlm_filetime_now();
+    if (timestamp == 0)
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto out;
+    }
+    if (client_challenge)
+        memcpy(nonce, client_challenge, sizeof(nonce));
+    else
+    {
+        status = rdp_ntlm_random_bytes(nonce, sizeof(nonce));
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
+    }
+
+    status = rdp_ntlm_append_auth_domain(&domain_name, challenge, domain);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_append_utf16le_ascii(&user_name, username, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_append_utf16le_ascii(&workstation_name, workstation ? workstation : "", 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_v2_hash(username, password, domain_name.data, domain_name.length, ntlm_v2_hash);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+
+    status = rdp_buffer_append_u32_le(&blob, 0x00000101u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&blob, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u64_le(&blob, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&blob, nonce, sizeof(nonce));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&blob, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&blob, challenge->target_info, challenge->target_info_len);
+    if (status == LIBRDP_STATUS_OK &&
+        !rdp_ntlm_target_info_has_eol(challenge->target_info, challenge->target_info_len))
+        status = rdp_buffer_append_u32_le(&blob, 0);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+
+    status = rdp_hmac_md5_parts(ntlm_v2_hash,
+                                sizeof(ntlm_v2_hash),
+                                challenge->server_challenge,
+                                sizeof(challenge->server_challenge),
+                                blob.data,
+                                blob.length,
+                                NULL,
+                                0,
+                                nt_proof);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&nt_response, nt_proof, sizeof(nt_proof));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&nt_response, blob.data, blob.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_hmac_md5_parts(ntlm_v2_hash,
+                                    sizeof(ntlm_v2_hash),
+                                    challenge->server_challenge,
+                                    sizeof(challenge->server_challenge),
+                                    nonce,
+                                    sizeof(nonce),
+                                    NULL,
+                                    0,
+                                    lm_proof);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&lm_response, lm_proof, sizeof(lm_proof));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&lm_response, nonce, sizeof(nonce));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_hmac_md5_parts(ntlm_v2_hash,
+                                    sizeof(ntlm_v2_hash),
+                                    nt_proof,
+                                    sizeof(nt_proof),
+                                    NULL,
+                                    0,
+                                    NULL,
+                                    0,
+                                    session_base_key);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+
+    if ((flags & RDP_NTLM_NEGOTIATE_KEY_EXCH) != 0)
+    {
+        rdp_ntlm_rc4_context rc4;
+        if (exported_session_key)
+            memcpy(session_key, exported_session_key, sizeof(session_key));
+        else
+        {
+            status = rdp_ntlm_random_bytes(session_key, sizeof(session_key));
+            if (status != LIBRDP_STATUS_OK)
+                goto out;
+        }
+        status = rdp_buffer_append(&encrypted_key, session_key, sizeof(session_key));
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
+        rdp_ntlm_rc4_init(&rc4, session_base_key, sizeof(session_base_key));
+        rdp_ntlm_rc4_crypt(&rc4, encrypted_key.data, encrypted_key.length);
+        OPENSSL_cleanse(&rc4, sizeof(rc4));
+    }
+    else
+    {
+        memcpy(session_key, session_base_key, sizeof(session_key));
+    }
+
+    if (lm_response.length > 0xffffu || nt_response.length > 0xffffu || domain_name.length > 0xffffu ||
+        user_name.length > 0xffffu || workstation_name.length > 0xffffu || encrypted_key.length > 0xffffu)
+    {
+        status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        goto out;
+    }
+
+    lm_offset = payload_offset;
+    nt_offset = lm_offset + lm_response.length;
+    domain_offset = nt_offset + nt_response.length;
+    user_offset = domain_offset + domain_name.length;
+    workstation_offset = user_offset + user_name.length;
+    key_offset = workstation_offset + workstation_name.length;
+    if (key_offset > 0xffffffffu || encrypted_key.length > 0xffffffffu - key_offset)
+    {
+        status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        goto out;
+    }
+
+    status = rdp_buffer_append(buffer, signature, sizeof(signature));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 3);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, lm_response.length, lm_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, nt_response.length, nt_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, domain_name.length, domain_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, user_name.length, user_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, workstation_name.length, workstation_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_write_security_buffer(buffer, encrypted_key.length, key_offset);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, version, sizeof(version));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, lm_response.data, lm_response.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, nt_response.data, nt_response.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, domain_name.data, domain_name.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, user_name.data, user_name.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, workstation_name.data, workstation_name.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, encrypted_key.data, encrypted_key.length);
+    if (status == LIBRDP_STATUS_OK && result)
+    {
+        result->flags = flags;
+        memcpy(result->session_key, session_key, sizeof(result->session_key));
+    }
+
+out:
+    if (domain_name.data)
+        OPENSSL_cleanse(domain_name.data, domain_name.length);
+    if (user_name.data)
+        OPENSSL_cleanse(user_name.data, user_name.length);
+    if (workstation_name.data)
+        OPENSSL_cleanse(workstation_name.data, workstation_name.length);
+    if (lm_response.data)
+        OPENSSL_cleanse(lm_response.data, lm_response.length);
+    if (nt_response.data)
+        OPENSSL_cleanse(nt_response.data, nt_response.length);
+    if (encrypted_key.data)
+        OPENSSL_cleanse(encrypted_key.data, encrypted_key.length);
+    if (blob.data)
+        OPENSSL_cleanse(blob.data, blob.length);
+    OPENSSL_cleanse(nonce, sizeof(nonce));
+    OPENSSL_cleanse(ntlm_v2_hash, sizeof(ntlm_v2_hash));
+    OPENSSL_cleanse(nt_proof, sizeof(nt_proof));
+    OPENSSL_cleanse(lm_proof, sizeof(lm_proof));
+    OPENSSL_cleanse(session_base_key, sizeof(session_base_key));
+    OPENSSL_cleanse(session_key, sizeof(session_key));
+    rdp_buffer_free(&encrypted_key);
+    rdp_buffer_free(&nt_response);
+    rdp_buffer_free(&lm_response);
+    rdp_buffer_free(&blob);
+    rdp_buffer_free(&workstation_name);
+    rdp_buffer_free(&user_name);
+    rdp_buffer_free(&domain_name);
+    return status;
+}
+
+librdp_status rdp_credssp_write_spnego_ntlm_authenticate(rdp_buffer* buffer,
+                                                         const uint8_t* ntlm_token,
+                                                         size_t ntlm_token_len)
+{
+    rdp_buffer token_body;
+    rdp_buffer response_token;
+    rdp_buffer response_sequence;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!ntlm_token && ntlm_token_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&token_body);
+    rdp_buffer_init(&response_token);
+    rdp_buffer_init(&response_sequence);
+
+    status = rdp_der_write_octet_string(&token_body, ntlm_token, ntlm_token_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_context(&response_token, 2, &token_body);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_wrap(&response_sequence, 0x30, &response_token);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_context(buffer, 1, &response_sequence);
+
+    rdp_buffer_free(&response_sequence);
+    rdp_buffer_free(&response_token);
+    rdp_buffer_free(&token_body);
     return status;
 }
 
@@ -523,16 +1243,6 @@ librdp_status rdp_credssp_parse_ts_request(const void* data, size_t length, rdp_
         }
     }
     return request->version > 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
-}
-
-static uint16_t rdp_read_u16_le_bytes(const uint8_t* data)
-{
-    return (uint16_t)(data[0] | ((uint16_t)data[1] << 8));
-}
-
-static uint32_t rdp_read_u32_le_bytes(const uint8_t* data)
-{
-    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
 }
 
 static librdp_status rdp_ntlm_read_security_buffer(const uint8_t* base,

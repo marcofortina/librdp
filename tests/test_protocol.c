@@ -27,6 +27,16 @@
         }                                                                                                              \
     } while (0)
 
+static uint16_t test_read_u16_le(const uint8_t* data)
+{
+    return (uint16_t)(data[0] | ((uint16_t)data[1] << 8));
+}
+
+static uint32_t test_read_u32_le(const uint8_t* data)
+{
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
 static int test_tpkt_x224(void)
 {
     rdp_buffer x224;
@@ -292,6 +302,32 @@ static int test_path_security_license_channels(void)
         'S',  0,    'R',  0,
         1,    0,    4,    0,    'A',  0,    0,    0
     };
+    const uint8_t ntlm_v2_target_name[] = {'D', 0, 'O', 0, 'M', 0, 'A', 0, 'I', 0, 'N', 0};
+    const uint8_t ntlm_v2_target_info[] = {
+        0x02, 0x00, 0x0c, 0x00, 'D', 0, 'O', 0, 'M', 0, 'A', 0, 'I', 0, 'N', 0,
+        0x01, 0x00, 0x0c, 0x00, 'S', 0, 'E', 0, 'R', 0, 'V', 0, 'E', 0, 'R', 0,
+        0x04, 0x00, 0x14, 0x00, 'd', 0, 'o', 0, 'm', 0, 'a', 0, 'i', 0, 'n', 0,
+        '.', 0,    'c', 0,    'o', 0,    'm', 0,
+        0x03, 0x00, 0x22, 0x00, 's', 0, 'e', 0, 'r', 0, 'v', 0, 'e', 0, 'r', 0,
+        '.', 0,    'd', 0,    'o', 0,    'm', 0, 'a', 0, 'i', 0, 'n', 0, '.', 0,
+        'c', 0,    'o', 0,    'm', 0,
+        0x00, 0x00, 0x00, 0x00
+    };
+    const uint8_t ntlm_v2_server_challenge[] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+    const uint8_t ntlm_v2_client_challenge[] = {0xff, 0xff, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44};
+    const uint8_t ntlm_v2_session_key[] = {
+        0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0xfe, 0xdc,
+        0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x99, 0x88
+    };
+    const uint8_t ntlm_v2_expected_lm[] = {
+        0xd6, 0xe6, 0x15, 0x2e, 0xa2, 0x5d, 0x03, 0xb7,
+        0xc6, 0xba, 0x66, 0x29, 0xc2, 0xd6, 0xaa, 0xf0,
+        0xff, 0xff, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44
+    };
+    const uint8_t ntlm_v2_expected_proof[] = {
+        0x29, 0x15, 0x7f, 0x79, 0xa3, 0x08, 0x93, 0x53,
+        0x78, 0x3e, 0x24, 0x4f, 0xad, 0x52, 0x8a, 0x5c
+    };
     const uint8_t server_certificate[] = {
         0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -379,7 +415,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer confirm_active;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
+    rdp_buffer ntlm_authenticate;
     rdp_buffer spnego_negotiate;
+    rdp_buffer spnego_authenticate;
     rdp_buffer ts_request;
     rdp_buffer nla_request;
     rdp_client_info info;
@@ -387,8 +425,16 @@ static int test_path_security_license_channels(void)
     rdp_capability_list confirm_caps;
     rdp_credssp_ts_request parsed_ts;
     rdp_ntlm_challenge ntlm_challenge;
+    rdp_ntlm_challenge ntlm_v2_challenge;
+    rdp_ntlm_authenticate_result ntlm_auth_result;
     const uint8_t* extracted_ntlm = NULL;
     size_t extracted_ntlm_len = 0;
+    uint16_t lm_len = 0;
+    uint16_t nt_len = 0;
+    uint16_t key_len = 0;
+    uint32_t lm_offset = 0;
+    uint32_t nt_offset = 0;
+    uint32_t key_offset = 0;
     uint8_t signature[8];
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -403,7 +449,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&confirm_active);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
+    rdp_buffer_init(&ntlm_authenticate);
     rdp_buffer_init(&spnego_negotiate);
+    rdp_buffer_init(&spnego_authenticate);
     rdp_buffer_init(&ts_request);
     rdp_buffer_init(&nla_request);
 
@@ -603,9 +651,54 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_credssp_parse_ntlm_challenge(ntlm_challenge_token,
                                             sizeof(ntlm_challenge_token) - 1u,
                                             &ntlm_challenge) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(&ntlm_v2_challenge, 0, sizeof(ntlm_v2_challenge));
+    ntlm_v2_challenge.flags = 0xe2888235u;
+    memcpy(ntlm_v2_challenge.server_challenge, ntlm_v2_server_challenge, sizeof(ntlm_v2_server_challenge));
+    ntlm_v2_challenge.target_name = ntlm_v2_target_name;
+    ntlm_v2_challenge.target_name_len = sizeof(ntlm_v2_target_name);
+    ntlm_v2_challenge.target_info = ntlm_v2_target_info;
+    ntlm_v2_challenge.target_info_len = sizeof(ntlm_v2_target_info);
+    PCHECK(rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
+                                               &ntlm_v2_challenge,
+                                               "user",
+                                               "SecREt01",
+                                               "DOMAIN",
+                                               "COMPUTER",
+                                               0x01c334b736d39000ull,
+                                               ntlm_v2_client_challenge,
+                                               ntlm_v2_session_key,
+                                               &ntlm_auth_result) == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_authenticate.length > 88);
+    PCHECK(memcmp(ntlm_authenticate.data, "NTLMSSP", 7) == 0);
+    PCHECK(test_read_u32_le(ntlm_authenticate.data + 8) == 3);
+    lm_len = test_read_u16_le(ntlm_authenticate.data + 12);
+    lm_offset = test_read_u32_le(ntlm_authenticate.data + 16);
+    nt_len = test_read_u16_le(ntlm_authenticate.data + 20);
+    nt_offset = test_read_u32_le(ntlm_authenticate.data + 24);
+    key_len = test_read_u16_le(ntlm_authenticate.data + 52);
+    key_offset = test_read_u32_le(ntlm_authenticate.data + 56);
+    PCHECK(test_read_u32_le(ntlm_authenticate.data + 60) == ntlm_auth_result.flags);
+    PCHECK(lm_len == sizeof(ntlm_v2_expected_lm));
+    PCHECK(nt_len > sizeof(ntlm_v2_expected_proof));
+    PCHECK(key_len == sizeof(ntlm_v2_session_key));
+    PCHECK((size_t)lm_offset + lm_len <= ntlm_authenticate.length);
+    PCHECK((size_t)nt_offset + nt_len <= ntlm_authenticate.length);
+    PCHECK((size_t)key_offset + key_len <= ntlm_authenticate.length);
+    PCHECK(memcmp(ntlm_authenticate.data + lm_offset, ntlm_v2_expected_lm, sizeof(ntlm_v2_expected_lm)) == 0);
+    PCHECK(memcmp(ntlm_authenticate.data + nt_offset,
+                  ntlm_v2_expected_proof,
+                  sizeof(ntlm_v2_expected_proof)) == 0);
+    PCHECK(memcmp(ntlm_auth_result.session_key, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) == 0);
+    PCHECK(memcmp(ntlm_authenticate.data + key_offset, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) != 0);
+    PCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
+                                                      ntlm_authenticate.data,
+                                                      ntlm_authenticate.length) == LIBRDP_STATUS_OK);
+    PCHECK(spnego_authenticate.length > ntlm_authenticate.length && spnego_authenticate.data[0] == 0xa1);
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&ts_request);
+    rdp_buffer_free(&spnego_authenticate);
     rdp_buffer_free(&spnego_negotiate);
+    rdp_buffer_free(&ntlm_authenticate);
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_buffer_free(&expected_cipher);

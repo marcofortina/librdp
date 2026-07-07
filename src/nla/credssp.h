@@ -40,11 +40,30 @@ typedef struct rdp_ntlm_challenge
     size_t target_info_len;
 } rdp_ntlm_challenge;
 
+typedef struct rdp_ntlm_authenticate_result
+{
+    uint32_t flags;
+    uint8_t session_key[16];
+} rdp_ntlm_authenticate_result;
+
 librdp_status rdp_credssp_begin(bool enabled, rdp_credssp_state* state);
 librdp_status rdp_credssp_write_ntlm_negotiate(rdp_buffer* buffer, const char* workstation, const char* domain);
 librdp_status rdp_credssp_write_spnego_ntlm_negotiate(rdp_buffer* buffer,
                                                       const uint8_t* ntlm_token,
                                                       size_t ntlm_token_len);
+librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
+                                                  const rdp_ntlm_challenge* challenge,
+                                                  const char* username,
+                                                  const char* password,
+                                                  const char* domain,
+                                                  const char* workstation,
+                                                  uint64_t timestamp,
+                                                  const uint8_t client_challenge[8],
+                                                  const uint8_t exported_session_key[16],
+                                                  rdp_ntlm_authenticate_result* result);
+librdp_status rdp_credssp_write_spnego_ntlm_authenticate(rdp_buffer* buffer,
+                                                         const uint8_t* ntlm_token,
+                                                         size_t ntlm_token_len);
 librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
                                            uint32_t version,
                                            const uint8_t* nego_token,
