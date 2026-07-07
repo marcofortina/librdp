@@ -1595,3 +1595,111 @@ librdp_status rdp_credssp_verify_public_key_hash(rdp_ntlm_security_context* cont
     rdp_buffer_free(&plain);
     return status;
 }
+
+static librdp_status rdp_credssp_write_context_octet_string(rdp_buffer* body,
+                                                            uint8_t index,
+                                                            const uint8_t* data,
+                                                            size_t length)
+{
+    rdp_buffer field;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!body || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&field);
+    status = rdp_der_write_octet_string(&field, data, length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_context(body, index, &field);
+    rdp_buffer_free(&field);
+    return status;
+}
+
+librdp_status rdp_credssp_write_password_credentials(rdp_buffer* buffer,
+                                                     const char* domain,
+                                                     const char* username,
+                                                     const char* password)
+{
+    rdp_buffer domain_utf16;
+    rdp_buffer user_utf16;
+    rdp_buffer password_utf16;
+    rdp_buffer password_body;
+    rdp_buffer password_sequence;
+    rdp_buffer field;
+    rdp_buffer credentials_body;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !username || !password)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&domain_utf16);
+    rdp_buffer_init(&user_utf16);
+    rdp_buffer_init(&password_utf16);
+    rdp_buffer_init(&password_body);
+    rdp_buffer_init(&password_sequence);
+    rdp_buffer_init(&field);
+    rdp_buffer_init(&credentials_body);
+
+    status = rdp_append_utf16le_ascii(&domain_utf16, domain ? domain : "", 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_append_utf16le_ascii(&user_utf16, username, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_append_utf16le_ascii(&password_utf16, password, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_write_context_octet_string(&password_body, 0, domain_utf16.data, domain_utf16.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_write_context_octet_string(&password_body, 1, user_utf16.data, user_utf16.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_write_context_octet_string(&password_body, 2, password_utf16.data, password_utf16.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_wrap(&password_sequence, 0x30, &password_body);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_integer(&field, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_context(&credentials_body, 0, &field);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&field);
+        rdp_buffer_init(&field);
+        status = rdp_der_write_octet_string(&field, password_sequence.data, password_sequence.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_write_context(&credentials_body, 1, &field);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_der_wrap(buffer, 0x30, &credentials_body);
+
+    if (password_utf16.data)
+        OPENSSL_cleanse(password_utf16.data, password_utf16.length);
+    if (user_utf16.data)
+        OPENSSL_cleanse(user_utf16.data, user_utf16.length);
+    if (domain_utf16.data)
+        OPENSSL_cleanse(domain_utf16.data, domain_utf16.length);
+    rdp_buffer_free(&credentials_body);
+    rdp_buffer_free(&field);
+    rdp_buffer_free(&password_sequence);
+    rdp_buffer_free(&password_body);
+    rdp_buffer_free(&password_utf16);
+    rdp_buffer_free(&user_utf16);
+    rdp_buffer_free(&domain_utf16);
+    return status;
+}
+
+librdp_status rdp_credssp_encrypt_password_credentials(rdp_ntlm_security_context* context,
+                                                       const char* domain,
+                                                       const char* username,
+                                                       const char* password,
+                                                       rdp_buffer* encrypted)
+{
+    rdp_buffer credentials;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!context || !username || !password || !encrypted)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&credentials);
+    status = rdp_credssp_write_password_credentials(&credentials, domain, username, password);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_ntlm_wrap(context, credentials.data, credentials.length, encrypted);
+    if (credentials.data)
+        OPENSSL_cleanse(credentials.data, credentials.length);
+    rdp_buffer_free(&credentials);
+    return status;
+}

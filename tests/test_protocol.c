@@ -466,6 +466,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer ntlm_unwrapped;
     rdp_buffer pub_key_auth;
     rdp_buffer server_pub_key_auth;
+    rdp_buffer ts_credentials;
+    rdp_buffer auth_info;
     rdp_buffer ts_request;
     rdp_buffer nla_request;
     rdp_client_info info;
@@ -507,6 +509,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&ntlm_unwrapped);
     rdp_buffer_init(&pub_key_auth);
     rdp_buffer_init(&server_pub_key_auth);
+    rdp_buffer_init(&ts_credentials);
+    rdp_buffer_init(&auth_info);
     rdp_buffer_init(&ts_request);
     rdp_buffer_init(&nla_request);
 
@@ -799,8 +803,25 @@ static int test_path_security_license_channels(void)
                                    ntlm_wrapped.length - 20,
                                    &ntlm_unwrapped) == LIBRDP_STATUS_OK);
     PCHECK(ntlm_unwrapped.length == 4 && memcmp(ntlm_unwrapped.data, "peer", 4) == 0);
+    PCHECK(rdp_credssp_write_password_credentials(&ts_credentials,
+                                                  "DOMAIN",
+                                                  "user",
+                                                  "SecREt01") == LIBRDP_STATUS_OK);
+    PCHECK(ts_credentials.length > 32 && ts_credentials.data[0] == 0x30);
+    PCHECK(rdp_credssp_encrypt_password_credentials(&ntlm_security,
+                                                    "DOMAIN",
+                                                    "user",
+                                                    "SecREt01",
+                                                    &auth_info) == LIBRDP_STATUS_OK);
+    PCHECK(auth_info.length == ts_credentials.length + 16u);
+    PCHECK(test_read_u32_le(auth_info.data) == 1);
+    PCHECK(test_read_u32_le(auth_info.data + 12) == 2);
+    PCHECK(memcmp(auth_info.data + 16, ts_credentials.data, ts_credentials.length < 8u ? ts_credentials.length : 8u) !=
+           0);
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&ts_request);
+    rdp_buffer_free(&auth_info);
+    rdp_buffer_free(&ts_credentials);
     rdp_buffer_free(&server_pub_key_auth);
     rdp_buffer_free(&pub_key_auth);
     rdp_buffer_free(&ntlm_unwrapped);

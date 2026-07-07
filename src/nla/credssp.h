@@ -130,5 +130,14 @@ librdp_status rdp_credssp_verify_public_key_hash(rdp_ntlm_security_context* cont
                                                  size_t public_key_len,
                                                  const void* encrypted,
                                                  size_t encrypted_len);
+librdp_status rdp_credssp_write_password_credentials(rdp_buffer* buffer,
+                                                     const char* domain,
+                                                     const char* username,
+                                                     const char* password);
+librdp_status rdp_credssp_encrypt_password_credentials(rdp_ntlm_security_context* context,
+                                                       const char* domain,
+                                                       const char* username,
+                                                       const char* password,
+                                                       rdp_buffer* encrypted);
 
 #endif
