@@ -1116,14 +1116,52 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_wire_to_surface_2(pdu, header.pdu_length, &wire);
             if (status != LIBRDP_STATUS_OK)
                 break;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.wire_to_surface.unsupported",
-                            "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u",
-                            channel_id,
-                            wire.surface_id,
-                            wire.codec_id,
-                            wire.codec_context_id,
-                            wire.bitmap_data_length);
+            if (wire.codec_id == RDP_GRAPHICS_CODECID_CAPROGRESSIVE)
+            {
+                rdp_graphics_progressive_stream progressive;
+
+                status = rdp_graphics_progressive_parse_stream(wire.bitmap_data,
+                                                               wire.bitmap_data_length,
+                                                               &progressive);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.graphics.progressive",
+                                    "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u",
+                                    channel_id,
+                                    wire.surface_id,
+                                    wire.codec_context_id,
+                                    progressive.block_count,
+                                    progressive.region_count,
+                                    progressive.tile_count,
+                                    progressive.simple_tile_count,
+                                    progressive.first_tile_count,
+                                    progressive.upgrade_tile_count);
+                }
+                else
+                {
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.graphics.progressive.unsupported",
+                                    "dvc_channel_id=%u surface_id=%u context_id=%u payload_len=%u parser_status=%d",
+                                    channel_id,
+                                    wire.surface_id,
+                                    wire.codec_context_id,
+                                    wire.bitmap_data_length,
+                                    (int)status);
+                    status = LIBRDP_STATUS_OK;
+                }
+            }
+            else
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.graphics.wire_to_surface.unsupported",
+                                "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u",
+                                channel_id,
+                                wire.surface_id,
+                                wire.codec_id,
+                                wire.codec_context_id,
+                                wire.bitmap_data_length);
+            }
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_DELETE_ENCODING_CONTEXT)
         {

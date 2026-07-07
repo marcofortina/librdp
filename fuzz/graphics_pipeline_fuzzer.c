@@ -26,6 +26,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_start_frame start_frame;
     rdp_graphics_end_frame end_frame;
     rdp_graphics_decompressor decompressor;
+    rdp_graphics_progressive_block progressive_block;
+    rdp_graphics_progressive_context progressive_context;
+    rdp_graphics_progressive_frame_begin progressive_frame_begin;
+    rdp_graphics_progressive_region progressive_region;
+    rdp_graphics_progressive_tile_simple progressive_simple;
+    rdp_graphics_progressive_tile_first progressive_first;
+    rdp_graphics_progressive_tile_upgrade progressive_upgrade;
+    rdp_graphics_progressive_stream progressive_stream;
     rdp_buffer output;
 
     rdp_graphics_decompressor_init(&decompressor);
@@ -50,6 +58,15 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_parse_delete_encoding_context(data, size, &delete_context);
     (void)rdp_graphics_parse_start_frame(data, size, &start_frame);
     (void)rdp_graphics_parse_end_frame(data, size, &end_frame);
+    (void)rdp_graphics_progressive_parse_block(data, size, &progressive_block);
+    (void)rdp_graphics_progressive_parse_context(data, size, &progressive_context);
+    (void)rdp_graphics_progressive_parse_frame_begin(data, size, &progressive_frame_begin);
+    (void)rdp_graphics_progressive_parse_frame_end(data, size);
+    (void)rdp_graphics_progressive_parse_region(data, size, &progressive_region);
+    (void)rdp_graphics_progressive_parse_tile_simple(data, size, &progressive_simple);
+    (void)rdp_graphics_progressive_parse_tile_first(data, size, &progressive_first);
+    (void)rdp_graphics_progressive_parse_tile_upgrade(data, size, &progressive_upgrade);
+    (void)rdp_graphics_progressive_parse_stream(data, size, &progressive_stream);
     (void)rdp_graphics_decode_segmented_data(&decompressor, data, size, &output);
     output.length = 0;
     (void)rdp_graphics_write_default_caps_advertise(&output);

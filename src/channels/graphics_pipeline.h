@@ -47,6 +47,15 @@
 #define RDP_GRAPHICS_BULK_PACKET_COMPRESSED 0x20u
 #define RDP_GRAPHICS_BULK_MAX_DECODED (64u * 1024u * 1024u)
 #define RDP_GRAPHICS_BULK_HISTORY_SIZE 2500000u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_SYNC 0xccc0u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_BEGIN 0xccc1u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_END 0xccc2u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT 0xccc3u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_REGION 0xccc4u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_SIMPLE 0xccc5u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST 0xccc6u
+#define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE 0xccc7u
+#define RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE 0x40u
 
 typedef struct rdp_graphics_header
 {
@@ -201,6 +210,124 @@ typedef struct rdp_graphics_decompressor
     uint32_t history_filled;
 } rdp_graphics_decompressor;
 
+typedef struct rdp_graphics_progressive_block
+{
+    uint16_t type;
+    uint32_t length;
+    const uint8_t* payload;
+    size_t payload_len;
+} rdp_graphics_progressive_block;
+
+typedef struct rdp_graphics_progressive_context
+{
+    uint8_t context_id;
+    uint16_t tile_size;
+    uint8_t flags;
+} rdp_graphics_progressive_context;
+
+typedef struct rdp_graphics_progressive_frame_begin
+{
+    uint32_t frame_index;
+    uint16_t region_count;
+} rdp_graphics_progressive_frame_begin;
+
+typedef struct rdp_graphics_progressive_region
+{
+    uint8_t tile_size;
+    uint16_t rect_count;
+    uint8_t quant_count;
+    uint8_t progressive_quant_count;
+    uint8_t flags;
+    uint16_t tile_count;
+    uint32_t tile_data_size;
+    const uint8_t* rects;
+    size_t rects_len;
+    const uint8_t* quant_values;
+    size_t quant_values_len;
+    const uint8_t* progressive_quant_values;
+    size_t progressive_quant_values_len;
+    const uint8_t* tiles;
+    size_t tiles_len;
+} rdp_graphics_progressive_region;
+
+typedef struct rdp_graphics_progressive_tile_simple
+{
+    uint16_t block_type;
+    uint8_t quant_idx_y;
+    uint8_t quant_idx_cb;
+    uint8_t quant_idx_cr;
+    uint16_t x_idx;
+    uint16_t y_idx;
+    uint8_t flags;
+    uint16_t y_len;
+    uint16_t cb_len;
+    uint16_t cr_len;
+    uint16_t tail_len;
+    const uint8_t* y_data;
+    const uint8_t* cb_data;
+    const uint8_t* cr_data;
+    const uint8_t* tail_data;
+} rdp_graphics_progressive_tile_simple;
+
+typedef struct rdp_graphics_progressive_tile_first
+{
+    uint16_t block_type;
+    uint8_t quant_idx_y;
+    uint8_t quant_idx_cb;
+    uint8_t quant_idx_cr;
+    uint16_t x_idx;
+    uint16_t y_idx;
+    uint8_t flags;
+    uint8_t progressive_quality;
+    uint16_t y_len;
+    uint16_t cb_len;
+    uint16_t cr_len;
+    uint16_t tail_len;
+    const uint8_t* y_data;
+    const uint8_t* cb_data;
+    const uint8_t* cr_data;
+    const uint8_t* tail_data;
+} rdp_graphics_progressive_tile_first;
+
+typedef struct rdp_graphics_progressive_tile_upgrade
+{
+    uint16_t block_type;
+    uint8_t quant_idx_y;
+    uint8_t quant_idx_cb;
+    uint8_t quant_idx_cr;
+    uint16_t x_idx;
+    uint16_t y_idx;
+    uint8_t progressive_quality;
+    uint16_t y_srl_len;
+    uint16_t y_raw_len;
+    uint16_t cb_srl_len;
+    uint16_t cb_raw_len;
+    uint16_t cr_srl_len;
+    uint16_t cr_raw_len;
+    const uint8_t* y_srl_data;
+    const uint8_t* y_raw_data;
+    const uint8_t* cb_srl_data;
+    const uint8_t* cb_raw_data;
+    const uint8_t* cr_srl_data;
+    const uint8_t* cr_raw_data;
+} rdp_graphics_progressive_tile_upgrade;
+
+typedef struct rdp_graphics_progressive_stream
+{
+    uint32_t block_count;
+    uint32_t known_block_count;
+    uint32_t region_count;
+    uint32_t tile_count;
+    uint32_t simple_tile_count;
+    uint32_t first_tile_count;
+    uint32_t upgrade_tile_count;
+    uint8_t has_context;
+    uint8_t has_frame_begin;
+    uint8_t has_frame_end;
+    uint8_t tile_size;
+    uint8_t flags;
+} rdp_graphics_progressive_stream;
+
 void rdp_graphics_decompressor_init(rdp_graphics_decompressor* decompressor);
 void rdp_graphics_decompressor_reset(rdp_graphics_decompressor* decompressor);
 void rdp_graphics_decompressor_free(rdp_graphics_decompressor* decompressor);
@@ -267,5 +394,33 @@ librdp_status rdp_graphics_decode_segmented_data(rdp_graphics_decompressor* deco
                                                  const void* data,
                                                  size_t length,
                                                  rdp_buffer* decoded);
+librdp_status rdp_graphics_progressive_parse_block(const void* data,
+                                                   size_t length,
+                                                   rdp_graphics_progressive_block* block);
+librdp_status rdp_graphics_progressive_parse_context(const void* data,
+                                                     size_t length,
+                                                     rdp_graphics_progressive_context* context);
+librdp_status rdp_graphics_progressive_parse_frame_begin(
+    const void* data,
+    size_t length,
+    rdp_graphics_progressive_frame_begin* frame_begin);
+librdp_status rdp_graphics_progressive_parse_frame_end(const void* data, size_t length);
+librdp_status rdp_graphics_progressive_parse_region(const void* data,
+                                                    size_t length,
+                                                    rdp_graphics_progressive_region* region);
+librdp_status rdp_graphics_progressive_parse_tile_simple(
+    const void* data,
+    size_t length,
+    rdp_graphics_progressive_tile_simple* tile);
+librdp_status rdp_graphics_progressive_parse_tile_first(const void* data,
+                                                       size_t length,
+                                                       rdp_graphics_progressive_tile_first* tile);
+librdp_status rdp_graphics_progressive_parse_tile_upgrade(
+    const void* data,
+    size_t length,
+    rdp_graphics_progressive_tile_upgrade* tile);
+librdp_status rdp_graphics_progressive_parse_stream(const void* data,
+                                                    size_t length,
+                                                    rdp_graphics_progressive_stream* stream);
 
 #endif
