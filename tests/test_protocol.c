@@ -8,6 +8,7 @@
 #include "common/stream.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/capabilities.h"
@@ -362,6 +363,10 @@ static int test_path_security_license_channels(void)
         7, 8, 9, 10, 11, 12
     };
     const uint8_t bitmap_16_data[] = {0x00, 0xf8, 0xe0, 0x07};
+    const uint8_t rfx_rlgr1_run_positive[] = {0xd8};
+    const uint8_t rfx_rlgr1_run_negative[] = {0xf8};
+    const uint8_t rfx_rlgr1_gr_mode[] = {0x83, 0x80};
+    const uint8_t rfx_rlgr3_pair[] = {0x87, 0xd0};
     const uint8_t fast_bitmap_update[] = {
         0x00, 0x2b, 0x01, 0x26, 0x00,
         0x01, 0x00,
@@ -824,6 +829,8 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_update bitmap_update;
     rdp_bitmap_update_header bitmap_header;
     rdp_bitmap_rect bitmap_rect;
+    int32_t rfx_coefficients[8];
+    size_t rfx_written = 0;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
@@ -1059,6 +1066,52 @@ static int test_path_security_license_channels(void)
            decoded_bitmap.data[6] == 0);
     bitmap_rect.flags = 1;
     PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               rfx_rlgr1_run_positive,
+                               sizeof(rfx_rlgr1_run_positive),
+                               rfx_coefficients,
+                               2,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == 2 && rfx_coefficients[0] == 0 && rfx_coefficients[1] == 5);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               rfx_rlgr1_run_negative,
+                               sizeof(rfx_rlgr1_run_negative),
+                               rfx_coefficients,
+                               2,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == 2 && rfx_coefficients[0] == 0 && rfx_coefficients[1] == -5);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               rfx_rlgr1_gr_mode,
+                               sizeof(rfx_rlgr1_gr_mode),
+                               rfx_coefficients,
+                               3,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == 3 &&
+           rfx_coefficients[0] == 1 &&
+           rfx_coefficients[1] == 0 &&
+           rfx_coefficients[2] == -2);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR3,
+                               rfx_rlgr3_pair,
+                               sizeof(rfx_rlgr3_pair),
+                               rfx_coefficients,
+                               3,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == 3 &&
+           rfx_coefficients[0] == 1 &&
+           rfx_coefficients[1] == 2 &&
+           rfx_coefficients[2] == -1);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               rfx_rlgr1_gr_mode,
+                               1,
+                               rfx_coefficients,
+                               3,
+                               &rfx_written) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_rfx_rlgr_decode((rdp_rfx_rlgr_mode)2,
+                               rfx_rlgr1_gr_mode,
+                               sizeof(rfx_rlgr1_gr_mode),
+                               rfx_coefficients,
+                               3,
+                               &rfx_written) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==

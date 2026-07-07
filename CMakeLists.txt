@@ -27,6 +27,7 @@ add_library(librdp
     src/common/trace.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
+    src/graphics/rfx_codec.c
     src/graphics/surface.c
     src/input/input.c
     src/licensing/licensing.c
@@ -97,6 +98,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_core_input fuzz/core_input_fuzzer.c)
     add_librdp_fuzzer(fuzz_graphics_pipeline fuzz/graphics_pipeline_fuzzer.c)
     add_librdp_fuzzer(fuzz_clearcodec fuzz/clearcodec_fuzzer.c)
+    add_librdp_fuzzer(fuzz_rfx_codec fuzz/rfx_codec_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
     add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)
     add_librdp_fuzzer(fuzz_credssp fuzz/credssp_fuzzer.c)
