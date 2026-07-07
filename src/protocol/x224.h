@@ -34,5 +34,10 @@ typedef struct rdp_x224_connection_confirm
 
 librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* cookie_name, uint32_t protocols);
 librdp_status rdp_x224_parse_connection_confirm(const void* payload, size_t payload_len, rdp_x224_connection_confirm* confirm);
+librdp_status rdp_x224_wrap_data(rdp_buffer* buffer, const void* payload, size_t payload_len);
+librdp_status rdp_x224_parse_data(const void* payload,
+                                  size_t payload_len,
+                                  const uint8_t** data,
+                                  size_t* data_len);
 
 #endif

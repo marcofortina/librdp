@@ -7,11 +7,15 @@
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_mcs_connect_response response;
+    rdp_mcs_attach_user_confirm attach;
+    rdp_mcs_channel_join_confirm join;
     rdp_stream stream;
     size_t length = 0;
 
     rdp_stream_init(&stream, data, size);
     (void)rdp_mcs_read_ber_length(&stream, &length);
     (void)rdp_mcs_parse_connect_response(data, size, &response);
+    (void)rdp_mcs_parse_attach_user_confirm(data, size, &attach);
+    (void)rdp_mcs_parse_channel_join_confirm(data, size, &join);
     return 0;
 }

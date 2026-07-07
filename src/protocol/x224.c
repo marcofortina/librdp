@@ -120,3 +120,36 @@ librdp_status rdp_x224_parse_connection_confirm(const void* payload, size_t payl
 
     return LIBRDP_STATUS_OK;
 }
+
+librdp_status rdp_x224_wrap_data(rdp_buffer* buffer, const void* payload, size_t payload_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!payload && payload_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append_u8(buffer, 0x02);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, 0xf0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, 0x80);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, payload, payload_len);
+}
+
+librdp_status rdp_x224_parse_data(const void* payload, size_t payload_len, const uint8_t** data, size_t* data_len)
+{
+    const uint8_t* bytes = (const uint8_t*)payload;
+
+    if (!payload || !data || !data_len || payload_len < 3)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (bytes[0] != 0x02 || bytes[1] != 0xf0 || bytes[2] != 0x80)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    *data = bytes + 3;
+    *data_len = payload_len - 3u;
+    return LIBRDP_STATUS_OK;
+}

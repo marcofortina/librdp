@@ -17,6 +17,7 @@ struct librdp_session
     librdp_settings* settings;
     librdp_surface* surface;
     rdp_transport transport;
+    uint16_t mcs_user_id;
     librdp_session_state state;
     librdp_event_callback callback;
     void* callback_data;
@@ -54,6 +55,54 @@ static librdp_status rdp_session_fail(librdp_session* session, librdp_status sta
     event.data.error.status = status;
     rdp_session_emit(session, &event);
     return status;
+}
+
+static librdp_status rdp_session_write_mcs_pdu(librdp_session* session, const rdp_buffer* pdu, const char* event)
+{
+    rdp_buffer x224_data;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !pdu || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&x224_data);
+    rdp_buffer_init(&packet);
+
+    status = rdp_x224_wrap_data(&x224_data, pdu->data, pdu->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_tpkt_write(&packet, x224_data.data, x224_data.length);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_hexdump(event, packet.data, packet.length);
+        status = rdp_transport_write_all(&session->transport, packet.data, packet.length);
+    }
+
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&x224_data);
+    return status;
+}
+
+static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
+                                              rdp_buffer* packet,
+                                              const uint8_t** pdu,
+                                              size_t* pdu_len,
+                                              const char* event)
+{
+    rdp_tpkt parsed;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !packet || !pdu || !pdu_len || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_transport_read_tpkt(&session->transport, packet);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_trace_hexdump(event, packet->data, packet->length);
+    status = rdp_tpkt_parse(packet->data, packet->length, &parsed);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_x224_parse_data(parsed.payload, parsed.payload_len, pdu, pdu_len);
 }
 
 librdp_session* librdp_session_new(const librdp_settings* settings)
@@ -123,6 +172,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_tpkt packet;
     rdp_x224_connection_confirm confirm;
     rdp_mcs_connect_response mcs_response;
+    rdp_mcs_attach_user_confirm attach_confirm;
+    rdp_mcs_channel_join_confirm join_confirm;
+    const uint8_t* mcs_pdu = NULL;
+    size_t mcs_pdu_len = 0;
     uint32_t protocols = 0;
     uint32_t selected_protocol = 0;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -222,24 +275,16 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_buffer_free(&request);
     rdp_buffer_init(&request);
-    status = rdp_tpkt_write(&request, mcs.data, mcs.length);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    rdp_trace_hexdump("mcs.connect.initial", request.data, request.length);
-    status = rdp_transport_write_all(&session->transport, request.data, request.length);
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.connect.initial");
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
     rdp_buffer_free(&reply);
     rdp_buffer_init(&reply);
-    status = rdp_transport_read_tpkt(&session->transport, &reply);
+    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.connect.response");
     if (status != LIBRDP_STATUS_OK)
         goto fail;
-    rdp_trace_hexdump("mcs.connect.response", reply.data, reply.length);
-    status = rdp_tpkt_parse(reply.data, reply.length, &packet);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    status = rdp_mcs_parse_connect_response(packet.payload, packet.payload_len, &mcs_response);
+    status = rdp_mcs_parse_connect_response(mcs_pdu, mcs_pdu_len, &mcs_response);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     if (!mcs_response.has_result || mcs_response.result != 0)
@@ -249,6 +294,107 @@ librdp_status librdp_session_connect(librdp_session* session)
         goto fail;
     }
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.response", "result=%u", mcs_response.result);
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_init(&mcs);
+    status = rdp_mcs_write_erect_domain_request(&mcs);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.erect_domain.request", "sub_height=0 sub_interval=0");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.erect_domain.request");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_init(&mcs);
+    status = rdp_mcs_write_attach_user_request(&mcs);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.attach_user.request", "message=sent");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.attach_user.request");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    rdp_buffer_free(&reply);
+    rdp_buffer_init(&reply);
+    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.attach_user.confirm");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_mcs_parse_attach_user_confirm(mcs_pdu, mcs_pdu_len, &attach_confirm);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    if (attach_confirm.result != 0)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.attach_user.failed", "result=%u", attach_confirm.result);
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
+    session->mcs_user_id = attach_confirm.user_id;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.attach_user.confirm", "result=0 user_id=%u", session->mcs_user_id);
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_init(&mcs);
+    status = rdp_mcs_write_channel_join_request(&mcs, session->mcs_user_id, session->mcs_user_id);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", session->mcs_user_id);
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    rdp_buffer_free(&reply);
+    rdp_buffer_init(&reply);
+    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.channel_join.confirm");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_mcs_parse_channel_join_confirm(mcs_pdu, mcs_pdu_len, &join_confirm);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    if (join_confirm.result != 0 || join_confirm.initiator != session->mcs_user_id ||
+        join_confirm.channel_id != session->mcs_user_id)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "mcs.channel_join.failed",
+                        "result=%u initiator=%u channel_id=%u",
+                        join_confirm.result,
+                        join_confirm.initiator,
+                        join_confirm.channel_id);
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.confirm", "channel_id=%u", join_confirm.channel_id);
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_init(&mcs);
+    status = rdp_mcs_write_channel_join_request(&mcs, session->mcs_user_id, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", RDP_MCS_GLOBAL_CHANNEL_ID);
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    rdp_buffer_free(&reply);
+    rdp_buffer_init(&reply);
+    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.channel_join.confirm");
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_mcs_parse_channel_join_confirm(mcs_pdu, mcs_pdu_len, &join_confirm);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    if (join_confirm.result != 0 || join_confirm.initiator != session->mcs_user_id ||
+        join_confirm.channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "mcs.channel_join.failed",
+                        "result=%u initiator=%u channel_id=%u",
+                        join_confirm.result,
+                        join_confirm.initiator,
+                        join_confirm.channel_id);
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.confirm", "channel_id=%u", join_confirm.channel_id);
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
@@ -309,7 +455,9 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
     }
     if ((revents & POLLIN) != 0)
     {
-        status = rdp_transport_read_tpkt(&session->transport, &packet);
+        const uint8_t* pdu = NULL;
+        size_t pdu_len = 0;
+        status = rdp_session_read_mcs_pdu(session, &packet, &pdu, &pdu_len, "rdp.slowpath.pdu");
         if (status == LIBRDP_STATUS_CLOSED)
         {
             rdp_buffer_free(&packet);
@@ -320,7 +468,8 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             rdp_buffer_free(&packet);
             return rdp_session_fail(session, status);
         }
-        rdp_trace_hexdump("rdp.slowpath.pdu", packet.data, packet.length);
+        (void)pdu;
+        (void)pdu_len;
     }
 
     rdp_buffer_free(&packet);

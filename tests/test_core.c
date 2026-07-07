@@ -97,6 +97,55 @@ static int capture_stderr(void (*fn)(void), char* out, size_t out_len)
     return 1;
 }
 
+static int read_exact_fd(int fd, void* data, size_t length)
+{
+    uint8_t* out = (uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t got = read(fd, out + offset, length - offset);
+        if (got <= 0)
+            return 0;
+        offset += (size_t)got;
+    }
+
+    return 1;
+}
+
+static int write_exact_fd(int fd, const void* data, size_t length)
+{
+    const uint8_t* in = (const uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t wrote = write(fd, in + offset, length - offset);
+        if (wrote <= 0)
+            return 0;
+        offset += (size_t)wrote;
+    }
+
+    return 1;
+}
+
+static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
+{
+    uint16_t total = 0;
+
+    if (!data || capacity < 4 || !length)
+        return 0;
+    if (!read_exact_fd(fd, data, 4))
+        return 0;
+    total = (uint16_t)(((uint16_t)data[2] << 8) | data[3]);
+    if (data[0] != 3 || data[1] != 0 || total < 4 || total > capacity)
+        return 0;
+    if (!read_exact_fd(fd, data + 4, (size_t)total - 4u))
+        return 0;
+    *length = total;
+    return 1;
+}
+
 static int start_handshake_server(uint16_t* port, pid_t* child_pid)
 {
     int fd = -1;
@@ -133,7 +182,8 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
 
     if (*child_pid == 0)
     {
-        uint8_t input[256];
+        uint8_t input[4096];
+        size_t input_len = 0;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
             0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -141,17 +191,40 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
             0x00, 0x00, 0x00, 0x00
         };
         const uint8_t mcs_response[] = {
-            0x03, 0x00, 0x00, 0x0a,
+            0x03, 0x00, 0x00, 0x0d,
+            0x02, 0xf0, 0x80,
             0x7f, 0x66, 0x03, 0x0a, 0x01, 0x00
+        };
+        const uint8_t attach_confirm[] = {
+            0x03, 0x00, 0x00, 0x0b,
+            0x02, 0xf0, 0x80,
+            0x2e, 0x00, 0x00, 0x03
+        };
+        const uint8_t join_user_confirm[] = {
+            0x03, 0x00, 0x00, 0x0f,
+            0x02, 0xf0, 0x80,
+            0x3e, 0x00, 0x00, 0x03, 0x03, 0xec, 0x03, 0xec
+        };
+        const uint8_t join_global_confirm[] = {
+            0x03, 0x00, 0x00, 0x0f,
+            0x02, 0xf0, 0x80,
+            0x3e, 0x00, 0x00, 0x03, 0x03, 0xeb, 0x03, 0xeb
         };
         struct timespec ts;
         int client = accept(fd, NULL, NULL);
         if (client >= 0)
         {
-            (void)read(client, input, sizeof(input));
-            (void)write(client, response, sizeof(response));
-            (void)read(client, input, sizeof(input));
-            (void)write(client, mcs_response, sizeof(mcs_response));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)write_exact_fd(client, response, sizeof(response));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)write_exact_fd(client, mcs_response, sizeof(mcs_response));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)write_exact_fd(client, attach_confirm, sizeof(attach_confirm));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)write_exact_fd(client, join_user_confirm, sizeof(join_user_confirm));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+            (void)write_exact_fd(client, join_global_confirm, sizeof(join_global_confirm));
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);

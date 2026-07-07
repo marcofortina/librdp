@@ -29,9 +29,12 @@
 static int test_tpkt_x224(void)
 {
     rdp_buffer x224;
+    rdp_buffer x224_data;
     rdp_buffer packet;
     rdp_tpkt parsed;
     rdp_x224_connection_confirm confirm;
+    const uint8_t* mcs_payload = NULL;
+    size_t mcs_payload_len = 0;
     const uint8_t cc_payload[] = {
         0x0e, 0xd0, 0x12, 0x34, 0x56, 0x78, 0x00,
         0x02, 0x00, 0x08, 0x00,
@@ -40,6 +43,7 @@ static int test_tpkt_x224(void)
     const uint8_t bad_tpkt[] = {0x03, 0x00, 0x00, 0x03};
 
     rdp_buffer_init(&x224);
+    rdp_buffer_init(&x224_data);
     rdp_buffer_init(&packet);
 
     PCHECK(rdp_x224_build_connection_request(&x224, "user", RDP_X224_PROTOCOL_TLS | RDP_X224_PROTOCOL_NLA) ==
@@ -60,7 +64,17 @@ static int test_tpkt_x224(void)
     PCHECK(confirm.negotiation.selected_protocol == 0);
     PCHECK(rdp_x224_parse_connection_confirm(cc_payload, 4, &confirm) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
+    PCHECK(rdp_x224_wrap_data(&x224_data, cc_payload, sizeof(cc_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(x224_data.length == sizeof(cc_payload) + 3u);
+    PCHECK(x224_data.data[0] == 0x02 && x224_data.data[1] == 0xf0 && x224_data.data[2] == 0x80);
+    PCHECK(rdp_x224_parse_data(x224_data.data, x224_data.length, &mcs_payload, &mcs_payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_payload_len == sizeof(cc_payload));
+    PCHECK(memcmp(mcs_payload, cc_payload, sizeof(cc_payload)) == 0);
+    PCHECK(rdp_x224_parse_data(cc_payload, sizeof(cc_payload), &mcs_payload, &mcs_payload_len) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
     rdp_buffer_free(&packet);
+    rdp_buffer_free(&x224_data);
     rdp_buffer_free(&x224);
     return 0;
 }
@@ -87,13 +101,19 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer client_blocks;
     rdp_buffer gcc_request;
     rdp_buffer mcs_initial;
+    rdp_buffer mcs_domain;
     rdp_gcc_client_config config;
     rdp_gcc_client_data_summary summary;
+    rdp_mcs_attach_user_confirm attach;
+    rdp_mcs_channel_join_confirm join;
+    const uint8_t attach_confirm[] = {0x2e, 0x00, 0x00, 0x03};
+    const uint8_t join_confirm[] = {0x3e, 0x00, 0x00, 0x03, 0x03, 0xec, 0x03, 0xec};
 
     rdp_buffer_init(&ber);
     rdp_buffer_init(&client_blocks);
     rdp_buffer_init(&gcc_request);
     rdp_buffer_init(&mcs_initial);
+    rdp_buffer_init(&mcs_domain);
 
     rdp_stream_init(&stream, ber_short, sizeof(ber_short));
     PCHECK(rdp_mcs_read_ber_length(&stream, &length) == LIBRDP_STATUS_OK && length == 0x7f);
@@ -146,6 +166,30 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(mcs_initial.length > gcc_request.length);
     PCHECK(mcs_initial.data[0] == 0x7f && mcs_initial.data[1] == 0x65);
 
+    PCHECK(rdp_mcs_write_erect_domain_request(&mcs_domain) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_domain.length == 5);
+    PCHECK(mcs_domain.data[0] == 0x04 && mcs_domain.data[1] == 0x01 && mcs_domain.data[2] == 0x00 &&
+           mcs_domain.data[3] == 0x01 && mcs_domain.data[4] == 0x00);
+    rdp_buffer_free(&mcs_domain);
+    rdp_buffer_init(&mcs_domain);
+    PCHECK(rdp_mcs_write_attach_user_request(&mcs_domain) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_domain.length == 1 && mcs_domain.data[0] == 0x28);
+    PCHECK(rdp_mcs_parse_attach_user_confirm(attach_confirm, sizeof(attach_confirm), &attach) == LIBRDP_STATUS_OK);
+    PCHECK(attach.result == 0 && attach.user_id == 1004);
+    PCHECK(rdp_mcs_parse_attach_user_confirm(join_confirm, sizeof(join_confirm), &attach) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&mcs_domain);
+    rdp_buffer_init(&mcs_domain);
+    PCHECK(rdp_mcs_write_channel_join_request(&mcs_domain, 1004, 1004) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_domain.length == 5);
+    PCHECK(mcs_domain.data[0] == 0x38 && mcs_domain.data[1] == 0x00 && mcs_domain.data[2] == 0x03 &&
+           mcs_domain.data[3] == 0x03 && mcs_domain.data[4] == 0xec);
+    PCHECK(rdp_mcs_parse_channel_join_confirm(join_confirm, sizeof(join_confirm), &join) == LIBRDP_STATUS_OK);
+    PCHECK(join.result == 0 && join.initiator == 1004 && join.requested_channel_id == 1004 &&
+           join.channel_id == 1004);
+    PCHECK(rdp_mcs_write_channel_join_request(&mcs_domain, 1000, 1004) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    rdp_buffer_free(&mcs_domain);
     rdp_buffer_free(&mcs_initial);
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&client_blocks);
