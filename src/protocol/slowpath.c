@@ -667,6 +667,52 @@ librdp_status rdp_slowpath_write_client_refresh_rect(rdp_buffer* buffer,
                                        sizeof(payload));
 }
 
+librdp_status rdp_slowpath_write_client_suppress_output(rdp_buffer* buffer,
+                                                        uint32_t share_id,
+                                                        uint16_t channel_id,
+                                                        int allow_updates,
+                                                        uint16_t x,
+                                                        uint16_t y,
+                                                        uint16_t width,
+                                                        uint16_t height)
+{
+    uint32_t right = 0;
+    uint32_t bottom = 0;
+    uint8_t payload[12];
+    size_t payload_len = 4;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(payload, 0, sizeof(payload));
+    payload[0] = allow_updates ? 1 : 0;
+    if (allow_updates)
+    {
+        if (width == 0 || height == 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        right = (uint32_t)x + width - 1u;
+        bottom = (uint32_t)y + height - 1u;
+        if (right > 0xffffu || bottom > 0xffffu)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        payload[4] = (uint8_t)(x & 0xffu);
+        payload[5] = (uint8_t)((x >> 8) & 0xffu);
+        payload[6] = (uint8_t)(y & 0xffu);
+        payload[7] = (uint8_t)((y >> 8) & 0xffu);
+        payload[8] = (uint8_t)(right & 0xffu);
+        payload[9] = (uint8_t)((right >> 8) & 0xffu);
+        payload[10] = (uint8_t)(bottom & 0xffu);
+        payload[11] = (uint8_t)((bottom >> 8) & 0xffu);
+        payload_len = 12;
+    }
+
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_SUPPRESS_OUTPUT,
+                                       payload,
+                                       payload_len);
+}
+
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu)
 {
     rdp_stream stream;

@@ -475,6 +475,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_keyboard_input;
     rdp_buffer client_mouse_input;
     rdp_buffer client_refresh_rect;
+    rdp_buffer client_suppress_output;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
     rdp_buffer ntlm_authenticate;
@@ -548,6 +549,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_keyboard_input);
     rdp_buffer_init(&client_mouse_input);
     rdp_buffer_init(&client_refresh_rect);
+    rdp_buffer_init(&client_suppress_output);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_authenticate);
@@ -711,6 +713,47 @@ static int test_path_security_license_channels(void)
                                                   0,
                                                   2,
                                                   1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_slowpath_write_client_suppress_output(&client_suppress_output,
+                                                     0x12345678u,
+                                                     1004,
+                                                     1,
+                                                     2,
+                                                     3,
+                                                     800,
+                                                     600) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_suppress_output.data,
+                                       client_suppress_output.length,
+                                       &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SUPPRESS_OUTPUT &&
+           data_pdu.payload_len == 12 &&
+           data_pdu.payload[0] == 1 &&
+           test_read_u16_le(data_pdu.payload + 4) == 2 &&
+           test_read_u16_le(data_pdu.payload + 6) == 3 &&
+           test_read_u16_le(data_pdu.payload + 8) == 801 &&
+           test_read_u16_le(data_pdu.payload + 10) == 602);
+    client_suppress_output.length = 0;
+    PCHECK(rdp_slowpath_write_client_suppress_output(&client_suppress_output,
+                                                     0x12345678u,
+                                                     1004,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_suppress_output.data,
+                                       client_suppress_output.length,
+                                       &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SUPPRESS_OUTPUT &&
+           data_pdu.payload_len == 4 &&
+           data_pdu.payload[0] == 0);
+    PCHECK(rdp_slowpath_write_client_suppress_output(&client_suppress_output,
+                                                     0x12345678u,
+                                                     1004,
+                                                     1,
+                                                     0xffffu,
+                                                     0,
+                                                     2,
+                                                     1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload), &font_map) == LIBRDP_STATUS_OK);
     PCHECK(font_map.number_entries == 1 && font_map.total_entries == 2 && font_map.map_flags == 3 &&
            font_map.entry_size == 4);
@@ -1010,6 +1053,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_buffer_free(&client_refresh_rect);
+    rdp_buffer_free(&client_suppress_output);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);
