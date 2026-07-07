@@ -1,4 +1,5 @@
 #include "channels/virtual_channel.h"
+#include "channels/core_input.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "clipboard/clipboard.h"
@@ -357,6 +358,12 @@ static int test_path_security_license_channels(void)
         0, 32, 0, 0,
         0, 32, 0, 0
     };
+    const uint8_t core_response[] = {
+        3, 2, 0, 0,
+        0, 1, 0, 1,
+        0, 0, 0, 0,
+        0, 0, 0, 0
+    };
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -505,6 +512,8 @@ static int test_path_security_license_channels(void)
     rdp_dynamic_channel_data_pdu dyn_data_pdu;
     rdp_dynamic_channel_data_first_pdu dyn_first_pdu;
     rdp_dynamic_channel_close_pdu dyn_close_pdu;
+    rdp_core_input_header core_header;
+    rdp_core_input_init_response core_init_response;
     rdp_display_control_caps display_parsed_caps;
     rdp_display_control_monitor display_monitor;
     rdp_clipboard_packet cb;
@@ -1049,6 +1058,44 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_parse_close(dyn_close, sizeof(dyn_close), &dyn_close_pdu) == LIBRDP_STATUS_OK);
     PCHECK(dyn_close_pdu.channel_id == 7 && dyn_close_pdu.channel_id_bytes == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_init_request(&dyn_response) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 16 &&
+           dyn_response.data[0] == RDP_CORE_INPUT_SIGNATURE &&
+           dyn_response.data[1] == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST &&
+           test_read_u16_le(dyn_response.data + 4) == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
+           test_read_u16_le(dyn_response.data + 6) == RDP_CORE_INPUT_PROTOCOL_VERSION_100);
+    PCHECK(rdp_core_input_parse_header(dyn_response.data, dyn_response.length, &core_header) == LIBRDP_STATUS_OK);
+    PCHECK(core_header.pdu_type == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST && core_header.event_count == 0);
+    PCHECK(rdp_core_input_parse_init_response(core_response,
+                                              sizeof(core_response),
+                                              &core_init_response) == LIBRDP_STATUS_OK);
+    PCHECK(core_init_response.selected_protocol_version == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
+           core_init_response.protocol_version_max == RDP_CORE_INPUT_PROTOCOL_VERSION_100);
+    PCHECK(rdp_core_input_parse_init_response(core_response,
+                                              sizeof(core_response) - 1u,
+                                              &core_init_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_keyboard_event(&dyn_response, 0x1e, 0) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 6 &&
+           dyn_response.data[1] == RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE &&
+           dyn_response.data[2] == 1 &&
+           dyn_response.data[4] == 0 &&
+           dyn_response.data[5] == 0x1e);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_keyboard_event(&dyn_response, 0x1e, 1) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.data[4] == RDP_CORE_INPUT_KBDFLAGS_RELEASE);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_mouse_event(&dyn_response, 0x8800u, 10, 11) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 11 &&
+           dyn_response.data[4] == (uint8_t)(RDP_CORE_INPUT_EVENT_MOUSE << 5) &&
+           test_read_u16_le(dyn_response.data + 5) == 0x8800u &&
+           test_read_u16_le(dyn_response.data + 7) == 10 &&
+           test_read_u16_le(dyn_response.data + 9) == 11);
     PCHECK(rdp_display_control_parse_caps(display_caps,
                                           sizeof(display_caps),
                                           &display_parsed_caps) == LIBRDP_STATUS_OK);
