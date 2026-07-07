@@ -3,6 +3,7 @@
 #include "client/settings_internal.h"
 #include "common/trace.h"
 #include "graphics/bitmap.h"
+#include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
@@ -1021,6 +1022,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         size_t pdu_len = 0;
         rdp_mcs_send_data_indication indication;
         rdp_slowpath_share_control_header slow_header;
+        int have_slow_header = 0;
         status = rdp_session_read_mcs_pdu(session, &packet, &pdu, &pdu_len, "rdp.slowpath.pdu");
         if (status == LIBRDP_STATUS_CLOSED)
         {
@@ -1045,7 +1047,29 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         indication.channel_id,
                         (unsigned)indication.payload_len);
         status = rdp_slowpath_parse_share_control_header(indication.payload, indication.payload_len, &slow_header);
-        if (status == LIBRDP_STATUS_OK &&
+        if (status == LIBRDP_STATUS_OK)
+            have_slow_header = 1;
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_license_error_alert alert;
+            librdp_status license_status = rdp_license_parse_error_alert(indication.payload,
+                                                                         indication.payload_len,
+                                                                         &alert);
+            if (license_status == LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.licensing.error_alert",
+                                "type=%u flags=%u error=%u state=%u blob_type=%u blob_len=%u",
+                                alert.message_type,
+                                alert.flags,
+                                alert.error_code,
+                                alert.state_transition,
+                                alert.blob_type,
+                                alert.blob_length);
+                status = LIBRDP_STATUS_OK;
+            }
+        }
+        if (have_slow_header && status == LIBRDP_STATUS_OK &&
             (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)
         {
             rdp_slowpath_demand_active demand;
@@ -1085,7 +1109,8 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             }
             rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.activation.confirm_active", "share_id=%u", demand.share_id);
         }
-        else if (status == LIBRDP_STATUS_OK && (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DATA)
+        else if (have_slow_header && status == LIBRDP_STATUS_OK &&
+                 (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DATA)
         {
             rdp_slowpath_data_pdu data_pdu;
 
