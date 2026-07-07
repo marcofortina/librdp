@@ -29,6 +29,13 @@ typedef struct rdp_bitmap_update
     rdp_bitmap_rect rects[RDP_BITMAP_MAX_RECTS];
 } rdp_bitmap_update;
 
+typedef struct rdp_bitmap_update_header
+{
+    uint16_t update_type;
+    uint16_t count;
+} rdp_bitmap_update_header;
+
+librdp_status rdp_bitmap_parse_update_header(const void* data, size_t length, rdp_bitmap_update_header* header);
 librdp_status rdp_bitmap_parse_update(const void* data, size_t length, rdp_bitmap_update* update);
 librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, rdp_bitmap_update* update);
 

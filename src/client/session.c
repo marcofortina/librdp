@@ -462,13 +462,24 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             rdp_bitmap_update bitmap;
 
             if (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || update->compression != 0)
-                return LIBRDP_STATUS_UNSUPPORTED;
-            status = rdp_bitmap_parse_fastpath_update(update->data, update->data_len, &bitmap);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_apply_bitmap_update(session, &bitmap);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
-            rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.fastpath.update.unsupported",
+                                "code=%u fragmentation=%u compression=%u payload_len=%u",
+                                update->update_code,
+                                update->fragmentation,
+                                update->compression,
+                                (unsigned)update->data_len);
+            }
+            else
+            {
+                status = rdp_bitmap_parse_fastpath_update(update->data, update->data_len, &bitmap);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_apply_bitmap_update(session, &bitmap);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+                rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
+            }
         }
     }
 
@@ -1411,18 +1422,56 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
-            if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE && data_pdu.compressed_type == 0)
+            if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE)
             {
-                rdp_bitmap_update update;
-                status = rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &update);
-                if (status == LIBRDP_STATUS_OK)
-                    status = rdp_session_apply_bitmap_update(session, &update);
-                if (status != LIBRDP_STATUS_OK)
+                if (data_pdu.compressed_type != 0)
                 {
-                    rdp_buffer_free(&packet);
-                    return rdp_session_fail(session, status);
+                    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                    "rdp.slowpath.update.unsupported",
+                                    "compressed_type=%u payload_len=%u",
+                                    data_pdu.compressed_type,
+                                    (unsigned)data_pdu.payload_len);
                 }
-                rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.bitmap_update", "rectangles=%u", update.count);
+                else
+                {
+                    rdp_bitmap_update_header update_header;
+
+                    status = rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &update_header);
+                    if (status != LIBRDP_STATUS_OK)
+                    {
+                        rdp_buffer_free(&packet);
+                        return rdp_session_fail(session, status);
+                    }
+                    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                    "rdp.slowpath.update",
+                                    "update_type=%u count=%u payload_len=%u",
+                                    update_header.update_type,
+                                    update_header.count,
+                                    (unsigned)data_pdu.payload_len);
+                    if (update_header.update_type == RDP_UPDATE_TYPE_BITMAP)
+                    {
+                        rdp_bitmap_update update;
+
+                        status = rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &update);
+                        if (status == LIBRDP_STATUS_OK)
+                            status = rdp_session_apply_bitmap_update(session, &update);
+                        if (status != LIBRDP_STATUS_OK)
+                        {
+                            rdp_buffer_free(&packet);
+                            return rdp_session_fail(session, status);
+                        }
+                        rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.bitmap_update", "rectangles=%u", update.count);
+                    }
+                    else
+                    {
+                        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                        "rdp.slowpath.update.unsupported",
+                                        "update_type=%u count=%u payload_len=%u",
+                                        update_header.update_type,
+                                        update_header.count,
+                                        (unsigned)data_pdu.payload_len);
+                    }
+                }
             }
         }
     }

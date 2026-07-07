@@ -454,6 +454,7 @@ static int test_path_security_license_channels(void)
     rdp_slowpath_font_map font_map;
     rdp_slowpath_save_session_info save_info;
     rdp_bitmap_update bitmap_update;
+    rdp_bitmap_update_header bitmap_header;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_clipboard_packet cb;
@@ -535,6 +536,7 @@ static int test_path_security_license_channels(void)
     const uint8_t font_map_payload[] = {1, 0, 2, 0, 3, 0, 4, 0};
     const uint8_t set_error_info_payload[] = {0x34, 0x12, 0, 0};
     const uint8_t save_session_info_payload[] = {1, 0, 0, 0, 0xaa, 0x55};
+    const uint8_t orders_update_payload[] = {0, 0, 0, 0};
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
@@ -593,12 +595,18 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(data_pdu.share_id == 0x12345678u && data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
     PCHECK(data_pdu.payload_len == 40);
+    PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &bitmap_header) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(bitmap_header.update_type == RDP_UPDATE_TYPE_BITMAP && bitmap_header.count == 1);
+    PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, 3, &bitmap_header) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &bitmap_update) == LIBRDP_STATUS_OK);
     PCHECK(bitmap_update.count == 1);
     PCHECK(bitmap_update.rects[0].width == 2 && bitmap_update.rects[0].height == 2);
     PCHECK(bitmap_update.rects[0].bits_per_pixel == 32 && bitmap_update.rects[0].data_len == 16);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
+           LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_slowpath_write_confirm_active(&confirm_active, 0x12345678u, 1004, 800, 600, "librdp") ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_slowpath_parse_share_control_header(confirm_active.data, confirm_active.length, &slow_header) ==
