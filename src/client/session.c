@@ -186,12 +186,14 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach_confirm;
     rdp_mcs_channel_join_confirm join_confirm;
+    rdp_standard_security_context standard_security;
     const uint8_t* mcs_pdu = NULL;
     size_t mcs_pdu_len = 0;
     uint32_t protocols = 0;
     uint32_t selected_protocol = 0;
     uint32_t server_encryption_method = 0;
     uint32_t server_encryption_level = 0;
+    int standard_security_ready = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -218,6 +220,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_init(&server_certificate);
     rdp_buffer_init(&request);
     rdp_buffer_init(&reply);
+    memset(&standard_security, 0, sizeof(standard_security));
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
 
@@ -495,18 +498,40 @@ librdp_status librdp_session_connect(librdp_session* session)
             status = rdp_security_generate_client_random(client_random);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_security_encrypt_client_random(&public_key, client_random, &encrypted_client_random);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_security_standard_client_init(&standard_security,
+                                                       server_encryption_method,
+                                                       client_random,
+                                                       server_random.data);
         memset(client_random, 0, sizeof(client_random));
         if (status == LIBRDP_STATUS_OK)
+            status = rdp_security_write_exchange_pdu(&security_payload,
+                                                     encrypted_client_random.data,
+                                                     encrypted_client_random.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_security_write_send_data_request(&security_data,
+                                                          session->mcs_user_id,
+                                                          (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                          security_payload.data,
+                                                          security_payload.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_write_mcs_pdu(session, &security_data, "rdp.security_exchange.pdu", 0);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            standard_security_ready = 1;
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "rdp.security_exchange.done",
-                            "encrypted_random_len=%u bulk_encryption=unsupported",
+                            "encrypted_random_len=%u",
                             (unsigned)encrypted_client_random.length);
+        }
         rdp_security_public_key_clear(&public_key);
         rdp_buffer_free(&encrypted_client_random);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
-        status = LIBRDP_STATUS_UNSUPPORTED;
-        goto fail;
+        rdp_buffer_free(&security_payload);
+        rdp_buffer_free(&security_data);
+        rdp_buffer_init(&security_payload);
+        rdp_buffer_init(&security_data);
     }
 
     {
@@ -517,7 +542,10 @@ librdp_status librdp_session_connect(librdp_session* session)
         info.password = rdp_settings_password_internal(session->settings);
         info.alternate_shell = NULL;
         info.working_dir = NULL;
-        status = rdp_security_write_client_info_pdu(&security_payload, &info);
+        if (standard_security_ready)
+            status = rdp_security_write_encrypted_client_info_pdu(&security_payload, &standard_security, &info);
+        else
+            status = rdp_security_write_client_info_pdu(&security_payload, &info);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
     }
@@ -530,9 +558,10 @@ librdp_status librdp_session_connect(librdp_session* session)
         goto fail;
     rdp_trace_event(RDP_TRACE_PROTOCOL,
                     "rdp.client_info.start",
-                    "domain_present=%u username_present=%u password=masked",
+                    "domain_present=%u username_present=%u password=masked encrypted=%u",
                     librdp_settings_domain(session->settings) ? 1u : 0u,
-                    librdp_settings_username(session->settings) ? 1u : 0u);
+                    librdp_settings_username(session->settings) ? 1u : 0u,
+                    standard_security_ready ? 1u : 0u);
     status = rdp_session_write_mcs_pdu(session, &security_data, "rdp.client_info.pdu", 0);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
@@ -558,6 +587,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    rdp_security_standard_clear(&standard_security);
     return LIBRDP_STATUS_OK;
 
 fail:
@@ -573,6 +603,7 @@ fail:
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    rdp_security_standard_clear(&standard_security);
     return rdp_session_fail(session, status);
 }
 

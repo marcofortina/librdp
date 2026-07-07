@@ -314,6 +314,7 @@ static int test_path_security_license_channels(void)
         0x30, 0xdb, 0xdf, 0xd2, 0xd8, 0xdc, 0xa0, 0x3f
     };
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     rdp_fastpath_header fast;
     rdp_slowpath_share_control_header slow_header;
     rdp_license_error_alert alert;
@@ -321,16 +322,26 @@ static int test_path_security_license_channels(void)
     rdp_clipboard_packet cb;
     rdp_credssp_state cred_state;
     rdp_security_public_key public_key;
+    rdp_standard_security_context secure_a;
+    rdp_standard_security_context secure_b;
     rdp_buffer security;
     rdp_buffer send_data;
     rdp_buffer encrypted;
+    rdp_buffer encrypted_info;
+    rdp_buffer plain_info_body;
+    rdp_buffer expected_cipher;
     rdp_buffer x509_chain;
     rdp_client_info info;
     rdp_client_info_summary info_summary;
+    uint8_t signature[8];
+    size_t i = 0;
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
     rdp_buffer_init(&encrypted);
+    rdp_buffer_init(&encrypted_info);
+    rdp_buffer_init(&plain_info_body);
+    rdp_buffer_init(&expected_cipher);
     rdp_buffer_init(&x509_chain);
 
     PCHECK(rdp_fastpath_parse_header(fast_short, sizeof(fast_short), &fast) == LIBRDP_STATUS_OK);
@@ -357,6 +368,49 @@ static int test_path_security_license_channels(void)
     PCHECK(info_summary.username_bytes == 8);
     PCHECK(info_summary.password_bytes == 12);
     PCHECK((info_summary.flags & 0x00000010u) != 0);
+    for (i = 0; i < sizeof(client_random); i++)
+    {
+        client_random[i] = (uint8_t)(i + 1u);
+        server_random[i] = (uint8_t)(0xa0u + i);
+    }
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(secure_a.key_len == 16);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_client_info_body(&plain_info_body, &info) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_mac_signature(&secure_b, plain_info_body.data, plain_info_body.length, signature) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_encrypted_client_info_pdu(&encrypted_info, &secure_a, &info) == LIBRDP_STATUS_OK);
+    PCHECK(encrypted_info.length == plain_info_body.length + 12u);
+    PCHECK(encrypted_info.data[0] == (uint8_t)(RDP_SEC_INFO_PKT | RDP_SEC_ENCRYPT));
+    PCHECK(memcmp(encrypted_info.data + 4, signature, sizeof(signature)) == 0);
+    PCHECK(memcmp(encrypted_info.data + 12, plain_info_body.data, plain_info_body.length) != 0);
+    PCHECK(rdp_buffer_append(&expected_cipher, plain_info_body.data, plain_info_body.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_encrypt_payload(&secure_b, expected_cipher.data, expected_cipher.length) == LIBRDP_STATUS_OK);
+    PCHECK(memcmp(encrypted_info.data + 12, expected_cipher.data, expected_cipher.length) == 0);
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_40BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(secure_a.key_len == 8 && secure_a.sign_key[0] == 0xd1 && secure_a.sign_key[2] == 0x9e);
+    rdp_security_standard_clear(&secure_a);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_56BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(secure_a.key_len == 8 && secure_a.sign_key[0] == 0xd1);
+    rdp_security_standard_clear(&secure_a);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_FIPS,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_security_write_send_data_request(&send_data, 1004, RDP_MCS_GLOBAL_CHANNEL_ID, security.data,
                                                 security.length) == LIBRDP_STATUS_OK);
     PCHECK(send_data.length > security.length);
@@ -409,6 +463,9 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_credssp_begin(false, &cred_state) == LIBRDP_STATUS_OK && cred_state == RDP_CREDSSP_DISABLED);
     PCHECK(rdp_credssp_begin(true, &cred_state) == LIBRDP_STATUS_UNSUPPORTED && cred_state == RDP_CREDSSP_FAILED);
     rdp_buffer_free(&x509_chain);
+    rdp_buffer_free(&expected_cipher);
+    rdp_buffer_free(&plain_info_body);
+    rdp_buffer_free(&encrypted_info);
     rdp_buffer_free(&encrypted);
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&security);
