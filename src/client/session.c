@@ -395,10 +395,17 @@ librdp_status librdp_session_connect(librdp_session* session)
     {
         rdp_buffer credssp_request;
         rdp_buffer credssp_reply;
+        rdp_buffer ntlm_authenticate;
+        rdp_buffer spnego_authenticate;
         rdp_credssp_ts_request ts_response;
+        rdp_credssp_ts_request auth_response;
+        rdp_ntlm_authenticate_result ntlm_auth_result;
 
         rdp_buffer_init(&credssp_request);
         rdp_buffer_init(&credssp_reply);
+        rdp_buffer_init(&ntlm_authenticate);
+        rdp_buffer_init(&spnego_authenticate);
+        memset(&ntlm_auth_result, 0, sizeof(ntlm_auth_result));
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.start", "state=begin");
         status = rdp_credssp_begin(true, &credssp_state);
         if (status == LIBRDP_STATUS_OK)
@@ -443,7 +450,62 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 ntlm_challenge.flags,
                                 (unsigned)ntlm_challenge.target_name_len,
                                 (unsigned)ntlm_challenge.target_info_len);
+            if (status == LIBRDP_STATUS_OK &&
+                (!librdp_settings_username(session->settings) || !rdp_settings_password_internal(session->settings)))
+                status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
+                                                             &ntlm_challenge,
+                                                             librdp_settings_username(session->settings),
+                                                             rdp_settings_password_internal(session->settings),
+                                                             librdp_settings_domain(session->settings),
+                                                             "librdp",
+                                                             0,
+                                                             NULL,
+                                                             NULL,
+                                                             &ntlm_auth_result);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
+                                                                    ntlm_authenticate.data,
+                                                                    ntlm_authenticate.length);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&credssp_request);
+                rdp_buffer_init(&credssp_request);
+                status = rdp_credssp_write_ts_request(&credssp_request,
+                                                      ts_response.version ? ts_response.version : 6,
+                                                      spnego_authenticate.data,
+                                                      spnego_authenticate.length,
+                                                      NULL,
+                                                      0,
+                                                      NULL,
+                                                      0);
+            }
+            if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "credssp.nla.authenticate",
+                                "token_len=%u flags=%u",
+                                (unsigned)credssp_request.length,
+                                ntlm_auth_result.flags);
+                status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
+            }
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_read_credssp_ts_request(session, &credssp_reply, 5000);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &auth_response);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "credssp.nla.authenticate_response",
+                                "version=%u token_len=%u auth_info_len=%u pub_key_auth_len=%u error=%u",
+                                auth_response.version,
+                                (unsigned)auth_response.nego_token_len,
+                                (unsigned)auth_response.auth_info_len,
+                                (unsigned)auth_response.pub_key_auth_len,
+                                auth_response.has_error_code ? auth_response.error_code : 0);
         }
+        rdp_buffer_free(&spnego_authenticate);
+        rdp_buffer_free(&ntlm_authenticate);
         rdp_buffer_free(&credssp_reply);
         rdp_buffer_free(&credssp_request);
         if (status != LIBRDP_STATUS_OK)
