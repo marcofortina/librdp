@@ -1,0 +1,21 @@
+#ifndef RDP_PROTOCOL_TPKT_H
+#define RDP_PROTOCOL_TPKT_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <librdp/error.h>
+
+#include "common/buffer.h"
+
+typedef struct rdp_tpkt
+{
+    const uint8_t* payload;
+    size_t payload_len;
+    uint16_t total_len;
+} rdp_tpkt;
+
+librdp_status rdp_tpkt_write(rdp_buffer* buffer, const void* payload, size_t payload_len);
+librdp_status rdp_tpkt_parse(const void* data, size_t length, rdp_tpkt* packet);
+
+#endif

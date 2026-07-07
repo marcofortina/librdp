@@ -6,9 +6,13 @@
 #include "input/input.h"
 
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(expr)                                                                                                    \
@@ -29,6 +33,9 @@ typedef struct event_counter
     int mouse;
     int disconnected;
 } event_counter;
+
+int test_protocol(void);
+int test_transport(void);
 
 static void on_event(librdp_session* session, const librdp_event* event, void* user_data)
 {
@@ -87,6 +94,68 @@ static int capture_stderr(void (*fn)(void), char* out, size_t out_len)
     if (got < 0)
         got = 0;
     out[got] = '\0';
+    return 1;
+}
+
+static int start_handshake_server(uint16_t* port, pid_t* child_pid)
+{
+    int fd = -1;
+    struct sockaddr_in addr;
+    socklen_t addr_len = (socklen_t)sizeof(addr);
+
+    if (!port || !child_pid)
+        return 0;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return 0;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0 ||
+        listen(fd, 1) != 0)
+    {
+        close(fd);
+        return 0;
+    }
+
+    *port = ntohs(addr.sin_port);
+    *child_pid = fork();
+    if (*child_pid < 0)
+    {
+        close(fd);
+        return 0;
+    }
+
+    if (*child_pid == 0)
+    {
+        uint8_t input[256];
+        const uint8_t response[] = {
+            0x03, 0x00, 0x00, 0x13,
+            0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x02, 0x00, 0x08, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        };
+        struct timespec ts;
+        int client = accept(fd, NULL, NULL);
+        if (client >= 0)
+        {
+            (void)read(client, input, sizeof(input));
+            (void)write(client, response, sizeof(response));
+            ts.tv_sec = 1;
+            ts.tv_nsec = 0;
+            (void)nanosleep(&ts, NULL);
+            close(client);
+        }
+        close(fd);
+        _exit(0);
+    }
+
+    close(fd);
     return 1;
 }
 
@@ -205,6 +274,8 @@ static int test_settings_surface_input_session(void)
     librdp_key_event key = {30, LIBRDP_KEY_PRESSED};
     librdp_mouse_event mouse = {10, 11, LIBRDP_MOUSE_BUTTON_LEFT, LIBRDP_MOUSE_PRESSED};
     event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
 
     memset(&counter, 0, sizeof(counter));
 
@@ -252,6 +323,11 @@ static int test_settings_surface_input_session(void)
 
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(start_handshake_server(&test_port, &server_pid));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    librdp_session_free(session);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
     librdp_session_set_event_callback(session, on_event, &counter);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
@@ -272,6 +348,8 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
     CHECK(counter.disconnected == 1);
     librdp_session_free(session);
+    if (server_pid > 0)
+        (void)waitpid(server_pid, NULL, 0);
 
     librdp_settings_free(copy);
     librdp_settings_free(settings);
@@ -283,6 +361,10 @@ int main(void)
     if (test_trace() != 0)
         return 1;
     if (test_buffer_stream() != 0)
+        return 1;
+    if (test_protocol() != 0)
+        return 1;
+    if (test_transport() != 0)
         return 1;
     if (test_settings_surface_input_session() != 0)
         return 1;

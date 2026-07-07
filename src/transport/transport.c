@@ -1,0 +1,200 @@
+#include "transport/transport.h"
+
+#include "common/trace.h"
+#include "platform/socket.h"
+#include "protocol/tpkt.h"
+#include "transport/tcp.h"
+
+#include <errno.h>
+#include <poll.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+void rdp_transport_init(rdp_transport* transport)
+{
+    if (!transport)
+        return;
+    transport->fd = -1;
+    transport->owns_fd = 0;
+}
+
+void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
+{
+    if (!transport)
+        return;
+    rdp_transport_close(transport);
+    transport->fd = fd;
+    transport->owns_fd = owns_fd;
+}
+
+librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms)
+{
+    int fd = -1;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_tcp_connect(host, port, timeout_ms, &fd);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    rdp_transport_attach_fd(transport, fd, 1);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short events, short* revents)
+{
+    struct pollfd pfd;
+    int rc = 0;
+
+    if (!transport || transport->fd < 0 || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    pfd.fd = transport->fd;
+    pfd.events = events;
+    pfd.revents = 0;
+
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.wait.start", "timeout_ms=%d events=%d", timeout_ms, (int)events);
+    rc = poll(&pfd, 1, timeout_ms);
+    if (rc == 0)
+    {
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.timeout", "timeout_ms=%d", timeout_ms);
+        return LIBRDP_STATUS_TIMEOUT;
+    }
+    if (rc < 0)
+        return errno == EINTR ? LIBRDP_STATUS_AGAIN : LIBRDP_STATUS_IO_ERROR;
+
+    if (revents)
+        *revents = pfd.revents;
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.wait.done", "revents=%d", (int)pfd.revents);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len)
+{
+    ssize_t rc = 0;
+
+    if (!transport || transport->fd < 0 || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.read.start", "length=%llu", (unsigned long long)length);
+    rc = recv(transport->fd, data, length, 0);
+    if (rc == 0)
+    {
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.eof", "length=0");
+        return LIBRDP_STATUS_CLOSED;
+    }
+    if (rc < 0)
+    {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            return LIBRDP_STATUS_AGAIN;
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+
+    if (read_len)
+        *read_len = (size_t)rc;
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.read.done", "read=%llu", (unsigned long long)rc);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_write(rdp_transport* transport, const void* data, size_t length, size_t* written_len)
+{
+    ssize_t rc = 0;
+    int flags = 0;
+
+    if (!transport || transport->fd < 0 || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL;
+#endif
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.write.start", "length=%llu", (unsigned long long)length);
+    rc = send(transport->fd, data, length, flags);
+    if (rc < 0)
+    {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            return LIBRDP_STATUS_AGAIN;
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+
+    if (written_len)
+        *written_len = (size_t)rc;
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.write.done", "written=%llu", (unsigned long long)rc);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_read_exact(rdp_transport* transport, void* data, size_t length)
+{
+    uint8_t* out = (uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        size_t got = 0;
+        librdp_status status = rdp_transport_read(transport, out + offset, length - offset, &got);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        offset += got;
+    }
+
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_write_all(rdp_transport* transport, const void* data, size_t length)
+{
+    const uint8_t* in = (const uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        size_t wrote = 0;
+        librdp_status status = rdp_transport_write(transport, in + offset, length - offset, &wrote);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        offset += wrote;
+    }
+
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_read_tpkt(rdp_transport* transport, rdp_buffer* packet)
+{
+    uint8_t header[4];
+    uint16_t total = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || !packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_free(packet);
+    rdp_buffer_init(packet);
+
+    status = rdp_transport_read_exact(transport, header, sizeof(header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    total = (uint16_t)(((uint16_t)header[2] << 8) | header[3]);
+    if (header[0] != 3 || header[1] != 0 || total < 4)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    status = rdp_buffer_append(packet, header, sizeof(header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_reserve(packet, total);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    packet->length = total;
+    return rdp_transport_read_exact(transport, packet->data + 4, (size_t)total - 4u);
+}
+
+void rdp_transport_close(rdp_transport* transport)
+{
+    if (!transport)
+        return;
+    if (transport->fd >= 0 && transport->owns_fd)
+        rdp_socket_close(transport->fd);
+    transport->fd = -1;
+    transport->owns_fd = 0;
+}

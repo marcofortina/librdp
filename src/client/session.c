@@ -1,14 +1,20 @@
 #include <librdp/session.h>
 
 #include "common/trace.h"
+#include "protocol/tpkt.h"
+#include "protocol/x224.h"
+#include "security/security.h"
+#include "transport/transport.h"
 #include "input/input.h"
 
+#include <poll.h>
 #include <stdlib.h>
 
 struct librdp_session
 {
     librdp_settings* settings;
     librdp_surface* surface;
+    rdp_transport transport;
     librdp_session_state state;
     librdp_event_callback callback;
     void* callback_data;
@@ -35,6 +41,17 @@ static void rdp_session_set_state(librdp_session* session, librdp_session_state 
     event.data.state.old_state = (int)old_state;
     event.data.state.new_state = (int)state;
     rdp_session_emit(session, &event);
+}
+
+static librdp_status rdp_session_fail(librdp_session* session, librdp_status status)
+{
+    librdp_event event;
+
+    rdp_session_set_state(session, LIBRDP_SESSION_FAILED);
+    event.type = LIBRDP_EVENT_ERROR;
+    event.data.error.status = status;
+    rdp_session_emit(session, &event);
+    return status;
 }
 
 librdp_session* librdp_session_new(const librdp_settings* settings)
@@ -66,6 +83,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     }
 
     session->state = LIBRDP_SESSION_IDLE;
+    rdp_transport_init(&session->transport);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.session.new", "width=%u height=%u",
                     librdp_settings_width(session->settings),
                     librdp_settings_height(session->settings));
@@ -77,6 +95,7 @@ void librdp_session_free(librdp_session* session)
     if (!session)
         return;
     (void)librdp_session_disconnect(session);
+    rdp_transport_close(&session->transport);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
     free(session);
@@ -93,6 +112,13 @@ void librdp_session_set_event_callback(librdp_session* session, librdp_event_cal
 librdp_status librdp_session_connect(librdp_session* session)
 {
     librdp_event event;
+    rdp_buffer x224;
+    rdp_buffer request;
+    rdp_buffer reply;
+    rdp_tpkt packet;
+    rdp_x224_connection_confirm confirm;
+    uint32_t protocols = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -108,7 +134,58 @@ librdp_status librdp_session_connect(librdp_session* session)
                     librdp_settings_width(session->settings),
                     librdp_settings_height(session->settings));
 
+    rdp_buffer_init(&x224);
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&reply);
+
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
+
+    status = rdp_transport_connect(&session->transport,
+                                   librdp_settings_target(session->settings),
+                                   librdp_settings_port(session->settings),
+                                   5000);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.start", "protocols=%u", protocols);
+    status = rdp_x224_build_connection_request(&x224, librdp_settings_username(session->settings), protocols);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_tpkt_write(&request, x224.data, x224.length);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_hexdump("x224.negotiation.request", request.data, request.length);
+    status = rdp_transport_write_all(&session->transport, request.data, request.length);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    status = rdp_transport_read_tpkt(&session->transport, &reply);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_hexdump("x224.negotiation.response", reply.data, reply.length);
+    status = rdp_tpkt_parse(reply.data, reply.length, &packet);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_x224_parse_connection_confirm(packet.payload, packet.payload_len, &confirm);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    if (confirm.negotiation.present && confirm.negotiation.failure)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.failed", "code=%u", confirm.negotiation.failure_code);
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
+    if (confirm.negotiation.present && !rdp_security_protocol_supported(confirm.negotiation.selected_protocol))
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.unsupported", "selected_protocol=%u",
+                        confirm.negotiation.selected_protocol);
+        status = LIBRDP_STATUS_UNSUPPORTED;
+        goto fail;
+    }
+
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.done", "selected_protocol=%u",
+                    confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0);
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
     event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
@@ -118,20 +195,65 @@ librdp_status librdp_session_connect(librdp_session* session)
     event.data.surface.height = librdp_surface_height(session->surface);
     rdp_session_emit(session, &event);
 
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.done", "transport=deferred");
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.done", "transport=tcp");
+    rdp_buffer_free(&reply);
+    rdp_buffer_free(&request);
+    rdp_buffer_free(&x224);
     return LIBRDP_STATUS_OK;
+
+fail:
+    rdp_transport_close(&session->transport);
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
+    rdp_buffer_free(&reply);
+    rdp_buffer_free(&request);
+    rdp_buffer_free(&x224);
+    return rdp_session_fail(session, status);
 }
 
 librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
 {
+    short revents = 0;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!session || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
 
+    rdp_buffer_init(&packet);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.start", "timeout_ms=%d", timeout_ms);
     if (session->state == LIBRDP_SESSION_CONNECTED)
         rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
+
+    status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
+    if (status == LIBRDP_STATUS_TIMEOUT)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.done", "status=timeout");
+        return LIBRDP_STATUS_OK;
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&packet);
+        return status;
+    }
+    if ((revents & POLLIN) != 0)
+    {
+        status = rdp_transport_read_tpkt(&session->transport, &packet);
+        if (status == LIBRDP_STATUS_CLOSED)
+        {
+            rdp_buffer_free(&packet);
+            return librdp_session_disconnect(session);
+        }
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&packet);
+            return rdp_session_fail(session, status);
+        }
+        rdp_trace_hexdump("rdp.slowpath.pdu", packet.data, packet.length);
+    }
+
+    rdp_buffer_free(&packet);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.done", "status=idle");
     return LIBRDP_STATUS_OK;
 }
@@ -147,6 +269,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
 
     rdp_trace_event(RDP_TRACE_CLIENT, "client.disconnect.start", "state=%d", (int)session->state);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
+    rdp_transport_close(&session->transport);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 
     event.type = LIBRDP_EVENT_DISCONNECTED;

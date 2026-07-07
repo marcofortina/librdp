@@ -14,11 +14,26 @@ add_library(librdp
     src/client/error.c
     src/client/settings.c
     src/client/session.c
+    src/channels/virtual_channel.c
+    src/clipboard/clipboard.c
     src/common/buffer.c
     src/common/stream.c
     src/common/trace.c
     src/graphics/surface.c
     src/input/input.c
+    src/licensing/licensing.c
+    src/nla/credssp.c
+    src/platform/socket.c
+    src/protocol/capabilities.c
+    src/protocol/fastpath.c
+    src/protocol/gcc.c
+    src/protocol/mcs.c
+    src/protocol/slowpath.c
+    src/protocol/tpkt.c
+    src/protocol/x224.c
+    src/security/security.c
+    src/transport/tcp.c
+    src/transport/transport.c
 )
 
 target_include_directories(librdp
@@ -38,6 +53,8 @@ if(LIBRDP_BUILD_TESTS)
     enable_testing()
     add_executable(test_core
         tests/test_core.c
+        tests/test_protocol.c
+        tests/test_transport.c
     )
     target_include_directories(test_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_core PRIVATE librdp)
