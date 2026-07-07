@@ -95,6 +95,7 @@ struct librdp_session
     uint32_t graphics_selected_flags;
     uint32_t graphics_frames_decoded;
     rdp_graphics_decompressor graphics_decompressor;
+    rdp_clearcodec_context clearcodec;
     rdp_session_graphics_surface graphics_surfaces[RDP_SESSION_MAX_GRAPHICS_SURFACES];
     rdp_session_graphics_cache_entry graphics_cache[RDP_SESSION_GRAPHICS_CACHE_SLOTS];
     size_t graphics_cache_bytes;
@@ -1051,7 +1052,8 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                     uint16_t height = (uint16_t)(wire.dest_rect.bottom - wire.dest_rect.top);
 
                     rdp_buffer_init(&decoded_bitmap);
-                    status = rdp_clearcodec_decode_bitmap(wire.bitmap_data,
+                    status = rdp_clearcodec_decode_bitmap(&session->clearcodec,
+                                                          wire.bitmap_data,
                                                           wire.bitmap_data_length,
                                                           width,
                                                           height,
@@ -1068,14 +1070,15 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                          decoded_stride,
                                                                          0);
                     rdp_buffer_free(&decoded_bitmap);
-                    if (status == LIBRDP_STATUS_UNSUPPORTED)
+                    if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
                                         "client.graphics.clearcodec.unsupported",
-                                        "dvc_channel_id=%u surface_id=%u payload_len=%u",
+                                        "dvc_channel_id=%u surface_id=%u payload_len=%u decoder_status=%d",
                                         channel_id,
                                         wire.surface_id,
-                                        wire.bitmap_data_length);
+                                        wire.bitmap_data_length,
+                                        (int)status);
                         status = LIBRDP_STATUS_OK;
                     }
                     if (status != LIBRDP_STATUS_OK)
@@ -1260,6 +1263,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                 break;
             rdp_session_graphics_surfaces_clear(session);
             rdp_session_graphics_cache_clear(session);
+            rdp_clearcodec_context_reset(&session->clearcodec);
             if (reset.width != librdp_surface_width(session->surface) ||
                 reset.height != librdp_surface_height(session->surface))
             {
@@ -1837,6 +1841,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             session->graphics_selected_flags = 0;
             session->graphics_frames_decoded = 0;
             rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+            rdp_clearcodec_context_reset(&session->clearcodec);
             rdp_session_graphics_surfaces_clear(session);
             rdp_session_graphics_cache_clear(session);
             rdp_trace_event(RDP_TRACE_CLIENT,
@@ -1991,6 +1996,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->graphics_selected_flags = 0;
                 session->graphics_frames_decoded = 0;
                 rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+                rdp_clearcodec_context_reset(&session->clearcodec);
                 rdp_session_graphics_surfaces_clear(session);
                 rdp_session_graphics_cache_clear(session);
             }
@@ -2266,6 +2272,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->state = LIBRDP_SESSION_IDLE;
     rdp_transport_init(&session->transport);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
+    rdp_clearcodec_context_init(&session->clearcodec);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.session.new", "width=%u height=%u",
                     librdp_settings_width(session->settings),
                     librdp_settings_height(session->settings));
@@ -2280,6 +2287,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_dynamic_channels_clear(session);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
+    rdp_clearcodec_context_free(&session->clearcodec);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_transport_close(&session->transport);
     librdp_surface_free(session->surface);
@@ -2368,6 +2376,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);
@@ -3283,6 +3292,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);

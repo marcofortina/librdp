@@ -14,6 +14,28 @@
 #define RDP_CLEARCODEC_SUBCODEC_RAW 0x00u
 #define RDP_CLEARCODEC_SUBCODEC_NSCODEC 0x01u
 #define RDP_CLEARCODEC_SUBCODEC_RLEX 0x02u
+#define RDP_CLEARCODEC_VBAR_STORAGE_ENTRIES 32768u
+#define RDP_CLEARCODEC_SHORT_VBAR_STORAGE_ENTRIES 16384u
+#define RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES 4000u
+#define RDP_CLEARCODEC_MAX_BAND_HEIGHT 52u
+
+typedef struct rdp_clearcodec_glyph
+{
+    uint16_t width;
+    uint16_t height;
+    rdp_buffer pixels;
+} rdp_clearcodec_glyph;
+
+typedef struct rdp_clearcodec_context
+{
+    uint8_t* vbar_storage;
+    uint8_t* short_vbar_storage;
+    uint8_t* vbar_lengths;
+    uint8_t* short_vbar_lengths;
+    uint16_t vbar_cursor;
+    uint16_t short_vbar_cursor;
+    rdp_clearcodec_glyph glyphs[RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES];
+} rdp_clearcodec_context;
 
 typedef struct rdp_clearcodec_stream
 {
@@ -47,6 +69,9 @@ typedef struct rdp_clearcodec_subcodec
     size_t total_len;
 } rdp_clearcodec_subcodec;
 
+void rdp_clearcodec_context_init(rdp_clearcodec_context* context);
+void rdp_clearcodec_context_reset(rdp_clearcodec_context* context);
+void rdp_clearcodec_context_free(rdp_clearcodec_context* context);
 librdp_status rdp_clearcodec_parse_stream(const void* data, size_t length, rdp_clearcodec_stream* stream);
 librdp_status rdp_clearcodec_parse_composite_payload(const void* data,
                                                      size_t length,
@@ -54,7 +79,8 @@ librdp_status rdp_clearcodec_parse_composite_payload(const void* data,
 librdp_status rdp_clearcodec_parse_subcodec(const void* data,
                                             size_t length,
                                             rdp_clearcodec_subcodec* subcodec);
-librdp_status rdp_clearcodec_decode_bitmap(const void* data,
+librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
+                                           const void* data,
                                            size_t length,
                                            uint16_t width,
                                            uint16_t height,
