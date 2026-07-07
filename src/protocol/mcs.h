@@ -14,6 +14,8 @@ typedef struct rdp_mcs_connect_response
 {
     bool has_result;
     uint8_t result;
+    const uint8_t* user_data;
+    size_t user_data_len;
 } rdp_mcs_connect_response;
 
 typedef struct rdp_mcs_attach_user_confirm

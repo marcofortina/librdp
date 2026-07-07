@@ -86,7 +86,20 @@ static int test_mcs_gcc_capabilities(void)
     const uint8_t ber_bad[] = {0x80};
     const uint8_t mcs_resp[] = {0x0a, 0x01, 0x00};
     const uint8_t mcs_wrapped_resp[] = {0x7f, 0x66, 0x03, 0x0a, 0x01, 0x00};
+    const uint8_t mcs_resp_user_data[] = {0x7f, 0x66, 0x08, 0x0a, 0x01, 0x00, 0x04, 0x03, 7, 8, 9};
     const uint8_t gcc_block[] = {0xc1, 0x00, 0x08, 0x00, 1, 2, 3, 4};
+    const uint8_t gcc_server_blocks[] = {
+        0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x03, 0x0c, 0x0a, 0x00, 0xeb, 0x03, 0x01, 0x00, 0xec, 0x03
+    };
+    const uint8_t gcc_response[] = {
+        0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01, 0x34, 0x14, 0x00, 0x03, 0x01, 0x2a, 0x00, 0x01,
+        0xc0, 0x00, 'M',  'c',  'D',  'n',  0x26,
+        0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x03, 0x0c, 0x0a, 0x00, 0xeb, 0x03, 0x01, 0x00, 0xec, 0x03
+    };
     const uint8_t caps[] = {
         0x02, 0x00, 0x00, 0x00,
         0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd,
@@ -104,6 +117,8 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer mcs_domain;
     rdp_gcc_client_config config;
     rdp_gcc_client_data_summary summary;
+    rdp_gcc_conference_response conference_response;
+    rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach;
     rdp_mcs_channel_join_confirm join;
     const uint8_t attach_confirm[] = {0x2e, 0x00, 0x00, 0x03};
@@ -126,6 +141,10 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(response.has_result && response.result == 0);
     PCHECK(rdp_mcs_parse_connect_response(mcs_wrapped_resp, sizeof(mcs_wrapped_resp), &response) == LIBRDP_STATUS_OK);
     PCHECK(response.has_result && response.result == 0);
+    PCHECK(rdp_mcs_parse_connect_response(mcs_resp_user_data, sizeof(mcs_resp_user_data), &response) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(response.has_result && response.result == 0);
+    PCHECK(response.user_data_len == 3 && response.user_data[0] == 7 && response.user_data[2] == 9);
 
     PCHECK(rdp_mcs_write_ber_length(&ber, 0x7f) == LIBRDP_STATUS_OK);
     PCHECK(rdp_mcs_write_ber_length(&ber, 0x123) == LIBRDP_STATUS_OK);
@@ -141,6 +160,25 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(rdp_gcc_read_user_data_block(&stream, &block) == LIBRDP_STATUS_OK);
     PCHECK(block.type == 0x00c1);
     PCHECK(block.payload_len == 4 && block.payload[3] == 4);
+    PCHECK(rdp_gcc_parse_server_data_blocks(gcc_server_blocks, sizeof(gcc_server_blocks), &server_data) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(server_data.has_core && server_data.has_security && server_data.has_network);
+    PCHECK(server_data.version == 0x00080004u && server_data.requested_protocols == 2);
+    PCHECK(server_data.early_capability_flags == 0x40);
+    PCHECK(server_data.encryption_method == 0 && server_data.encryption_level == 0);
+    PCHECK(server_data.mcs_channel_id == 1003 && server_data.channel_count == 1 && server_data.channel_ids[0] == 1004);
+    PCHECK(rdp_gcc_parse_server_data_blocks(gcc_server_blocks, sizeof(gcc_server_blocks) - 1u, &server_data) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_gcc_parse_conference_create_response(gcc_response, sizeof(gcc_response), &conference_response) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(conference_response.node_id == 1004 && conference_response.tag == 42 && conference_response.result == 0);
+    PCHECK(conference_response.user_data_len == sizeof(gcc_server_blocks));
+    PCHECK(memcmp(conference_response.user_data, gcc_server_blocks, sizeof(gcc_server_blocks)) == 0);
+    PCHECK(rdp_gcc_parse_server_data_blocks(conference_response.user_data,
+                                            conference_response.user_data_len,
+                                            &server_data) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gcc_parse_conference_create_response(gcc_response, sizeof(gcc_response) - 1u, &conference_response) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_capabilities_parse(caps, sizeof(caps), &list) == LIBRDP_STATUS_OK);
     PCHECK(list.count == 2);

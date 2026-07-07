@@ -180,6 +180,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_tpkt packet;
     rdp_x224_connection_confirm confirm;
     rdp_mcs_connect_response mcs_response;
+    rdp_gcc_conference_response gcc_response;
+    rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach_confirm;
     rdp_mcs_channel_join_confirm join_confirm;
     const uint8_t* mcs_pdu = NULL;
@@ -304,6 +306,48 @@ librdp_status librdp_session_connect(librdp_session* session)
         goto fail;
     }
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.response", "result=%u", mcs_response.result);
+    if (mcs_response.user_data_len > 0)
+    {
+        status = rdp_gcc_parse_conference_create_response(mcs_response.user_data,
+                                                          mcs_response.user_data_len,
+                                                          &gcc_response);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        if (gcc_response.result != 0)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL, "gcc.conference.response.failed", "result=%u", gcc_response.result);
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto fail;
+        }
+        status = rdp_gcc_parse_server_data_blocks(gcc_response.user_data, gcc_response.user_data_len, &server_data);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "gcc.conference.response",
+                        "node_id=%u tag=%u user_data_len=%u",
+                        gcc_response.node_id,
+                        gcc_response.tag,
+                        (unsigned)gcc_response.user_data_len);
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "gcc.server.core",
+                        "version=%u requested_protocols=%u early_capability_flags=%u",
+                        server_data.version,
+                        server_data.requested_protocols,
+                        server_data.early_capability_flags);
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "gcc.server.security",
+                        "encryption_method=%u encryption_level=%u random_len=%u certificate_len=%u",
+                        server_data.encryption_method,
+                        server_data.encryption_level,
+                        server_data.server_random_len,
+                        server_data.server_certificate_len);
+        if (server_data.has_network)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "gcc.server.network",
+                            "mcs_channel_id=%u channel_count=%u",
+                            server_data.mcs_channel_id,
+                            server_data.channel_count);
+    }
 
     rdp_buffer_free(&mcs);
     rdp_buffer_init(&mcs);

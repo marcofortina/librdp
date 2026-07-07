@@ -442,6 +442,11 @@ static librdp_status rdp_mcs_scan_connect_response(const uint8_t* data,
             response->has_result = true;
             response->result = payload[0];
         }
+        else if (tag_len == 1 && tag[0] == 0x04)
+        {
+            response->user_data = payload;
+            response->user_data_len = item_len;
+        }
         else if (constructed)
         {
             librdp_status status = rdp_mcs_scan_connect_response(payload, item_len, depth + 1u, response);

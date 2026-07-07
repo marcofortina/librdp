@@ -9,8 +9,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_stream stream;
     rdp_gcc_user_data_block block;
     rdp_gcc_client_data_summary summary;
+    rdp_gcc_conference_response response;
+    rdp_gcc_server_data server_data;
 
     (void)rdp_gcc_parse_client_data_blocks(data, size, &summary);
+    (void)rdp_gcc_parse_conference_create_response(data, size, &response);
+    (void)rdp_gcc_parse_server_data_blocks(data, size, &server_data);
     rdp_stream_init(&stream, data, size);
     while (rdp_stream_remaining(&stream) > 0)
     {
