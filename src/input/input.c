@@ -33,7 +33,7 @@ librdp_status rdp_input_make_pointer_flags(const librdp_mouse_event* event, uint
             *flags = 0x0200u | 0x0078u;
             return LIBRDP_STATUS_OK;
         case LIBRDP_MOUSE_BUTTON_WHEEL_DOWN:
-            *flags = 0x0200u | 0x0088u;
+            *flags = 0x0200u | 0x0100u | 0x0088u;
             return LIBRDP_STATUS_OK;
         case LIBRDP_MOUSE_BUTTON_NONE:
             break;

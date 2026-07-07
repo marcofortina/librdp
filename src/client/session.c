@@ -28,6 +28,7 @@ struct librdp_session
     librdp_surface* surface;
     rdp_transport transport;
     uint16_t mcs_user_id;
+    uint32_t share_id;
     librdp_session_state state;
     librdp_event_callback callback;
     void* callback_data;
@@ -412,6 +413,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     memset(&standard_security, 0, sizeof(standard_security));
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
+    session->share_id = 0;
 
     status = rdp_transport_connect(&session->transport,
                                    librdp_settings_target(session->settings),
@@ -1156,6 +1158,8 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                                 demand.share_id,
                                 demand.capabilities.count);
             if (status == LIBRDP_STATUS_OK)
+                session->share_id = demand.share_id;
+            if (status == LIBRDP_STATUS_OK)
                 status = rdp_slowpath_write_confirm_active(&confirm,
                                                            demand.share_id,
                                                            session->mcs_user_id,
@@ -1261,6 +1265,7 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
 {
     uint16_t flags = 0;
+    rdp_buffer input;
     librdp_event event;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1268,21 +1273,37 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
+    if (session->share_id == 0)
+        return LIBRDP_STATUS_STATE;
 
+    rdp_buffer_init(&input);
     status = rdp_input_make_keyboard_flags(key, &flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_client_keyboard_input(&input,
+                                                          session->share_id,
+                                                          session->mcs_user_id,
+                                                          flags,
+                                                          (uint16_t)key->scancode);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(session, &input, "rdp.input.keyboard");
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&input);
         return status;
+    }
 
     event.type = LIBRDP_EVENT_KEY_SENT;
     event.data.key = *key;
     rdp_session_emit(session, &event);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.input.send", "kind=keyboard scancode=%u flags=%u", key->scancode, flags);
+    rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;
 }
 
 librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* mouse)
 {
     uint16_t flags = 0;
+    rdp_buffer input;
     librdp_event event;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1290,15 +1311,31 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
+    if (session->share_id == 0)
+        return LIBRDP_STATUS_STATE;
 
+    rdp_buffer_init(&input);
     status = rdp_input_make_pointer_flags(mouse, &flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_client_mouse_input(&input,
+                                                       session->share_id,
+                                                       session->mcs_user_id,
+                                                       flags,
+                                                       mouse->x,
+                                                       mouse->y);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(session, &input, "rdp.input.mouse");
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&input);
         return status;
+    }
 
     event.type = LIBRDP_EVENT_MOUSE_SENT;
     event.data.mouse = *mouse;
     rdp_session_emit(session, &event);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.input.send", "kind=mouse x=%u y=%u flags=%u", mouse->x, mouse->y, flags);
+    rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;
 }
 
