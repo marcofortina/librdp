@@ -468,6 +468,56 @@ static int build_bitmap_update_packet(rdp_buffer* out)
     return ok;
 }
 
+static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
+{
+    rdp_buffer payload;
+    rdp_buffer slow;
+    rdp_buffer mcs;
+    size_t total = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&slow);
+    rdp_buffer_init(&mcs);
+
+    ok = rdp_buffer_append_u32_le(&payload, error_info) == LIBRDP_STATUS_OK;
+    total = payload.length + 18u;
+    if (ok)
+        ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 1004) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0x10203040u) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 1) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)payload.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow, payload.data, payload.length) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
+             append_per_length(&mcs, slow.length) &&
+             rdp_buffer_append(&mcs, slow.data, slow.length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok)
+        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&slow);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
 {
     uint16_t total = 0;
@@ -485,7 +535,7 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
     return 1;
 }
 
-static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted)
+static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -526,6 +576,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         rdp_buffer mcs_response;
         rdp_buffer demand_active;
         rdp_buffer bitmap_update;
+        rdp_buffer error_update;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
             0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -552,6 +603,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         rdp_buffer_init(&mcs_response);
         rdp_buffer_init(&demand_active);
         rdp_buffer_init(&bitmap_update);
+        rdp_buffer_init(&error_update);
         if (client >= 0)
         {
             if (!build_server_connect_response(&mcs_response, encrypted))
@@ -583,8 +635,14 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
                     !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
                     !validate_confirm_active(input, input_len))
                     _exit(4);
-                if (!build_bitmap_update_packet(&bitmap_update) ||
-                    !write_exact_fd(client, bitmap_update.data, bitmap_update.length))
+                if (error_info != 0)
+                {
+                    if (!build_set_error_info_packet(&error_update, error_info) ||
+                        !write_exact_fd(client, error_update.data, error_update.length))
+                        _exit(5);
+                }
+                else if (!build_bitmap_update_packet(&bitmap_update) ||
+                         !write_exact_fd(client, bitmap_update.data, bitmap_update.length))
                     _exit(5);
             }
             ts.tv_sec = 1;
@@ -592,6 +650,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
             (void)nanosleep(&ts, NULL);
             close(client);
         }
+        rdp_buffer_free(&error_update);
         rdp_buffer_free(&bitmap_update);
         rdp_buffer_free(&demand_active);
         rdp_buffer_free(&mcs_response);
@@ -771,7 +830,7 @@ static int test_settings_surface_input_session(void)
 
     session = librdp_session_new(settings);
     CHECK(session != NULL);
-    CHECK(start_handshake_server(&test_port, &server_pid, 0));
+    CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);
     session = librdp_session_new(settings);
@@ -811,7 +870,26 @@ static int test_settings_surface_input_session(void)
     memset(&counter, 0, sizeof(counter));
     server_pid = -1;
     child_status = 0;
-    CHECK(start_handshake_server(&test_port, &server_pid, 1));
+    CHECK(start_handshake_server(&test_port, &server_pid, 0, 0x1234u));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    librdp_session_free(session);
+    if (server_pid > 0)
+    {
+        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+        CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    }
+
+    memset(&counter, 0, sizeof(counter));
+    server_pid = -1;
+    child_status = 0;
+    CHECK(start_handshake_server(&test_port, &server_pid, 1, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);

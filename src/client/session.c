@@ -241,7 +241,11 @@ static librdp_status rdp_session_trace_slowpath_data_pdu(const rdp_slowpath_data
 
         status = rdp_slowpath_parse_set_error_info(data_pdu->payload, data_pdu->payload_len, &error_info);
         if (status == LIBRDP_STATUS_OK)
+        {
             rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.set_error_info", "error_info=%u", error_info);
+            if (error_info != 0)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
     }
     else if (data_pdu->pdu_type2 == RDP_SLOWPATH_DATA_PDU_SAVE_SESSION_INFO)
     {
