@@ -202,9 +202,19 @@ static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc
 {
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t client_version = RDP_GCC_CLIENT_VERSION_5;
+    uint16_t early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO;
+    uint8_t connection_type = RDP_GCC_CONNECTION_TYPE_LAN;
+
+    if (config->client_version != 0)
+        client_version = config->client_version;
+    if (config->early_capability_flags != 0)
+        early_capability_flags = config->early_capability_flags;
+    if (config->connection_type != 0)
+        connection_type = config->connection_type;
 
     rdp_buffer_init(&payload);
-    status = rdp_buffer_append_u32_le(&payload, 0x00080004u);
+    status = rdp_buffer_append_u32_le(&payload, client_version);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&payload, config->desktop_width);
     if (status == LIBRDP_STATUS_OK)
@@ -242,11 +252,11 @@ static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&payload, 0x0007u);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(&payload, 0x0001u);
+        status = rdp_buffer_append_u16_le(&payload, early_capability_flags);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_utf16le_fixed(&payload, "librdp", 64);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u8(&payload, 6);
+        status = rdp_buffer_append_u8(&payload, connection_type);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(&payload, 0);
     if (status == LIBRDP_STATUS_OK)
@@ -525,6 +535,18 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
             {
                 payload.position = 208;
                 if (rdp_stream_read_u32_le(&payload, &summary->requested_protocols) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (block.payload_len >= 142)
+            {
+                payload.position = 140;
+                if (rdp_stream_read_u16_le(&payload, &summary->early_capability_flags) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (block.payload_len >= 207)
+            {
+                payload.position = 206;
+                if (rdp_stream_read_u8(&payload, &summary->connection_type) != LIBRDP_STATUS_OK)
                     return LIBRDP_STATUS_PROTOCOL_ERROR;
             }
         }

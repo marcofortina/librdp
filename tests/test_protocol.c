@@ -249,21 +249,35 @@ static int test_mcs_gcc_capabilities(void)
 
     config.desktop_width = 1024;
     config.desktop_height = 768;
+    config.client_version = 0;
     config.requested_protocols = 0;
+    config.early_capability_flags = 0;
+    config.connection_type = 0;
     config.client_name = "librdp";
     config.enable_dynamic_channels = 0;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
     PCHECK(summary.has_core && summary.has_security && summary.has_network);
     PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
-    PCHECK(summary.version == 0x00080004u);
+    PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_5);
+    PCHECK(summary.early_capability_flags == RDP_GCC_EARLY_SUPPORT_ERRINFO);
+    PCHECK(summary.connection_type == RDP_GCC_CONNECTION_TYPE_LAN);
     PCHECK(summary.channel_count == 0);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_init(&client_blocks);
+    config.client_version = RDP_GCC_CLIENT_VERSION_10_12;
+    config.early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO | RDP_GCC_EARLY_SUPPORT_STATUSINFO |
+                                    RDP_GCC_EARLY_SUPPORT_MONITOR_LAYOUT |
+                                    RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT |
+                                    RDP_GCC_EARLY_SUPPORT_DYNVC_GFX;
+    config.connection_type = RDP_GCC_CONNECTION_TYPE_LAN;
     config.enable_dynamic_channels = 1;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
     PCHECK(summary.channel_count == 1);
+    PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
+    PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_DYNVC_GFX) != 0);
+    PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT) != 0);
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "drdynvc", 7));
     PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
            LIBRDP_STATUS_OK);

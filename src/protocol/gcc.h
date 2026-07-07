@@ -16,6 +16,15 @@
 #define RDP_GCC_SC_SECURITY 0x0c02u
 #define RDP_GCC_SC_NETWORK 0x0c03u
 #define RDP_GCC_MAX_SERVER_CHANNELS 64u
+#define RDP_GCC_CLIENT_VERSION_5 0x00080004u
+#define RDP_GCC_CLIENT_VERSION_10_12 0x00080011u
+#define RDP_GCC_EARLY_SUPPORT_ERRINFO 0x0001u
+#define RDP_GCC_EARLY_WANT_32BPP 0x0002u
+#define RDP_GCC_EARLY_SUPPORT_STATUSINFO 0x0004u
+#define RDP_GCC_EARLY_SUPPORT_MONITOR_LAYOUT 0x0040u
+#define RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT 0x0080u
+#define RDP_GCC_EARLY_SUPPORT_DYNVC_GFX 0x0100u
+#define RDP_GCC_CONNECTION_TYPE_LAN 0x06u
 
 typedef struct rdp_gcc_user_data_block
 {
@@ -27,9 +36,12 @@ typedef struct rdp_gcc_user_data_block
 
 typedef struct rdp_gcc_client_config
 {
+    uint32_t client_version;
     uint16_t desktop_width;
     uint16_t desktop_height;
     uint32_t requested_protocols;
+    uint16_t early_capability_flags;
+    uint8_t connection_type;
     const char* client_name;
     uint8_t enable_dynamic_channels;
 } rdp_gcc_client_config;
@@ -43,6 +55,8 @@ typedef struct rdp_gcc_client_data_summary
     uint16_t desktop_height;
     uint32_t version;
     uint32_t requested_protocols;
+    uint16_t early_capability_flags;
+    uint8_t connection_type;
     uint16_t channel_count;
 } rdp_gcc_client_data_summary;
 
