@@ -17,6 +17,7 @@
 #define RDP_SLOWPATH_DATA_PDU_CONTROL 0x14u
 #define RDP_SLOWPATH_DATA_PDU_INPUT 0x1cu
 #define RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE 0x1fu
+#define RDP_SLOWPATH_DATA_PDU_REFRESH_RECT 0x21u
 #define RDP_SLOWPATH_DATA_PDU_FONT_LIST 0x27u
 #define RDP_SLOWPATH_DATA_PDU_FONT_MAP 0x28u
 #define RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO 0x2fu
@@ -83,6 +84,13 @@ librdp_status rdp_slowpath_write_client_mouse_input(rdp_buffer* buffer,
                                                     uint16_t flags,
                                                     uint16_t x,
                                                     uint16_t y);
+librdp_status rdp_slowpath_write_client_refresh_rect(rdp_buffer* buffer,
+                                                     uint32_t share_id,
+                                                     uint16_t channel_id,
+                                                     uint16_t x,
+                                                     uint16_t y,
+                                                     uint16_t width,
+                                                     uint16_t height);
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu);
 
 #endif

@@ -126,6 +126,7 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     rdp_buffer cooperate;
     rdp_buffer request;
     rdp_buffer font_list;
+    rdp_buffer refresh;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -135,6 +136,7 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     rdp_buffer_init(&cooperate);
     rdp_buffer_init(&request);
     rdp_buffer_init(&font_list);
+    rdp_buffer_init(&refresh);
 
     status = rdp_slowpath_write_client_synchronize(&sync, share_id, session->mcs_user_id);
     if (status == LIBRDP_STATUS_OK)
@@ -163,6 +165,25 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.activation.client_font_list", "share_id=%u", share_id);
 
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_client_refresh_rect(&refresh,
+                                                        share_id,
+                                                        session->mcs_user_id,
+                                                        0,
+                                                        0,
+                                                        (uint16_t)librdp_surface_width(session->surface),
+                                                        (uint16_t)librdp_surface_height(session->surface));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(session, &refresh, "rdp.activation.client_refresh_rect");
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.activation.client_refresh_rect",
+                        "share_id=%u width=%u height=%u",
+                        share_id,
+                        librdp_surface_width(session->surface),
+                        librdp_surface_height(session->surface));
+
+    rdp_buffer_free(&refresh);
     rdp_buffer_free(&font_list);
     rdp_buffer_free(&request);
     rdp_buffer_free(&cooperate);

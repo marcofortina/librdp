@@ -462,6 +462,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_font_list;
     rdp_buffer client_keyboard_input;
     rdp_buffer client_mouse_input;
+    rdp_buffer client_refresh_rect;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
     rdp_buffer ntlm_authenticate;
@@ -530,6 +531,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_font_list);
     rdp_buffer_init(&client_keyboard_input);
     rdp_buffer_init(&client_mouse_input);
+    rdp_buffer_init(&client_refresh_rect);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_authenticate);
@@ -657,6 +659,30 @@ static int test_path_security_license_channels(void)
            test_read_u16_le(data_pdu.payload + 10) == 0x9000u &&
            test_read_u16_le(data_pdu.payload + 12) == 10 &&
            test_read_u16_le(data_pdu.payload + 14) == 11);
+    PCHECK(rdp_slowpath_write_client_refresh_rect(&client_refresh_rect,
+                                                  0x12345678u,
+                                                  1004,
+                                                  2,
+                                                  3,
+                                                  800,
+                                                  600) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_refresh_rect.data,
+                                       client_refresh_rect.length,
+                                       &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_REFRESH_RECT &&
+           data_pdu.payload_len == 12 &&
+           data_pdu.payload[0] == 1 &&
+           test_read_u16_le(data_pdu.payload + 4) == 2 &&
+           test_read_u16_le(data_pdu.payload + 6) == 3 &&
+           test_read_u16_le(data_pdu.payload + 8) == 801 &&
+           test_read_u16_le(data_pdu.payload + 10) == 602);
+    PCHECK(rdp_slowpath_write_client_refresh_rect(&client_refresh_rect,
+                                                  0x12345678u,
+                                                  1004,
+                                                  0xffffu,
+                                                  0,
+                                                  2,
+                                                  1) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_STANDARD) == RDP_X224_PROTOCOL_STANDARD);
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_TLS) == RDP_X224_PROTOCOL_TLS);
@@ -936,6 +962,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_authenticate);
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
+    rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);
