@@ -77,6 +77,50 @@ static int32_t rdp_rfx_from_2mag_sign(uint32_t value)
     return (value & 1u) != 0 ? -magnitude : magnitude;
 }
 
+static void rdp_rfx_component_quant_from_values(rdp_rfx_component_quant* quant, const uint8_t values[10])
+{
+    quant->ll3 = values[0];
+    quant->hl3 = values[1];
+    quant->lh3 = values[2];
+    quant->hh3 = values[3];
+    quant->hl2 = values[4];
+    quant->lh2 = values[5];
+    quant->hh2 = values[6];
+    quant->hl1 = values[7];
+    quant->lh1 = values[8];
+    quant->hh1 = values[9];
+}
+
+static void rdp_rfx_component_quant_to_values(const rdp_rfx_component_quant* quant, uint8_t values[10])
+{
+    values[0] = quant->ll3;
+    values[1] = quant->hl3;
+    values[2] = quant->lh3;
+    values[3] = quant->hh3;
+    values[4] = quant->hl2;
+    values[5] = quant->lh2;
+    values[6] = quant->hh2;
+    values[7] = quant->hl1;
+    values[8] = quant->lh1;
+    values[9] = quant->hh1;
+}
+
+static int rdp_rfx_component_quant_in_range(const rdp_rfx_component_quant* quant, uint8_t max_value)
+{
+    uint8_t values[10];
+    size_t i = 0;
+
+    if (!quant)
+        return 0;
+    rdp_rfx_component_quant_to_values(quant, values);
+    for (i = 0; i < sizeof(values) / sizeof(values[0]); i++)
+    {
+        if (values[i] > max_value)
+            return 0;
+    }
+    return 1;
+}
+
 static librdp_status rdp_rfx_write_value(int32_t* coefficients,
                                          size_t coefficient_count,
                                          size_t* written,
@@ -86,6 +130,81 @@ static librdp_status rdp_rfx_write_value(int32_t* coefficients,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     coefficients[*written] = value;
     (*written)++;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_rfx_parse_component_quant(const void* data,
+                                            size_t length,
+                                            rdp_rfx_component_quant* quant)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    uint8_t values[10];
+    size_t i = 0;
+
+    if (!data || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 5u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(quant, 0, sizeof(*quant));
+    for (i = 0; i < 5u; i++)
+    {
+        values[i * 2u] = (uint8_t)(bytes[i] & 0x0fu);
+        values[(i * 2u) + 1u] = (uint8_t)(bytes[i] >> 4);
+    }
+    rdp_rfx_component_quant_from_values(quant, values);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_rfx_parse_progressive_quant(const void* data,
+                                              size_t length,
+                                              rdp_rfx_progressive_quant* quant)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+
+    if (!data || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(quant, 0, sizeof(*quant));
+    quant->quality = bytes[0];
+    if (rdp_rfx_parse_component_quant(bytes + 1u, 5u, &quant->y) != LIBRDP_STATUS_OK ||
+        rdp_rfx_parse_component_quant(bytes + 6u, 5u, &quant->cb) != LIBRDP_STATUS_OK ||
+        rdp_rfx_parse_component_quant(bytes + 11u, 5u, &quant->cr) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_rfx_component_quant_in_range(&quant->y, 8) ||
+        !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
+        !rdp_rfx_component_quant_in_range(&quant->cr, 8))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_rfx_add_component_quant(const rdp_rfx_component_quant* base,
+                                          const rdp_rfx_component_quant* delta,
+                                          rdp_rfx_component_quant* output)
+{
+    uint8_t base_values[10];
+    uint8_t delta_values[10];
+    uint8_t output_values[10];
+    size_t i = 0;
+
+    if (!base || !delta || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_rfx_component_quant_in_range(base, 15) || !rdp_rfx_component_quant_in_range(delta, 8))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_rfx_component_quant_to_values(base, base_values);
+    rdp_rfx_component_quant_to_values(delta, delta_values);
+    for (i = 0; i < sizeof(output_values) / sizeof(output_values[0]); i++)
+    {
+        uint8_t value = (uint8_t)(base_values[i] + delta_values[i]);
+
+        if (value > 15u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        output_values[i] = value;
+    }
+    rdp_rfx_component_quant_from_values(output, output_values);
     return LIBRDP_STATUS_OK;
 }
 

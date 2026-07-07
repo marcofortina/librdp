@@ -367,6 +367,19 @@ static int test_path_security_license_channels(void)
     const uint8_t rfx_rlgr1_run_negative[] = {0xf8};
     const uint8_t rfx_rlgr1_gr_mode[] = {0x83, 0x80};
     const uint8_t rfx_rlgr3_pair[] = {0x87, 0xd0};
+    const uint8_t rfx_quant_values[] = {0x10, 0x32, 0x54, 0x76, 0x98};
+    const uint8_t rfx_progressive_quant_values[] = {
+        0x64,
+        0x11, 0x11, 0x11, 0x11, 0x11,
+        0x22, 0x22, 0x22, 0x22, 0x22,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
+    const uint8_t rfx_bad_progressive_quant_values[] = {
+        0x64,
+        0x99, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00
+    };
     const uint8_t fast_bitmap_update[] = {
         0x00, 0x2b, 0x01, 0x26, 0x00,
         0x01, 0x00,
@@ -831,6 +844,9 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_rect bitmap_rect;
     int32_t rfx_coefficients[8];
     size_t rfx_written = 0;
+    rdp_rfx_component_quant rfx_quant;
+    rdp_rfx_progressive_quant rfx_progressive_quant;
+    rdp_rfx_component_quant rfx_added_quant;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
@@ -1112,6 +1128,46 @@ static int test_path_security_license_channels(void)
                                rfx_coefficients,
                                3,
                                &rfx_written) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_rfx_parse_component_quant(rfx_quant_values,
+                                         sizeof(rfx_quant_values),
+                                         &rfx_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_quant.ll3 == 0 &&
+           rfx_quant.hl3 == 1 &&
+           rfx_quant.lh3 == 2 &&
+           rfx_quant.hh3 == 3 &&
+           rfx_quant.hl2 == 4 &&
+           rfx_quant.lh2 == 5 &&
+           rfx_quant.hh2 == 6 &&
+           rfx_quant.hl1 == 7 &&
+           rfx_quant.lh1 == 8 &&
+           rfx_quant.hh1 == 9);
+    PCHECK(rdp_rfx_parse_progressive_quant(rfx_progressive_quant_values,
+                                           sizeof(rfx_progressive_quant_values),
+                                           &rfx_progressive_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_progressive_quant.quality == 0x64 &&
+           rfx_progressive_quant.y.ll3 == 1 &&
+           rfx_progressive_quant.cb.ll3 == 2 &&
+           rfx_progressive_quant.cr.ll3 == 3);
+    PCHECK(rdp_rfx_add_component_quant(&rfx_quant,
+                                       &rfx_progressive_quant.y,
+                                       &rfx_added_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_added_quant.ll3 == 1 &&
+           rfx_added_quant.hl3 == 2 &&
+           rfx_added_quant.hh1 == 10);
+    PCHECK(rdp_rfx_add_component_quant(&rfx_quant,
+                                       &rfx_progressive_quant.cr,
+                                       &rfx_added_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_added_quant.hh1 == 12);
+    rfx_progressive_quant.cr.hh1 = 8;
+    PCHECK(rdp_rfx_add_component_quant(&rfx_quant,
+                                       &rfx_progressive_quant.cr,
+                                       &rfx_added_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_rfx_parse_progressive_quant(rfx_bad_progressive_quant_values,
+                                           sizeof(rfx_bad_progressive_quant_values),
+                                           &rfx_progressive_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_rfx_parse_component_quant(rfx_quant_values,
+                                         sizeof(rfx_quant_values) - 1u,
+                                         &rfx_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
