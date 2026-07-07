@@ -703,3 +703,58 @@ librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_s
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
+
+librdp_status rdp_slowpath_parse_font_map(const void* data, size_t length, rdp_slowpath_font_map* font_map)
+{
+    rdp_stream stream;
+
+    if (!data || !font_map)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 8)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(font_map, 0, sizeof(*font_map));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u16_le(&stream, &font_map->number_entries) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &font_map->total_entries) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &font_map->map_flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &font_map->entry_size) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_slowpath_parse_set_error_info(const void* data, size_t length, uint32_t* error_info)
+{
+    rdp_stream stream;
+
+    if (!data || !error_info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 4)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    *error_info = 0;
+    rdp_stream_init(&stream, data, length);
+    return rdp_stream_read_u32_le(&stream, error_info);
+}
+
+librdp_status rdp_slowpath_parse_save_session_info(const void* data,
+                                                   size_t length,
+                                                   rdp_slowpath_save_session_info* info)
+{
+    rdp_stream stream;
+
+    if (!data || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 4)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(info, 0, sizeof(*info));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &info->info_type) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    info->data_len = rdp_stream_remaining(&stream);
+    if (info->data_len > 0 &&
+        rdp_stream_read_bytes(&stream, &info->data, info->data_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}

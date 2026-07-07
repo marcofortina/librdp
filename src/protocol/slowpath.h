@@ -18,6 +18,7 @@
 #define RDP_SLOWPATH_DATA_PDU_INPUT 0x1cu
 #define RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE 0x1fu
 #define RDP_SLOWPATH_DATA_PDU_REFRESH_RECT 0x21u
+#define RDP_SLOWPATH_DATA_PDU_SAVE_SESSION_INFO 0x26u
 #define RDP_SLOWPATH_DATA_PDU_FONT_LIST 0x27u
 #define RDP_SLOWPATH_DATA_PDU_FONT_MAP 0x28u
 #define RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO 0x2fu
@@ -50,6 +51,21 @@ typedef struct rdp_slowpath_data_pdu
     const uint8_t* payload;
     size_t payload_len;
 } rdp_slowpath_data_pdu;
+
+typedef struct rdp_slowpath_font_map
+{
+    uint16_t number_entries;
+    uint16_t total_entries;
+    uint16_t map_flags;
+    uint16_t entry_size;
+} rdp_slowpath_font_map;
+
+typedef struct rdp_slowpath_save_session_info
+{
+    uint32_t info_type;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_slowpath_save_session_info;
 
 librdp_status rdp_slowpath_parse_share_control_header(const void* data,
                                                       size_t length,
@@ -92,5 +108,10 @@ librdp_status rdp_slowpath_write_client_refresh_rect(rdp_buffer* buffer,
                                                      uint16_t width,
                                                      uint16_t height);
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu);
+librdp_status rdp_slowpath_parse_font_map(const void* data, size_t length, rdp_slowpath_font_map* font_map);
+librdp_status rdp_slowpath_parse_set_error_info(const void* data, size_t length, uint32_t* error_info);
+librdp_status rdp_slowpath_parse_save_session_info(const void* data,
+                                                   size_t length,
+                                                   rdp_slowpath_save_session_info* info);
 
 #endif

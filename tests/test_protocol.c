@@ -441,6 +441,8 @@ static int test_path_security_license_channels(void)
     rdp_slowpath_share_control_header slow_header;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_data_pdu data_pdu;
+    rdp_slowpath_font_map font_map;
+    rdp_slowpath_save_session_info save_info;
     rdp_bitmap_update bitmap_update;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
@@ -494,6 +496,7 @@ static int test_path_security_license_channels(void)
     uint32_t lm_offset = 0;
     uint32_t nt_offset = 0;
     uint32_t key_offset = 0;
+    uint32_t error_info = 0;
     uint8_t signature[8];
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -518,6 +521,9 @@ static int test_path_security_license_channels(void)
     const uint16_t expected_confirm_lengths[] = {
         24, 28, 88, 40, 10, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12
     };
+    const uint8_t font_map_payload[] = {1, 0, 2, 0, 3, 0, 4, 0};
+    const uint8_t set_error_info_payload[] = {0x34, 0x12, 0, 0};
+    const uint8_t save_session_info_payload[] = {1, 0, 0, 0, 0xaa, 0x55};
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
@@ -683,6 +689,25 @@ static int test_path_security_license_channels(void)
                                                   0,
                                                   2,
                                                   1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload), &font_map) == LIBRDP_STATUS_OK);
+    PCHECK(font_map.number_entries == 1 && font_map.total_entries == 2 && font_map.map_flags == 3 &&
+           font_map.entry_size == 4);
+    PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload) - 1u, &font_map) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_slowpath_parse_set_error_info(set_error_info_payload,
+                                             sizeof(set_error_info_payload),
+                                             &error_info) == LIBRDP_STATUS_OK);
+    PCHECK(error_info == 0x1234u);
+    PCHECK(rdp_slowpath_parse_set_error_info(set_error_info_payload,
+                                             sizeof(set_error_info_payload) - 1u,
+                                             &error_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_slowpath_parse_save_session_info(save_session_info_payload,
+                                                sizeof(save_session_info_payload),
+                                                &save_info) == LIBRDP_STATUS_OK);
+    PCHECK(save_info.info_type == 1 && save_info.data_len == 2 && save_info.data[0] == 0xaa &&
+           save_info.data[1] == 0x55);
+    PCHECK(rdp_slowpath_parse_save_session_info(save_session_info_payload, 3, &save_info) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_STANDARD) == RDP_X224_PROTOCOL_STANDARD);
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_TLS) == RDP_X224_PROTOCOL_TLS);

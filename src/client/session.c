@@ -191,6 +191,51 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     return status;
 }
 
+static librdp_status rdp_session_trace_slowpath_data_pdu(const rdp_slowpath_data_pdu* data_pdu)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data_pdu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (data_pdu->pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP)
+    {
+        rdp_slowpath_font_map font_map;
+
+        status = rdp_slowpath_parse_font_map(data_pdu->payload, data_pdu->payload_len, &font_map);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.activation.font_map",
+                            "entries=%u total_entries=%u flags=%u entry_size=%u",
+                            font_map.number_entries,
+                            font_map.total_entries,
+                            font_map.map_flags,
+                            font_map.entry_size);
+    }
+    else if (data_pdu->pdu_type2 == RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO)
+    {
+        uint32_t error_info = 0;
+
+        status = rdp_slowpath_parse_set_error_info(data_pdu->payload, data_pdu->payload_len, &error_info);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.set_error_info", "error_info=%u", error_info);
+    }
+    else if (data_pdu->pdu_type2 == RDP_SLOWPATH_DATA_PDU_SAVE_SESSION_INFO)
+    {
+        rdp_slowpath_save_session_info info;
+
+        status = rdp_slowpath_parse_save_session_info(data_pdu->payload, data_pdu->payload_len, &info);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.save_session_info",
+                            "info_type=%u data_len=%u",
+                            info.info_type,
+                            (unsigned)info.data_len);
+    }
+
+    return status;
+}
+
 static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
                                               rdp_buffer* packet,
                                               const uint8_t** pdu,
@@ -1220,6 +1265,12 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                             data_pdu.pdu_type2,
                             data_pdu.compressed_type,
                             (unsigned)data_pdu.payload_len);
+            status = rdp_session_trace_slowpath_data_pdu(&data_pdu);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
             if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE && data_pdu.compressed_type == 0)
             {
                 rdp_bitmap_update update;
