@@ -1,5 +1,7 @@
 #include <librdp/session.h>
 
+#include "channels/dynamic_channel.h"
+#include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
 #include "common/trace.h"
 #include "graphics/bitmap.h"
@@ -29,6 +31,7 @@ struct librdp_session
     librdp_surface* surface;
     rdp_transport transport;
     uint16_t mcs_user_id;
+    uint16_t dynamic_channel_id;
     uint32_t share_id;
     librdp_session_state state;
     librdp_event_callback callback;
@@ -119,6 +122,94 @@ static librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
         status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
     rdp_buffer_free(&send_data);
     return status;
+}
+
+static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
+                                                   uint16_t channel_id,
+                                                   const rdp_buffer* payload,
+                                                   const char* event)
+{
+    rdp_buffer channel_packet;
+    rdp_buffer send_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !payload || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&channel_packet);
+    rdp_buffer_init(&send_data);
+    status = rdp_virtual_channel_write_packet(&channel_packet, payload->data, payload->length, 3);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_send_data_request(&send_data,
+                                                      session->mcs_user_id,
+                                                      channel_id,
+                                                      channel_packet.data,
+                                                      channel_packet.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
+    rdp_buffer_free(&send_data);
+    rdp_buffer_free(&channel_packet);
+    return status;
+}
+
+static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
+                                              rdp_buffer* packet,
+                                              const uint8_t** pdu,
+                                              size_t* pdu_len,
+                                              const char* event);
+
+static librdp_status rdp_session_join_mcs_channel(librdp_session* session,
+                                                  uint16_t channel_id,
+                                                  const char* name,
+                                                  rdp_buffer* request,
+                                                  rdp_buffer* reply)
+{
+    const uint8_t* pdu = NULL;
+    size_t pdu_len = 0;
+    rdp_mcs_channel_join_confirm confirm;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !request || !reply)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_free(request);
+    rdp_buffer_init(request);
+    status = rdp_mcs_write_channel_join_request(request, session->mcs_user_id, channel_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "mcs.channel_join.request",
+                    "channel_id=%u name=%s",
+                    channel_id,
+                    name ? name : "");
+    status = rdp_session_write_mcs_pdu(session, request, "mcs.channel_join.request", 1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    rdp_buffer_free(reply);
+    rdp_buffer_init(reply);
+    status = rdp_session_read_mcs_pdu(session, reply, &pdu, &pdu_len, "mcs.channel_join.confirm");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_mcs_parse_channel_join_confirm(pdu, pdu_len, &confirm);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (confirm.result != 0 || confirm.initiator != session->mcs_user_id || confirm.channel_id != channel_id)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "mcs.channel_join.failed",
+                        "result=%u initiator=%u channel_id=%u",
+                        confirm.result,
+                        confirm.initiator,
+                        confirm.channel_id);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "mcs.channel_join.confirm",
+                    "channel_id=%u name=%s",
+                    confirm.channel_id,
+                    name ? name : "");
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_session_send_activation_finalization(librdp_session* session, uint32_t share_id)
@@ -269,6 +360,88 @@ static librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session
     }
 
     return status;
+}
+
+static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
+                                                        const rdp_virtual_channel_packet* channel_packet)
+{
+    rdp_dynamic_channel_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !channel_packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_dynamic_channel_parse_header(channel_packet->payload, channel_packet->payload_len, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES)
+    {
+        rdp_dynamic_channel_capabilities capabilities;
+        rdp_buffer response;
+
+        rdp_buffer_init(&response);
+        status = rdp_dynamic_channel_parse_capabilities(channel_packet->payload,
+                                                        channel_packet->payload_len,
+                                                        &capabilities);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_capabilities_response(&response, 1);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_write_channel_pdu(session,
+                                                   session->dynamic_channel_id,
+                                                   &response,
+                                                   "client.drdynvc.capabilities");
+        rdp_buffer_free(&response);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.capabilities",
+                        "server_version=%u client_version=1",
+                        capabilities.version);
+    }
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CREATE)
+    {
+        rdp_dynamic_channel_create_request request;
+        rdp_buffer response;
+        size_t trace_name_len = 0;
+        int name_len = 0;
+
+        rdp_buffer_init(&response);
+        status = rdp_dynamic_channel_parse_create_request(channel_packet->payload,
+                                                          channel_packet->payload_len,
+                                                          &request);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_create_response(&response,
+                                                               request.channel_id,
+                                                               request.channel_id_bytes,
+                                                               RDP_DYNAMIC_CHANNEL_STATUS_OK);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_write_channel_pdu(session,
+                                                   session->dynamic_channel_id,
+                                                   &response,
+                                                   "client.drdynvc.create");
+        rdp_buffer_free(&response);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        trace_name_len = request.name_len > 120u ? 120u : request.name_len;
+        name_len = (int)trace_name_len;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.create",
+                        "channel_id=%u name=%.*s status=0",
+                        request.channel_id,
+                        name_len,
+                        request.name);
+    }
+    else
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.data",
+                        "command=%u payload_len=%u",
+                        header.command,
+                        (unsigned)channel_packet->payload_len);
+    }
+
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
@@ -568,7 +741,6 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_gcc_conference_response gcc_response;
     rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach_confirm;
-    rdp_mcs_channel_join_confirm join_confirm;
     rdp_standard_security_context standard_security;
     rdp_credssp_state credssp_state = RDP_CREDSSP_DISABLED;
     const uint8_t* mcs_pdu = NULL;
@@ -608,6 +780,7 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     session->share_id = 0;
+    session->dynamic_channel_id = 0;
 
     status = rdp_transport_connect(&session->transport,
                                    librdp_settings_target(session->settings),
@@ -924,15 +1097,20 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     {
         rdp_gcc_client_config config;
+        memset(&config, 0, sizeof(config));
         config.desktop_width = (uint16_t)librdp_settings_width(session->settings);
         config.desktop_height = (uint16_t)librdp_settings_height(session->settings);
         config.requested_protocols = selected_protocol;
         config.client_name = "librdp";
+        config.enable_dynamic_channels = 1;
 
-        rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.initial", "width=%u height=%u selected_protocol=%u",
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "mcs.connect.initial",
+                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u",
                         (unsigned)config.desktop_width,
                         (unsigned)config.desktop_height,
-                        config.requested_protocols);
+                        config.requested_protocols,
+                        (unsigned)config.enable_dynamic_channels);
         status = rdp_gcc_write_client_data_blocks(&gcc_blocks, &config);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
@@ -1017,11 +1195,21 @@ librdp_status librdp_session_connect(librdp_session* session)
                         server_data.server_random_len,
                         server_data.server_certificate_len);
         if (server_data.has_network)
+        {
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "gcc.server.network",
                             "mcs_channel_id=%u channel_count=%u",
                             server_data.mcs_channel_id,
                             server_data.channel_count);
+            if (server_data.channel_count > 0)
+            {
+                session->dynamic_channel_id = server_data.channel_ids[0];
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.drdynvc.channel",
+                                "channel_id=%u",
+                                session->dynamic_channel_id);
+            }
+        }
     }
 
     rdp_buffer_free(&mcs);
@@ -1061,69 +1249,21 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->mcs_user_id = attach_confirm.user_id;
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.attach_user.confirm", "result=0 user_id=%u", session->mcs_user_id);
 
-    rdp_buffer_free(&mcs);
-    rdp_buffer_init(&mcs);
-    status = rdp_mcs_write_channel_join_request(&mcs, session->mcs_user_id, session->mcs_user_id);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", session->mcs_user_id);
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request", 1);
+    status = rdp_session_join_mcs_channel(session, session->mcs_user_id, "user", &mcs, &reply);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
-    rdp_buffer_free(&reply);
-    rdp_buffer_init(&reply);
-    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.channel_join.confirm");
+    status = rdp_session_join_mcs_channel(session, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID, "global", &mcs, &reply);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
-    status = rdp_mcs_parse_channel_join_confirm(mcs_pdu, mcs_pdu_len, &join_confirm);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    if (join_confirm.result != 0 || join_confirm.initiator != session->mcs_user_id ||
-        join_confirm.channel_id != session->mcs_user_id)
+
+    if (session->dynamic_channel_id != 0 && session->dynamic_channel_id != session->mcs_user_id &&
+        session->dynamic_channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
     {
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "mcs.channel_join.failed",
-                        "result=%u initiator=%u channel_id=%u",
-                        join_confirm.result,
-                        join_confirm.initiator,
-                        join_confirm.channel_id);
-        status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        goto fail;
+        status = rdp_session_join_mcs_channel(session, session->dynamic_channel_id, "drdynvc", &mcs, &reply);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
     }
-    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.confirm", "channel_id=%u", join_confirm.channel_id);
-
-    rdp_buffer_free(&mcs);
-    rdp_buffer_init(&mcs);
-    status = rdp_mcs_write_channel_join_request(&mcs, session->mcs_user_id, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", RDP_MCS_GLOBAL_CHANNEL_ID);
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request", 1);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-
-    rdp_buffer_free(&reply);
-    rdp_buffer_init(&reply);
-    status = rdp_session_read_mcs_pdu(session, &reply, &mcs_pdu, &mcs_pdu_len, "mcs.channel_join.confirm");
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    status = rdp_mcs_parse_channel_join_confirm(mcs_pdu, mcs_pdu_len, &join_confirm);
-    if (status != LIBRDP_STATUS_OK)
-        goto fail;
-    if (join_confirm.result != 0 || join_confirm.initiator != session->mcs_user_id ||
-        join_confirm.channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
-    {
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "mcs.channel_join.failed",
-                        "result=%u initiator=%u channel_id=%u",
-                        join_confirm.result,
-                        join_confirm.initiator,
-                        join_confirm.channel_id);
-        status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        goto fail;
-    }
-    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.confirm", "channel_id=%u", join_confirm.channel_id);
 
     if (server_encryption_method != 0 || server_encryption_level != 0)
     {
@@ -1345,6 +1485,30 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         indication.initiator,
                         indication.channel_id,
                         (unsigned)indication.payload_len);
+        if (session->dynamic_channel_id != 0 && indication.channel_id == session->dynamic_channel_id)
+        {
+            rdp_virtual_channel_packet channel_packet;
+
+            status = rdp_virtual_channel_parse_packet(indication.payload, indication.payload_len, &channel_packet);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.drdynvc.data",
+                            "channel_id=%u flags=%u payload_len=%u",
+                            indication.channel_id,
+                            channel_packet.flags,
+                            (unsigned)channel_packet.payload_len);
+            status = rdp_session_handle_dynamic_channel(session, &channel_packet);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            goto done;
+        }
         status = rdp_slowpath_parse_share_control_header(indication.payload, indication.payload_len, &slow_header);
         if (status == LIBRDP_STATUS_OK)
             have_slow_header = 1;

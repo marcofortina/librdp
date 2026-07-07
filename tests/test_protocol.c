@@ -1,4 +1,5 @@
 #include "channels/virtual_channel.h"
+#include "channels/dynamic_channel.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
@@ -68,6 +69,20 @@ static int test_sha256_three(const uint8_t* a,
 out:
     EVP_MD_CTX_free(context);
     return ok;
+}
+
+static int test_contains_bytes(const uint8_t* data, size_t data_len, const char* needle, size_t needle_len)
+{
+    size_t i = 0;
+
+    if (!data || !needle || needle_len == 0 || data_len < needle_len)
+        return 0;
+    for (i = 0; i <= data_len - needle_len; i++)
+    {
+        if (memcmp(data + i, needle, needle_len) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 static int test_tpkt_x224(void)
@@ -234,12 +249,20 @@ static int test_mcs_gcc_capabilities(void)
     config.desktop_height = 768;
     config.requested_protocols = 0;
     config.client_name = "librdp";
+    config.enable_dynamic_channels = 0;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
     PCHECK(summary.has_core && summary.has_security && summary.has_network);
     PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
     PCHECK(summary.version == 0x00080004u);
     PCHECK(summary.channel_count == 0);
+    rdp_buffer_free(&client_blocks);
+    rdp_buffer_init(&client_blocks);
+    config.enable_dynamic_channels = 1;
+    PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
+    PCHECK(summary.channel_count == 1);
+    PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "drdynvc", 7));
     PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(gcc_request.length > client_blocks.length);
@@ -321,6 +344,8 @@ static int test_path_security_license_channels(void)
         9, 8
     };
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
+    const uint8_t dyn_caps[] = {0x50, 0x00, 0x03, 0x00, 0x33, 0x33, 0x11, 0x11};
+    const uint8_t dyn_create[] = {0x18, 0x07, 'E', 'C', 'H', 'O', 0};
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -463,6 +488,9 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_rect bitmap_rect;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
+    rdp_dynamic_channel_header dyn_header;
+    rdp_dynamic_channel_capabilities dyn_parsed_caps;
+    rdp_dynamic_channel_create_request dyn_create_request;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
     rdp_credssp_state cred_state;
@@ -498,6 +526,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer auth_info;
     rdp_buffer ts_request;
     rdp_buffer nla_request;
+    rdp_buffer channel_packet;
+    rdp_buffer dyn_response;
     rdp_client_info info;
     rdp_client_info_summary info_summary;
     rdp_capability_list confirm_caps;
@@ -576,6 +606,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&auth_info);
     rdp_buffer_init(&ts_request);
     rdp_buffer_init(&nla_request);
+    rdp_buffer_init(&channel_packet);
+    rdp_buffer_init(&dyn_response);
 
     PCHECK(rdp_fastpath_parse_header(fast_short, sizeof(fast_short), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
@@ -937,6 +969,29 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_virtual_channel_parse_packet(channel, sizeof(channel), &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == 3 && vc.flags == 0x10 && vc.payload[2] == 3);
+    PCHECK(rdp_virtual_channel_write_packet(&channel_packet, dyn_create, sizeof(dyn_create), 3) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_virtual_channel_parse_packet(channel_packet.data, channel_packet.length, &vc) == LIBRDP_STATUS_OK);
+    PCHECK(vc.length == sizeof(dyn_create) && vc.flags == 3 && memcmp(vc.payload, dyn_create, sizeof(dyn_create)) == 0);
+    PCHECK(rdp_dynamic_channel_parse_header(dyn_caps, sizeof(dyn_caps), &dyn_header) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_header.command == RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES && dyn_header.channel_id_bytes == 1);
+    PCHECK(rdp_dynamic_channel_parse_capabilities(dyn_caps, sizeof(dyn_caps), &dyn_parsed_caps) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(dyn_parsed_caps.version == 3);
+    PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 1) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_dynamic_channel_parse_create_request(dyn_create,
+                                                    sizeof(dyn_create),
+                                                    &dyn_create_request) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_create_request.channel_id == 7 && dyn_create_request.channel_id_bytes == 1 &&
+           dyn_create_request.name_len == 4 && memcmp(dyn_create_request.name, "ECHO", 4) == 0);
+    PCHECK(rdp_dynamic_channel_write_create_response(&dyn_response,
+                                                     dyn_create_request.channel_id,
+                                                     dyn_create_request.channel_id_bytes,
+                                                     RDP_DYNAMIC_CHANNEL_STATUS_OK) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 6 && dyn_response.data[0] == 0x10 && dyn_response.data[1] == 7 &&
+           test_read_u32_le(dyn_response.data + 2) == 0);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==
@@ -1098,6 +1153,8 @@ static int test_path_security_license_channels(void)
     PCHECK(memcmp(auth_info.data + 16, ts_credentials.data, ts_credentials.length < 8u ? ts_credentials.length : 8u) !=
            0);
     rdp_buffer_free(&nla_request);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_free(&channel_packet);
     rdp_buffer_free(&ts_request);
     rdp_buffer_free(&auth_info);
     rdp_buffer_free(&ts_credentials);

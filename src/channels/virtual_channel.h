@@ -6,6 +6,8 @@
 
 #include <librdp/error.h>
 
+#include "common/buffer.h"
+
 typedef struct rdp_virtual_channel_packet
 {
     uint32_t length;
@@ -15,5 +17,9 @@ typedef struct rdp_virtual_channel_packet
 } rdp_virtual_channel_packet;
 
 librdp_status rdp_virtual_channel_parse_packet(const void* data, size_t length, rdp_virtual_channel_packet* packet);
+librdp_status rdp_virtual_channel_write_packet(rdp_buffer* buffer,
+                                               const void* payload,
+                                               size_t payload_len,
+                                               uint32_t flags);
 
 #endif

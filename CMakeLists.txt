@@ -16,6 +16,7 @@ add_library(librdp
     src/client/error.c
     src/client/settings.c
     src/client/session.c
+    src/channels/dynamic_channel.c
     src/channels/virtual_channel.c
     src/clipboard/clipboard.c
     src/common/buffer.c
@@ -87,6 +88,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_slowpath fuzz/slowpath_fuzzer.c)
     add_librdp_fuzzer(fuzz_bitmap fuzz/bitmap_fuzzer.c)
     add_librdp_fuzzer(fuzz_virtual_channel fuzz/virtual_channel_fuzzer.c)
+    add_librdp_fuzzer(fuzz_dynamic_channel fuzz/dynamic_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
     add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)
     add_librdp_fuzzer(fuzz_credssp fuzz/credssp_fuzzer.c)

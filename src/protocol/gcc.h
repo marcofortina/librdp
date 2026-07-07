@@ -31,6 +31,7 @@ typedef struct rdp_gcc_client_config
     uint16_t desktop_height;
     uint32_t requested_protocols;
     const char* client_name;
+    uint8_t enable_dynamic_channels;
 } rdp_gcc_client_config;
 
 typedef struct rdp_gcc_client_data_summary

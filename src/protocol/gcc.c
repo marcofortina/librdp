@@ -283,15 +283,24 @@ static librdp_status rdp_gcc_write_client_security(rdp_buffer* buffer)
     return status;
 }
 
-static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer)
+static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
 
+    if (!config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
     rdp_buffer_init(&payload);
-    status = rdp_buffer_append_u16_le(&payload, 0);
+    status = rdp_buffer_append_u32_le(&payload, config->enable_dynamic_channels ? 1u : 0u);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(&payload, 0);
+    {
+        static const uint8_t name[8] = {'d', 'r', 'd', 'y', 'n', 'v', 'c', 0};
+        if (config->enable_dynamic_channels)
+            status = rdp_buffer_append(&payload, name, sizeof(name));
+    }
+    if (status == LIBRDP_STATUS_OK && config->enable_dynamic_channels)
+        status = rdp_buffer_append_u32_le(&payload, 0x80800000u);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_CS_NETWORK, &payload);
     rdp_buffer_free(&payload);
@@ -309,7 +318,7 @@ librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_client_security(buffer);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_gcc_write_client_network(buffer);
+        status = rdp_gcc_write_client_network(buffer, config);
     return status;
 }
 
