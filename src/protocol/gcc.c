@@ -204,14 +204,23 @@ static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t client_version = RDP_GCC_CLIENT_VERSION_5;
     uint16_t early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO;
+    uint16_t supported_color_depths = RDP_GCC_SUPPORTED_COLOR_DEPTHS_LEGACY;
     uint8_t connection_type = RDP_GCC_CONNECTION_TYPE_LAN;
+    uint32_t desktop_scale_factor = 100;
+    uint32_t device_scale_factor = 100;
 
     if (config->client_version != 0)
         client_version = config->client_version;
     if (config->early_capability_flags != 0)
         early_capability_flags = config->early_capability_flags;
+    if (config->supported_color_depths != 0)
+        supported_color_depths = config->supported_color_depths;
     if (config->connection_type != 0)
         connection_type = config->connection_type;
+    if (config->desktop_scale_factor != 0)
+        desktop_scale_factor = config->desktop_scale_factor;
+    if (config->device_scale_factor != 0)
+        device_scale_factor = config->device_scale_factor;
 
     rdp_buffer_init(&payload);
     status = rdp_buffer_append_u32_le(&payload, client_version);
@@ -250,7 +259,7 @@ static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&payload, 0x0018u);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(&payload, 0x0007u);
+        status = rdp_buffer_append_u16_le(&payload, supported_color_depths);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&payload, early_capability_flags);
     if (status == LIBRDP_STATUS_OK)
@@ -262,15 +271,15 @@ static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(&payload, config->requested_protocols);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 0);
+        status = rdp_buffer_append_u32_le(&payload, config->desktop_physical_width);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 0);
+        status = rdp_buffer_append_u32_le(&payload, config->desktop_physical_height);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(&payload, 0);
+        status = rdp_buffer_append_u16_le(&payload, config->desktop_orientation);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 100);
+        status = rdp_buffer_append_u32_le(&payload, desktop_scale_factor);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 100);
+        status = rdp_buffer_append_u32_le(&payload, device_scale_factor);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_CS_CORE, &payload);
 
@@ -539,6 +548,9 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
             }
             if (block.payload_len >= 142)
             {
+                payload.position = 138;
+                if (rdp_stream_read_u16_le(&payload, &summary->supported_color_depths) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
                 payload.position = 140;
                 if (rdp_stream_read_u16_le(&payload, &summary->early_capability_flags) != LIBRDP_STATUS_OK)
                     return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -547,6 +559,13 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
             {
                 payload.position = 206;
                 if (rdp_stream_read_u8(&payload, &summary->connection_type) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (block.payload_len >= 220)
+            {
+                payload.position = 212;
+                if (rdp_stream_read_u32_le(&payload, &summary->desktop_physical_width) != LIBRDP_STATUS_OK ||
+                    rdp_stream_read_u32_le(&payload, &summary->desktop_physical_height) != LIBRDP_STATUS_OK)
                     return LIBRDP_STATUS_PROTOCOL_ERROR;
             }
         }

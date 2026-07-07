@@ -25,6 +25,8 @@
 #define RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT 0x0080u
 #define RDP_GCC_EARLY_SUPPORT_DYNVC_GFX 0x0100u
 #define RDP_GCC_CONNECTION_TYPE_LAN 0x06u
+#define RDP_GCC_SUPPORTED_COLOR_DEPTHS_LEGACY 0x0007u
+#define RDP_GCC_SUPPORTED_COLOR_DEPTHS_32BPP 0x000fu
 
 typedef struct rdp_gcc_user_data_block
 {
@@ -41,7 +43,13 @@ typedef struct rdp_gcc_client_config
     uint16_t desktop_height;
     uint32_t requested_protocols;
     uint16_t early_capability_flags;
+    uint16_t supported_color_depths;
     uint8_t connection_type;
+    uint32_t desktop_physical_width;
+    uint32_t desktop_physical_height;
+    uint16_t desktop_orientation;
+    uint32_t desktop_scale_factor;
+    uint32_t device_scale_factor;
     const char* client_name;
     uint8_t enable_dynamic_channels;
 } rdp_gcc_client_config;
@@ -56,7 +64,10 @@ typedef struct rdp_gcc_client_data_summary
     uint32_t version;
     uint32_t requested_protocols;
     uint16_t early_capability_flags;
+    uint16_t supported_color_depths;
     uint8_t connection_type;
+    uint32_t desktop_physical_width;
+    uint32_t desktop_physical_height;
     uint16_t channel_count;
 } rdp_gcc_client_data_summary;
 

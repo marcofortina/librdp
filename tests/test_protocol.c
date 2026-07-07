@@ -252,7 +252,13 @@ static int test_mcs_gcc_capabilities(void)
     config.client_version = 0;
     config.requested_protocols = 0;
     config.early_capability_flags = 0;
+    config.supported_color_depths = 0;
     config.connection_type = 0;
+    config.desktop_physical_width = 0;
+    config.desktop_physical_height = 0;
+    config.desktop_orientation = 0;
+    config.desktop_scale_factor = 0;
+    config.device_scale_factor = 0;
     config.client_name = "librdp";
     config.enable_dynamic_channels = 0;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
@@ -261,16 +267,24 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_5);
     PCHECK(summary.early_capability_flags == RDP_GCC_EARLY_SUPPORT_ERRINFO);
+    PCHECK(summary.supported_color_depths == RDP_GCC_SUPPORTED_COLOR_DEPTHS_LEGACY);
     PCHECK(summary.connection_type == RDP_GCC_CONNECTION_TYPE_LAN);
+    PCHECK(summary.desktop_physical_width == 0 && summary.desktop_physical_height == 0);
     PCHECK(summary.channel_count == 0);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_init(&client_blocks);
     config.client_version = RDP_GCC_CLIENT_VERSION_10_12;
     config.early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO | RDP_GCC_EARLY_SUPPORT_STATUSINFO |
+                                    RDP_GCC_EARLY_WANT_32BPP |
                                     RDP_GCC_EARLY_SUPPORT_MONITOR_LAYOUT |
                                     RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT |
                                     RDP_GCC_EARLY_SUPPORT_DYNVC_GFX;
+    config.supported_color_depths = RDP_GCC_SUPPORTED_COLOR_DEPTHS_32BPP;
     config.connection_type = RDP_GCC_CONNECTION_TYPE_LAN;
+    config.desktop_physical_width = 271;
+    config.desktop_physical_height = 203;
+    config.desktop_scale_factor = 100;
+    config.device_scale_factor = 100;
     config.enable_dynamic_channels = 1;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
@@ -278,6 +292,9 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_DYNVC_GFX) != 0);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT) != 0);
+    PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_WANT_32BPP) != 0);
+    PCHECK(summary.supported_color_depths == RDP_GCC_SUPPORTED_COLOR_DEPTHS_32BPP);
+    PCHECK(summary.desktop_physical_width == 271 && summary.desktop_physical_height == 203);
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "drdynvc", 7));
     PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
            LIBRDP_STATUS_OK);
