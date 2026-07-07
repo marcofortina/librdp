@@ -10,6 +10,7 @@
 
 #define RDP_GRAPHICS_CMDID_WIRE_TO_SURFACE_1 0x0001u
 #define RDP_GRAPHICS_CMDID_WIRE_TO_SURFACE_2 0x0002u
+#define RDP_GRAPHICS_CMDID_SOLIDFILL 0x0004u
 #define RDP_GRAPHICS_CMDID_CREATE_SURFACE 0x0009u
 #define RDP_GRAPHICS_CMDID_DELETE_SURFACE 0x000au
 #define RDP_GRAPHICS_CMDID_START_FRAME 0x000bu
@@ -78,6 +79,23 @@ typedef struct rdp_graphics_map_surface_to_output
     uint32_t output_origin_y;
 } rdp_graphics_map_surface_to_output;
 
+typedef struct rdp_graphics_rect16
+{
+    uint16_t left;
+    uint16_t top;
+    uint16_t right;
+    uint16_t bottom;
+} rdp_graphics_rect16;
+
+typedef struct rdp_graphics_solid_fill
+{
+    uint16_t surface_id;
+    uint32_t fill_pixel;
+    uint16_t rect_count;
+    const uint8_t* rects;
+    size_t rects_len;
+} rdp_graphics_solid_fill;
+
 typedef struct rdp_graphics_start_frame
 {
     uint32_t timestamp;
@@ -118,6 +136,10 @@ librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_grap
 librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
                                                        size_t length,
                                                        rdp_graphics_map_surface_to_output* map);
+librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_graphics_rect16* rect);
+librdp_status rdp_graphics_parse_solid_fill(const void* data,
+                                            size_t length,
+                                            rdp_graphics_solid_fill* solid_fill);
 librdp_status rdp_graphics_parse_start_frame(const void* data,
                                              size_t length,
                                              rdp_graphics_start_frame* start_frame);

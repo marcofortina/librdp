@@ -31,6 +31,8 @@
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
+#define RDP_SESSION_MAX_GRAPHICS_SURFACES 64u
+#define RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION 8192u
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
@@ -45,6 +47,19 @@ typedef struct rdp_session_dynamic_channel
     rdp_buffer fragment;
     char name[RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX];
 } rdp_session_dynamic_channel;
+
+typedef struct rdp_session_graphics_surface
+{
+    uint8_t active;
+    uint8_t mapped;
+    uint16_t surface_id;
+    uint16_t width;
+    uint16_t height;
+    uint8_t pixel_format;
+    uint32_t output_origin_x;
+    uint32_t output_origin_y;
+    rdp_buffer pixels;
+} rdp_session_graphics_surface;
 
 struct librdp_session
 {
@@ -67,6 +82,7 @@ struct librdp_session
     uint32_t graphics_selected_flags;
     uint32_t graphics_frames_decoded;
     rdp_graphics_decompressor graphics_decompressor;
+    rdp_session_graphics_surface graphics_surfaces[RDP_SESSION_MAX_GRAPHICS_SURFACES];
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     uint32_t share_id;
     librdp_session_state state;
@@ -347,6 +363,221 @@ static void rdp_session_dynamic_channels_clear(librdp_session* session)
     memset(session->dynamic_channels, 0, sizeof(session->dynamic_channels));
 }
 
+static rdp_session_graphics_surface* rdp_session_graphics_surface_find(librdp_session* session, uint16_t surface_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_GRAPHICS_SURFACES; i++)
+    {
+        if (session->graphics_surfaces[i].active && session->graphics_surfaces[i].surface_id == surface_id)
+            return &session->graphics_surfaces[i];
+    }
+    return NULL;
+}
+
+static rdp_session_graphics_surface* rdp_session_graphics_surface_find_slot(librdp_session* session,
+                                                                            uint16_t surface_id)
+{
+    size_t i = 0;
+    rdp_session_graphics_surface* free_slot = NULL;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_GRAPHICS_SURFACES; i++)
+    {
+        if (session->graphics_surfaces[i].active && session->graphics_surfaces[i].surface_id == surface_id)
+            return &session->graphics_surfaces[i];
+        if (!session->graphics_surfaces[i].active && !free_slot)
+            free_slot = &session->graphics_surfaces[i];
+    }
+    return free_slot;
+}
+
+static void rdp_session_graphics_surfaces_clear(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_MAX_GRAPHICS_SURFACES; i++)
+        rdp_buffer_free(&session->graphics_surfaces[i].pixels);
+    memset(session->graphics_surfaces, 0, sizeof(session->graphics_surfaces));
+}
+
+static librdp_status rdp_session_graphics_surface_create(librdp_session* session,
+                                                         const rdp_graphics_create_surface* create)
+{
+    rdp_session_graphics_surface* surface = NULL;
+    size_t stride = 0;
+    size_t size = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !create)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (create->width == 0 || create->height == 0 ||
+        create->width > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION ||
+        create->height > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    stride = (size_t)create->width * 4u;
+    if ((size_t)create->height > ((size_t)-1) / stride)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    size = stride * (size_t)create->height;
+
+    surface = rdp_session_graphics_surface_find_slot(session, create->surface_id);
+    if (!surface)
+        return LIBRDP_STATUS_NO_MEMORY;
+
+    rdp_buffer_free(&surface->pixels);
+    memset(surface, 0, sizeof(*surface));
+    status = rdp_buffer_reserve(&surface->pixels, size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    memset(surface->pixels.data, 0, size);
+    surface->pixels.length = size;
+    surface->active = 1;
+    surface->surface_id = create->surface_id;
+    surface->width = create->width;
+    surface->height = create->height;
+    surface->pixel_format = create->pixel_format;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_session_graphics_surface_delete(librdp_session* session, uint16_t surface_id)
+{
+    rdp_session_graphics_surface* surface = rdp_session_graphics_surface_find(session, surface_id);
+
+    if (!surface)
+        return;
+    rdp_buffer_free(&surface->pixels);
+    memset(surface, 0, sizeof(*surface));
+}
+
+static librdp_status rdp_session_graphics_surface_flush(librdp_session* session,
+                                                        rdp_session_graphics_surface* surface,
+                                                        uint16_t left,
+                                                        uint16_t top,
+                                                        uint16_t right,
+                                                        uint16_t bottom)
+{
+    uint64_t dst_x64 = 0;
+    uint64_t dst_y64 = 0;
+    uint32_t dst_x = 0;
+    uint32_t dst_y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t output_width = 0;
+    uint32_t output_height = 0;
+    size_t stride = 0;
+    const uint8_t* pixels = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !surface || !surface->active)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!surface->mapped || left >= right || top >= bottom)
+        return LIBRDP_STATUS_OK;
+    if (right > surface->width || bottom > surface->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    output_width = librdp_surface_width(session->surface);
+    output_height = librdp_surface_height(session->surface);
+    dst_x64 = (uint64_t)surface->output_origin_x + left;
+    dst_y64 = (uint64_t)surface->output_origin_y + top;
+    if (dst_x64 >= output_width || dst_y64 >= output_height)
+        return LIBRDP_STATUS_OK;
+    dst_x = (uint32_t)dst_x64;
+    dst_y = (uint32_t)dst_y64;
+    width = (uint32_t)(right - left);
+    height = (uint32_t)(bottom - top);
+    if (width > output_width - dst_x)
+        width = output_width - dst_x;
+    if (height > output_height - dst_y)
+        height = output_height - dst_y;
+    if (width == 0 || height == 0)
+        return LIBRDP_STATUS_OK;
+
+    stride = (size_t)surface->width * 4u;
+    pixels = surface->pixels.data + ((size_t)top * stride) + ((size_t)left * 4u);
+    status = librdp_surface_blit_bgra32(session->surface, dst_x, dst_y, width, height, pixels, stride);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        librdp_event event;
+
+        event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
+        event.data.surface.x = dst_x;
+        event.data.surface.y = dst_y;
+        event.data.surface.width = width;
+        event.data.surface.height = height;
+        rdp_session_emit(session, &event);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.surface.flush",
+                        "surface_id=%u x=%u y=%u width=%u height=%u",
+                        surface->surface_id,
+                        dst_x,
+                        dst_y,
+                        width,
+                        height);
+    }
+    return status;
+}
+
+static librdp_status rdp_session_graphics_surface_map(librdp_session* session,
+                                                      const rdp_graphics_map_surface_to_output* map)
+{
+    rdp_session_graphics_surface* surface = NULL;
+
+    if (!session || !map)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    surface = rdp_session_graphics_surface_find(session, map->surface_id);
+    if (!surface)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    surface->mapped = 1;
+    surface->output_origin_x = map->output_origin_x;
+    surface->output_origin_y = map->output_origin_y;
+    return rdp_session_graphics_surface_flush(session, surface, 0, 0, surface->width, surface->height);
+}
+
+static librdp_status rdp_session_graphics_surface_fill(librdp_session* session,
+                                                       rdp_session_graphics_surface* surface,
+                                                       const rdp_graphics_rect16* rect,
+                                                       uint32_t fill_pixel)
+{
+    uint8_t b = (uint8_t)(fill_pixel & 0xffu);
+    uint8_t g = (uint8_t)((fill_pixel >> 8) & 0xffu);
+    uint8_t r = (uint8_t)((fill_pixel >> 16) & 0xffu);
+    uint8_t a = 0xffu;
+    size_t stride = 0;
+    uint16_t y = 0;
+
+    if (!session || !surface || !rect || !surface->active)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rect->right > surface->width || rect->bottom > surface->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rect->left >= rect->right || rect->top >= rect->bottom)
+        return LIBRDP_STATUS_OK;
+    if (surface->pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888)
+        a = (uint8_t)((fill_pixel >> 24) & 0xffu);
+
+    stride = (size_t)surface->width * 4u;
+    for (y = rect->top; y < rect->bottom; y++)
+    {
+        uint8_t* pixel = surface->pixels.data + ((size_t)y * stride) + ((size_t)rect->left * 4u);
+        uint16_t x = 0;
+
+        for (x = rect->left; x < rect->right; x++)
+        {
+            pixel[0] = b;
+            pixel[1] = g;
+            pixel[2] = r;
+            pixel[3] = a;
+            pixel += 4;
+        }
+    }
+    return rdp_session_graphics_surface_flush(session, surface, rect->left, rect->top, rect->right, rect->bottom);
+}
+
 static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
                                               rdp_buffer* packet,
                                               const uint8_t** pdu,
@@ -541,6 +772,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_reset(pdu, header.pdu_length, &reset);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            rdp_session_graphics_surfaces_clear(session);
             if (reset.width != librdp_surface_width(session->surface) ||
                 reset.height != librdp_surface_height(session->surface))
             {
@@ -571,6 +803,9 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_create_surface(pdu, header.pdu_length, &create_surface);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            status = rdp_session_graphics_surface_create(session, &create_surface);
+            if (status != LIBRDP_STATUS_OK)
+                break;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.surface.create",
                             "dvc_channel_id=%u surface_id=%u width=%u height=%u pixel_format=%u",
@@ -587,6 +822,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_delete_surface(pdu, header.pdu_length, &delete_surface);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            rdp_session_graphics_surface_delete(session, delete_surface.surface_id);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.surface.delete",
                             "dvc_channel_id=%u surface_id=%u",
@@ -600,6 +836,9 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_map_surface_to_output(pdu, header.pdu_length, &map);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            status = rdp_session_graphics_surface_map(session, &map);
+            if (status != LIBRDP_STATUS_OK)
+                break;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.surface.map_output",
                             "dvc_channel_id=%u surface_id=%u x=%u y=%u",
@@ -607,6 +846,42 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                             map.surface_id,
                             map.output_origin_x,
                             map.output_origin_y);
+        }
+        else if (header.cmd_id == RDP_GRAPHICS_CMDID_SOLIDFILL)
+        {
+            rdp_graphics_solid_fill solid_fill;
+            rdp_session_graphics_surface* surface = NULL;
+            uint16_t i = 0;
+
+            status = rdp_graphics_parse_solid_fill(pdu, header.pdu_length, &solid_fill);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            surface = rdp_session_graphics_surface_find(session, solid_fill.surface_id);
+            if (!surface)
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
+            for (i = 0; i < solid_fill.rect_count; i++)
+            {
+                rdp_graphics_rect16 rect;
+
+                status = rdp_graphics_parse_rect16(solid_fill.rects + ((size_t)i * 8u),
+                                                   solid_fill.rects_len - ((size_t)i * 8u),
+                                                   &rect);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_graphics_surface_fill(session, surface, &rect, solid_fill.fill_pixel);
+                if (status != LIBRDP_STATUS_OK)
+                    break;
+            }
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.graphics.solid_fill",
+                            "dvc_channel_id=%u surface_id=%u rects=%u",
+                            channel_id,
+                            solid_fill.surface_id,
+                            solid_fill.rect_count);
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_START_FRAME)
         {
@@ -1028,6 +1303,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             session->graphics_selected_flags = 0;
             session->graphics_frames_decoded = 0;
             rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+            rdp_session_graphics_surfaces_clear(session);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.channel",
                             "dvc_channel_id=%u",
@@ -1180,6 +1456,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->graphics_selected_flags = 0;
                 session->graphics_frames_decoded = 0;
                 rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+                rdp_session_graphics_surfaces_clear(session);
             }
             rdp_buffer_free(&entry->fragment);
             entry->fragment_expected = 0;
@@ -1465,6 +1742,7 @@ void librdp_session_free(librdp_session* session)
         return;
     (void)librdp_session_disconnect(session);
     rdp_session_dynamic_channels_clear(session);
+    rdp_session_graphics_surfaces_clear(session);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_transport_close(&session->transport);
     librdp_surface_free(session->surface);
@@ -1553,6 +1831,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_session_graphics_surfaces_clear(session);
     rdp_session_dynamic_channels_clear(session);
 
     status = rdp_transport_connect(&session->transport,
@@ -2466,6 +2745,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_session_graphics_surfaces_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 

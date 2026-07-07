@@ -12,6 +12,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_delete_surface delete_surface;
     rdp_graphics_reset reset;
     rdp_graphics_map_surface_to_output map;
+    rdp_graphics_rect16 rect;
+    rdp_graphics_solid_fill solid_fill;
     rdp_graphics_start_frame start_frame;
     rdp_graphics_end_frame end_frame;
     rdp_graphics_decompressor decompressor;
@@ -26,6 +28,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_parse_delete_surface(data, size, &delete_surface);
     (void)rdp_graphics_parse_reset(data, size, &reset);
     (void)rdp_graphics_parse_map_surface_to_output(data, size, &map);
+    (void)rdp_graphics_parse_rect16(data, size, &rect);
+    (void)rdp_graphics_parse_solid_fill(data, size, &solid_fill);
     (void)rdp_graphics_parse_start_frame(data, size, &start_frame);
     (void)rdp_graphics_parse_end_frame(data, size, &end_frame);
     (void)rdp_graphics_decode_segmented_data(&decompressor, data, size, &output);

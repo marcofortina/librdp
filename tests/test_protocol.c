@@ -441,6 +441,19 @@ static int test_path_security_license_channels(void)
         0x0a, 0x00, 0x00, 0x00,
         0x14, 0x00, 0x00, 0x00
     };
+    const uint8_t graphics_solid_fill[] = {
+        0x04, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x34, 0x12,
+        0x11, 0x22, 0x33, 0xff,
+        0x01, 0x00,
+        0x01, 0x00, 0x02, 0x00,
+        0x05, 0x00, 0x06, 0x00
+    };
+    const uint8_t graphics_bad_rect[] = {
+        0x05, 0x00, 0x02, 0x00,
+        0x01, 0x00, 0x06, 0x00
+    };
     const uint8_t graphics_start_frame[] = {
         0x0b, 0x00, 0x00, 0x00,
         0x10, 0x00, 0x00, 0x00,
@@ -610,6 +623,8 @@ static int test_path_security_license_channels(void)
     rdp_graphics_delete_surface graphics_delete;
     rdp_graphics_reset graphics_reset;
     rdp_graphics_map_surface_to_output graphics_map;
+    rdp_graphics_rect16 graphics_rect;
+    rdp_graphics_solid_fill graphics_solid;
     rdp_graphics_start_frame graphics_start;
     rdp_graphics_end_frame graphics_end;
     rdp_graphics_decompressor graphics_decompressor;
@@ -1283,6 +1298,26 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_map.surface_id == 0x1234 &&
            graphics_map.output_origin_x == 10 &&
            graphics_map.output_origin_y == 20);
+    PCHECK(rdp_graphics_parse_solid_fill(graphics_solid_fill,
+                                         sizeof(graphics_solid_fill),
+                                         &graphics_solid) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_solid.surface_id == 0x1234 &&
+           graphics_solid.fill_pixel == 0xff332211u &&
+           graphics_solid.rect_count == 1 &&
+           graphics_solid.rects_len == 8);
+    PCHECK(rdp_graphics_parse_rect16(graphics_solid.rects,
+                                     graphics_solid.rects_len,
+                                     &graphics_rect) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_rect.left == 1 &&
+           graphics_rect.top == 2 &&
+           graphics_rect.right == 5 &&
+           graphics_rect.bottom == 6);
+    PCHECK(rdp_graphics_parse_solid_fill(graphics_solid_fill,
+                                         sizeof(graphics_solid_fill) - 1u,
+                                         &graphics_solid) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_rect16(graphics_bad_rect,
+                                     sizeof(graphics_bad_rect),
+                                     &graphics_rect) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_parse_start_frame(graphics_start_frame,
                                           sizeof(graphics_start_frame),
                                           &graphics_start) == LIBRDP_STATUS_OK);

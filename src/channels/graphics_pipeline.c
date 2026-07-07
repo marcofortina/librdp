@@ -571,6 +571,58 @@ librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_graphics_rect16* rect)
+{
+    rdp_stream stream;
+
+    if (!data || !rect)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(rect, 0, sizeof(*rect));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u16_le(&stream, &rect->left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &rect->top) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &rect->right) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &rect->bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rect->right < rect->left || rect->bottom < rect->top)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_parse_solid_fill(const void* data,
+                                            size_t length,
+                                            rdp_graphics_solid_fill* solid_fill)
+{
+    rdp_graphics_header header;
+    rdp_stream stream;
+
+    if (!data || !solid_fill)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(solid_fill, 0, sizeof(*solid_fill));
+    if (rdp_graphics_parse_header(data, length, &header) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header.cmd_id != RDP_GRAPHICS_CMDID_SOLIDFILL || header.pdu_length != length || length < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &solid_fill->surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &solid_fill->fill_pixel) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &solid_fill->rect_count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((size_t)solid_fill->rect_count != rdp_stream_remaining(&stream) / 8u ||
+        rdp_stream_remaining(&stream) % 8u != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &solid_fill->rects, rdp_stream_remaining(&stream)) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    solid_fill->rects_len = (size_t)solid_fill->rect_count * 8u;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_graphics_parse_start_frame(const void* data,
                                              size_t length,
                                              rdp_graphics_start_frame* start_frame)
