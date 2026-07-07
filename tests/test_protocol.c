@@ -478,6 +478,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer confirm_active;
     rdp_buffer client_sync;
     rdp_buffer client_control;
+    rdp_buffer client_persistent_keys;
     rdp_buffer client_font_list;
     rdp_buffer client_keyboard_input;
     rdp_buffer client_mouse_input;
@@ -555,6 +556,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&confirm_active);
     rdp_buffer_init(&client_sync);
     rdp_buffer_init(&client_control);
+    rdp_buffer_init(&client_persistent_keys);
     rdp_buffer_init(&client_font_list);
     rdp_buffer_init(&client_keyboard_input);
     rdp_buffer_init(&client_mouse_input);
@@ -693,6 +695,17 @@ static int test_path_security_license_channels(void)
            test_read_u16_le(data_pdu.payload) == 1);
     PCHECK(rdp_slowpath_write_client_control(&client_control, 0x12345678u, 1004, 2) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_slowpath_write_client_persistent_key_list(&client_persistent_keys, 0x12345678u, 1004) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_persistent_keys.data,
+                                       client_persistent_keys.length,
+                                       &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_BITMAP_CACHE_PERSISTENT_LIST &&
+           data_pdu.payload_len == 24 &&
+           data_pdu.payload[20] == 3);
+    for (i = 0; i < 20; i++)
+        PCHECK(data_pdu.payload[i] == 0);
+    PCHECK(data_pdu.payload[21] == 0 && data_pdu.payload[22] == 0 && data_pdu.payload[23] == 0);
     PCHECK(rdp_slowpath_write_client_font_list(&client_font_list, 0x12345678u, 1004) == LIBRDP_STATUS_OK);
     PCHECK(rdp_slowpath_parse_data_pdu(client_font_list.data, client_font_list.length, &data_pdu) ==
            LIBRDP_STATUS_OK);
@@ -1103,6 +1116,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);
     rdp_buffer_free(&client_font_list);
+    rdp_buffer_free(&client_persistent_keys);
     rdp_buffer_free(&client_control);
     rdp_buffer_free(&client_sync);
     rdp_buffer_free(&expected_cipher);

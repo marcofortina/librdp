@@ -22,6 +22,7 @@
 #define RDP_SLOWPATH_DATA_PDU_SAVE_SESSION_INFO 0x26u
 #define RDP_SLOWPATH_DATA_PDU_FONT_LIST 0x27u
 #define RDP_SLOWPATH_DATA_PDU_FONT_MAP 0x28u
+#define RDP_SLOWPATH_DATA_PDU_BITMAP_CACHE_PERSISTENT_LIST 0x2bu
 #define RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO 0x2fu
 
 typedef struct rdp_slowpath_share_control_header
@@ -90,6 +91,9 @@ librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
 librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
                                                   uint32_t share_id,
                                                   uint16_t channel_id);
+librdp_status rdp_slowpath_write_client_persistent_key_list(rdp_buffer* buffer,
+                                                            uint32_t share_id,
+                                                            uint16_t channel_id);
 librdp_status rdp_slowpath_write_client_keyboard_input(rdp_buffer* buffer,
                                                        uint32_t share_id,
                                                        uint16_t channel_id,

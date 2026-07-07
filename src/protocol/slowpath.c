@@ -573,6 +573,21 @@ librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
                                        sizeof(payload));
 }
 
+librdp_status rdp_slowpath_write_client_persistent_key_list(rdp_buffer* buffer,
+                                                            uint32_t share_id,
+                                                            uint16_t channel_id)
+{
+    uint8_t payload[24] = {0};
+
+    payload[20] = 3;
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_BITMAP_CACHE_PERSISTENT_LIST,
+                                       payload,
+                                       sizeof(payload));
+}
+
 static librdp_status rdp_slowpath_write_client_input_event(rdp_buffer* buffer,
                                                            uint32_t share_id,
                                                            uint16_t channel_id,

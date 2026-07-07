@@ -126,6 +126,7 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     rdp_buffer sync;
     rdp_buffer cooperate;
     rdp_buffer request;
+    rdp_buffer persistent_keys;
     rdp_buffer font_list;
     rdp_buffer suppress;
     rdp_buffer refresh;
@@ -137,6 +138,7 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     rdp_buffer_init(&sync);
     rdp_buffer_init(&cooperate);
     rdp_buffer_init(&request);
+    rdp_buffer_init(&persistent_keys);
     rdp_buffer_init(&font_list);
     rdp_buffer_init(&suppress);
     rdp_buffer_init(&refresh);
@@ -160,6 +162,13 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
         status = rdp_session_write_slowpath_pdu(session, &request, "rdp.activation.client_control_request");
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.activation.client_control_request", "share_id=%u", share_id);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_client_persistent_key_list(&persistent_keys, share_id, session->mcs_user_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(session, &persistent_keys, "rdp.activation.client_persistent_key_list");
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.activation.client_persistent_key_list", "share_id=%u entries=0", share_id);
 
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_client_font_list(&font_list, share_id, session->mcs_user_id);
@@ -208,6 +217,7 @@ static librdp_status rdp_session_send_activation_finalization(librdp_session* se
     rdp_buffer_free(&refresh);
     rdp_buffer_free(&suppress);
     rdp_buffer_free(&font_list);
+    rdp_buffer_free(&persistent_keys);
     rdp_buffer_free(&request);
     rdp_buffer_free(&cooperate);
     rdp_buffer_free(&sync);
