@@ -4,6 +4,8 @@
 #include "common/stream.h"
 #include "common/trace.h"
 #include "input/input.h"
+#include "protocol/mcs.h"
+#include "protocol/slowpath.h"
 #include "security/security.h"
 
 #include <errno.h>
@@ -334,6 +336,73 @@ static int validate_encrypted_client_info(const uint8_t* input, size_t input_len
     return payload[0] == flags && payload[1] == 0 && payload[2] == 0 && payload[3] == 0;
 }
 
+static int build_demand_active_packet(rdp_buffer* out)
+{
+    rdp_buffer caps;
+    rdp_buffer slow;
+    rdp_buffer mcs;
+    const char source[] = {'s', 'r', 'v'};
+    size_t total = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&caps);
+    rdp_buffer_init(&slow);
+    rdp_buffer_init(&mcs);
+
+    ok = rdp_buffer_append_u16_le(&caps, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 0) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&caps, 8) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&caps, 0) == LIBRDP_STATUS_OK;
+    total = 6u + 4u + 2u + 2u + sizeof(source) + caps.length;
+    if (ok)
+        ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 1002) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0x10203040u) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)sizeof(source)) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)caps.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow, source, sizeof(source)) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow, caps.data, caps.length) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
+             append_per_length(&mcs, slow.length) &&
+             rdp_buffer_append(&mcs, slow.data, slow.length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok)
+        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&slow);
+    rdp_buffer_free(&caps);
+    return ok;
+}
+
+static int validate_confirm_active(const uint8_t* input, size_t input_len)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    rdp_slowpath_share_control_header header;
+
+    if (!read_security_payload(input, input_len, &payload, &payload_len))
+        return 0;
+    if (rdp_slowpath_parse_share_control_header(payload, payload_len, &header) != LIBRDP_STATUS_OK)
+        return 0;
+    return (header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE && header.channel_id == 1004 &&
+           payload_len >= 16 && payload[6] == 0x40 && payload[7] == 0x30 && payload[8] == 0x20 &&
+           payload[9] == 0x10;
+}
+
 static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
 {
     uint16_t total = 0;
@@ -390,6 +459,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         uint8_t input[4096];
         size_t input_len = 0;
         rdp_buffer mcs_response;
+        rdp_buffer demand_active;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
             0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -414,6 +484,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         struct timespec ts;
         int client = accept(fd, NULL, NULL);
         rdp_buffer_init(&mcs_response);
+        rdp_buffer_init(&demand_active);
         if (client >= 0)
         {
             if (!build_server_connect_response(&mcs_response, encrypted))
@@ -438,11 +509,20 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
                     !validate_encrypted_client_info(input, input_len))
                     _exit(3);
             }
+            else
+            {
+                if (!build_demand_active_packet(&demand_active) ||
+                    !write_exact_fd(client, demand_active.data, demand_active.length) ||
+                    !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                    !validate_confirm_active(input, input_len))
+                    _exit(4);
+            }
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);
             close(client);
         }
+        rdp_buffer_free(&demand_active);
         rdp_buffer_free(&mcs_response);
         close(fd);
         _exit(0);
@@ -630,7 +710,7 @@ static int test_settings_surface_input_session(void)
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
-    CHECK(librdp_session_run_once(session, 0) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     key.state = LIBRDP_KEY_PRESSED;
     CHECK(librdp_session_send_key(session, &key) == LIBRDP_STATUS_OK);

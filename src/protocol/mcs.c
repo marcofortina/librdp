@@ -7,6 +7,7 @@
 #define RDP_MCS_PDU_ATTACH_USER_CONFIRM 11u
 #define RDP_MCS_PDU_CHANNEL_JOIN_REQUEST 14u
 #define RDP_MCS_PDU_CHANNEL_JOIN_CONFIRM 15u
+#define RDP_MCS_PDU_SEND_DATA_INDICATION 26u
 
 static librdp_status rdp_mcs_write_domain_choice(rdp_buffer* buffer, uint8_t pdu_type, uint8_t options)
 {
@@ -85,6 +86,28 @@ static librdp_status rdp_mcs_read_per_enum(rdp_stream* stream, uint8_t* value)
     if (!stream || !value)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_stream_read_u8(stream, value);
+}
+
+static librdp_status rdp_mcs_read_per_length(rdp_stream* stream, size_t* length)
+{
+    uint8_t first = 0;
+
+    if (!stream || !length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((first & 0x80u) == 0)
+    {
+        *length = first;
+        return LIBRDP_STATUS_OK;
+    }
+    {
+        uint8_t second = 0;
+        if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        *length = (size_t)(((uint16_t)(first & 0x7fu) << 8) | second);
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_mcs_write_ber_tag(rdp_buffer* buffer, const uint8_t* tag, size_t tag_len, size_t length)
@@ -464,4 +487,32 @@ librdp_status rdp_mcs_parse_connect_response(const void* data, size_t length, rd
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(response, 0, sizeof(*response));
     return rdp_mcs_scan_connect_response((const uint8_t*)data, length, 0, response);
+}
+
+librdp_status rdp_mcs_parse_send_data_indication(const void* data,
+                                                 size_t length,
+                                                 rdp_mcs_send_data_indication* indication)
+{
+    rdp_stream stream;
+    uint8_t ignored = 0;
+    size_t payload_len = 0;
+
+    if (!data || !indication)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(indication, 0, sizeof(*indication));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_mcs_read_domain_choice(&stream, RDP_MCS_PDU_SEND_DATA_INDICATION, NULL) != LIBRDP_STATUS_OK ||
+        rdp_mcs_read_per_integer16(&stream, (uint16_t)RDP_MCS_BASE_CHANNEL_ID, &indication->initiator) !=
+            LIBRDP_STATUS_OK ||
+        rdp_mcs_read_per_integer16(&stream, 0, &indication->channel_id) != LIBRDP_STATUS_OK ||
+        rdp_mcs_read_per_enum(&stream, &ignored) != LIBRDP_STATUS_OK ||
+        rdp_mcs_read_per_length(&stream, &payload_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (payload_len == 0 || payload_len > rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &indication->payload, payload_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    indication->payload_len = payload_len;
+    return LIBRDP_STATUS_OK;
 }
