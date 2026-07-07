@@ -225,6 +225,7 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
             (void)write_exact_fd(client, join_user_confirm, sizeof(join_user_confirm));
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, join_global_confirm, sizeof(join_global_confirm));
+            (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);

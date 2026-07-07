@@ -1,5 +1,6 @@
 #include <librdp/session.h>
 
+#include "client/settings_internal.h"
 #include "common/trace.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
@@ -11,6 +12,7 @@
 
 #include <poll.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct librdp_session
 {
@@ -57,7 +59,10 @@ static librdp_status rdp_session_fail(librdp_session* session, librdp_status sta
     return status;
 }
 
-static librdp_status rdp_session_write_mcs_pdu(librdp_session* session, const rdp_buffer* pdu, const char* event)
+static librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
+                                               const rdp_buffer* pdu,
+                                               const char* event,
+                                               int allow_hexdump)
 {
     rdp_buffer x224_data;
     rdp_buffer packet;
@@ -74,7 +79,8 @@ static librdp_status rdp_session_write_mcs_pdu(librdp_session* session, const rd
         status = rdp_tpkt_write(&packet, x224_data.data, x224_data.length);
     if (status == LIBRDP_STATUS_OK)
     {
-        rdp_trace_hexdump(event, packet.data, packet.length);
+        if (allow_hexdump)
+            rdp_trace_hexdump(event, packet.data, packet.length);
         status = rdp_transport_write_all(&session->transport, packet.data, packet.length);
     }
 
@@ -167,6 +173,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer gcc_blocks;
     rdp_buffer gcc_request;
     rdp_buffer mcs;
+    rdp_buffer security_payload;
+    rdp_buffer security_data;
     rdp_buffer request;
     rdp_buffer reply;
     rdp_tpkt packet;
@@ -198,6 +206,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_init(&gcc_blocks);
     rdp_buffer_init(&gcc_request);
     rdp_buffer_init(&mcs);
+    rdp_buffer_init(&security_payload);
+    rdp_buffer_init(&security_data);
     rdp_buffer_init(&request);
     rdp_buffer_init(&reply);
 
@@ -275,7 +285,7 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_buffer_free(&request);
     rdp_buffer_init(&request);
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.connect.initial");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.connect.initial", 1);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
@@ -301,7 +311,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.erect_domain.request", "sub_height=0 sub_interval=0");
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.erect_domain.request");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.erect_domain.request", 1);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
@@ -311,7 +321,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.attach_user.request", "message=sent");
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.attach_user.request");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.attach_user.request", 1);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
@@ -338,7 +348,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", session->mcs_user_id);
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request", 1);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
@@ -370,7 +380,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.request", "channel_id=%u", RDP_MCS_GLOBAL_CHANNEL_ID);
-    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request");
+    status = rdp_session_write_mcs_pdu(session, &mcs, "mcs.channel_join.request", 1);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
@@ -396,6 +406,35 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
     rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.channel_join.confirm", "channel_id=%u", join_confirm.channel_id);
 
+    {
+        rdp_client_info info;
+        memset(&info, 0, sizeof(info));
+        info.domain = librdp_settings_domain(session->settings);
+        info.username = librdp_settings_username(session->settings);
+        info.password = rdp_settings_password_internal(session->settings);
+        info.alternate_shell = NULL;
+        info.working_dir = NULL;
+        status = rdp_security_write_client_info_pdu(&security_payload, &info);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+    }
+    status = rdp_security_write_send_data_request(&security_data,
+                                                  session->mcs_user_id,
+                                                  (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                  security_payload.data,
+                                                  security_payload.length);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "rdp.client_info.start",
+                    "domain_present=%u username_present=%u password=masked",
+                    librdp_settings_domain(session->settings) ? 1u : 0u,
+                    librdp_settings_username(session->settings) ? 1u : 0u);
+    status = rdp_session_write_mcs_pdu(session, &security_data, "rdp.client_info.pdu", 0);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.client_info.done", "status=sent");
+
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
     event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
@@ -408,6 +447,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.done", "transport=tcp");
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
+    rdp_buffer_free(&security_data);
+    rdp_buffer_free(&security_payload);
     rdp_buffer_free(&mcs);
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
@@ -419,6 +460,8 @@ fail:
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
+    rdp_buffer_free(&security_data);
+    rdp_buffer_free(&security_payload);
     rdp_buffer_free(&mcs);
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);

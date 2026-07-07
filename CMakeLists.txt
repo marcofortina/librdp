@@ -82,6 +82,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_slowpath fuzz/slowpath_fuzzer.c)
     add_librdp_fuzzer(fuzz_virtual_channel fuzz/virtual_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
+    add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)

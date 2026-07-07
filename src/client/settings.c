@@ -1,5 +1,7 @@
 #include <librdp/settings.h>
 
+#include "client/settings_internal.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -190,4 +192,9 @@ uint32_t librdp_settings_height(const librdp_settings* settings)
 librdp_security_mode librdp_settings_security_mode(const librdp_settings* settings)
 {
     return settings ? settings->security_mode : LIBRDP_SECURITY_AUTO;
+}
+
+const char* rdp_settings_password_internal(const librdp_settings* settings)
+{
+    return settings ? settings->password : NULL;
 }

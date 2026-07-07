@@ -211,12 +211,20 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
+    const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
     rdp_fastpath_header fast;
     rdp_slowpath_share_control_header slow_header;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_clipboard_packet cb;
     rdp_credssp_state cred_state;
+    rdp_buffer security;
+    rdp_buffer send_data;
+    rdp_client_info info;
+    rdp_client_info_summary info_summary;
+
+    rdp_buffer_init(&security);
+    rdp_buffer_init(&send_data);
 
     PCHECK(rdp_fastpath_parse_header(fast_short, sizeof(fast_short), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
@@ -232,6 +240,30 @@ static int test_path_security_license_channels(void)
     PCHECK(!rdp_security_protocol_supported(RDP_X224_PROTOCOL_TLS));
     PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_STANDARD));
 
+    memset(&info, 0, sizeof(info));
+    info.domain = "D";
+    info.username = "user";
+    info.password = "secret";
+    PCHECK(rdp_security_write_client_info_pdu(&security, &info) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_parse_client_info_pdu(security.data, security.length, &info_summary) == LIBRDP_STATUS_OK);
+    PCHECK(info_summary.domain_bytes == 2);
+    PCHECK(info_summary.username_bytes == 8);
+    PCHECK(info_summary.password_bytes == 12);
+    PCHECK((info_summary.flags & 0x00000010u) != 0);
+    PCHECK(rdp_security_write_send_data_request(&send_data, 1004, RDP_MCS_GLOBAL_CHANNEL_ID, security.data,
+                                                security.length) == LIBRDP_STATUS_OK);
+    PCHECK(send_data.length > security.length);
+    PCHECK(send_data.data[0] == 0x64);
+    PCHECK(send_data.data[1] == 0x00 && send_data.data[2] == 0x03);
+    PCHECK(send_data.data[3] == 0x03 && send_data.data[4] == 0xeb);
+    rdp_buffer_free(&security);
+    rdp_buffer_init(&security);
+    PCHECK(rdp_security_write_exchange_pdu(&security, encrypted_random, sizeof(encrypted_random)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(security.length == sizeof(encrypted_random) + 16u);
+    PCHECK(security.data[0] == 0x01 && security.data[1] == 0x00);
+    PCHECK(security.data[4] == (uint8_t)(sizeof(encrypted_random) + 8u));
+
     PCHECK(rdp_license_parse_error_alert(license, sizeof(license), &alert) == LIBRDP_STATUS_OK);
     PCHECK(alert.error_code == 1 && alert.state_transition == 2 && alert.blob_length == 2 && alert.blob[1] == 8);
     PCHECK(rdp_license_parse_error_alert(license, 15, &alert) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -243,6 +275,8 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_credssp_begin(false, &cred_state) == LIBRDP_STATUS_OK && cred_state == RDP_CREDSSP_DISABLED);
     PCHECK(rdp_credssp_begin(true, &cred_state) == LIBRDP_STATUS_UNSUPPORTED && cred_state == RDP_CREDSSP_FAILED);
+    rdp_buffer_free(&send_data);
+    rdp_buffer_free(&security);
     return 0;
 }
 
