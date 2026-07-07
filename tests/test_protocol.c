@@ -411,7 +411,8 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_STANDARD) == RDP_X224_PROTOCOL_STANDARD);
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_TLS) == RDP_X224_PROTOCOL_TLS);
-    PCHECK(!rdp_security_protocol_supported(RDP_X224_PROTOCOL_TLS));
+    PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_TLS));
+    PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_NLA));
     PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_STANDARD));
 
     memset(&info, 0, sizeof(info));

@@ -3,6 +3,7 @@
 #include "client/settings_internal.h"
 #include "common/trace.h"
 #include "graphics/bitmap.h"
+#include "nla/credssp.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -241,6 +242,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_mcs_attach_user_confirm attach_confirm;
     rdp_mcs_channel_join_confirm join_confirm;
     rdp_standard_security_context standard_security;
+    rdp_credssp_state credssp_state = RDP_CREDSSP_DISABLED;
     const uint8_t* mcs_pdu = NULL;
     size_t mcs_pdu_len = 0;
     uint32_t protocols = 0;
@@ -325,6 +327,20 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.done", "selected_protocol=%u",
                     confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0);
     selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0;
+    if (selected_protocol == RDP_X224_PROTOCOL_TLS || selected_protocol == RDP_X224_PROTOCOL_NLA)
+    {
+        status = rdp_transport_start_tls(&session->transport, librdp_settings_target(session->settings));
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "transport.tls.ready", "selected_protocol=%u", selected_protocol);
+    }
+    if (selected_protocol == RDP_X224_PROTOCOL_NLA)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.start", "state=begin");
+        status = rdp_credssp_begin(true, &credssp_state);
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
+        goto fail;
+    }
 
     {
         rdp_gcc_client_config config;

@@ -48,7 +48,7 @@ target_include_directories(librdp
 )
 
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
-target_link_libraries(librdp PRIVATE OpenSSL::Crypto)
+target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
@@ -62,7 +62,7 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_transport.c
     )
     target_include_directories(test_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_core PRIVATE librdp)
+    target_link_libraries(test_core PRIVATE librdp OpenSSL::SSL OpenSSL::Crypto)
     add_test(NAME core COMMAND test_core)
 endif()
 

@@ -51,7 +51,8 @@ uint32_t rdp_security_protocol_mask(librdp_security_mode mode)
 
 bool rdp_security_protocol_supported(uint32_t selected_protocol)
 {
-    return selected_protocol == RDP_X224_PROTOCOL_STANDARD;
+    return selected_protocol == RDP_X224_PROTOCOL_STANDARD || selected_protocol == RDP_X224_PROTOCOL_TLS ||
+           selected_protocol == RDP_X224_PROTOCOL_NLA;
 }
 
 static size_t rdp_ascii_len(const char* text)

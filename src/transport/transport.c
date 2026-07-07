@@ -5,7 +5,11 @@
 #include "protocol/tpkt.h"
 #include "transport/tcp.h"
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -17,6 +21,9 @@ void rdp_transport_init(rdp_transport* transport)
         return;
     transport->fd = -1;
     transport->owns_fd = 0;
+    transport->tls_context = NULL;
+    transport->tls = NULL;
+    transport->tls_active = 0;
 }
 
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
@@ -41,6 +48,67 @@ librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, 
         return status;
 
     rdp_transport_attach_fd(transport, fd, 1);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
+{
+    int error = SSL_get_error(tls, rc);
+
+    if (error == SSL_ERROR_ZERO_RETURN)
+        return LIBRDP_STATUS_CLOSED;
+    if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
+        return LIBRDP_STATUS_AGAIN;
+    return LIBRDP_STATUS_IO_ERROR;
+}
+
+librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host)
+{
+    SSL_CTX* context = NULL;
+    SSL* tls = NULL;
+    int rc = 0;
+
+    if (!transport || transport->fd < 0 || !host || transport->tls_active)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.start", "host=%s", host);
+    context = SSL_CTX_new(TLS_client_method());
+    if (!context)
+        return LIBRDP_STATUS_IO_ERROR;
+    SSL_CTX_set_verify(context, SSL_VERIFY_NONE, NULL);
+    tls = SSL_new(context);
+    if (!tls)
+    {
+        SSL_CTX_free(context);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (SSL_set_fd(tls, transport->fd) != 1)
+    {
+        SSL_free(tls);
+        SSL_CTX_free(context);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    (void)SSL_set_tlsext_host_name(tls, host);
+
+    rc = SSL_connect(tls);
+    if (rc != 1)
+    {
+        librdp_status status = rdp_transport_tls_status(tls, rc);
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.failed", "status=%d", (int)status);
+        SSL_free(tls);
+        SSL_CTX_free(context);
+        ERR_clear_error();
+        return status;
+    }
+
+    transport->tls_context = context;
+    transport->tls = tls;
+    transport->tls_active = 1;
+    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                    "transport.tls.connect.done",
+                    "version=%s cipher=%s",
+                    SSL_get_version(tls),
+                    SSL_get_cipher(tls));
     return LIBRDP_STATUS_OK;
 }
 
@@ -79,6 +147,21 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
     if (!transport || transport->fd < 0 || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    if (transport->tls_active)
+    {
+        int tls_rc = 0;
+        if (length > INT_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.read.start", "length=%llu", (unsigned long long)length);
+        tls_rc = SSL_read(transport->tls, data, (int)length);
+        if (tls_rc <= 0)
+            return rdp_transport_tls_status(transport->tls, tls_rc);
+        if (read_len)
+            *read_len = (size_t)tls_rc;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.read.done", "read=%d", tls_rc);
+        return LIBRDP_STATUS_OK;
+    }
+
     rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.read.start", "length=%llu", (unsigned long long)length);
     rc = recv(transport->fd, data, length, 0);
     if (rc == 0)
@@ -110,6 +193,21 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
 #ifdef MSG_NOSIGNAL
     flags = MSG_NOSIGNAL;
 #endif
+    if (transport->tls_active)
+    {
+        int tls_rc = 0;
+        if (length > INT_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.write.start", "length=%llu", (unsigned long long)length);
+        tls_rc = SSL_write(transport->tls, data, (int)length);
+        if (tls_rc <= 0)
+            return rdp_transport_tls_status(transport->tls, tls_rc);
+        if (written_len)
+            *written_len = (size_t)tls_rc;
+        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.write.done", "written=%d", tls_rc);
+        return LIBRDP_STATUS_OK;
+    }
+
     rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.write.start", "length=%llu", (unsigned long long)length);
     rc = send(transport->fd, data, length, flags);
     if (rc < 0)
@@ -193,6 +291,17 @@ void rdp_transport_close(rdp_transport* transport)
 {
     if (!transport)
         return;
+    if (transport->tls)
+    {
+        SSL_set_quiet_shutdown(transport->tls, 1);
+        (void)SSL_shutdown(transport->tls);
+        SSL_free(transport->tls);
+    }
+    if (transport->tls_context)
+        SSL_CTX_free(transport->tls_context);
+    transport->tls = NULL;
+    transport->tls_context = NULL;
+    transport->tls_active = 0;
     if (transport->fd >= 0 && transport->owns_fd)
         rdp_socket_close(transport->fd);
     transport->fd = -1;
