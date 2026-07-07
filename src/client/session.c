@@ -193,6 +193,17 @@ static uint8_t rdp_session_dynamic_length_bytes(size_t length)
     return 4;
 }
 
+static uint32_t rdp_session_pixels_to_mm(uint16_t pixels)
+{
+    uint32_t mm = ((uint32_t)pixels * 254u + 480u) / 960u;
+
+    if (mm < 10u)
+        return 10u;
+    if (mm > 10000u)
+        return 10000u;
+    return mm;
+}
+
 static librdp_status rdp_session_send_dynamic_channel_data(librdp_session* session,
                                                            uint32_t channel_id,
                                                            uint8_t channel_id_bytes,
@@ -1581,16 +1592,29 @@ librdp_status librdp_session_connect(librdp_session* session)
         config.desktop_width = (uint16_t)librdp_settings_width(session->settings);
         config.desktop_height = (uint16_t)librdp_settings_height(session->settings);
         config.requested_protocols = selected_protocol;
+        config.client_version = RDP_GCC_CLIENT_VERSION_10_12;
+        config.early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO | RDP_GCC_EARLY_WANT_32BPP |
+                                        RDP_GCC_EARLY_SUPPORT_STATUSINFO |
+                                        RDP_GCC_EARLY_SUPPORT_MONITOR_LAYOUT |
+                                        RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT |
+                                        RDP_GCC_EARLY_SUPPORT_DYNVC_GFX;
+        config.supported_color_depths = RDP_GCC_SUPPORTED_COLOR_DEPTHS_32BPP;
+        config.connection_type = RDP_GCC_CONNECTION_TYPE_LAN;
+        config.desktop_physical_width = rdp_session_pixels_to_mm(config.desktop_width);
+        config.desktop_physical_height = rdp_session_pixels_to_mm(config.desktop_height);
+        config.desktop_scale_factor = 100;
+        config.device_scale_factor = 100;
         config.client_name = "librdp";
         config.enable_dynamic_channels = 1;
 
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "mcs.connect.initial",
-                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u",
+                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u early_capability_flags=%u",
                         (unsigned)config.desktop_width,
                         (unsigned)config.desktop_height,
                         config.requested_protocols,
-                        (unsigned)config.enable_dynamic_channels);
+                        (unsigned)config.enable_dynamic_channels,
+                        (unsigned)config.early_capability_flags);
         status = rdp_gcc_write_client_data_blocks(&gcc_blocks, &config);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
