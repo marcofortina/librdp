@@ -115,6 +115,63 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     return rdp_x224_parse_data(parsed.payload, parsed.payload_len, pdu, pdu_len);
 }
 
+static librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms)
+{
+    uint8_t header[6];
+    uint8_t first_len = 0;
+    size_t header_len = 0;
+    size_t content_len = 0;
+    size_t i = 0;
+    short revents = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !packet || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_free(packet);
+    rdp_buffer_init(packet);
+
+    status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((revents & POLLIN) == 0)
+        return LIBRDP_STATUS_TIMEOUT;
+
+    status = rdp_transport_read_exact(&session->transport, header, 2);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (header[0] != 0x30)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    first_len = header[1];
+    header_len = 2;
+    if ((first_len & 0x80u) == 0)
+    {
+        content_len = first_len;
+    }
+    else
+    {
+        uint8_t count = (uint8_t)(first_len & 0x7fu);
+        if (count == 0 || count > 4)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = rdp_transport_read_exact(&session->transport, header + 2, count);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        header_len += count;
+        for (i = 0; i < count; i++)
+            content_len = (content_len << 8) | header[2u + i];
+    }
+    if (content_len == 0 || content_len > 1024u * 1024u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_append(packet, header, header_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_reserve(packet, header_len + content_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    packet->length = header_len + content_len;
+    return rdp_transport_read_exact(&session->transport, packet->data + header_len, content_len);
+}
+
 static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, const rdp_bitmap_update* update)
 {
     uint16_t i = 0;
@@ -336,8 +393,45 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
     if (selected_protocol == RDP_X224_PROTOCOL_NLA)
     {
+        rdp_buffer credssp_request;
+        rdp_buffer credssp_reply;
+        rdp_credssp_ts_request ts_response;
+
+        rdp_buffer_init(&credssp_request);
+        rdp_buffer_init(&credssp_reply);
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.start", "state=begin");
         status = rdp_credssp_begin(true, &credssp_state);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_credssp_write_negotiate_request(&credssp_request,
+                                                         "librdp",
+                                                         librdp_settings_domain(session->settings));
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "credssp.nla.negotiate",
+                            "token_len=%u",
+                            (unsigned)credssp_request.length);
+            status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_read_credssp_ts_request(session, &credssp_reply, 5000);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &ts_response);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "credssp.nla.challenge",
+                            "version=%u token_len=%u error=%u",
+                            ts_response.version,
+                            (unsigned)ts_response.nego_token_len,
+                            ts_response.has_error_code ? ts_response.error_code : 0);
+        rdp_buffer_free(&credssp_reply);
+        rdp_buffer_free(&credssp_request);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
+            goto fail;
+        }
+        status = LIBRDP_STATUS_UNSUPPORTED;
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
         goto fail;
     }

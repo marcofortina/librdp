@@ -353,9 +353,14 @@ static int test_path_security_license_channels(void)
     rdp_buffer expected_cipher;
     rdp_buffer confirm_active;
     rdp_buffer x509_chain;
+    rdp_buffer ntlm_negotiate;
+    rdp_buffer spnego_negotiate;
+    rdp_buffer ts_request;
+    rdp_buffer nla_request;
     rdp_client_info info;
     rdp_client_info_summary info_summary;
     rdp_capability_list confirm_caps;
+    rdp_credssp_ts_request parsed_ts;
     uint8_t signature[8];
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -369,6 +374,10 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&expected_cipher);
     rdp_buffer_init(&confirm_active);
     rdp_buffer_init(&x509_chain);
+    rdp_buffer_init(&ntlm_negotiate);
+    rdp_buffer_init(&spnego_negotiate);
+    rdp_buffer_init(&ts_request);
+    rdp_buffer_init(&nla_request);
 
     PCHECK(rdp_fastpath_parse_header(fast_short, sizeof(fast_short), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
@@ -524,7 +533,36 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_credssp_begin(false, &cred_state) == LIBRDP_STATUS_OK && cred_state == RDP_CREDSSP_DISABLED);
-    PCHECK(rdp_credssp_begin(true, &cred_state) == LIBRDP_STATUS_UNSUPPORTED && cred_state == RDP_CREDSSP_FAILED);
+    PCHECK(rdp_credssp_begin(true, &cred_state) == LIBRDP_STATUS_OK && cred_state == RDP_CREDSSP_NEGOTIATING);
+    PCHECK(rdp_credssp_write_ntlm_negotiate(&ntlm_negotiate, "host", "dom") == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_negotiate.length == 47);
+    PCHECK(memcmp(ntlm_negotiate.data, "NTLMSSP", 7) == 0);
+    PCHECK(ntlm_negotiate.data[8] == 1 && ntlm_negotiate.data[16] == 3 && ntlm_negotiate.data[24] == 4);
+    PCHECK(memcmp(ntlm_negotiate.data + 40, "DOMHOST", 7) == 0);
+    PCHECK(rdp_credssp_write_spnego_ntlm_negotiate(&spnego_negotiate,
+                                                   ntlm_negotiate.data,
+                                                   ntlm_negotiate.length) == LIBRDP_STATUS_OK);
+    PCHECK(spnego_negotiate.length > ntlm_negotiate.length && spnego_negotiate.data[0] == 0x60);
+    PCHECK(rdp_credssp_write_ts_request(&ts_request,
+                                        6,
+                                        spnego_negotiate.data,
+                                        spnego_negotiate.length,
+                                        NULL,
+                                        0,
+                                        NULL,
+                                        0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_parse_ts_request(ts_request.data, ts_request.length, &parsed_ts) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_ts.version == 6 && parsed_ts.nego_token_len == spnego_negotiate.length);
+    PCHECK(memcmp(parsed_ts.nego_token, spnego_negotiate.data, spnego_negotiate.length) == 0);
+    PCHECK(rdp_credssp_parse_ts_request(ts_request.data, ts_request.length - 1u, &parsed_ts) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_credssp_write_negotiate_request(&nla_request, "host", "dom") == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_parse_ts_request(nla_request.data, nla_request.length, &parsed_ts) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_ts.version == 6 && parsed_ts.nego_token_len > 0);
+    rdp_buffer_free(&nla_request);
+    rdp_buffer_free(&ts_request);
+    rdp_buffer_free(&spnego_negotiate);
+    rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_buffer_free(&expected_cipher);
     rdp_buffer_free(&plain_info_body);
