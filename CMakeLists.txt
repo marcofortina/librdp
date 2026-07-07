@@ -21,6 +21,7 @@ add_library(librdp
     src/common/buffer.c
     src/common/stream.c
     src/common/trace.c
+    src/graphics/bitmap.c
     src/graphics/surface.c
     src/input/input.c
     src/licensing/licensing.c
@@ -84,6 +85,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_capabilities fuzz/capabilities_fuzzer.c)
     add_librdp_fuzzer(fuzz_fastpath fuzz/fastpath_fuzzer.c)
     add_librdp_fuzzer(fuzz_slowpath fuzz/slowpath_fuzzer.c)
+    add_librdp_fuzzer(fuzz_bitmap fuzz/bitmap_fuzzer.c)
     add_librdp_fuzzer(fuzz_virtual_channel fuzz/virtual_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
     add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)

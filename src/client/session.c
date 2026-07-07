@@ -2,6 +2,7 @@
 
 #include "client/settings_internal.h"
 #include "common/trace.h"
+#include "graphics/bitmap.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -12,6 +13,7 @@
 #include "input/input.h"
 
 #include <poll.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -110,6 +112,57 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_x224_parse_data(parsed.payload, parsed.payload_len, pdu, pdu_len);
+}
+
+static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, const rdp_bitmap_update* update)
+{
+    uint16_t i = 0;
+
+    if (!session || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    for (i = 0; i < update->count; i++)
+    {
+        const rdp_bitmap_rect* rect = &update->rects[i];
+        uint32_t row = 0;
+        size_t stride = 0;
+
+        if (rect->bits_per_pixel != 32 || rect->flags != 0)
+            return LIBRDP_STATUS_UNSUPPORTED;
+        stride = (size_t)rect->width * 4u;
+        if ((size_t)rect->height > SIZE_MAX / stride || rect->data_len < stride * rect->height)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (row = 0; row < rect->height; row++)
+        {
+            const uint8_t* src = rect->data + ((size_t)(rect->height - 1u - row) * stride);
+            librdp_status status = librdp_surface_blit_bgra32(session->surface,
+                                                              rect->dest_left,
+                                                              (uint32_t)rect->dest_top + row,
+                                                              rect->width,
+                                                              1,
+                                                              src,
+                                                              stride);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        {
+            librdp_event event;
+            event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
+            event.data.surface.x = rect->dest_left;
+            event.data.surface.y = rect->dest_top;
+            event.data.surface.width = rect->width;
+            event.data.surface.height = rect->height;
+            rdp_session_emit(session, &event);
+        }
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.active.framebuffer.blit",
+                        "x=%u y=%u width=%u height=%u",
+                        rect->dest_left,
+                        rect->dest_top,
+                        rect->width,
+                        rect->height);
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_session* librdp_session_new(const librdp_settings* settings)
@@ -704,6 +757,36 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 return rdp_session_fail(session, status);
             }
             rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.activation.confirm_active", "share_id=%u", demand.share_id);
+        }
+        else if (status == LIBRDP_STATUS_OK && (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DATA)
+        {
+            rdp_slowpath_data_pdu data_pdu;
+
+            status = rdp_slowpath_parse_data_pdu(indication.payload, indication.payload_len, &data_pdu);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.slowpath.data",
+                            "type=%u compressed_type=%u payload_len=%u",
+                            data_pdu.pdu_type2,
+                            data_pdu.compressed_type,
+                            (unsigned)data_pdu.payload_len);
+            if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE && data_pdu.compressed_type == 0)
+            {
+                rdp_bitmap_update update;
+                status = rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &update);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_apply_bitmap_update(session, &update);
+                if (status != LIBRDP_STATUS_OK)
+                {
+                    rdp_buffer_free(&packet);
+                    return rdp_session_fail(session, status);
+                }
+                rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.bitmap_update", "rectangles=%u", update.count);
+            }
         }
     }
 

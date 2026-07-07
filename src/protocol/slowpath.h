@@ -11,7 +11,9 @@
 
 #define RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE 0x0001u
 #define RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE 0x0003u
+#define RDP_SLOWPATH_PDU_TYPE_DATA 0x0007u
 #define RDP_SLOWPATH_PDU_VERSION 0x0010u
+#define RDP_SLOWPATH_DATA_PDU_UPDATE 0x02u
 
 typedef struct rdp_slowpath_share_control_header
 {
@@ -29,6 +31,19 @@ typedef struct rdp_slowpath_demand_active
     rdp_capability_list capabilities;
 } rdp_slowpath_demand_active;
 
+typedef struct rdp_slowpath_data_pdu
+{
+    rdp_slowpath_share_control_header header;
+    uint32_t share_id;
+    uint8_t stream_id;
+    uint16_t uncompressed_length;
+    uint8_t pdu_type2;
+    uint8_t compressed_type;
+    uint16_t compressed_length;
+    const uint8_t* payload;
+    size_t payload_len;
+} rdp_slowpath_data_pdu;
+
 librdp_status rdp_slowpath_parse_share_control_header(const void* data,
                                                       size_t length,
                                                       rdp_slowpath_share_control_header* header);
@@ -41,5 +56,6 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint16_t width,
                                                 uint16_t height,
                                                 const char* source_descriptor);
+librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu);
 
 #endif

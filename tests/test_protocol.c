@@ -2,6 +2,7 @@
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
+#include "graphics/bitmap.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/capabilities.h"
@@ -245,6 +246,16 @@ static int test_path_security_license_channels(void)
         0x03, 0x00, 0x0c, 0x00, 's',  'r',  'v',  0x01, 0x00, 0x00,
         0x00, 0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd
     };
+    const uint8_t bitmap_data_pdu[] = {
+        0x3a, 0x00, 0x17, 0x00, 0xec, 0x03, 0x78, 0x56, 0x34, 0x12,
+        0x00, 0x01, 0x28, 0x00, 0x02, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x02, 0x00, 0x02, 0x00, 0x20, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        1,    2,    3,    4,    5,    6,    7,    8,
+        9,    10,   11,   12,   13,   14,   15,   16
+    };
     const uint8_t license[] = {
         0xff, 0x03, 0x12, 0x00,
         1, 0, 0, 0,
@@ -324,6 +335,8 @@ static int test_path_security_license_channels(void)
     rdp_fastpath_header fast;
     rdp_slowpath_share_control_header slow_header;
     rdp_slowpath_demand_active demand;
+    rdp_slowpath_data_pdu data_pdu;
+    rdp_bitmap_update bitmap_update;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_clipboard_packet cb;
@@ -370,6 +383,15 @@ static int test_path_security_license_channels(void)
     PCHECK(demand.source_descriptor_len == 3 && memcmp(demand.source_descriptor, "srv", 3) == 0);
     PCHECK(demand.capabilities.count == 1 && demand.capabilities.sets[0].type == 1);
     PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active) - 1u, &demand) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.share_id == 0x12345678u && data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+    PCHECK(data_pdu.payload_len == 40);
+    PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &bitmap_update) == LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1);
+    PCHECK(bitmap_update.rects[0].width == 2 && bitmap_update.rects[0].height == 2);
+    PCHECK(bitmap_update.rects[0].bits_per_pixel == 32 && bitmap_update.rects[0].data_len == 16);
+    PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_slowpath_write_confirm_active(&confirm_active, 0x12345678u, 1004, 800, 600, "librdp") ==
            LIBRDP_STATUS_OK);
