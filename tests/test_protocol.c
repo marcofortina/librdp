@@ -423,6 +423,35 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t graphics_segment_compressed_literal[] = {0xe0, 0x24, 0x24, 0x80, 0x07};
     const uint8_t graphics_segment_bad_compression_type[] = {0xe0, 0x20, 1, 2, 3};
+    const uint8_t graphics_create_surface[] = {
+        0x09, 0x00, 0x00, 0x00,
+        0x0f, 0x00, 0x00, 0x00,
+        0x34, 0x12, 0x00, 0x04,
+        0x00, 0x03, 0x20
+    };
+    const uint8_t graphics_delete_surface[] = {
+        0x0a, 0x00, 0x00, 0x00,
+        0x0a, 0x00, 0x00, 0x00,
+        0x34, 0x12
+    };
+    const uint8_t graphics_map_output[] = {
+        0x0f, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00,
+        0x34, 0x12, 0x00, 0x00,
+        0x0a, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00
+    };
+    const uint8_t graphics_start_frame[] = {
+        0x0b, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        0x04, 0x03, 0x02, 0x01,
+        0x44, 0x33, 0x22, 0x11
+    };
+    const uint8_t graphics_end_frame[] = {
+        0x0c, 0x00, 0x00, 0x00,
+        0x0c, 0x00, 0x00, 0x00,
+        0x44, 0x33, 0x22, 0x11
+    };
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -577,6 +606,12 @@ static int test_path_security_license_channels(void)
     rdp_display_control_monitor display_monitor;
     rdp_graphics_header graphics_header;
     rdp_graphics_caps_confirm graphics_caps_confirm;
+    rdp_graphics_create_surface graphics_create;
+    rdp_graphics_delete_surface graphics_delete;
+    rdp_graphics_reset graphics_reset;
+    rdp_graphics_map_surface_to_output graphics_map;
+    rdp_graphics_start_frame graphics_start;
+    rdp_graphics_end_frame graphics_end;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
@@ -600,6 +635,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_refresh_rect;
     rdp_buffer client_suppress_output;
     rdp_buffer graphics_decoded;
+    rdp_buffer graphics_reset_pdu;
     rdp_buffer decoded_bitmap;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
@@ -682,6 +718,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_suppress_output);
     rdp_graphics_decompressor_init(&graphics_decompressor);
     rdp_buffer_init(&graphics_decoded);
+    rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&decoded_bitmap);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
@@ -1229,6 +1266,56 @@ static int test_path_security_license_channels(void)
                                               &graphics_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm, sizeof(graphics_confirm) - 1u, &graphics_caps_confirm) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_create_surface(graphics_create_surface,
+                                             sizeof(graphics_create_surface),
+                                             &graphics_create) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_create.surface_id == 0x1234 &&
+           graphics_create.width == 1024 &&
+           graphics_create.height == 768 &&
+           graphics_create.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888);
+    PCHECK(rdp_graphics_parse_delete_surface(graphics_delete_surface,
+                                             sizeof(graphics_delete_surface),
+                                             &graphics_delete) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_delete.surface_id == 0x1234);
+    PCHECK(rdp_graphics_parse_map_surface_to_output(graphics_map_output,
+                                                    sizeof(graphics_map_output),
+                                                    &graphics_map) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_map.surface_id == 0x1234 &&
+           graphics_map.output_origin_x == 10 &&
+           graphics_map.output_origin_y == 20);
+    PCHECK(rdp_graphics_parse_start_frame(graphics_start_frame,
+                                          sizeof(graphics_start_frame),
+                                          &graphics_start) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_start.timestamp == 0x01020304 && graphics_start.frame_id == 0x11223344);
+    PCHECK(rdp_graphics_parse_end_frame(graphics_end_frame,
+                                        sizeof(graphics_end_frame),
+                                        &graphics_end) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_end.frame_id == 0x11223344);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_frame_ack(&dyn_response,
+                                        RDP_GRAPHICS_QUEUE_DEPTH_UNAVAILABLE,
+                                        graphics_end.frame_id,
+                                        7) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 20 &&
+           test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_FRAME_ACKNOWLEDGE &&
+           test_read_u32_le(dyn_response.data + 4) == 20 &&
+           test_read_u32_le(dyn_response.data + 12) == graphics_end.frame_id &&
+           test_read_u32_le(dyn_response.data + 16) == 7);
+    PCHECK(rdp_buffer_append_u16_le(&graphics_reset_pdu, RDP_GRAPHICS_CMDID_RESET_GRAPHICS) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&graphics_reset_pdu, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&graphics_reset_pdu, 340) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&graphics_reset_pdu, 1024) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&graphics_reset_pdu, 768) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&graphics_reset_pdu, 0) == LIBRDP_STATUS_OK);
+    while (graphics_reset_pdu.length < 340)
+        PCHECK(rdp_buffer_append_u8(&graphics_reset_pdu, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_reset(graphics_reset_pdu.data,
+                                    graphics_reset_pdu.length,
+                                    &graphics_reset) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_reset.width == 1024 &&
+           graphics_reset.height == 768 &&
+           graphics_reset.monitor_count == 0);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==
@@ -1405,6 +1492,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_graphics_decompressor_free(&graphics_decompressor);
+    rdp_buffer_free(&graphics_reset_pdu);
     rdp_buffer_free(&graphics_decoded);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
