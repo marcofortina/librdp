@@ -478,6 +478,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         rdp_security_public_key public_key;
         rdp_buffer encrypted_client_random;
 
+        memset(&public_key, 0, sizeof(public_key));
         rdp_buffer_init(&encrypted_client_random);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "rdp.security_exchange.start",
@@ -500,6 +501,7 @@ librdp_status librdp_session_connect(librdp_session* session)
                             "rdp.security_exchange.done",
                             "encrypted_random_len=%u bulk_encryption=unsupported",
                             (unsigned)encrypted_client_random.length);
+        rdp_security_public_key_clear(&public_key);
         rdp_buffer_free(&encrypted_client_random);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
