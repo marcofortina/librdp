@@ -14,6 +14,11 @@
 #define RDP_SLOWPATH_PDU_TYPE_DATA 0x0007u
 #define RDP_SLOWPATH_PDU_VERSION 0x0010u
 #define RDP_SLOWPATH_DATA_PDU_UPDATE 0x02u
+#define RDP_SLOWPATH_DATA_PDU_CONTROL 0x14u
+#define RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE 0x1fu
+#define RDP_SLOWPATH_DATA_PDU_FONT_LIST 0x27u
+#define RDP_SLOWPATH_DATA_PDU_FONT_MAP 0x28u
+#define RDP_SLOWPATH_DATA_PDU_SET_ERROR_INFO 0x2fu
 
 typedef struct rdp_slowpath_share_control_header
 {
@@ -56,6 +61,16 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint16_t width,
                                                 uint16_t height,
                                                 const char* source_descriptor);
+librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
+                                                    uint32_t share_id,
+                                                    uint16_t channel_id);
+librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id,
+                                                uint16_t action);
+librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
+                                                  uint32_t share_id,
+                                                  uint16_t channel_id);
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu);
 
 #endif

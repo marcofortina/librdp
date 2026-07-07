@@ -457,6 +457,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer plain_info_body;
     rdp_buffer expected_cipher;
     rdp_buffer confirm_active;
+    rdp_buffer client_sync;
+    rdp_buffer client_control;
+    rdp_buffer client_font_list;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
     rdp_buffer ntlm_authenticate;
@@ -492,6 +495,26 @@ static int test_path_security_license_channels(void)
     size_t i = 0;
     uint16_t confirm_source_len = 0;
     uint16_t confirm_caps_len = 0;
+    const uint16_t expected_confirm_types[] = {
+        RDP_CAPABILITY_TYPE_GENERAL,
+        RDP_CAPABILITY_TYPE_BITMAP,
+        RDP_CAPABILITY_TYPE_ORDER,
+        RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2,
+        RDP_CAPABILITY_TYPE_POINTER,
+        RDP_CAPABILITY_TYPE_INPUT,
+        RDP_CAPABILITY_TYPE_BRUSH,
+        RDP_CAPABILITY_TYPE_GLYPH_CACHE,
+        RDP_CAPABILITY_TYPE_VIRTUAL_CHANNEL,
+        RDP_CAPABILITY_TYPE_SOUND,
+        RDP_CAPABILITY_TYPE_SHARE,
+        RDP_CAPABILITY_TYPE_FONT,
+        RDP_CAPABILITY_TYPE_CONTROL,
+        RDP_CAPABILITY_TYPE_COLOR_CACHE,
+        RDP_CAPABILITY_TYPE_ACTIVATION
+    };
+    const uint16_t expected_confirm_lengths[] = {
+        24, 28, 88, 40, 10, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12
+    };
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
@@ -500,6 +523,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&plain_info_body);
     rdp_buffer_init(&expected_cipher);
     rdp_buffer_init(&confirm_active);
+    rdp_buffer_init(&client_sync);
+    rdp_buffer_init(&client_control);
+    rdp_buffer_init(&client_font_list);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
     rdp_buffer_init(&ntlm_authenticate);
@@ -551,7 +577,48 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_capabilities_parse(confirm_active.data + 16u + confirm_source_len,
                                   confirm_caps_len,
                                   &confirm_caps) == LIBRDP_STATUS_OK);
-    PCHECK(confirm_caps.count == 2 && confirm_caps.sets[0].type == 1 && confirm_caps.sets[1].type == 2);
+    PCHECK(confirm_caps.count == sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]));
+    PCHECK(confirm_caps_len == 410);
+    for (i = 0; i < sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]); i++)
+    {
+        PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
+        PCHECK(confirm_caps.sets[i].length == expected_confirm_lengths[i]);
+    }
+    PCHECK(confirm_caps.sets[0].data[0] == 1 && confirm_caps.sets[0].data[2] == 3 &&
+           confirm_caps.sets[0].data[4] == 0x00 && confirm_caps.sets[0].data[5] == 0x02);
+    PCHECK(confirm_caps.sets[1].data[0] == 32 && confirm_caps.sets[1].data[8] == 0x20 &&
+           confirm_caps.sets[1].data[9] == 0x03 && confirm_caps.sets[1].data[10] == 0x58 &&
+           confirm_caps.sets[1].data[11] == 0x02);
+    PCHECK(confirm_caps.sets[2].data[30] == 0x2a && confirm_caps.sets[2].data[31] == 0x00);
+    PCHECK(confirm_caps.sets[5].data[0] == 1 && confirm_caps.sets[5].data[4] == 0x09 &&
+           confirm_caps.sets[5].data[5] == 0x04);
+    PCHECK(rdp_slowpath_write_client_synchronize(&client_sync, 0x12345678u, 1004) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_sync.data, client_sync.length, &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.share_id == 0x12345678u &&
+           data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE &&
+           data_pdu.payload_len == 4);
+    PCHECK(test_read_u16_le(data_pdu.payload) == 1 && test_read_u16_le(data_pdu.payload + 2) == 1004);
+    PCHECK(rdp_slowpath_write_client_control(&client_control, 0x12345678u, 1004, 4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_control.data, client_control.length, &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL &&
+           data_pdu.payload_len == 8 &&
+           test_read_u16_le(data_pdu.payload) == 4 &&
+           test_read_u16_le(data_pdu.payload + 2) == 0 &&
+           test_read_u32_le(data_pdu.payload + 4) == 0);
+    client_control.length = 0;
+    PCHECK(rdp_slowpath_write_client_control(&client_control, 0x12345678u, 1004, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_control.data, client_control.length, &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL &&
+           test_read_u16_le(data_pdu.payload) == 1);
+    PCHECK(rdp_slowpath_write_client_control(&client_control, 0x12345678u, 1004, 2) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_slowpath_write_client_font_list(&client_font_list, 0x12345678u, 1004) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_font_list.data, client_font_list.length, &data_pdu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_LIST &&
+           data_pdu.payload_len == 8 &&
+           test_read_u16_le(data_pdu.payload + 4) == 3 &&
+           test_read_u16_le(data_pdu.payload + 6) == 50);
 
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_STANDARD) == RDP_X224_PROTOCOL_STANDARD);
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_TLS) == RDP_X224_PROTOCOL_TLS);
@@ -831,6 +898,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_authenticate);
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
+    rdp_buffer_free(&client_font_list);
+    rdp_buffer_free(&client_control);
+    rdp_buffer_free(&client_sync);
     rdp_buffer_free(&expected_cipher);
     rdp_buffer_free(&plain_info_body);
     rdp_buffer_free(&encrypted_info);

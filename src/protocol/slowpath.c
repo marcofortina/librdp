@@ -30,6 +30,54 @@ static uint16_t rdp_slowpath_base_type(uint16_t pdu_type)
     return (uint16_t)(pdu_type & 0x000fu);
 }
 
+#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 15u
+
+static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
+{
+    static const uint8_t zeros[64] = {0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    while (count > 0)
+    {
+        size_t chunk = count > sizeof(zeros) ? sizeof(zeros) : count;
+        status = rdp_buffer_append(buffer, zeros, chunk);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        count -= chunk;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_slowpath_append_u16s(rdp_buffer* buffer, const uint16_t* values, size_t count)
+{
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!values && count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < count; i++)
+    {
+        status = rdp_buffer_append_u16_le(buffer, values[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_slowpath_write_capability_header(rdp_buffer* buffer, uint16_t type, uint16_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || length < 4)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, length);
+    return status;
+}
+
 librdp_status rdp_slowpath_parse_demand_active(const void* data,
                                                size_t length,
                                                rdp_slowpath_demand_active* demand)
@@ -76,31 +124,16 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
 
 static librdp_status rdp_slowpath_write_general_capability(rdp_buffer* buffer)
 {
+    const uint16_t fields[] = {
+        1, 3, 0x0200u, 0, 0, 0x0404u, 0, 0, 0
+    };
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_buffer_append_u16_le(buffer, 1);
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_GENERAL, 24);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 24);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 1);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 3);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0x0200u);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0x040du);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, 1);
     if (status == LIBRDP_STATUS_OK)
@@ -114,9 +147,7 @@ static librdp_status rdp_slowpath_write_bitmap_capability(rdp_buffer* buffer, ui
 
     if (!buffer || width == 0 || height == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_buffer_append_u16_le(buffer, 2);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 28);
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_BITMAP, 28);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, 32);
     if (status == LIBRDP_STATUS_OK)
@@ -146,6 +177,265 @@ static librdp_status rdp_slowpath_write_bitmap_capability(rdp_buffer* buffer, ui
     return status;
 }
 
+static librdp_status rdp_slowpath_write_order_capability(rdp_buffer* buffer)
+{
+    const uint16_t first_fields[] = {1, 20, 0, 1, 0, 0x002au};
+    const uint16_t last_fields[] = {0, 0, 65001u, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_ORDER, 88);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_zeros(buffer, 16);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, first_fields, sizeof(first_fields) / sizeof(first_fields[0]));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_zeros(buffer, 32);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 230400u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, last_fields, sizeof(last_fields) / sizeof(last_fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_bitmap_cache_v2_capability(rdp_buffer* buffer)
+{
+    const uint32_t cell_info[] = {600u, 600u, 2048u, 4096u, 2048u};
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2, 40);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0x0002u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 5);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < sizeof(cell_info) / sizeof(cell_info[0]); i++)
+        status = rdp_buffer_append_u32_le(buffer, cell_info[i]);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_zeros(buffer, 12);
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_pointer_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {1, 128, 128};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_POINTER, 10);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_input_capability(rdp_buffer* buffer)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_INPUT, 88);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0x0001u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0x00000409u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 4);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 12);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_zeros(buffer, 64);
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_u32_capability(rdp_buffer* buffer, uint16_t type, uint32_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, type, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, value);
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_glyph_cache_capability(rdp_buffer* buffer)
+{
+    const uint16_t cell_sizes[] = {4, 4, 8, 8, 16, 32, 64, 128, 256, 256};
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_GLYPH_CACHE, 52);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < sizeof(cell_sizes) / sizeof(cell_sizes[0]); i++)
+    {
+        status = rdp_buffer_append_u16_le(buffer, 254);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(buffer, cell_sizes[i]);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 256);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 256);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_virtual_channel_capability(rdp_buffer* buffer)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_VIRTUAL_CHANNEL, 12);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 1600);
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_sound_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {0, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_SOUND, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_share_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {0, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_SHARE, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_font_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {1, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_FONT, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_control_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {0, 0, 2, 2};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_CONTROL, 12);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_color_cache_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {6, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_COLOR_CACHE, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_activation_capability(rdp_buffer* buffer)
+{
+    const uint16_t fields[] = {0, 0, 0, 0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_ACTIVATION, 12);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
+                                                 uint32_t share_id,
+                                                 uint16_t channel_id,
+                                                 uint8_t pdu_type2,
+                                                 const void* payload,
+                                                 size_t payload_len)
+{
+    size_t total = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!payload && payload_len > 0) || payload_len > 0xffffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    total = 18u + payload_len;
+    if (total > 0xffffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)total);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, channel_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, share_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, pdu_type2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, payload, payload_len);
+    return status;
+}
+
 librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint32_t share_id,
                                                 uint16_t channel_id,
@@ -166,13 +456,39 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&capabilities);
-    status = rdp_buffer_append_u16_le(&capabilities, 2);
+    status = rdp_buffer_append_u16_le(&capabilities, RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&capabilities, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_general_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_bitmap_capability(&capabilities, width, height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_order_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_bitmap_cache_v2_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_pointer_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_input_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_u32_capability(&capabilities, RDP_CAPABILITY_TYPE_BRUSH, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_glyph_cache_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_virtual_channel_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_sound_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_share_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_font_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_control_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_color_cache_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_activation_capability(&capabilities);
     combined_len = capabilities.length;
     total = 6u + 4u + 2u + 2u + 2u + source_len + combined_len;
     if (status == LIBRDP_STATUS_OK && total > 0xffffu)
@@ -198,6 +514,63 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
 
     rdp_buffer_free(&capabilities);
     return status;
+}
+
+librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
+                                                    uint32_t share_id,
+                                                    uint16_t channel_id)
+{
+    uint8_t payload[4];
+
+    payload[0] = 1;
+    payload[1] = 0;
+    payload[2] = (uint8_t)(channel_id & 0xffu);
+    payload[3] = (uint8_t)((channel_id >> 8) & 0xffu);
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE,
+                                       payload,
+                                       sizeof(payload));
+}
+
+librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id,
+                                                uint16_t action)
+{
+    uint8_t payload[8];
+
+    if (action != 1u && action != 4u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    payload[0] = (uint8_t)(action & 0xffu);
+    payload[1] = (uint8_t)((action >> 8) & 0xffu);
+    payload[2] = 0;
+    payload[3] = 0;
+    payload[4] = 0;
+    payload[5] = 0;
+    payload[6] = 0;
+    payload[7] = 0;
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_CONTROL,
+                                       payload,
+                                       sizeof(payload));
+}
+
+librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
+                                                  uint32_t share_id,
+                                                  uint16_t channel_id)
+{
+    static const uint8_t payload[8] = {0, 0, 0, 0, 3, 0, 50, 0};
+
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_FONT_LIST,
+                                       payload,
+                                       sizeof(payload));
 }
 
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu)
