@@ -400,17 +400,17 @@ static int test_path_security_license_channels(void)
     const uint8_t graphics_confirm[] = {
         0x13, 0x00, 0x00, 0x00,
         0x14, 0x00, 0x00, 0x00,
-        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x08, 0x00,
         0x04, 0x00, 0x00, 0x00,
-        0x22, 0x00, 0x00, 0x00
+        0x02, 0x00, 0x00, 0x00
     };
     const uint8_t graphics_segment_single[] = {
         0xe0, 0x04,
         0x13, 0x00, 0x00, 0x00,
         0x14, 0x00, 0x00, 0x00,
-        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x08, 0x00,
         0x04, 0x00, 0x00, 0x00,
-        0x22, 0x00, 0x00, 0x00
+        0x02, 0x00, 0x00, 0x00
     };
     const uint8_t graphics_segment_multipart[] = {
         0xe1, 0x02, 0x00, 0x14, 0x00, 0x00, 0x00,
@@ -418,9 +418,9 @@ static int test_path_security_license_channels(void)
         0x13, 0x00, 0x00, 0x00,
         0x14, 0x00, 0x00, 0x00,
         0x0d, 0x00, 0x00, 0x00, 0x04,
-        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x08, 0x00,
         0x04, 0x00, 0x00, 0x00,
-        0x22, 0x00, 0x00, 0x00
+        0x02, 0x00, 0x00, 0x00
     };
     const uint8_t graphics_segment_compressed_literal[] = {0xe0, 0x24, 0x24, 0x80, 0x07};
     const uint8_t graphics_segment_bad_compression_type[] = {0xe0, 0x20, 1, 2, 3};
@@ -1405,17 +1405,17 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_graphics_write_default_caps_advertise(&dyn_response) == LIBRDP_STATUS_OK);
-    PCHECK(dyn_response.length == 34);
+    PCHECK(dyn_response.length == 22);
     PCHECK(test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
     PCHECK(test_read_u32_le(dyn_response.data + 4) == dyn_response.length);
-    PCHECK(test_read_u16_le(dyn_response.data + 8) == 2);
+    PCHECK(test_read_u16_le(dyn_response.data + 8) == 1);
     PCHECK(rdp_graphics_parse_header(graphics_confirm, sizeof(graphics_confirm), &graphics_header) ==
            LIBRDP_STATUS_OK);
     PCHECK(graphics_header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM);
     PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm, sizeof(graphics_confirm), &graphics_caps_confirm) ==
            LIBRDP_STATUS_OK);
-    PCHECK(graphics_caps_confirm.selected.version == RDP_GRAPHICS_CAPVERSION_10);
-    PCHECK((graphics_caps_confirm.selected.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    PCHECK(graphics_caps_confirm.selected.version == RDP_GRAPHICS_CAPVERSION_8);
+    PCHECK((graphics_caps_confirm.selected.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
     PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
                                               graphics_segment_single,
                                               sizeof(graphics_segment_single),

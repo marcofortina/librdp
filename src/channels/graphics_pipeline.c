@@ -436,7 +436,6 @@ librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
 librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
 {
     const rdp_graphics_capset capsets[] = {
-        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED},
         {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE}
     };
 
