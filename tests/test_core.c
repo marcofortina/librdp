@@ -830,6 +830,7 @@ static int test_settings_surface_input_session(void)
 
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(librdp_session_refresh(session, 0, 0, 1, 1) == LIBRDP_STATUS_STATE);
     CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);
@@ -851,6 +852,8 @@ static int test_settings_surface_input_session(void)
     CHECK(session_surface != NULL);
     out = librdp_surface_pixels(session_surface);
     CHECK(out[0] == 9 && out[1] == 10 && out[2] == 11 && out[3] == 12);
+    CHECK(librdp_session_refresh(session, 0, 0, 64, 48) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_refresh(session, 0, 0, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
     key.state = LIBRDP_KEY_PRESSED;
     CHECK(librdp_session_send_key(session, &key) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_send_mouse(session, &mouse) == LIBRDP_STATUS_OK);

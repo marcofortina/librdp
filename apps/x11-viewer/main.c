@@ -358,7 +358,15 @@ int main(int argc, char** argv)
         {
             XNextEvent(app.display, &event);
             if (event.type == Expose)
+            {
+                if (event.xexpose.width > 0 && event.xexpose.height > 0)
+                    (void)librdp_session_refresh(app.session,
+                                                 event.xexpose.x < 0 ? 0u : (uint32_t)event.xexpose.x,
+                                                 event.xexpose.y < 0 ? 0u : (uint32_t)event.xexpose.y,
+                                                 (uint32_t)event.xexpose.width,
+                                                 (uint32_t)event.xexpose.height);
                 app.dirty = 1;
+            }
             else if (event.type == ClientMessage && (Atom)event.xclient.data.l[0] == app.wm_delete)
                 app.running = 0;
             else if (event.type == KeyPress)
@@ -372,9 +380,16 @@ int main(int argc, char** argv)
             else if (event.type == MotionNotify)
                 handle_motion(&app, &event.xmotion);
             else if (event.type == ConfigureNotify && event.xconfigure.width > 0 && event.xconfigure.height > 0)
+            {
                 (void)librdp_session_resize(app.session,
                                             (uint32_t)event.xconfigure.width,
                                             (uint32_t)event.xconfigure.height);
+                (void)librdp_session_refresh(app.session,
+                                             0,
+                                             0,
+                                             (uint32_t)event.xconfigure.width,
+                                             (uint32_t)event.xconfigure.height);
+            }
         }
 
         (void)librdp_session_run_once(app.session, 16);

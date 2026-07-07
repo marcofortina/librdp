@@ -1528,6 +1528,43 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    rdp_buffer refresh;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || width == 0 || height == 0 || x > 0xffffu || y > 0xffffu ||
+        width > 0xffffu || height > 0xffffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (x + width - 1u > 0xffffu || y + height - 1u > 0xffffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (session->share_id == 0)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_buffer_init(&refresh);
+    status = rdp_slowpath_write_client_refresh_rect(&refresh,
+                                                    session->share_id,
+                                                    session->mcs_user_id,
+                                                    (uint16_t)x,
+                                                    (uint16_t)y,
+                                                    (uint16_t)width,
+                                                    (uint16_t)height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_write_slowpath_pdu(session, &refresh, "rdp.refresh_rect");
+    rdp_buffer_free(&refresh);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.active.refresh_rect",
+                        "x=%u y=%u width=%u height=%u",
+                        x,
+                        y,
+                        width,
+                        height);
+    return status;
+}
+
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
 {
     uint16_t flags = 0;

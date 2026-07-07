@@ -34,6 +34,7 @@ librdp_status librdp_session_connect(librdp_session* session);
 librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
 librdp_status librdp_session_disconnect(librdp_session* session);
 librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uint32_t height);
+librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* event);
 librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* event);
 librdp_session_state librdp_session_get_state(const librdp_session* session);
