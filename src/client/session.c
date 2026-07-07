@@ -3,6 +3,7 @@
 #include "channels/core_input.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/graphics_pipeline.h"
 #include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
 #include "common/trace.h"
@@ -32,6 +33,7 @@
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
+#define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
 
 typedef struct rdp_session_dynamic_channel
 {
@@ -58,6 +60,12 @@ struct librdp_session
     uint8_t display_control_channel_id_bytes;
     uint8_t display_control_ready;
     rdp_display_control_caps display_control_caps;
+    uint32_t graphics_channel_id;
+    uint8_t graphics_channel_id_bytes;
+    uint8_t graphics_ready;
+    uint32_t graphics_selected_version;
+    uint32_t graphics_selected_flags;
+    rdp_graphics_decompressor graphics_decompressor;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     uint32_t share_id;
     librdp_session_state state;
@@ -406,6 +414,101 @@ static librdp_status rdp_session_send_core_input_init(librdp_session* session)
     return status;
 }
 
+static librdp_status rdp_session_send_graphics_caps(librdp_session* session)
+{
+    rdp_buffer caps;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || session->graphics_channel_id_bytes == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&caps);
+    status = rdp_graphics_write_default_caps_advertise(&caps);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       session->graphics_channel_id,
+                                                       session->graphics_channel_id_bytes,
+                                                       caps.data,
+                                                       caps.length,
+                                                       "client.graphics.caps_advertise");
+    rdp_buffer_free(&caps);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.caps_advertise",
+                        "dvc_channel_id=%u",
+                        session->graphics_channel_id);
+    return status;
+}
+
+static librdp_status rdp_session_handle_graphics_message(librdp_session* session,
+                                                         uint32_t channel_id,
+                                                         const uint8_t* data,
+                                                         size_t data_len)
+{
+    rdp_buffer decoded;
+    size_t offset = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&decoded);
+    status = rdp_graphics_decode_segmented_data(&session->graphics_decompressor, data, data_len, &decoded);
+    if (status == LIBRDP_STATUS_UNSUPPORTED)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.unsupported",
+                        "dvc_channel_id=%u reason=bulk_compression payload_len=%u",
+                        channel_id,
+                        (unsigned)data_len);
+        rdp_buffer_free(&decoded);
+        return LIBRDP_STATUS_OK;
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&decoded);
+        return status;
+    }
+
+    while (offset < decoded.length)
+    {
+        rdp_graphics_header header;
+        const uint8_t* pdu = decoded.data + offset;
+        size_t remaining = decoded.length - offset;
+
+        status = rdp_graphics_parse_header(pdu, remaining, &header);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.graphics.pdu",
+                        "dvc_channel_id=%u cmd_id=%u pdu_len=%u",
+                        channel_id,
+                        header.cmd_id,
+                        header.pdu_length);
+        if (header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM)
+        {
+            rdp_graphics_caps_confirm confirm;
+
+            status = rdp_graphics_parse_caps_confirm(pdu, header.pdu_length, &confirm);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            session->graphics_selected_version = confirm.selected.version;
+            session->graphics_selected_flags = confirm.selected.flags;
+            session->graphics_ready = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.graphics.caps_confirm",
+                            "dvc_channel_id=%u version=%u flags=%u",
+                            channel_id,
+                            confirm.selected.version,
+                            confirm.selected.flags);
+        }
+        offset += header.pdu_length;
+    }
+
+    rdp_buffer_free(&decoded);
+    return status;
+}
+
 static librdp_status rdp_session_join_mcs_channel(librdp_session* session,
                                                   uint16_t channel_id,
                                                   const char* name,
@@ -681,7 +784,11 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                         response.selected_protocol_version,
                         response.protocol_version_max);
     }
-    return LIBRDP_STATUS_OK;
+    else if (strcmp(entry->name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0)
+    {
+        status = rdp_session_handle_graphics_message(session, channel_id, data, data_len);
+    }
+    return status;
 }
 
 static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
@@ -770,6 +877,23 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u",
                             request.channel_id);
             status = rdp_session_send_core_input_init(session);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_GRAPHICS_PIPELINE_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_GRAPHICS_PIPELINE_NAME, request.name_len) == 0)
+        {
+            session->graphics_channel_id = request.channel_id;
+            session->graphics_channel_id_bytes = request.channel_id_bytes;
+            session->graphics_ready = 0;
+            session->graphics_selected_version = 0;
+            session->graphics_selected_flags = 0;
+            rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.graphics.channel",
+                            "dvc_channel_id=%u",
+                            request.channel_id);
+            status = rdp_session_send_graphics_caps(session);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
@@ -907,6 +1031,15 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->core_input_channel_id = 0;
                 session->core_input_channel_id_bytes = 0;
                 session->core_input_ready = 0;
+            }
+            if (entry->channel_id == session->graphics_channel_id)
+            {
+                session->graphics_channel_id = 0;
+                session->graphics_channel_id_bytes = 0;
+                session->graphics_ready = 0;
+                session->graphics_selected_version = 0;
+                session->graphics_selected_flags = 0;
+                rdp_graphics_decompressor_reset(&session->graphics_decompressor);
             }
             rdp_buffer_free(&entry->fragment);
             entry->fragment_expected = 0;
@@ -1179,6 +1312,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
 
     session->state = LIBRDP_SESSION_IDLE;
     rdp_transport_init(&session->transport);
+    rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.session.new", "width=%u height=%u",
                     librdp_settings_width(session->settings),
                     librdp_settings_height(session->settings));
@@ -1191,6 +1325,7 @@ void librdp_session_free(librdp_session* session)
         return;
     (void)librdp_session_disconnect(session);
     rdp_session_dynamic_channels_clear(session);
+    rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_transport_close(&session->transport);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
@@ -1271,6 +1406,12 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
     memset(&session->display_control_caps, 0, sizeof(session->display_control_caps));
+    session->graphics_channel_id = 0;
+    session->graphics_channel_id_bytes = 0;
+    session->graphics_ready = 0;
+    session->graphics_selected_version = 0;
+    session->graphics_selected_flags = 0;
+    rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_session_dynamic_channels_clear(session);
 
     status = rdp_transport_connect(&session->transport,
@@ -2177,6 +2318,12 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
     memset(&session->display_control_caps, 0, sizeof(session->display_control_caps));
+    session->graphics_channel_id = 0;
+    session->graphics_channel_id_bytes = 0;
+    session->graphics_ready = 0;
+    session->graphics_selected_version = 0;
+    session->graphics_selected_flags = 0;
+    rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 

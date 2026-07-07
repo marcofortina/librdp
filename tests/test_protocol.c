@@ -2,6 +2,7 @@
 #include "channels/core_input.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/graphics_pipeline.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
@@ -395,6 +396,33 @@ static int test_path_security_license_channels(void)
         0, 0, 0, 0,
         0, 0, 0, 0
     };
+    const uint8_t graphics_confirm[] = {
+        0x13, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x22, 0x00, 0x00, 0x00
+    };
+    const uint8_t graphics_segment_single[] = {
+        0xe0, 0x04,
+        0x13, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x22, 0x00, 0x00, 0x00
+    };
+    const uint8_t graphics_segment_multipart[] = {
+        0xe1, 0x02, 0x00, 0x14, 0x00, 0x00, 0x00,
+        0x09, 0x00, 0x00, 0x00, 0x04,
+        0x13, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00,
+        0x0d, 0x00, 0x00, 0x00, 0x04,
+        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x22, 0x00, 0x00, 0x00
+    };
+    const uint8_t graphics_segment_compressed_literal[] = {0xe0, 0x24, 0x24, 0x80, 0x07};
+    const uint8_t graphics_segment_bad_compression_type[] = {0xe0, 0x20, 1, 2, 3};
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -547,6 +575,9 @@ static int test_path_security_license_channels(void)
     rdp_core_input_init_response core_init_response;
     rdp_display_control_caps display_parsed_caps;
     rdp_display_control_monitor display_monitor;
+    rdp_graphics_header graphics_header;
+    rdp_graphics_caps_confirm graphics_caps_confirm;
+    rdp_graphics_decompressor graphics_decompressor;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
     rdp_credssp_state cred_state;
@@ -568,6 +599,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_mouse_input;
     rdp_buffer client_refresh_rect;
     rdp_buffer client_suppress_output;
+    rdp_buffer graphics_decoded;
     rdp_buffer decoded_bitmap;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
@@ -648,6 +680,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_mouse_input);
     rdp_buffer_init(&client_refresh_rect);
     rdp_buffer_init(&client_suppress_output);
+    rdp_graphics_decompressor_init(&graphics_decompressor);
+    rdp_buffer_init(&graphics_decoded);
     rdp_buffer_init(&decoded_bitmap);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
@@ -1155,6 +1189,46 @@ static int test_path_security_license_channels(void)
     display_monitor.width = 801;
     PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_default_caps_advertise(&dyn_response) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 34);
+    PCHECK(test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
+    PCHECK(test_read_u32_le(dyn_response.data + 4) == dyn_response.length);
+    PCHECK(test_read_u16_le(dyn_response.data + 8) == 2);
+    PCHECK(rdp_graphics_parse_header(graphics_confirm, sizeof(graphics_confirm), &graphics_header) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM);
+    PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm, sizeof(graphics_confirm), &graphics_caps_confirm) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_caps_confirm.selected.version == RDP_GRAPHICS_CAPVERSION_10);
+    PCHECK((graphics_caps_confirm.selected.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
+                                              graphics_segment_single,
+                                              sizeof(graphics_segment_single),
+                                              &graphics_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == sizeof(graphics_confirm));
+    PCHECK(memcmp(graphics_decoded.data, graphics_confirm, sizeof(graphics_confirm)) == 0);
+    graphics_decoded.length = 0;
+    PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
+                                              graphics_segment_multipart,
+                                              sizeof(graphics_segment_multipart),
+                                              &graphics_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == sizeof(graphics_confirm));
+    PCHECK(memcmp(graphics_decoded.data, graphics_confirm, sizeof(graphics_confirm)) == 0);
+    graphics_decoded.length = 0;
+    PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
+                                              graphics_segment_compressed_literal,
+                                              sizeof(graphics_segment_compressed_literal),
+                                              &graphics_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == 1 && graphics_decoded.data[0] == 0x49);
+    graphics_decoded.length = 0;
+    PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
+                                              graphics_segment_bad_compression_type,
+                                              sizeof(graphics_segment_bad_compression_type),
+                                              &graphics_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm, sizeof(graphics_confirm) - 1u, &graphics_caps_confirm) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==
@@ -1330,6 +1404,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_authenticate);
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
+    rdp_graphics_decompressor_free(&graphics_decompressor);
+    rdp_buffer_free(&graphics_decoded);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
     rdp_buffer_free(&decoded_bitmap);
