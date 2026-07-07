@@ -11,6 +11,15 @@
 
 #define RDP_SEC_EXCHANGE_PKT 0x0001u
 #define RDP_SEC_INFO_PKT 0x0040u
+#define RDP_SECURITY_CLIENT_RANDOM_LEN 32u
+
+typedef struct rdp_security_public_key
+{
+    uint32_t exponent;
+    const uint8_t* modulus_le;
+    size_t modulus_len;
+    uint32_t bit_len;
+} rdp_security_public_key;
 
 typedef struct rdp_client_info
 {
@@ -47,5 +56,12 @@ librdp_status rdp_security_write_send_data_request(rdp_buffer* buffer,
                                                    uint16_t channel_id,
                                                    const void* payload,
                                                    size_t payload_len);
+librdp_status rdp_security_parse_server_certificate(const void* data,
+                                                    size_t length,
+                                                    rdp_security_public_key* public_key);
+librdp_status rdp_security_generate_client_random(uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN]);
+librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
+                                                 const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                 rdp_buffer* encrypted);
 
 #endif

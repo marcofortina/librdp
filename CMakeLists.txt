@@ -10,6 +10,8 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+find_package(OpenSSL 3.0 REQUIRED)
+
 add_library(librdp
     src/client/error.c
     src/client/settings.c
@@ -31,6 +33,7 @@ add_library(librdp
     src/protocol/slowpath.c
     src/protocol/tpkt.c
     src/protocol/x224.c
+    src/security/certificate.c
     src/security/security.c
     src/transport/tcp.c
     src/transport/transport.c
@@ -44,6 +47,7 @@ target_include_directories(librdp
 )
 
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
+target_link_libraries(librdp PRIVATE OpenSSL::Crypto)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)

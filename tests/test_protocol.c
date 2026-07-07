@@ -250,19 +250,40 @@ static int test_path_security_license_channels(void)
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
+    const uint8_t server_certificate[] = {
+        0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
+        0x00, 0x04, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0xeb, 0x63, 0x25, 0x72, 0xe3, 0xeb, 0x4e, 0x15, 0x13, 0x3c, 0x7b, 0x9c,
+        0x5c, 0x66, 0x61, 0x89, 0x0f, 0x7f, 0x79, 0x1a, 0x93, 0x75, 0x9c, 0xe2,
+        0x98, 0xeb, 0xa5, 0xa6, 0x73, 0xd2, 0xc7, 0x14, 0x2c, 0x5a, 0x57, 0x10,
+        0x48, 0x3b, 0x04, 0x69, 0xaf, 0x52, 0x86, 0x58, 0xe3, 0xf7, 0x05, 0xcf,
+        0x22, 0x0f, 0x6e, 0x25, 0x41, 0xe0, 0x3a, 0x26, 0x62, 0x2f, 0x31, 0xcf,
+        0xd5, 0x97, 0xd3, 0xa0, 0x93, 0x73, 0x4c, 0x9b, 0xc1, 0x9c, 0x2a, 0x30,
+        0x66, 0x7f, 0x61, 0x25, 0x67, 0xab, 0xd3, 0xe7, 0xe2, 0x7f, 0x5e, 0x57,
+        0x2a, 0x3a, 0x2b, 0x9c, 0x4f, 0x4e, 0x2c, 0xba, 0x8e, 0xf0, 0x93, 0x29,
+        0x3f, 0xf7, 0xca, 0x9e, 0x46, 0xd4, 0x1e, 0x11, 0x96, 0x84, 0xef, 0x2d,
+        0xa9, 0x57, 0x3d, 0x8b, 0x9b, 0x27, 0x90, 0x5b, 0x98, 0x9d, 0x5b, 0x80,
+        0x64, 0x24, 0x76, 0xc0, 0xba, 0x8d, 0xe4, 0xb2, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
+    uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     rdp_fastpath_header fast;
     rdp_slowpath_share_control_header slow_header;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_clipboard_packet cb;
     rdp_credssp_state cred_state;
+    rdp_security_public_key public_key;
     rdp_buffer security;
     rdp_buffer send_data;
+    rdp_buffer encrypted;
     rdp_client_info info;
     rdp_client_info_summary info_summary;
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
+    rdp_buffer_init(&encrypted);
 
     PCHECK(rdp_fastpath_parse_header(fast_short, sizeof(fast_short), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
@@ -301,6 +322,17 @@ static int test_path_security_license_channels(void)
     PCHECK(security.length == sizeof(encrypted_random) + 16u);
     PCHECK(security.data[0] == 0x01 && security.data[1] == 0x00);
     PCHECK(security.data[4] == (uint8_t)(sizeof(encrypted_random) + 8u));
+    memset(client_random, 0x4a, sizeof(client_random));
+    PCHECK(rdp_security_parse_server_certificate(server_certificate, sizeof(server_certificate), &public_key) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(public_key.exponent == 65537u && public_key.bit_len == 1024u && public_key.modulus_len == 128u);
+    PCHECK(public_key.modulus_le[0] == 0xeb && public_key.modulus_le[127] == 0xb2);
+    PCHECK(rdp_security_encrypt_client_random(&public_key, client_random, &encrypted) == LIBRDP_STATUS_OK);
+    PCHECK(encrypted.length == public_key.modulus_len);
+    PCHECK(memcmp(encrypted.data, client_random, sizeof(client_random)) != 0);
+    PCHECK(rdp_security_generate_client_random(client_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_parse_server_certificate(server_certificate, sizeof(server_certificate) - 1u, &public_key) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_license_parse_error_alert(license, sizeof(license), &alert) == LIBRDP_STATUS_OK);
     PCHECK(alert.error_code == 1 && alert.state_transition == 2 && alert.blob_length == 2 && alert.blob[1] == 8);
@@ -313,6 +345,7 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_credssp_begin(false, &cred_state) == LIBRDP_STATUS_OK && cred_state == RDP_CREDSSP_DISABLED);
     PCHECK(rdp_credssp_begin(true, &cred_state) == LIBRDP_STATUS_UNSUPPORTED && cred_state == RDP_CREDSSP_FAILED);
+    rdp_buffer_free(&encrypted);
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&security);
     return 0;

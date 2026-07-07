@@ -6,6 +6,9 @@
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_client_info_summary summary;
+    rdp_security_public_key public_key;
+
     (void)rdp_security_parse_client_info_pdu(data, size, &summary);
+    (void)rdp_security_parse_server_certificate(data, size, &public_key);
     return 0;
 }
