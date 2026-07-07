@@ -9,6 +9,9 @@
 #include "common/buffer.h"
 
 #define RDP_DYNAMIC_CHANNEL_CMD_CREATE 0x01u
+#define RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST 0x02u
+#define RDP_DYNAMIC_CHANNEL_CMD_DATA 0x03u
+#define RDP_DYNAMIC_CHANNEL_CMD_CLOSE 0x04u
 #define RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES 0x05u
 #define RDP_DYNAMIC_CHANNEL_STATUS_OK 0x00000000u
 
@@ -33,6 +36,20 @@ typedef struct rdp_dynamic_channel_create_request
     size_t name_len;
 } rdp_dynamic_channel_create_request;
 
+typedef struct rdp_dynamic_channel_data_pdu
+{
+    uint32_t channel_id;
+    uint8_t channel_id_bytes;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_dynamic_channel_data_pdu;
+
+typedef struct rdp_dynamic_channel_close_pdu
+{
+    uint32_t channel_id;
+    uint8_t channel_id_bytes;
+} rdp_dynamic_channel_close_pdu;
+
 librdp_status rdp_dynamic_channel_parse_header(const void* data,
                                                size_t length,
                                                rdp_dynamic_channel_header* header);
@@ -47,5 +64,16 @@ librdp_status rdp_dynamic_channel_write_create_response(rdp_buffer* buffer,
                                                        uint32_t channel_id,
                                                        uint8_t channel_id_bytes,
                                                        uint32_t status_code);
+librdp_status rdp_dynamic_channel_parse_data(const void* data,
+                                             size_t length,
+                                             rdp_dynamic_channel_data_pdu* pdu);
+librdp_status rdp_dynamic_channel_write_data(rdp_buffer* buffer,
+                                             uint32_t channel_id,
+                                             uint8_t channel_id_bytes,
+                                             const void* data,
+                                             size_t data_len);
+librdp_status rdp_dynamic_channel_parse_close(const void* data,
+                                              size_t length,
+                                              rdp_dynamic_channel_close_pdu* pdu);
 
 #endif

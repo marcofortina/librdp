@@ -346,6 +346,8 @@ static int test_path_security_license_channels(void)
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
     const uint8_t dyn_caps[] = {0x50, 0x00, 0x03, 0x00, 0x33, 0x33, 0x11, 0x11};
     const uint8_t dyn_create[] = {0x18, 0x07, 'E', 'C', 'H', 'O', 0};
+    const uint8_t dyn_data[] = {0x30, 0x07, 0xaa, 0xbb, 0xcc};
+    const uint8_t dyn_close[] = {0x40, 0x07};
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
@@ -491,6 +493,8 @@ static int test_path_security_license_channels(void)
     rdp_dynamic_channel_header dyn_header;
     rdp_dynamic_channel_capabilities dyn_parsed_caps;
     rdp_dynamic_channel_create_request dyn_create_request;
+    rdp_dynamic_channel_data_pdu dyn_data_pdu;
+    rdp_dynamic_channel_close_pdu dyn_close_pdu;
     rdp_clipboard_packet cb;
     rdp_mcs_send_data_indication indication;
     rdp_credssp_state cred_state;
@@ -992,6 +996,18 @@ static int test_path_security_license_channels(void)
                                                      RDP_DYNAMIC_CHANNEL_STATUS_OK) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 6 && dyn_response.data[0] == 0x10 && dyn_response.data[1] == 7 &&
            test_read_u32_le(dyn_response.data + 2) == 0);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_dynamic_channel_parse_data(dyn_data, sizeof(dyn_data), &dyn_data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_data_pdu.channel_id == 7 && dyn_data_pdu.data_len == 3 && dyn_data_pdu.data[0] == 0xaa);
+    PCHECK(rdp_dynamic_channel_write_data(&dyn_response,
+                                          dyn_data_pdu.channel_id,
+                                          dyn_data_pdu.channel_id_bytes,
+                                          dyn_data_pdu.data,
+                                          dyn_data_pdu.data_len) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(dyn_data) && memcmp(dyn_response.data, dyn_data, sizeof(dyn_data)) == 0);
+    PCHECK(rdp_dynamic_channel_parse_close(dyn_close, sizeof(dyn_close), &dyn_close_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_close_pdu.channel_id == 7 && dyn_close_pdu.channel_id_bytes == 1);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==

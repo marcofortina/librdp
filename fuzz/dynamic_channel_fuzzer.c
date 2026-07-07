@@ -8,12 +8,16 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_dynamic_channel_header header;
     rdp_dynamic_channel_capabilities capabilities;
     rdp_dynamic_channel_create_request request;
+    rdp_dynamic_channel_data_pdu data_pdu;
+    rdp_dynamic_channel_close_pdu close_pdu;
     rdp_buffer response;
 
     rdp_buffer_init(&response);
     (void)rdp_dynamic_channel_parse_header(data, size, &header);
     (void)rdp_dynamic_channel_parse_capabilities(data, size, &capabilities);
     (void)rdp_dynamic_channel_parse_create_request(data, size, &request);
+    (void)rdp_dynamic_channel_parse_data(data, size, &data_pdu);
+    (void)rdp_dynamic_channel_parse_close(data, size, &close_pdu);
     (void)rdp_dynamic_channel_write_capabilities_response(&response, 1);
     rdp_buffer_free(&response);
     return 0;

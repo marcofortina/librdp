@@ -187,3 +187,84 @@ librdp_status rdp_dynamic_channel_write_create_response(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, status_code);
     return status;
 }
+
+librdp_status rdp_dynamic_channel_parse_data(const void* data,
+                                             size_t length,
+                                             rdp_dynamic_channel_data_pdu* pdu)
+{
+    rdp_stream stream;
+    rdp_dynamic_channel_header header;
+
+    if (!data || !pdu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(pdu, 0, sizeof(*pdu));
+    if (rdp_dynamic_channel_parse_header(data, length, &header) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header.command != RDP_DYNAMIC_CHANNEL_CMD_DATA)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 1) != LIBRDP_STATUS_OK ||
+        rdp_dynamic_channel_read_channel_id(&stream, header.channel_id_bytes, &pdu->channel_id) !=
+            LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    pdu->channel_id_bytes = header.channel_id_bytes;
+    pdu->data_len = rdp_stream_remaining(&stream);
+    if (pdu->data_len > 0 && rdp_stream_read_bytes(&stream, &pdu->data, pdu->data_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_dynamic_channel_write_data(rdp_buffer* buffer,
+                                             uint32_t channel_id,
+                                             uint8_t channel_id_bytes,
+                                             const void* data,
+                                             size_t data_len)
+{
+    uint8_t cb_id = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (channel_id_bytes == 1)
+        cb_id = 0;
+    else if (channel_id_bytes == 2)
+        cb_id = 1;
+    else if (channel_id_bytes == 4)
+        cb_id = 2;
+    else
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA << 4) | cb_id));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_dynamic_channel_write_channel_id(buffer, channel_id, channel_id_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
+}
+
+librdp_status rdp_dynamic_channel_parse_close(const void* data,
+                                              size_t length,
+                                              rdp_dynamic_channel_close_pdu* pdu)
+{
+    rdp_stream stream;
+    rdp_dynamic_channel_header header;
+
+    if (!data || !pdu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(pdu, 0, sizeof(*pdu));
+    if (rdp_dynamic_channel_parse_header(data, length, &header) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header.command != RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 1) != LIBRDP_STATUS_OK ||
+        rdp_dynamic_channel_read_channel_id(&stream, header.channel_id_bytes, &pdu->channel_id) !=
+            LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    pdu->channel_id_bytes = header.channel_id_bytes;
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}

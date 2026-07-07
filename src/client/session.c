@@ -25,6 +25,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
+#define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
+
+typedef struct rdp_session_dynamic_channel
+{
+    uint32_t channel_id;
+    uint8_t channel_id_bytes;
+    uint8_t active;
+    char name[RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX];
+} rdp_session_dynamic_channel;
+
 struct librdp_session
 {
     librdp_settings* settings;
@@ -32,6 +43,7 @@ struct librdp_session
     rdp_transport transport;
     uint16_t mcs_user_id;
     uint16_t dynamic_channel_id;
+    rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     uint32_t share_id;
     librdp_session_state state;
     librdp_event_callback callback;
@@ -150,6 +162,57 @@ static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&channel_packet);
     return status;
+}
+
+static rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_session* session, uint32_t channel_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        if (session->dynamic_channels[i].active && session->dynamic_channels[i].channel_id == channel_id)
+            return &session->dynamic_channels[i];
+    }
+    return NULL;
+}
+
+static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
+                                                     const rdp_dynamic_channel_create_request* request)
+{
+    size_t i = 0;
+    size_t name_len = 0;
+    rdp_session_dynamic_channel* entry = NULL;
+
+    if (!session || !request || !request->name)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    entry = rdp_session_dynamic_channel_find(session, request->channel_id);
+    if (!entry)
+    {
+        for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
+        {
+            if (!session->dynamic_channels[i].active)
+            {
+                entry = &session->dynamic_channels[i];
+                break;
+            }
+        }
+    }
+    if (!entry)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    memset(entry, 0, sizeof(*entry));
+    entry->channel_id = request->channel_id;
+    entry->channel_id_bytes = request->channel_id_bytes;
+    entry->active = 1;
+    name_len = request->name_len < RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX - 1u ?
+                   request->name_len :
+                   RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX - 1u;
+    memcpy(entry->name, request->name, name_len);
+    entry->name[name_len] = '\0';
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
@@ -416,6 +479,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                                request.channel_id_bytes,
                                                                RDP_DYNAMIC_CHANNEL_STATUS_OK);
         if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_dynamic_channel_add(session, &request);
+        if (status == LIBRDP_STATUS_OK)
             status = rdp_session_write_channel_pdu(session,
                                                    session->dynamic_channel_id,
                                                    &response,
@@ -431,6 +496,64 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                         request.channel_id,
                         name_len,
                         request.name);
+    }
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA)
+    {
+        rdp_dynamic_channel_data_pdu data_pdu;
+        rdp_session_dynamic_channel* entry = NULL;
+
+        status = rdp_dynamic_channel_parse_data(channel_packet->payload, channel_packet->payload_len, &data_pdu);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+
+        entry = rdp_session_dynamic_channel_find(session, data_pdu.channel_id);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.data",
+                        "dvc_channel_id=%u name=%s payload_len=%u",
+                        data_pdu.channel_id,
+                        entry ? entry->name : "",
+                        (unsigned)data_pdu.data_len);
+        if (entry && strcmp(entry->name, "ECHO") == 0)
+        {
+            rdp_buffer response;
+
+            rdp_buffer_init(&response);
+            status = rdp_dynamic_channel_write_data(&response,
+                                                    data_pdu.channel_id,
+                                                    data_pdu.channel_id_bytes,
+                                                    data_pdu.data,
+                                                    data_pdu.data_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_write_channel_pdu(session,
+                                                       session->dynamic_channel_id,
+                                                       &response,
+                                                       "client.drdynvc.echo");
+            rdp_buffer_free(&response);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.drdynvc.echo",
+                            "dvc_channel_id=%u payload_len=%u",
+                            data_pdu.channel_id,
+                            (unsigned)data_pdu.data_len);
+        }
+    }
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
+    {
+        rdp_dynamic_channel_close_pdu close_pdu;
+        rdp_session_dynamic_channel* entry = NULL;
+
+        status = rdp_dynamic_channel_parse_close(channel_packet->payload, channel_packet->payload_len, &close_pdu);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        entry = rdp_session_dynamic_channel_find(session, close_pdu.channel_id);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.close",
+                        "dvc_channel_id=%u name=%s",
+                        close_pdu.channel_id,
+                        entry ? entry->name : "");
+        if (entry)
+            entry->active = 0;
     }
     else
     {
@@ -781,6 +904,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     session->share_id = 0;
     session->dynamic_channel_id = 0;
+    memset(session->dynamic_channels, 0, sizeof(session->dynamic_channels));
 
     status = rdp_transport_connect(&session->transport,
                                    librdp_settings_target(session->settings),
