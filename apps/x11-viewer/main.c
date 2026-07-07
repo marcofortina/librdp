@@ -145,13 +145,25 @@ static void draw_surface(x11_app* app)
 static void handle_key(x11_app* app, XKeyEvent* key, librdp_key_state state)
 {
     librdp_key_event event;
+    uint32_t scancode = 0;
 
     if (!app || !key)
         return;
+    if (key->keycode < 8)
+        return;
 
-    event.scancode = (uint32_t)(key->keycode & 0xffu);
+    scancode = (uint32_t)key->keycode - 8u;
+    if (scancode > 0xffu)
+        return;
+
+    event.scancode = scancode;
     event.state = state;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.keyboard.key", "keycode=%u state=%u", event.scancode, (unsigned)state);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.keyboard.key",
+                    "keycode=%u scancode=%u state=%u",
+                    key->keycode,
+                    event.scancode,
+                    (unsigned)state);
     (void)librdp_session_send_key(app->session, &event);
 }
 
