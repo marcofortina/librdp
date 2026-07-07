@@ -1,6 +1,8 @@
 #include <librdp/session.h>
 
 #include "common/trace.h"
+#include "protocol/gcc.h"
+#include "protocol/mcs.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
@@ -113,11 +115,16 @@ librdp_status librdp_session_connect(librdp_session* session)
 {
     librdp_event event;
     rdp_buffer x224;
+    rdp_buffer gcc_blocks;
+    rdp_buffer gcc_request;
+    rdp_buffer mcs;
     rdp_buffer request;
     rdp_buffer reply;
     rdp_tpkt packet;
     rdp_x224_connection_confirm confirm;
+    rdp_mcs_connect_response mcs_response;
     uint32_t protocols = 0;
+    uint32_t selected_protocol = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -135,6 +142,9 @@ librdp_status librdp_session_connect(librdp_session* session)
                     librdp_settings_height(session->settings));
 
     rdp_buffer_init(&x224);
+    rdp_buffer_init(&gcc_blocks);
+    rdp_buffer_init(&gcc_request);
+    rdp_buffer_init(&mcs);
     rdp_buffer_init(&request);
     rdp_buffer_init(&reply);
 
@@ -186,6 +196,60 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.done", "selected_protocol=%u",
                     confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0);
+    selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0;
+
+    {
+        rdp_gcc_client_config config;
+        config.desktop_width = (uint16_t)librdp_settings_width(session->settings);
+        config.desktop_height = (uint16_t)librdp_settings_height(session->settings);
+        config.requested_protocols = selected_protocol;
+        config.client_name = "librdp";
+
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.initial", "width=%u height=%u selected_protocol=%u",
+                        (unsigned)config.desktop_width,
+                        (unsigned)config.desktop_height,
+                        config.requested_protocols);
+        status = rdp_gcc_write_client_data_blocks(&gcc_blocks, &config);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        status = rdp_gcc_write_conference_create_request(&gcc_request, gcc_blocks.data, gcc_blocks.length);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        status = rdp_mcs_write_connect_initial(&mcs, gcc_request.data, gcc_request.length);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+    }
+
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+    status = rdp_tpkt_write(&request, mcs.data, mcs.length);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_hexdump("mcs.connect.initial", request.data, request.length);
+    status = rdp_transport_write_all(&session->transport, request.data, request.length);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+
+    rdp_buffer_free(&reply);
+    rdp_buffer_init(&reply);
+    status = rdp_transport_read_tpkt(&session->transport, &reply);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    rdp_trace_hexdump("mcs.connect.response", reply.data, reply.length);
+    status = rdp_tpkt_parse(reply.data, reply.length, &packet);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    status = rdp_mcs_parse_connect_response(packet.payload, packet.payload_len, &mcs_response);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    if (!mcs_response.has_result || mcs_response.result != 0)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.response.failed", "result=%u", mcs_response.result);
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
+    rdp_trace_event(RDP_TRACE_PROTOCOL, "mcs.connect.response", "result=%u", mcs_response.result);
+
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
     event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
@@ -198,6 +262,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.done", "transport=tcp");
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
     return LIBRDP_STATUS_OK;
 
@@ -206,6 +273,9 @@ fail:
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
     return rdp_session_fail(session, status);
 }

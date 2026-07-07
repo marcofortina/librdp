@@ -71,6 +71,7 @@ static int test_mcs_gcc_capabilities(void)
     const uint8_t ber_long[] = {0x82, 0x01, 0x23};
     const uint8_t ber_bad[] = {0x80};
     const uint8_t mcs_resp[] = {0x0a, 0x01, 0x00};
+    const uint8_t mcs_wrapped_resp[] = {0x7f, 0x66, 0x03, 0x0a, 0x01, 0x00};
     const uint8_t gcc_block[] = {0xc1, 0x00, 0x08, 0x00, 1, 2, 3, 4};
     const uint8_t caps[] = {
         0x02, 0x00, 0x00, 0x00,
@@ -82,6 +83,17 @@ static int test_mcs_gcc_capabilities(void)
     rdp_mcs_connect_response response;
     rdp_gcc_user_data_block block;
     rdp_capability_list list;
+    rdp_buffer ber;
+    rdp_buffer client_blocks;
+    rdp_buffer gcc_request;
+    rdp_buffer mcs_initial;
+    rdp_gcc_client_config config;
+    rdp_gcc_client_data_summary summary;
+
+    rdp_buffer_init(&ber);
+    rdp_buffer_init(&client_blocks);
+    rdp_buffer_init(&gcc_request);
+    rdp_buffer_init(&mcs_initial);
 
     rdp_stream_init(&stream, ber_short, sizeof(ber_short));
     PCHECK(rdp_mcs_read_ber_length(&stream, &length) == LIBRDP_STATUS_OK && length == 0x7f);
@@ -92,6 +104,18 @@ static int test_mcs_gcc_capabilities(void)
 
     PCHECK(rdp_mcs_parse_connect_response(mcs_resp, sizeof(mcs_resp), &response) == LIBRDP_STATUS_OK);
     PCHECK(response.has_result && response.result == 0);
+    PCHECK(rdp_mcs_parse_connect_response(mcs_wrapped_resp, sizeof(mcs_wrapped_resp), &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.has_result && response.result == 0);
+
+    PCHECK(rdp_mcs_write_ber_length(&ber, 0x7f) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_mcs_write_ber_length(&ber, 0x123) == LIBRDP_STATUS_OK);
+    PCHECK(ber.length == 4);
+    PCHECK(ber.data[0] == 0x7f && ber.data[1] == 0x82 && ber.data[2] == 0x01 && ber.data[3] == 0x23);
+    rdp_buffer_free(&ber);
+    rdp_buffer_init(&ber);
+    PCHECK(rdp_mcs_write_ber_integer(&ber, 0x80) == LIBRDP_STATUS_OK);
+    PCHECK(ber.length == 4 && ber.data[0] == 0x02 && ber.data[1] == 0x02 && ber.data[2] == 0x00 &&
+           ber.data[3] == 0x80);
 
     rdp_stream_init(&stream, gcc_block, sizeof(gcc_block));
     PCHECK(rdp_gcc_read_user_data_block(&stream, &block) == LIBRDP_STATUS_OK);
@@ -103,6 +127,29 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(list.sets[0].type == 1 && list.sets[0].data_len == 4);
     PCHECK(list.sets[1].type == 2 && list.sets[1].data_len == 0);
     PCHECK(rdp_capabilities_parse(caps, 5, &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    config.desktop_width = 1024;
+    config.desktop_height = 768;
+    config.requested_protocols = 0;
+    config.client_name = "librdp";
+    PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
+    PCHECK(summary.has_core && summary.has_security && summary.has_network);
+    PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
+    PCHECK(summary.version == 0x00080004u);
+    PCHECK(summary.channel_count == 0);
+    PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(gcc_request.length > client_blocks.length);
+    PCHECK(gcc_request.data[0] == 0 && gcc_request.data[1] == 5);
+    PCHECK(rdp_mcs_write_connect_initial(&mcs_initial, gcc_request.data, gcc_request.length) == LIBRDP_STATUS_OK);
+    PCHECK(mcs_initial.length > gcc_request.length);
+    PCHECK(mcs_initial.data[0] == 0x7f && mcs_initial.data[1] == 0x65);
+
+    rdp_buffer_free(&mcs_initial);
+    rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&client_blocks);
+    rdp_buffer_free(&ber);
     return 0;
 }
 

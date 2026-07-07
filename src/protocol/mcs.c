@@ -2,6 +2,183 @@
 
 #include <string.h>
 
+static librdp_status rdp_mcs_write_ber_tag(rdp_buffer* buffer, const uint8_t* tag, size_t tag_len, size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !tag || tag_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append(buffer, tag, tag_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_mcs_write_ber_length(buffer, length);
+}
+
+librdp_status rdp_mcs_write_ber_length(rdp_buffer* buffer, size_t length)
+{
+    uint8_t tmp[sizeof(size_t)];
+    size_t count = 0;
+    size_t value = length;
+    size_t i = 0;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 0x80u)
+        return rdp_buffer_append_u8(buffer, (uint8_t)length);
+
+    while (value > 0)
+    {
+        tmp[sizeof(tmp) - 1u - count] = (uint8_t)(value & 0xffu);
+        value >>= 8;
+        count++;
+    }
+    if (count > 0x7fu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    {
+        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)(0x80u | count));
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    for (i = sizeof(tmp) - count; i < sizeof(tmp); i++)
+    {
+        librdp_status status = rdp_buffer_append_u8(buffer, tmp[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_mcs_write_ber_integer(rdp_buffer* buffer, uint32_t value)
+{
+    uint8_t tmp[5];
+    uint8_t bytes[4];
+    size_t first = 0;
+    size_t length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    bytes[0] = (uint8_t)((value >> 24) & 0xffu);
+    bytes[1] = (uint8_t)((value >> 16) & 0xffu);
+    bytes[2] = (uint8_t)((value >> 8) & 0xffu);
+    bytes[3] = (uint8_t)(value & 0xffu);
+    while (first < 3 && bytes[first] == 0 && (bytes[first + 1u] & 0x80u) == 0)
+        first++;
+
+    if ((bytes[first] & 0x80u) != 0)
+    {
+        tmp[0] = 0;
+        memcpy(tmp + 1, bytes + first, sizeof(bytes) - first);
+        length = sizeof(bytes) - first + 1u;
+    }
+    else
+    {
+        memcpy(tmp, bytes + first, sizeof(bytes) - first);
+        length = sizeof(bytes) - first;
+    }
+
+    status = rdp_buffer_append_u8(buffer, 0x02);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_mcs_write_ber_length(buffer, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, tmp, length);
+}
+
+static librdp_status rdp_mcs_write_ber_octet_string(rdp_buffer* buffer, const void* data, size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, 0x04);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_mcs_write_ber_length(buffer, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, data, length);
+}
+
+static librdp_status rdp_mcs_write_domain_parameters(rdp_buffer* buffer,
+                                                     uint32_t max_channels,
+                                                     uint32_t max_users,
+                                                     uint32_t max_tokens,
+                                                     uint32_t priorities,
+                                                     uint32_t min_throughput,
+                                                     uint32_t max_height,
+                                                     uint32_t max_pdu_size,
+                                                     uint32_t protocol_version)
+{
+    rdp_buffer body;
+    librdp_status status = LIBRDP_STATUS_OK;
+    const uint8_t tag = 0x30;
+
+    rdp_buffer_init(&body);
+    status = rdp_mcs_write_ber_integer(&body, max_channels);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, max_users);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, max_tokens);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, priorities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, min_throughput);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, max_height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, max_pdu_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_integer(&body, protocol_version);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_tag(buffer, &tag, 1, body.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, body.data, body.length);
+
+    rdp_buffer_free(&body);
+    return status;
+}
+
+librdp_status rdp_mcs_write_connect_initial(rdp_buffer* buffer, const void* gcc_data, size_t gcc_data_len)
+{
+    static const uint8_t selector[] = {0x01};
+    static const uint8_t app_tag[] = {0x7f, 0x65};
+    rdp_buffer body;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!gcc_data && gcc_data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&body);
+    status = rdp_mcs_write_ber_octet_string(&body, selector, sizeof(selector));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_octet_string(&body, selector, sizeof(selector));
+    if (status == LIBRDP_STATUS_OK)
+    {
+        static const uint8_t boolean_true[] = {0x01, 0x01, 0xff};
+        status = rdp_buffer_append(&body, boolean_true, sizeof(boolean_true));
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_domain_parameters(&body, 34, 2, 0, 1, 0, 1, 65535, 2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_domain_parameters(&body, 1, 1, 1, 1, 0, 1, 1056, 2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_domain_parameters(&body, 65535, 64535, 65535, 1, 0, 1, 65535, 2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_octet_string(&body, gcc_data, gcc_data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_ber_tag(buffer, app_tag, sizeof(app_tag), body.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, body.data, body.length);
+
+    rdp_buffer_free(&body);
+    return status;
+}
+
 librdp_status rdp_mcs_read_ber_length(rdp_stream* stream, size_t* length)
 {
     uint8_t first = 0;
@@ -35,22 +212,53 @@ librdp_status rdp_mcs_read_ber_length(rdp_stream* stream, size_t* length)
     return LIBRDP_STATUS_OK;
 }
 
-librdp_status rdp_mcs_parse_connect_response(const void* data, size_t length, rdp_mcs_connect_response* response)
+static librdp_status rdp_mcs_read_ber_tag(rdp_stream* stream, uint8_t* tag, size_t* tag_len, bool* constructed)
+{
+    uint8_t first = 0;
+    size_t count = 0;
+
+    if (!stream || !tag || !tag_len || !constructed)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    tag[count++] = first;
+    *constructed = (first & 0x20u) != 0;
+    if ((first & 0x1fu) == 0x1fu)
+    {
+        uint8_t next = 0;
+        do
+        {
+            if (count >= 8 || rdp_stream_read_u8(stream, &next) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            tag[count++] = next;
+        } while ((next & 0x80u) != 0);
+    }
+
+    *tag_len = count;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_mcs_scan_connect_response(const uint8_t* data,
+                                                   size_t length,
+                                                   unsigned depth,
+                                                   rdp_mcs_connect_response* response)
 {
     rdp_stream stream;
 
-    if (!data || !response)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!data || !response || depth > 8)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(response, 0, sizeof(*response));
     rdp_stream_init(&stream, data, length);
-    while (rdp_stream_remaining(&stream) >= 2)
+    while (rdp_stream_remaining(&stream) > 0)
     {
-        uint8_t tag = 0;
+        uint8_t tag[8];
+        size_t tag_len = 0;
         size_t item_len = 0;
         const uint8_t* payload = NULL;
+        bool constructed = false;
 
-        if (rdp_stream_read_u8(&stream, &tag) != LIBRDP_STATUS_OK ||
+        if (rdp_mcs_read_ber_tag(&stream, tag, &tag_len, &constructed) != LIBRDP_STATUS_OK ||
             rdp_mcs_read_ber_length(&stream, &item_len) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_remaining(&stream) < item_len)
@@ -58,12 +266,26 @@ librdp_status rdp_mcs_parse_connect_response(const void* data, size_t length, rd
         if (rdp_stream_read_bytes(&stream, &payload, item_len) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-        if (tag == 0x0a && item_len == 1)
+        if (tag_len == 1 && tag[0] == 0x0a && item_len == 1)
         {
             response->has_result = true;
             response->result = payload[0];
         }
+        else if (constructed)
+        {
+            librdp_status status = rdp_mcs_scan_connect_response(payload, item_len, depth + 1u, response);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
     }
 
     return response->has_result ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_mcs_parse_connect_response(const void* data, size_t length, rdp_mcs_connect_response* response)
+{
+    if (!data || !response)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(response, 0, sizeof(*response));
+    return rdp_mcs_scan_connect_response((const uint8_t*)data, length, 0, response);
 }

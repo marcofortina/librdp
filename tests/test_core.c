@@ -140,12 +140,18 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid)
             0x02, 0x00, 0x08, 0x00,
             0x00, 0x00, 0x00, 0x00
         };
+        const uint8_t mcs_response[] = {
+            0x03, 0x00, 0x00, 0x0a,
+            0x7f, 0x66, 0x03, 0x0a, 0x01, 0x00
+        };
         struct timespec ts;
         int client = accept(fd, NULL, NULL);
         if (client >= 0)
         {
             (void)read(client, input, sizeof(input));
             (void)write(client, response, sizeof(response));
+            (void)read(client, input, sizeof(input));
+            (void)write(client, mcs_response, sizeof(mcs_response));
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);
