@@ -524,3 +524,86 @@ librdp_status rdp_credssp_parse_ts_request(const void* data, size_t length, rdp_
     }
     return request->version > 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
+
+static uint16_t rdp_read_u16_le_bytes(const uint8_t* data)
+{
+    return (uint16_t)(data[0] | ((uint16_t)data[1] << 8));
+}
+
+static uint32_t rdp_read_u32_le_bytes(const uint8_t* data)
+{
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static librdp_status rdp_ntlm_read_security_buffer(const uint8_t* base,
+                                                   size_t length,
+                                                   size_t offset,
+                                                   const uint8_t** value,
+                                                   size_t* value_len)
+{
+    uint16_t len = 0;
+    uint16_t max_len = 0;
+    uint32_t data_offset = 0;
+
+    if (!base || !value || !value_len || offset > length || length - offset < 8)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    len = rdp_read_u16_le_bytes(base + offset);
+    max_len = rdp_read_u16_le_bytes(base + offset + 2u);
+    data_offset = rdp_read_u32_le_bytes(base + offset + 4u);
+    if (len > max_len || data_offset > length || (size_t)len > length - data_offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = base + data_offset;
+    *value_len = len;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_credssp_extract_ntlm_challenge(const void* token,
+                                                 size_t token_len,
+                                                 const uint8_t** ntlm,
+                                                 size_t* ntlm_len)
+{
+    static const uint8_t signature[] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
+    const uint8_t* bytes = (const uint8_t*)token;
+    size_t i = 0;
+
+    if (!token || !ntlm || !ntlm_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (token_len < sizeof(signature) + 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i <= token_len - sizeof(signature) - 4u; i++)
+    {
+        if (memcmp(bytes + i, signature, sizeof(signature)) == 0 &&
+            rdp_read_u32_le_bytes(bytes + i + sizeof(signature)) == 2u)
+        {
+            *ntlm = bytes + i;
+            *ntlm_len = token_len - i;
+            return LIBRDP_STATUS_OK;
+        }
+    }
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_credssp_parse_ntlm_challenge(const void* data,
+                                               size_t length,
+                                               rdp_ntlm_challenge* challenge)
+{
+    static const uint8_t signature[] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
+    const uint8_t* bytes = (const uint8_t*)data;
+
+    if (!data || !challenge)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 48 || memcmp(bytes, signature, sizeof(signature)) != 0 ||
+        rdp_read_u32_le_bytes(bytes + 8) != 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(challenge, 0, sizeof(*challenge));
+    if (rdp_ntlm_read_security_buffer(bytes, length, 12, &challenge->target_name, &challenge->target_name_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    challenge->flags = rdp_read_u32_le_bytes(bytes + 20);
+    memcpy(challenge->server_challenge, bytes + 24, sizeof(challenge->server_challenge));
+    if (rdp_ntlm_read_security_buffer(bytes, length, 40, &challenge->target_info, &challenge->target_info_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}

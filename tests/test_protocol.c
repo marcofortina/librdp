@@ -267,6 +267,31 @@ static int test_path_security_license_channels(void)
     const uint8_t clip[] = {1, 0, 2, 0, 3, 0, 0, 0, 4, 5, 6};
     const uint8_t indication_pdu[] = {0x68, 0x00, 0x03, 0x03, 0xeb, 0x70, 0x04, 1, 2, 3, 4};
     const uint8_t encrypted_random[] = {1, 2, 3, 4, 5};
+    const uint8_t ntlm_challenge_token[] = {
+        'N',  'T',  'L',  'M',  'S',  'S',  'P',  0,
+        2,    0,    0,    0,
+        4,    0,    4,    0,    56,   0,    0,    0,
+        1,    2,    3,    4,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0,    0,    0,    0,    0,    0,    0,    0,
+        8,    0,    8,    0,    60,   0,    0,    0,
+        0,    0,    0,    0,    0,    0,    0,    0,
+        'S',  0,    'R',  0,
+        1,    0,    4,    0,    'A',  0,    0,    0
+    };
+    const uint8_t wrapped_ntlm_challenge[] = {
+        0xa1, 0x4c, 0x30, 0x4a, 0xa2, 0x48, 0x04, 0x46,
+        'N',  'T',  'L',  'M',  'S',  'S',  'P',  0,
+        2,    0,    0,    0,
+        4,    0,    4,    0,    56,   0,    0,    0,
+        1,    2,    3,    4,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0,    0,    0,    0,    0,    0,    0,    0,
+        8,    0,    8,    0,    60,   0,    0,    0,
+        0,    0,    0,    0,    0,    0,    0,    0,
+        'S',  0,    'R',  0,
+        1,    0,    4,    0,    'A',  0,    0,    0
+    };
     const uint8_t server_certificate[] = {
         0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -361,6 +386,9 @@ static int test_path_security_license_channels(void)
     rdp_client_info_summary info_summary;
     rdp_capability_list confirm_caps;
     rdp_credssp_ts_request parsed_ts;
+    rdp_ntlm_challenge ntlm_challenge;
+    const uint8_t* extracted_ntlm = NULL;
+    size_t extracted_ntlm_len = 0;
     uint8_t signature[8];
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -559,6 +587,22 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_credssp_write_negotiate_request(&nla_request, "host", "dom") == LIBRDP_STATUS_OK);
     PCHECK(rdp_credssp_parse_ts_request(nla_request.data, nla_request.length, &parsed_ts) == LIBRDP_STATUS_OK);
     PCHECK(parsed_ts.version == 6 && parsed_ts.nego_token_len > 0);
+    PCHECK(rdp_credssp_parse_ntlm_challenge(ntlm_challenge_token,
+                                            sizeof(ntlm_challenge_token),
+                                            &ntlm_challenge) == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_challenge.flags == 0x04030201u);
+    PCHECK(ntlm_challenge.server_challenge[0] == 0x10 && ntlm_challenge.server_challenge[7] == 0x17);
+    PCHECK(ntlm_challenge.target_name_len == 4 && ntlm_challenge.target_info_len == 8);
+    PCHECK(rdp_credssp_extract_ntlm_challenge(wrapped_ntlm_challenge,
+                                              sizeof(wrapped_ntlm_challenge),
+                                              &extracted_ntlm,
+                                              &extracted_ntlm_len) == LIBRDP_STATUS_OK);
+    PCHECK(extracted_ntlm_len == sizeof(ntlm_challenge_token));
+    PCHECK(rdp_credssp_parse_ntlm_challenge(extracted_ntlm, extracted_ntlm_len, &ntlm_challenge) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_parse_ntlm_challenge(ntlm_challenge_token,
+                                            sizeof(ntlm_challenge_token) - 1u,
+                                            &ntlm_challenge) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&ts_request);
     rdp_buffer_free(&spnego_negotiate);

@@ -424,6 +424,26 @@ librdp_status librdp_session_connect(librdp_session* session)
                             ts_response.version,
                             (unsigned)ts_response.nego_token_len,
                             ts_response.has_error_code ? ts_response.error_code : 0);
+        if (status == LIBRDP_STATUS_OK && ts_response.nego_token_len > 0)
+        {
+            const uint8_t* ntlm_token = NULL;
+            size_t ntlm_token_len = 0;
+            rdp_ntlm_challenge ntlm_challenge;
+
+            status = rdp_credssp_extract_ntlm_challenge(ts_response.nego_token,
+                                                        ts_response.nego_token_len,
+                                                        &ntlm_token,
+                                                        &ntlm_token_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_parse_ntlm_challenge(ntlm_token, ntlm_token_len, &ntlm_challenge);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "credssp.ntlm.challenge",
+                                "flags=%u target_name_len=%u target_info_len=%u",
+                                ntlm_challenge.flags,
+                                (unsigned)ntlm_challenge.target_name_len,
+                                (unsigned)ntlm_challenge.target_info_len);
+        }
         rdp_buffer_free(&credssp_reply);
         rdp_buffer_free(&credssp_request);
         if (status != LIBRDP_STATUS_OK)
