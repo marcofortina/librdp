@@ -442,6 +442,15 @@ static int test_path_security_license_channels(void)
         0x0a, 0x00, 0x00, 0x00,
         0x14, 0x00, 0x00, 0x00
     };
+    const uint8_t graphics_scaled_map_output[] = {
+        0x17, 0x00, 0x00, 0x00,
+        0x1c, 0x00, 0x00, 0x00,
+        0x34, 0x12, 0x00, 0x00,
+        0x0a, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00,
+        0x00, 0x04, 0x00, 0x00,
+        0x00, 0x03, 0x00, 0x00
+    };
     const uint8_t graphics_solid_fill[] = {
         0x04, 0x00, 0x00, 0x00,
         0x18, 0x00, 0x00, 0x00,
@@ -513,6 +522,12 @@ static int test_path_security_license_channels(void)
         0x08, 0x00, 0x00, 0x00,
         0x0a, 0x00, 0x00, 0x00,
         0x42, 0x00
+    };
+    const uint8_t graphics_delete_context_pdu[] = {
+        0x03, 0x00, 0x00, 0x00,
+        0x0e, 0x00, 0x00, 0x00,
+        0x34, 0x12,
+        0x44, 0x33, 0x22, 0x11
     };
     const uint8_t clear_residual_bitmap[] = {
         0x00, 0x00,
@@ -717,6 +732,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_delete_surface graphics_delete;
     rdp_graphics_reset graphics_reset;
     rdp_graphics_map_surface_to_output graphics_map;
+    rdp_graphics_map_surface_to_scaled_output graphics_scaled_map;
     rdp_graphics_point16 graphics_point;
     rdp_graphics_rect16 graphics_rect;
     rdp_graphics_solid_fill graphics_solid;
@@ -726,6 +742,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_surface_to_cache graphics_surface_cache;
     rdp_graphics_cache_to_surface graphics_cache_surface;
     rdp_graphics_evict_cache_entry graphics_evict;
+    rdp_graphics_delete_encoding_context graphics_delete_context;
     rdp_graphics_start_frame graphics_start;
     rdp_graphics_end_frame graphics_end;
     rdp_graphics_decompressor graphics_decompressor;
@@ -1404,6 +1421,14 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_map.surface_id == 0x1234 &&
            graphics_map.output_origin_x == 10 &&
            graphics_map.output_origin_y == 20);
+    PCHECK(rdp_graphics_parse_map_surface_to_scaled_output(graphics_scaled_map_output,
+                                                           sizeof(graphics_scaled_map_output),
+                                                           &graphics_scaled_map) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_scaled_map.surface_id == 0x1234 &&
+           graphics_scaled_map.output_origin_x == 10 &&
+           graphics_scaled_map.output_origin_y == 20 &&
+           graphics_scaled_map.target_width == 1024 &&
+           graphics_scaled_map.target_height == 768);
     PCHECK(rdp_graphics_parse_solid_fill(graphics_solid_fill,
                                          sizeof(graphics_solid_fill),
                                          &graphics_solid) == LIBRDP_STATUS_OK);
@@ -1479,6 +1504,11 @@ static int test_path_security_license_channels(void)
                                                 sizeof(graphics_evict_cache),
                                                 &graphics_evict) == LIBRDP_STATUS_OK);
     PCHECK(graphics_evict.cache_slot == 0x42);
+    PCHECK(rdp_graphics_parse_delete_encoding_context(graphics_delete_context_pdu,
+                                                      sizeof(graphics_delete_context_pdu),
+                                                      &graphics_delete_context) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_delete_context.surface_id == 0x1234 &&
+           graphics_delete_context.codec_context_id == 0x11223344u);
     PCHECK(rdp_graphics_parse_start_frame(graphics_start_frame,
                                           sizeof(graphics_start_frame),
                                           &graphics_start) == LIBRDP_STATUS_OK);

@@ -1122,6 +1122,20 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                             wire.codec_context_id,
                             wire.bitmap_data_length);
         }
+        else if (header.cmd_id == RDP_GRAPHICS_CMDID_DELETE_ENCODING_CONTEXT)
+        {
+            rdp_graphics_delete_encoding_context context;
+
+            status = rdp_graphics_parse_delete_encoding_context(pdu, header.pdu_length, &context);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.graphics.encoding_context.delete",
+                            "dvc_channel_id=%u surface_id=%u context_id=%u",
+                            channel_id,
+                            context.surface_id,
+                            context.codec_context_id);
+        }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_SURFACE_TO_SURFACE)
         {
             rdp_graphics_surface_to_surface surface_to_surface;
@@ -1319,6 +1333,53 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                             map.surface_id,
                             map.output_origin_x,
                             map.output_origin_y);
+        }
+        else if (header.cmd_id == RDP_GRAPHICS_CMDID_MAP_SURFACE_TO_SCALED_OUTPUT)
+        {
+            rdp_graphics_map_surface_to_scaled_output map;
+            rdp_session_graphics_surface* surface = NULL;
+
+            status = rdp_graphics_parse_map_surface_to_scaled_output(pdu, header.pdu_length, &map);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            surface = rdp_session_graphics_surface_find(session, map.surface_id);
+            if (!surface)
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
+            if (map.target_width == surface->width && map.target_height == surface->height)
+            {
+                rdp_graphics_map_surface_to_output unscaled_map;
+
+                unscaled_map.surface_id = map.surface_id;
+                unscaled_map.output_origin_x = map.output_origin_x;
+                unscaled_map.output_origin_y = map.output_origin_y;
+                status = rdp_session_graphics_surface_map(session, &unscaled_map);
+                if (status != LIBRDP_STATUS_OK)
+                    break;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.graphics.surface.map_scaled_output",
+                                "dvc_channel_id=%u surface_id=%u x=%u y=%u target_width=%u target_height=%u",
+                                channel_id,
+                                map.surface_id,
+                                map.output_origin_x,
+                                map.output_origin_y,
+                                map.target_width,
+                                map.target_height);
+            }
+            else
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.graphics.surface.map_scaled_output.unsupported",
+                                "dvc_channel_id=%u surface_id=%u x=%u y=%u target_width=%u target_height=%u",
+                                channel_id,
+                                map.surface_id,
+                                map.output_origin_x,
+                                map.output_origin_y,
+                                map.target_width,
+                                map.target_height);
+            }
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_SOLIDFILL)
         {

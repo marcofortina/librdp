@@ -93,6 +93,15 @@ typedef struct rdp_graphics_map_surface_to_output
     uint32_t output_origin_y;
 } rdp_graphics_map_surface_to_output;
 
+typedef struct rdp_graphics_map_surface_to_scaled_output
+{
+    uint16_t surface_id;
+    uint32_t output_origin_x;
+    uint32_t output_origin_y;
+    uint32_t target_width;
+    uint32_t target_height;
+} rdp_graphics_map_surface_to_scaled_output;
+
 typedef struct rdp_graphics_point16
 {
     uint16_t x;
@@ -168,6 +177,12 @@ typedef struct rdp_graphics_evict_cache_entry
     uint16_t cache_slot;
 } rdp_graphics_evict_cache_entry;
 
+typedef struct rdp_graphics_delete_encoding_context
+{
+    uint16_t surface_id;
+    uint32_t codec_context_id;
+} rdp_graphics_delete_encoding_context;
+
 typedef struct rdp_graphics_start_frame
 {
     uint32_t timestamp;
@@ -208,6 +223,10 @@ librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_grap
 librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
                                                        size_t length,
                                                        rdp_graphics_map_surface_to_output* map);
+librdp_status rdp_graphics_parse_map_surface_to_scaled_output(
+    const void* data,
+    size_t length,
+    rdp_graphics_map_surface_to_scaled_output* map);
 librdp_status rdp_graphics_parse_point16(const void* data, size_t length, rdp_graphics_point16* point);
 librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_graphics_rect16* rect);
 librdp_status rdp_graphics_parse_solid_fill(const void* data,
@@ -231,6 +250,9 @@ librdp_status rdp_graphics_parse_cache_to_surface(const void* data,
 librdp_status rdp_graphics_parse_evict_cache_entry(const void* data,
                                                    size_t length,
                                                    rdp_graphics_evict_cache_entry* evict);
+librdp_status rdp_graphics_parse_delete_encoding_context(const void* data,
+                                                         size_t length,
+                                                         rdp_graphics_delete_encoding_context* context);
 librdp_status rdp_graphics_parse_start_frame(const void* data,
                                              size_t length,
                                              rdp_graphics_start_frame* start_frame);
