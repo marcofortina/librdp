@@ -8,6 +8,7 @@
 
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -109,11 +110,16 @@ int test_transport(void)
     size_t got = 0;
     rdp_buffer packet;
     rdp_buffer wire;
+    rdp_buffer tls_public_key;
     const uint8_t payload[] = {0xaa, 0xbb, 0xcc};
+    unsigned char* expected_public_key = NULL;
+    unsigned char* expected_public_key_ptr = NULL;
+    int expected_public_key_len = 0;
 
     rdp_transport_init(&transport);
     rdp_buffer_init(&packet);
     rdp_buffer_init(&wire);
+    rdp_buffer_init(&tls_public_key);
 
     TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
     rdp_transport_attach_fd(&transport, pair[0], 1);
@@ -158,6 +164,15 @@ int test_transport(void)
     rdp_transport_attach_fd(&transport, tls_pair[0], 1);
     tls_pair[0] = -1;
     TCHECK(rdp_transport_start_tls(&transport, "localhost") == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_get_tls_public_key(&transport, &tls_public_key) == LIBRDP_STATUS_OK);
+    expected_public_key_len = i2d_PublicKey(key, NULL);
+    TCHECK(expected_public_key_len > 0);
+    expected_public_key = (unsigned char*)malloc((size_t)expected_public_key_len);
+    TCHECK(expected_public_key != NULL);
+    expected_public_key_ptr = expected_public_key;
+    TCHECK(i2d_PublicKey(key, &expected_public_key_ptr) == expected_public_key_len);
+    TCHECK(tls_public_key.length == (size_t)expected_public_key_len);
+    TCHECK(memcmp(tls_public_key.data, expected_public_key, tls_public_key.length) == 0);
     TCHECK(rdp_transport_write_all(&transport, "ping", 4) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_read_exact(&transport, data, 4) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "pong", 4) == 0);
@@ -167,5 +182,7 @@ int test_transport(void)
 
     X509_free(cert);
     EVP_PKEY_free(key);
+    free(expected_public_key);
+    rdp_buffer_free(&tls_public_key);
     return 0;
 }

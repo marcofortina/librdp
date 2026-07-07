@@ -7,6 +7,7 @@
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -110,6 +111,53 @@ librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host
                     SSL_get_version(tls),
                     SSL_get_cipher(tls));
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_get_tls_public_key(rdp_transport* transport, rdp_buffer* public_key)
+{
+    X509* cert = NULL;
+    EVP_PKEY* pkey = NULL;
+    unsigned char* out = NULL;
+    int length = 0;
+    int written = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!transport || !transport->tls_active || !transport->tls || !public_key)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    cert = SSL_get1_peer_certificate(transport->tls);
+    if (!cert)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    pkey = X509_get_pubkey(cert);
+    if (!pkey)
+    {
+        X509_free(cert);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+
+    length = i2d_PublicKey(pkey, NULL);
+    if (length <= 0)
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto out;
+    }
+    status = rdp_buffer_reserve(public_key, (size_t)length);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+    out = public_key->data;
+    written = i2d_PublicKey(pkey, &out);
+    if (written != length)
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto out;
+    }
+    public_key->length = (size_t)written;
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.public_key", "length=%u", (unsigned)public_key->length);
+
+out:
+    EVP_PKEY_free(pkey);
+    X509_free(cert);
+    return status;
 }
 
 librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short events, short* revents)

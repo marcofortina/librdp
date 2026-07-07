@@ -14,6 +14,8 @@
 #include "protocol/x224.h"
 #include "security/security.h"
 
+#include <openssl/evp.h>
+
 #include <stdio.h>
 #include <string.h>
 
@@ -35,6 +37,37 @@ static uint16_t test_read_u16_le(const uint8_t* data)
 static uint32_t test_read_u32_le(const uint8_t* data)
 {
     return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static int test_sha256_three(const uint8_t* a,
+                             size_t a_len,
+                             const uint8_t* b,
+                             size_t b_len,
+                             const uint8_t* c,
+                             size_t c_len,
+                             uint8_t out[32])
+{
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    unsigned int got = 0;
+    int ok = 0;
+
+    if (!context)
+        return 0;
+    if (EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1)
+        goto out;
+    if (EVP_DigestUpdate(context, a, a_len) != 1)
+        goto out;
+    if (EVP_DigestUpdate(context, b, b_len) != 1)
+        goto out;
+    if (EVP_DigestUpdate(context, c, c_len) != 1)
+        goto out;
+    if (EVP_DigestFinal_ex(context, out, &got) != 1 || got != 32u)
+        goto out;
+    ok = 1;
+
+out:
+    EVP_MD_CTX_free(context);
+    return ok;
 }
 
 static int test_tpkt_x224(void)
@@ -319,6 +352,17 @@ static int test_path_security_license_channels(void)
         0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0xfe, 0xdc,
         0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x99, 0x88
     };
+    const uint8_t credssp_client_nonce[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    const uint8_t credssp_public_key[] = {
+        0x30, 0x13, 0x02, 0x0f, 0x00, 0xb8, 0x2d, 0xf1,
+        0xa8, 0x88, 0x3d, 0xa8, 0xfb, 0xa6, 0x99, 0xf8,
+        0x74, 0x2e, 0xc3, 0x02, 0x03, 0x01, 0x00, 0x01
+    };
     const uint8_t ntlm_v2_expected_lm[] = {
         0xd6, 0xe6, 0x15, 0x2e, 0xa2, 0x5d, 0x03, 0xb7,
         0xc6, 0xba, 0x66, 0x29, 0xc2, 0xd6, 0xaa, 0xf0,
@@ -418,6 +462,10 @@ static int test_path_security_license_channels(void)
     rdp_buffer ntlm_authenticate;
     rdp_buffer spnego_negotiate;
     rdp_buffer spnego_authenticate;
+    rdp_buffer ntlm_wrapped;
+    rdp_buffer ntlm_unwrapped;
+    rdp_buffer pub_key_auth;
+    rdp_buffer server_pub_key_auth;
     rdp_buffer ts_request;
     rdp_buffer nla_request;
     rdp_client_info info;
@@ -427,8 +475,11 @@ static int test_path_security_license_channels(void)
     rdp_ntlm_challenge ntlm_challenge;
     rdp_ntlm_challenge ntlm_v2_challenge;
     rdp_ntlm_authenticate_result ntlm_auth_result;
+    rdp_ntlm_security_context ntlm_security;
+    rdp_ntlm_security_context server_security;
     const uint8_t* extracted_ntlm = NULL;
     size_t extracted_ntlm_len = 0;
+    uint8_t server_hash[32];
     uint16_t lm_len = 0;
     uint16_t nt_len = 0;
     uint16_t key_len = 0;
@@ -452,6 +503,10 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&ntlm_authenticate);
     rdp_buffer_init(&spnego_negotiate);
     rdp_buffer_init(&spnego_authenticate);
+    rdp_buffer_init(&ntlm_wrapped);
+    rdp_buffer_init(&ntlm_unwrapped);
+    rdp_buffer_init(&pub_key_auth);
+    rdp_buffer_init(&server_pub_key_auth);
     rdp_buffer_init(&ts_request);
     rdp_buffer_init(&nla_request);
 
@@ -626,10 +681,14 @@ static int test_path_security_license_channels(void)
                                         NULL,
                                         0,
                                         NULL,
-                                        0) == LIBRDP_STATUS_OK);
+                                        0,
+                                        credssp_client_nonce,
+                                        sizeof(credssp_client_nonce)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_credssp_parse_ts_request(ts_request.data, ts_request.length, &parsed_ts) == LIBRDP_STATUS_OK);
     PCHECK(parsed_ts.version == 6 && parsed_ts.nego_token_len == spnego_negotiate.length);
     PCHECK(memcmp(parsed_ts.nego_token, spnego_negotiate.data, spnego_negotiate.length) == 0);
+    PCHECK(parsed_ts.client_nonce_len == sizeof(credssp_client_nonce));
+    PCHECK(memcmp(parsed_ts.client_nonce, credssp_client_nonce, sizeof(credssp_client_nonce)) == 0);
     PCHECK(rdp_credssp_parse_ts_request(ts_request.data, ts_request.length - 1u, &parsed_ts) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_credssp_write_negotiate_request(&nla_request, "host", "dom") == LIBRDP_STATUS_OK);
@@ -694,8 +753,58 @@ static int test_path_security_license_channels(void)
                                                       ntlm_authenticate.data,
                                                       ntlm_authenticate.length) == LIBRDP_STATUS_OK);
     PCHECK(spnego_authenticate.length > ntlm_authenticate.length && spnego_authenticate.data[0] == 0xa1);
+    PCHECK(rdp_credssp_ntlm_security_init(&ntlm_security, &ntlm_auth_result) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_ntlm_wrap(&ntlm_security, "data", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_wrapped.length == 20);
+    PCHECK(test_read_u32_le(ntlm_wrapped.data) == 1);
+    PCHECK(test_read_u32_le(ntlm_wrapped.data + 12) == 0);
+    PCHECK(memcmp(ntlm_wrapped.data + 16, "data", 4) != 0);
+    PCHECK(ntlm_security.send_seq == 1);
+    PCHECK(rdp_credssp_encrypt_public_key_hash(&ntlm_security,
+                                               credssp_client_nonce,
+                                               sizeof(credssp_client_nonce),
+                                               credssp_public_key,
+                                               sizeof(credssp_public_key),
+                                               &pub_key_auth) == LIBRDP_STATUS_OK);
+    PCHECK(pub_key_auth.length == 48 && ntlm_security.send_seq == 2);
+    server_security = ntlm_security;
+    memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
+    server_security.send_rc4 = ntlm_security.recv_rc4;
+    server_security.send_seq = 0;
+    PCHECK(test_sha256_three((const uint8_t*)"CredSSP Server-To-Client Binding Hash",
+                             sizeof("CredSSP Server-To-Client Binding Hash"),
+                             credssp_client_nonce,
+                             sizeof(credssp_client_nonce),
+                             credssp_public_key,
+                             sizeof(credssp_public_key),
+                             server_hash));
+    PCHECK(rdp_credssp_ntlm_wrap(&server_security,
+                                 server_hash,
+                                 sizeof(server_hash),
+                                 &server_pub_key_auth) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_verify_public_key_hash(&ntlm_security,
+                                              credssp_client_nonce,
+                                              sizeof(credssp_client_nonce),
+                                              credssp_public_key,
+                                              sizeof(credssp_public_key),
+                                              server_pub_key_auth.data,
+                                              server_pub_key_auth.length) == LIBRDP_STATUS_OK);
+    server_security = ntlm_security;
+    memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
+    server_security.send_rc4 = ntlm_security.recv_rc4;
+    server_security.send_seq = ntlm_security.recv_seq;
+    PCHECK(rdp_credssp_ntlm_wrap(&server_security, "peer", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_ntlm_unwrap(&ntlm_security,
+                                   ntlm_wrapped.data + 20,
+                                   ntlm_wrapped.length - 20,
+                                   &ntlm_unwrapped) == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_unwrapped.length == 4 && memcmp(ntlm_unwrapped.data, "peer", 4) == 0);
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&ts_request);
+    rdp_buffer_free(&server_pub_key_auth);
+    rdp_buffer_free(&pub_key_auth);
+    rdp_buffer_free(&ntlm_unwrapped);
+    rdp_buffer_free(&ntlm_wrapped);
     rdp_buffer_free(&spnego_authenticate);
     rdp_buffer_free(&spnego_negotiate);
     rdp_buffer_free(&ntlm_authenticate);

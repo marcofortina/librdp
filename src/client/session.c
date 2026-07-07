@@ -13,6 +13,9 @@
 #include "transport/transport.h"
 #include "input/input.h"
 
+#include <openssl/crypto.h>
+#include <openssl/rand.h>
+
 #include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -395,29 +398,64 @@ librdp_status librdp_session_connect(librdp_session* session)
     {
         rdp_buffer credssp_request;
         rdp_buffer credssp_reply;
+        rdp_buffer ntlm_negotiate;
+        rdp_buffer spnego_negotiate;
         rdp_buffer ntlm_authenticate;
         rdp_buffer spnego_authenticate;
+        rdp_buffer tls_public_key;
+        rdp_buffer pub_key_auth;
         rdp_credssp_ts_request ts_response;
         rdp_credssp_ts_request auth_response;
+        rdp_credssp_ts_request pub_key_response;
         rdp_ntlm_authenticate_result ntlm_auth_result;
+        rdp_ntlm_security_context ntlm_security;
+        uint8_t client_nonce[32];
 
         rdp_buffer_init(&credssp_request);
         rdp_buffer_init(&credssp_reply);
+        rdp_buffer_init(&ntlm_negotiate);
+        rdp_buffer_init(&spnego_negotiate);
         rdp_buffer_init(&ntlm_authenticate);
         rdp_buffer_init(&spnego_authenticate);
+        rdp_buffer_init(&tls_public_key);
+        rdp_buffer_init(&pub_key_auth);
         memset(&ntlm_auth_result, 0, sizeof(ntlm_auth_result));
+        memset(&ntlm_security, 0, sizeof(ntlm_security));
+        memset(client_nonce, 0, sizeof(client_nonce));
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.start", "state=begin");
         status = rdp_credssp_begin(true, &credssp_state);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_credssp_write_negotiate_request(&credssp_request,
-                                                         "librdp",
-                                                         librdp_settings_domain(session->settings));
+            status = RAND_bytes(client_nonce, (int)sizeof(client_nonce)) == 1 ? LIBRDP_STATUS_OK
+                                                                              : LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_transport_get_tls_public_key(&session->transport, &tls_public_key);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_credssp_write_ntlm_negotiate(&ntlm_negotiate,
+                                                      "librdp",
+                                                      librdp_settings_domain(session->settings));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_credssp_write_spnego_ntlm_negotiate(&spnego_negotiate,
+                                                             ntlm_negotiate.data,
+                                                             ntlm_negotiate.length);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_credssp_write_ts_request(&credssp_request,
+                                                  6,
+                                                  spnego_negotiate.data,
+                                                  spnego_negotiate.length,
+                                                  NULL,
+                                                  0,
+                                                  NULL,
+                                                  0,
+                                                  client_nonce,
+                                                  sizeof(client_nonce));
         if (status == LIBRDP_STATUS_OK)
         {
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "credssp.nla.negotiate",
-                            "token_len=%u",
-                            (unsigned)credssp_request.length);
+                            "token_len=%u client_nonce_len=%u public_key_len=%u",
+                            (unsigned)credssp_request.length,
+                            (unsigned)sizeof(client_nonce),
+                            (unsigned)tls_public_key.length);
             status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
         }
         if (status == LIBRDP_STATUS_OK)
@@ -479,7 +517,9 @@ librdp_status librdp_session_connect(librdp_session* session)
                                                       NULL,
                                                       0,
                                                       NULL,
-                                                      0);
+                                                      0,
+                                                      client_nonce,
+                                                      sizeof(client_nonce));
             }
             if (status == LIBRDP_STATUS_OK)
             {
@@ -503,11 +543,74 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 (unsigned)auth_response.auth_info_len,
                                 (unsigned)auth_response.pub_key_auth_len,
                                 auth_response.has_error_code ? auth_response.error_code : 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_ntlm_security_init(&ntlm_security, &ntlm_auth_result);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_encrypt_public_key_hash(&ntlm_security,
+                                                             client_nonce,
+                                                             sizeof(client_nonce),
+                                                             tls_public_key.data,
+                                                             tls_public_key.length,
+                                                             &pub_key_auth);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&credssp_request);
+                rdp_buffer_init(&credssp_request);
+                status = rdp_credssp_write_ts_request(&credssp_request,
+                                                      auth_response.version ? auth_response.version : 6,
+                                                      NULL,
+                                                      0,
+                                                      NULL,
+                                                      0,
+                                                      pub_key_auth.data,
+                                                      pub_key_auth.length,
+                                                      client_nonce,
+                                                      sizeof(client_nonce));
+            }
+            if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "credssp.nla.pubkey",
+                                "token_len=%u pub_key_auth_len=%u",
+                                (unsigned)credssp_request.length,
+                                (unsigned)pub_key_auth.length);
+                status = rdp_transport_write_all(&session->transport, credssp_request.data, credssp_request.length);
+            }
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_read_credssp_ts_request(session, &credssp_reply, 5000);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_parse_ts_request(credssp_reply.data, credssp_reply.length, &pub_key_response);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "credssp.nla.pubkey_response",
+                                "version=%u token_len=%u auth_info_len=%u pub_key_auth_len=%u error=%u",
+                                pub_key_response.version,
+                                (unsigned)pub_key_response.nego_token_len,
+                                (unsigned)pub_key_response.auth_info_len,
+                                (unsigned)pub_key_response.pub_key_auth_len,
+                                pub_key_response.has_error_code ? pub_key_response.error_code : 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_credssp_verify_public_key_hash(&ntlm_security,
+                                                            client_nonce,
+                                                            sizeof(client_nonce),
+                                                            tls_public_key.data,
+                                                            tls_public_key.length,
+                                                            pub_key_response.pub_key_auth,
+                                                            pub_key_response.pub_key_auth_len);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.pubkey.verified", "pub_key_auth_len=%u",
+                                (unsigned)pub_key_response.pub_key_auth_len);
         }
+        rdp_buffer_free(&pub_key_auth);
+        rdp_buffer_free(&tls_public_key);
         rdp_buffer_free(&spnego_authenticate);
         rdp_buffer_free(&ntlm_authenticate);
+        rdp_buffer_free(&spnego_negotiate);
+        rdp_buffer_free(&ntlm_negotiate);
         rdp_buffer_free(&credssp_reply);
         rdp_buffer_free(&credssp_request);
+        OPENSSL_cleanse(&ntlm_security, sizeof(ntlm_security));
+        OPENSSL_cleanse(client_nonce, sizeof(client_nonce));
         if (status != LIBRDP_STATUS_OK)
         {
             rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
