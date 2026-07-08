@@ -40,6 +40,9 @@ typedef struct x11_app
     librdp_session* session;
     int running;
     int dirty;
+    uint64_t event_serial;
+    uint32_t window_width;
+    uint32_t window_height;
     int focused;
     int pointer_inside;
     int keyboard_grabbed;
@@ -53,6 +56,7 @@ typedef struct x11_app
 #define X11_CURSOR_HIDDEN 1
 #define X11_CURSOR_SHAPE 2
 #define X11_MAX_EVENTS_PER_TICK 128u
+#define X11_MAX_NETWORK_PUMP 64u
 
 typedef struct x11_scancode_map
 {
@@ -902,6 +906,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
 
     if (!app || !event)
         return;
+    app->event_serial++;
 
     switch (event->type)
     {
@@ -930,6 +935,38 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
     }
 }
 
+static void run_session_pump(x11_app* app)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    unsigned int i = 0;
+
+    if (!app || !app->session || !app->running)
+        return;
+
+    status = librdp_session_run_once(app->session, 16);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        fprintf(stderr, "error=%s\n", librdp_status_string(status));
+        app->running = 0;
+        return;
+    }
+
+    for (i = 0; app->running && i < X11_MAX_NETWORK_PUMP; i++)
+    {
+        uint64_t before = app->event_serial;
+
+        status = librdp_session_run_once(app->session, 0);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            fprintf(stderr, "error=%s\n", librdp_status_string(status));
+            app->running = 0;
+            return;
+        }
+        if (!app->dirty && app->event_serial == before)
+            break;
+    }
+}
+
 static void draw_surface(x11_app* app)
 {
     const librdp_surface* surface = NULL;
@@ -946,6 +983,9 @@ static void draw_surface(x11_app* app)
 
     width = librdp_surface_width(surface);
     height = librdp_surface_height(surface);
+    if ((app->window_width != 0 && app->window_width != width) ||
+        (app->window_height != 0 && app->window_height != height))
+        XClearWindow(app->display, app->window);
     image = XCreateImage(app->display,
                          DefaultVisual(app->display, app->screen),
                          (unsigned)DefaultDepth(app->display, app->screen),
@@ -1232,6 +1272,8 @@ int main(int argc, char** argv)
                                      BlackPixel(app.display, app.screen),
                                      BlackPixel(app.display, app.screen));
     app.gc = XCreateGC(app.display, app.window, 0, NULL);
+    app.window_width = width;
+    app.window_height = height;
     set_window_identity(&app);
     allow_xwayland_keyboard_grab(&app);
     app.wm_delete = XInternAtom(app.display, "WM_DELETE_WINDOW", False);
@@ -1374,14 +1416,15 @@ int main(int argc, char** argv)
             }
             else if (event.type == ConfigureNotify && event.xconfigure.width > 0 && event.xconfigure.height > 0)
             {
-                (void)librdp_session_resize(app.session,
-                                            (uint32_t)event.xconfigure.width,
-                                            (uint32_t)event.xconfigure.height);
-                (void)librdp_session_refresh(app.session,
-                                             0,
-                                             0,
-                                             (uint32_t)event.xconfigure.width,
-                                             (uint32_t)event.xconfigure.height);
+                uint32_t configured_width = (uint32_t)event.xconfigure.width;
+                uint32_t configured_height = (uint32_t)event.xconfigure.height;
+
+                if (configured_width == app.window_width && configured_height == app.window_height)
+                    continue;
+                app.window_width = configured_width;
+                app.window_height = configured_height;
+                (void)librdp_session_resize(app.session, configured_width, configured_height);
+                XClearWindow(app.display, app.window);
                 app.dirty = 1;
                 apply_viewer_cursor(&app);
             }
@@ -1394,7 +1437,7 @@ int main(int argc, char** argv)
 
         if (!app.running)
             break;
-        (void)librdp_session_run_once(app.session, 16);
+        run_session_pump(&app);
         if (app.running && app.dirty)
             draw_surface(&app);
     }

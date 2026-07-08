@@ -5,6 +5,7 @@
 #include "common/trace.h"
 #include "input/input.h"
 #include "protocol/mcs.h"
+#include "protocol/pointer.h"
 #include "protocol/slowpath.h"
 #include "security/security.h"
 
@@ -767,6 +768,39 @@ static int test_buffer_stream(void)
     return 0;
 }
 
+static int test_pointer_decode(void)
+{
+    rdp_pointer_update update;
+    rdp_buffer output;
+    size_t stride = 0;
+    const uint8_t xor_mask[12] = {
+        0, 0, 0, 0,
+        0xff, 0xff, 0xff, 0,
+        0, 0, 0, 0
+    };
+    const uint8_t and_mask[2] = {0xe0, 0};
+
+    memset(&update, 0, sizeof(update));
+    rdp_buffer_init(&output);
+    update.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    update.width = 3;
+    update.height = 1;
+    update.xor_bpp = 32;
+    update.xor_mask = xor_mask;
+    update.xor_mask_len = sizeof(xor_mask);
+    update.and_mask = and_mask;
+    update.and_mask_len = sizeof(and_mask);
+
+    CHECK(rdp_pointer_decode_bgra32(&update, &output, &stride) == LIBRDP_STATUS_OK);
+    CHECK(stride == 12);
+    CHECK(output.length == 12);
+    CHECK(output.data[0] == 0xff && output.data[1] == 0xff && output.data[2] == 0xff && output.data[3] == 0xff);
+    CHECK(output.data[4] == 0 && output.data[5] == 0 && output.data[6] == 0 && output.data[7] == 0xff);
+    CHECK(output.data[8] == 0xff && output.data[9] == 0xff && output.data[10] == 0xff && output.data[11] == 0xff);
+    rdp_buffer_free(&output);
+    return 0;
+}
+
 static int test_settings_surface_input_session(void)
 {
     librdp_settings* settings = NULL;
@@ -881,8 +915,12 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 3);
-    CHECK(counter.pointer >= 2);
+    CHECK(counter.surfaces == 2);
+    CHECK(counter.pointer >= 1);
+    session_surface = librdp_session_get_surface(session);
+    CHECK(session_surface != NULL);
+    CHECK(librdp_surface_width(session_surface) == 64);
+    CHECK(librdp_surface_height(session_surface) == 48);
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
     CHECK(counter.disconnected == 1);
     librdp_session_free(session);
@@ -940,6 +978,8 @@ int main(void)
     if (test_trace() != 0)
         return 1;
     if (test_buffer_stream() != 0)
+        return 1;
+    if (test_pointer_decode() != 0)
         return 1;
     if (test_protocol() != 0)
         return 1;
