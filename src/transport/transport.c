@@ -172,11 +172,20 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
     pfd.events = events;
     pfd.revents = 0;
 
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.wait.start", "timeout_ms=%d events=%d", timeout_ms, (int)events);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.wait.start",
+                          "timeout_ms=%d events=%d",
+                          timeout_ms,
+                          (int)events);
     rc = poll(&pfd, 1, timeout_ms);
     if (rc == 0)
     {
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.timeout", "timeout_ms=%d", timeout_ms);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tcp.timeout",
+                              "timeout_ms=%d",
+                              timeout_ms);
         return LIBRDP_STATUS_TIMEOUT;
     }
     if (rc < 0)
@@ -184,7 +193,11 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
 
     if (revents)
         *revents = pfd.revents;
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.wait.done", "revents=%d", (int)pfd.revents);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.wait.done",
+                          "revents=%d",
+                          (int)pfd.revents);
     return LIBRDP_STATUS_OK;
 }
 
@@ -200,17 +213,29 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
         int tls_rc = 0;
         if (length > INT_MAX)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.peek.start", "length=%llu", (unsigned long long)length);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.peek.start",
+                              "length=%llu",
+                              (unsigned long long)length);
         tls_rc = SSL_peek(transport->tls, data, (int)length);
         if (tls_rc <= 0)
             return rdp_transport_tls_status(transport->tls, tls_rc);
         if (read_len)
             *read_len = (size_t)tls_rc;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.peek.done", "read=%d", tls_rc);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.peek.done",
+                              "read=%d",
+                              tls_rc);
         return LIBRDP_STATUS_OK;
     }
 
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.peek.start", "length=%llu", (unsigned long long)length);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.peek.start",
+                          "length=%llu",
+                          (unsigned long long)length);
     rc = recv(transport->fd, data, length, MSG_PEEK);
     if (rc == 0)
     {
@@ -226,7 +251,11 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
 
     if (read_len)
         *read_len = (size_t)rc;
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.peek.done", "read=%llu", (unsigned long long)rc);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.peek.done",
+                          "read=%llu",
+                          (unsigned long long)rc);
     return LIBRDP_STATUS_OK;
 }
 
@@ -242,17 +271,29 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
         int tls_rc = 0;
         if (length > INT_MAX)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.read.start", "length=%llu", (unsigned long long)length);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.read.start",
+                              "length=%llu",
+                              (unsigned long long)length);
         tls_rc = SSL_read(transport->tls, data, (int)length);
         if (tls_rc <= 0)
             return rdp_transport_tls_status(transport->tls, tls_rc);
         if (read_len)
             *read_len = (size_t)tls_rc;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.read.done", "read=%d", tls_rc);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.read.done",
+                              "read=%d",
+                              tls_rc);
         return LIBRDP_STATUS_OK;
     }
 
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.read.start", "length=%llu", (unsigned long long)length);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.read.start",
+                          "length=%llu",
+                          (unsigned long long)length);
     rc = recv(transport->fd, data, length, 0);
     if (rc == 0)
     {
@@ -268,7 +309,11 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
 
     if (read_len)
         *read_len = (size_t)rc;
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.read.done", "read=%llu", (unsigned long long)rc);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.read.done",
+                          "read=%llu",
+                          (unsigned long long)rc);
     return LIBRDP_STATUS_OK;
 }
 
@@ -288,17 +333,29 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
         int tls_rc = 0;
         if (length > INT_MAX)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.write.start", "length=%llu", (unsigned long long)length);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.write.start",
+                              "length=%llu",
+                              (unsigned long long)length);
         tls_rc = SSL_write(transport->tls, data, (int)length);
         if (tls_rc <= 0)
             return rdp_transport_tls_status(transport->tls, tls_rc);
         if (written_len)
             *written_len = (size_t)tls_rc;
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.write.done", "written=%d", tls_rc);
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.tls.write.done",
+                              "written=%d",
+                              tls_rc);
         return LIBRDP_STATUS_OK;
     }
 
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.write.start", "length=%llu", (unsigned long long)length);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.write.start",
+                          "length=%llu",
+                          (unsigned long long)length);
     rc = send(transport->fd, data, length, flags);
     if (rc < 0)
     {
@@ -309,7 +366,11 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
 
     if (written_len)
         *written_len = (size_t)rc;
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tcp.write.done", "written=%llu", (unsigned long long)rc);
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.tcp.write.done",
+                          "written=%llu",
+                          (unsigned long long)rc);
     return LIBRDP_STATUS_OK;
 }
 

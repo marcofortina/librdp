@@ -241,33 +241,35 @@ static void rdp_session_graphics_dirty_add(librdp_session* session,
         return;
     if (!session->graphics_frame_active)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.dirty.immediate",
-                        "x=%u y=%u width=%u height=%u frame_id=%u",
-                        x,
-                        y,
-                        width,
-                        height,
-                        session->graphics_current_frame_id);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.graphics.dirty.immediate",
+                              "x=%u y=%u width=%u height=%u frame_id=%u",
+                              x,
+                              y,
+                              width,
+                              height,
+                              session->graphics_current_frame_id);
         rdp_session_emit_surface_invalidated(session, x, y, width, height);
         return;
     }
 
     right = x + width;
     bottom = y + height;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.frame.dirty.add",
-                    "frame_id=%u x=%u y=%u width=%u height=%u pending=%u previous_left=%u previous_top=%u previous_right=%u previous_bottom=%u",
-                    session->graphics_current_frame_id,
-                    x,
-                    y,
-                    width,
-                    height,
-                    session->graphics_dirty_pending ? 1u : 0u,
-                    session->graphics_dirty_left,
-                    session->graphics_dirty_top,
-                    session->graphics_dirty_right,
-                    session->graphics_dirty_bottom);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.frame.dirty.add",
+                          "frame_id=%u x=%u y=%u width=%u height=%u pending=%u previous_left=%u previous_top=%u previous_right=%u previous_bottom=%u",
+                          session->graphics_current_frame_id,
+                          x,
+                          y,
+                          width,
+                          height,
+                          session->graphics_dirty_pending ? 1u : 0u,
+                          session->graphics_dirty_left,
+                          session->graphics_dirty_top,
+                          session->graphics_dirty_right,
+                          session->graphics_dirty_bottom);
     if (!session->graphics_dirty_pending)
     {
         session->graphics_dirty_pending = 1;
@@ -296,14 +298,15 @@ static void rdp_session_graphics_dirty_flush(librdp_session* session)
                                          session->graphics_dirty_top,
                                          session->graphics_dirty_right - session->graphics_dirty_left,
                                          session->graphics_dirty_bottom - session->graphics_dirty_top);
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.frame.flush",
-                    "frame_id=%u x=%u y=%u width=%u height=%u",
-                    session->graphics_current_frame_id,
-                    session->graphics_dirty_left,
-                    session->graphics_dirty_top,
-                    session->graphics_dirty_right - session->graphics_dirty_left,
-                    session->graphics_dirty_bottom - session->graphics_dirty_top);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.graphics.frame.flush",
+                          "frame_id=%u x=%u y=%u width=%u height=%u",
+                          session->graphics_current_frame_id,
+                          session->graphics_dirty_left,
+                          session->graphics_dirty_top,
+                          session->graphics_dirty_right - session->graphics_dirty_left,
+                          session->graphics_dirty_bottom - session->graphics_dirty_top);
     session->graphics_dirty_pending = 0;
 }
 
@@ -864,19 +867,20 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
         old_y_idx = victim->y_idx;
         old_valid = victim->state ? victim->state->valid : 0u;
         old_pass = victim->state ? victim->state->pass : 0u;
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.progressive.tile_state.evict",
-                        "slot=%u old_surface_id=%u old_x_idx=%u old_y_idx=%u old_valid=%u old_pass=%u old_frame_id=%u new_surface_id=%u new_x_idx=%u new_y_idx=%u",
-                        (unsigned)victim_slot,
-                        old_surface_id,
-                        old_x_idx,
-                        old_y_idx,
-                        old_valid,
-                        old_pass,
-                        victim->updated_frame_id,
-                        surface_id,
-                        x_idx,
-                        y_idx);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "client.graphics.progressive.tile_state.evict",
+                              "slot=%u old_surface_id=%u old_x_idx=%u old_y_idx=%u old_valid=%u old_pass=%u old_frame_id=%u new_surface_id=%u new_x_idx=%u new_y_idx=%u",
+                              (unsigned)victim_slot,
+                              old_surface_id,
+                              old_x_idx,
+                              old_y_idx,
+                              old_valid,
+                              old_pass,
+                              victim->updated_frame_id,
+                              surface_id,
+                              x_idx,
+                              y_idx);
     }
     if (!victim->state)
     {
@@ -907,14 +911,15 @@ static rdp_session_progressive_tile_cache* rdp_session_progressive_tile_get(libr
     victim->last_used = ++session->progressive_tile_clock;
     victim->state->x_idx = x_idx;
     victim->state->y_idx = y_idx;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.progressive.tile_state.alloc",
-                    "slot=%u surface_id=%u x_idx=%u y_idx=%u evicted=%u",
-                    (unsigned)victim_slot,
-                    surface_id,
-                    x_idx,
-                    y_idx,
-                    (unsigned)evicting);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.progressive.tile_state.alloc",
+                          "slot=%u surface_id=%u x_idx=%u y_idx=%u evicted=%u",
+                          (unsigned)victim_slot,
+                          surface_id,
+                          x_idx,
+                          y_idx,
+                          (unsigned)evicting);
     return victim;
 }
 
@@ -1057,25 +1062,26 @@ static librdp_status rdp_session_graphics_surface_flush(librdp_session* session,
                                                       output_stride);
         }
         rdp_session_graphics_dirty_add(session, dst_x, dst_y, width, height);
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.surface.flush",
-                        "source=%s surface_id=%u src_x=%u src_y=%u dst_x=%u dst_y=%u width=%u height=%u surface_width=%u surface_height=%u output_width=%u output_height=%u frame_id=%u frame_active=%u source_hash=%016llx output_hash=%016llx",
-                        source ? source : "unknown",
-                        surface->surface_id,
-                        left,
-                        top,
-                        dst_x,
-                        dst_y,
-                        width,
-                        height,
-                        surface->width,
-                        surface->height,
-                        output_width,
-                        output_height,
-                        session->graphics_current_frame_id,
-                        session->graphics_frame_active ? 1u : 0u,
-                        (unsigned long long)source_hash,
-                        (unsigned long long)output_hash);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "client.graphics.surface.flush",
+                              "source=%s surface_id=%u src_x=%u src_y=%u dst_x=%u dst_y=%u width=%u height=%u surface_width=%u surface_height=%u output_width=%u output_height=%u frame_id=%u frame_active=%u source_hash=%016llx output_hash=%016llx",
+                              source ? source : "unknown",
+                              surface->surface_id,
+                              left,
+                              top,
+                              dst_x,
+                              dst_y,
+                              width,
+                              height,
+                              surface->width,
+                              surface->height,
+                              output_width,
+                              output_height,
+                              session->graphics_current_frame_id,
+                              session->graphics_frame_active ? 1u : 0u,
+                              (unsigned long long)source_hash,
+                              (unsigned long long)output_hash);
     }
     return status;
 }
@@ -1132,23 +1138,24 @@ static librdp_status rdp_session_graphics_surface_fill(librdp_session* session,
             pixel += 4;
         }
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.surface.fill.rect",
-                    "source=solid_fill surface_id=%u x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u fill_pixel=%08x frame_id=%u dest_hash=%016llx",
-                    surface->surface_id,
-                    rect->left,
-                    rect->top,
-                    (unsigned)(rect->right - rect->left),
-                    (unsigned)(rect->bottom - rect->top),
-                    surface->width,
-                    surface->height,
-                    fill_pixel,
-                    session->graphics_current_frame_id,
-                    (unsigned long long)rdp_session_trace_surface_hash(surface,
-                                                                        rect->left,
-                                                                        rect->top,
-                                                                        (uint32_t)(rect->right - rect->left),
-                                                                        (uint32_t)(rect->bottom - rect->top)));
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.surface.fill.rect",
+                          "source=solid_fill surface_id=%u x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u fill_pixel=%08x frame_id=%u dest_hash=%016llx",
+                          surface->surface_id,
+                          rect->left,
+                          rect->top,
+                          (unsigned)(rect->right - rect->left),
+                          (unsigned)(rect->bottom - rect->top),
+                          surface->width,
+                          surface->height,
+                          fill_pixel,
+                          session->graphics_current_frame_id,
+                          (unsigned long long)rdp_session_trace_surface_hash(surface,
+                                                                              rect->left,
+                                                                              rect->top,
+                                                                              (uint32_t)(rect->right - rect->left),
+                                                                              (uint32_t)(rect->bottom - rect->top)));
     return rdp_session_graphics_surface_flush(session,
                                               surface,
                                               rect->left,
@@ -1200,23 +1207,24 @@ static librdp_status rdp_session_graphics_surface_write_bgra(librdp_session* ses
         }
     }
     dest_hash = rdp_session_trace_surface_hash(surface, x, y, width, height);
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.surface.write",
-                    "source=%s surface_id=%u x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u stride=%u dest_stride=%u force_opaque=%u frame_id=%u source_hash=%016llx dest_hash=%016llx",
-                    source ? source : "unknown",
-                    surface->surface_id,
-                    x,
-                    y,
-                    width,
-                    height,
-                    surface->width,
-                    surface->height,
-                    (unsigned)stride,
-                    (unsigned)dest_stride,
-                    force_opaque ? 1u : 0u,
-                    session->graphics_current_frame_id,
-                    (unsigned long long)source_hash,
-                    (unsigned long long)dest_hash);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.surface.write",
+                          "source=%s surface_id=%u x=%u y=%u width=%u height=%u surface_width=%u surface_height=%u stride=%u dest_stride=%u force_opaque=%u frame_id=%u source_hash=%016llx dest_hash=%016llx",
+                          source ? source : "unknown",
+                          surface->surface_id,
+                          x,
+                          y,
+                          width,
+                          height,
+                          surface->width,
+                          surface->height,
+                          (unsigned)stride,
+                          (unsigned)dest_stride,
+                          force_opaque ? 1u : 0u,
+                          session->graphics_current_frame_id,
+                          (unsigned long long)source_hash,
+                          (unsigned long long)dest_hash);
     return rdp_session_graphics_surface_flush(session,
                                               surface,
                                               x,
@@ -1301,7 +1309,8 @@ static uint64_t rdp_session_trace_hash_bgra(const uint8_t* pixels,
     uint64_t samples = 0;
     uint64_t i = 0;
 
-    if (!rdp_trace_enabled(RDP_TRACE_CLIENT) || !pixels || width == 0 || height == 0 || stride < row_bytes)
+    if (!rdp_trace_enabled_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_TRACE) ||
+        !pixels || width == 0 || height == 0 || stride < row_bytes)
         return 0;
 
     hash = rdp_session_trace_hash_seed(hash, width);
@@ -1458,24 +1467,25 @@ static librdp_status rdp_session_graphics_progressive_write_region_tile(
         if (right <= left || bottom <= top)
             continue;
 
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.progressive.region.write",
-                        "surface_id=%u tile_x=%u tile_y=%u tile_width=%u tile_height=%u rect_index=%u rect_left=%u rect_top=%u rect_right=%u rect_bottom=%u write_left=%u write_top=%u write_width=%u write_height=%u frame_id=%u",
-                        surface->surface_id,
-                        x,
-                        y,
-                        width,
-                        height,
-                        i,
-                        rect.left,
-                        rect.top,
-                        rect.right,
-                        rect.bottom,
-                        left,
-                        top,
-                        right - left,
-                        bottom - top,
-                        session->graphics_current_frame_id);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "client.graphics.progressive.region.write",
+                              "surface_id=%u tile_x=%u tile_y=%u tile_width=%u tile_height=%u rect_index=%u rect_left=%u rect_top=%u rect_right=%u rect_bottom=%u write_left=%u write_top=%u write_width=%u write_height=%u frame_id=%u",
+                              surface->surface_id,
+                              x,
+                              y,
+                              width,
+                              height,
+                              i,
+                              rect.left,
+                              rect.top,
+                              rect.right,
+                              rect.bottom,
+                              left,
+                              top,
+                              right - left,
+                              bottom - top,
+                              session->graphics_current_frame_id);
         src = pixels->bgra + (((size_t)top - y) * pixels->stride) + (((size_t)left - x) * 4u);
         status = rdp_session_graphics_surface_write_bgra(session,
                                                          surface,
@@ -1689,22 +1699,23 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
     }
 
     (*rendered_tiles)++;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.progressive.tile",
-                    "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u width=%u height=%u block_type=%u flags=%u progressive_idx=%u pass=%u extrapolate=%u frame_id=%u queued=1",
-                    channel_id,
-                    codec_context_id,
-                    surface->surface_id,
-                    x,
-                    y,
-                    width,
-                    height,
-                    block_type,
-                    tile_flags,
-                    progressive_idx,
-                    tile_cache && tile_cache->state ? tile_cache->state->pass : 0u,
-                    (unsigned)extrapolate,
-                    session->graphics_current_frame_id);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.progressive.tile",
+                          "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u width=%u height=%u block_type=%u flags=%u progressive_idx=%u pass=%u extrapolate=%u frame_id=%u queued=1",
+                          channel_id,
+                          codec_context_id,
+                          surface->surface_id,
+                          x,
+                          y,
+                          width,
+                          height,
+                          block_type,
+                          tile_flags,
+                          progressive_idx,
+                          tile_cache && tile_cache->state ? tile_cache->state->pass : 0u,
+                          (unsigned)extrapolate,
+                          session->graphics_current_frame_id);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1864,21 +1875,22 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
     }
 
     (*rendered_tiles)++;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.progressive.tile",
-                    "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u width=%u height=%u block_type=%u progressive_idx=%u pass=%u extrapolate=%u frame_id=%u queued=1",
-                    channel_id,
-                    codec_context_id,
-                    surface->surface_id,
-                    x,
-                    y,
-                    width,
-                    height,
-                    tile->block_type,
-                    tile->progressive_quality,
-                    tile_cache->state->pass,
-                    (unsigned)extrapolate,
-                    session->graphics_current_frame_id);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.progressive.tile",
+                          "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u width=%u height=%u block_type=%u progressive_idx=%u pass=%u extrapolate=%u frame_id=%u queued=1",
+                          channel_id,
+                          codec_context_id,
+                          surface->surface_id,
+                          x,
+                          y,
+                          width,
+                          height,
+                          tile->block_type,
+                          tile->progressive_quality,
+                          tile_cache->state->pass,
+                          (unsigned)extrapolate,
+                          session->graphics_current_frame_id);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1956,17 +1968,18 @@ static librdp_status rdp_session_graphics_progressive_flush_region(librdp_sessio
             clipped_tiles++;
     }
 
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.progressive.region.flush",
-                    "dvc_channel_id=%u context_id=%u surface_id=%u frame_id=%u considered_tiles=%u flushed_tiles=%u clipped_tiles=%u failed_tiles=%u",
-                    channel_id,
-                    codec_context_id,
-                    surface->surface_id,
-                    session->graphics_current_frame_id,
-                    considered_tiles,
-                    *flushed_tiles,
-                    clipped_tiles,
-                    *failed_tiles);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.progressive.region.flush",
+                          "dvc_channel_id=%u context_id=%u surface_id=%u frame_id=%u considered_tiles=%u flushed_tiles=%u clipped_tiles=%u failed_tiles=%u",
+                          channel_id,
+                          codec_context_id,
+                          surface->surface_id,
+                          session->graphics_current_frame_id,
+                          considered_tiles,
+                          *flushed_tiles,
+                          clipped_tiles,
+                          *failed_tiles);
     return LIBRDP_STATUS_OK;
 }
 
@@ -2262,29 +2275,30 @@ static librdp_status rdp_session_graphics_cache_store(librdp_session* session,
     entry->height = height;
     entry->cache_key = surface_to_cache->cache_key;
     session->graphics_cache_bytes = current_without_old + size;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.cache.store",
-                    "surface_id=%u cache_slot=%u width=%u height=%u src_left=%u src_top=%u src_right=%u src_bottom=%u cache_key=%llu cache_bytes=%llu source_hash=%016llx cache_hash=%016llx frame_id=%u",
-                    surface_to_cache->surface_id,
-                    surface_to_cache->cache_slot,
-                    width,
-                    height,
-                    surface_to_cache->rect_src.left,
-                    surface_to_cache->rect_src.top,
-                    surface_to_cache->rect_src.right,
-                    surface_to_cache->rect_src.bottom,
-                    (unsigned long long)surface_to_cache->cache_key,
-                    (unsigned long long)session->graphics_cache_bytes,
-                    (unsigned long long)rdp_session_trace_surface_hash(surface,
-                                                                        surface_to_cache->rect_src.left,
-                                                                        surface_to_cache->rect_src.top,
-                                                                        width,
-                                                                        height),
-                    (unsigned long long)rdp_session_trace_hash_bgra(entry->pixels.data,
-                                                                    width,
-                                                                    height,
-                                                                    (size_t)width * 4u),
-                    session->graphics_current_frame_id);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.cache.store",
+                          "surface_id=%u cache_slot=%u width=%u height=%u src_left=%u src_top=%u src_right=%u src_bottom=%u cache_key=%llu cache_bytes=%llu source_hash=%016llx cache_hash=%016llx frame_id=%u",
+                          surface_to_cache->surface_id,
+                          surface_to_cache->cache_slot,
+                          width,
+                          height,
+                          surface_to_cache->rect_src.left,
+                          surface_to_cache->rect_src.top,
+                          surface_to_cache->rect_src.right,
+                          surface_to_cache->rect_src.bottom,
+                          (unsigned long long)surface_to_cache->cache_key,
+                          (unsigned long long)session->graphics_cache_bytes,
+                          (unsigned long long)rdp_session_trace_surface_hash(surface,
+                                                                              surface_to_cache->rect_src.left,
+                                                                              surface_to_cache->rect_src.top,
+                                                                              width,
+                                                                              height),
+                          (unsigned long long)rdp_session_trace_hash_bgra(entry->pixels.data,
+                                                                          width,
+                                                                          height,
+                                                                          (size_t)width * 4u),
+                          session->graphics_current_frame_id);
     return LIBRDP_STATUS_OK;
 }
 
@@ -2326,21 +2340,22 @@ static librdp_status rdp_session_graphics_surface_copy(librdp_session* session,
                    row_stride);
         }
         copy.length = row_stride * (size_t)height;
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.surface.copy",
-                        "source_id=%u dest_id=%u src_left=%u src_top=%u src_right=%u src_bottom=%u dst_x=%u dst_y=%u width=%u height=%u frame_id=%u copy_hash=%016llx",
-                        source->surface_id,
-                        dest->surface_id,
-                        rect->left,
-                        rect->top,
-                        rect->right,
-                        rect->bottom,
-                        point->x,
-                        point->y,
-                        width,
-                        height,
-                        session->graphics_current_frame_id,
-                        (unsigned long long)rdp_session_trace_hash_bgra(copy.data, width, height, row_stride));
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "client.graphics.surface.copy",
+                              "source_id=%u dest_id=%u src_left=%u src_top=%u src_right=%u src_bottom=%u dst_x=%u dst_y=%u width=%u height=%u frame_id=%u copy_hash=%016llx",
+                              source->surface_id,
+                              dest->surface_id,
+                              rect->left,
+                              rect->top,
+                              rect->right,
+                              rect->bottom,
+                              point->x,
+                              point->y,
+                              width,
+                              height,
+                              session->graphics_current_frame_id,
+                              (unsigned long long)rdp_session_trace_hash_bgra(copy.data, width, height, row_stride));
         status = rdp_session_graphics_surface_write_bgra(session,
                                                          dest,
                                                          point->x,
@@ -2368,21 +2383,22 @@ static librdp_status rdp_session_graphics_cache_copy_to_surface(librdp_session* 
     if (point->x > surface->width || point->y > surface->height ||
         cache->width > surface->width - point->x || cache->height > surface->height - point->y)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.cache.copy",
-                    "cache_slot=%u surface_id=%u dst_x=%u dst_y=%u width=%u height=%u cache_key=%llu frame_id=%u cache_hash=%016llx",
-                    cache->cache_slot,
-                    surface->surface_id,
-                    point->x,
-                    point->y,
-                    cache->width,
-                    cache->height,
-                    (unsigned long long)cache->cache_key,
-                    session->graphics_current_frame_id,
-                    (unsigned long long)rdp_session_trace_hash_bgra(cache->pixels.data,
-                                                                    cache->width,
-                                                                    cache->height,
-                                                                    (size_t)cache->width * 4u));
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.graphics.cache.copy",
+                          "cache_slot=%u surface_id=%u dst_x=%u dst_y=%u width=%u height=%u cache_key=%llu frame_id=%u cache_hash=%016llx",
+                          cache->cache_slot,
+                          surface->surface_id,
+                          point->x,
+                          point->y,
+                          cache->width,
+                          cache->height,
+                          (unsigned long long)cache->cache_key,
+                          session->graphics_current_frame_id,
+                          (unsigned long long)rdp_session_trace_hash_bgra(cache->pixels.data,
+                                                                          cache->width,
+                                                                          cache->height,
+                                                                          (size_t)cache->width * 4u));
     status = rdp_session_graphics_surface_write_bgra(session,
                                                      surface,
                                                      point->x,

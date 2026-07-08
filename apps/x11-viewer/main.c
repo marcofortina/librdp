@@ -91,7 +91,8 @@ static uint64_t x11_trace_hash_bgra(const uint8_t* pixels, uint32_t width, uint3
     uint64_t samples = 0;
     uint64_t i = 0;
 
-    if (!rdp_trace_enabled(RDP_TRACE_CLIENT) || !pixels || width == 0 || height == 0 || stride < row_bytes)
+    if (!rdp_trace_enabled_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_TRACE) ||
+        !pixels || width == 0 || height == 0 || stride < row_bytes)
         return 0;
 
     hash = x11_trace_hash_seed(hash, width);
@@ -972,15 +973,16 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             const int dirty_before = app->dirty;
 
             app->dirty = 1;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.active.framebuffer.blit",
-                            "x=%u y=%u width=%u height=%u dirty_before=%u event_serial=%llu",
-                            event->data.surface.x,
-                            event->data.surface.y,
-                            event->data.surface.width,
-                            event->data.surface.height,
-                            dirty_before ? 1u : 0u,
-                            (unsigned long long)app->event_serial);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_TRACE,
+                                  "client.active.framebuffer.blit",
+                                  "x=%u y=%u width=%u height=%u dirty_before=%u event_serial=%llu",
+                                  event->data.surface.x,
+                                  event->data.surface.y,
+                                  event->data.surface.width,
+                                  event->data.surface.height,
+                                  dirty_before ? 1u : 0u,
+                                  (unsigned long long)app->event_serial);
             break;
         }
         case LIBRDP_EVENT_DISCONNECTED:
@@ -1051,16 +1053,17 @@ static void draw_surface(x11_app* app)
     height = librdp_surface_height(surface);
     stride = librdp_surface_stride(surface);
     surface_hash = x11_trace_hash_bgra(librdp_surface_pixels(surface), width, height, stride);
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "x11.surface.draw.start",
-                    "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
-                    width,
-                    height,
-                    (unsigned)stride,
-                    app->window_width,
-                    app->window_height,
-                    app->dirty ? 1u : 0u,
-                    (unsigned long long)surface_hash);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "x11.surface.draw.start",
+                          "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
+                          width,
+                          height,
+                          (unsigned)stride,
+                          app->window_width,
+                          app->window_height,
+                          app->dirty ? 1u : 0u,
+                          (unsigned long long)surface_hash);
     if ((app->window_width != 0 && app->window_width != width) ||
         (app->window_height != 0 && app->window_height != height))
     {
@@ -1098,16 +1101,17 @@ static void draw_surface(x11_app* app)
     image->data = NULL;
     XDestroyImage(image);
     XFlush(app->display);
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "x11.surface.draw.done",
-                    "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
-                    width,
-                    height,
-                    (unsigned)stride,
-                    app->window_width,
-                    app->window_height,
-                    put_result,
-                    (unsigned long long)surface_hash);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "x11.surface.draw.done",
+                          "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                          width,
+                          height,
+                          (unsigned)stride,
+                          app->window_width,
+                          app->window_height,
+                          put_result,
+                          (unsigned long long)surface_hash);
     app->dirty = 0;
 }
 

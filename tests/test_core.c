@@ -687,11 +687,33 @@ static void trace_protocol_hexdump(void)
 {
     const uint8_t bytes[] = {0x41, 0x42, 0x00, 0x43};
     setenv("LIBRDP_TRACE_PROTOCOL", "ON", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
     setenv("LIBRDP_TRACE_HEX_BYTES", "2", 1);
     rdp_trace_reset_for_tests();
     rdp_trace_hexdump("rdp.fastpath.pdu", bytes, sizeof(bytes));
     unsetenv("LIBRDP_TRACE_PROTOCOL");
+    unsetenv("LIBRDP_TRACE_LEVEL");
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
+}
+
+static void trace_level_filtered_event(void)
+{
+    setenv("LIBRDP_TRACE_CLIENT", "1", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "info", 1);
+    rdp_trace_reset_for_tests();
+    rdp_trace_event_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_DEBUG, "client.debug", "value=1");
+    unsetenv("LIBRDP_TRACE_CLIENT");
+    unsetenv("LIBRDP_TRACE_LEVEL");
+}
+
+static void trace_level_debug_event(void)
+{
+    setenv("LIBRDP_TRACE_CLIENT", "1", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "debug", 1);
+    rdp_trace_reset_for_tests();
+    rdp_trace_event_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_DEBUG, "client.debug", "value=1");
+    unsetenv("LIBRDP_TRACE_CLIENT");
+    unsetenv("LIBRDP_TRACE_LEVEL");
 }
 
 static int test_trace(void)
@@ -710,8 +732,17 @@ static int test_trace(void)
     CHECK(rdp_trace_parse_hex_limit_value("32") == 32);
     CHECK(rdp_trace_parse_hex_limit_value("bad") == 0);
     CHECK(rdp_trace_parse_hex_limit_value("") == 0);
+    CHECK(rdp_trace_parse_level_value(NULL) == RDP_TRACE_LEVEL_INFO);
+    CHECK(rdp_trace_parse_level_value("") == RDP_TRACE_LEVEL_INFO);
+    CHECK(rdp_trace_parse_level_value("error") == RDP_TRACE_LEVEL_ERROR);
+    CHECK(rdp_trace_parse_level_value("WARN") == RDP_TRACE_LEVEL_WARN);
+    CHECK(rdp_trace_parse_level_value("info") == RDP_TRACE_LEVEL_INFO);
+    CHECK(rdp_trace_parse_level_value("debug") == RDP_TRACE_LEVEL_DEBUG);
+    CHECK(rdp_trace_parse_level_value("TRACE") == RDP_TRACE_LEVEL_TRACE);
+    CHECK(rdp_trace_parse_level_value("bad") == RDP_TRACE_LEVEL_INFO);
 
     unsetenv("LIBRDP_TRACE_CLIENT");
+    unsetenv("LIBRDP_TRACE_LEVEL");
     CHECK(capture_stderr(trace_default_event, output, sizeof(output)));
     CHECK(output[0] == '\0');
 
@@ -724,10 +755,18 @@ static int test_trace(void)
     rdp_trace_reset_for_tests();
     CHECK(rdp_trace_enabled(RDP_TRACE_TRANSPORT));
     CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
+    CHECK(rdp_trace_enabled_level(RDP_TRACE_TRANSPORT, RDP_TRACE_LEVEL_INFO));
+    CHECK(!rdp_trace_enabled_level(RDP_TRACE_TRANSPORT, RDP_TRACE_LEVEL_DEBUG));
     unsetenv("LIBRDP_TRACE_TRANSPORT");
+
+    CHECK(capture_stderr(trace_level_filtered_event, output, sizeof(output)));
+    CHECK(output[0] == '\0');
+    CHECK(capture_stderr(trace_level_debug_event, output, sizeof(output)));
+    CHECK(strstr(output, "category=client event=client.debug level=debug") != NULL);
 
     CHECK(capture_stderr(trace_protocol_hexdump, output, sizeof(output)));
     CHECK(strstr(output, "category=protocol event=rdp.fastpath.pdu") != NULL);
+    CHECK(strstr(output, "level=trace") != NULL);
     CHECK(strstr(output, "payload_len=4 dumped=2 hex=4142 ascii=\"AB\"") != NULL);
     return 0;
 }

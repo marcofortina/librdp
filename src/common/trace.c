@@ -15,6 +15,7 @@ typedef struct rdp_trace_config
     bool transport;
     bool protocol;
     size_t hex_limit;
+    rdp_trace_level level;
     bool initialized;
     uint64_t first_ns;
 } rdp_trace_config;
@@ -64,12 +65,31 @@ size_t rdp_trace_parse_hex_limit_value(const char* value)
     return (size_t)parsed;
 }
 
+rdp_trace_level rdp_trace_parse_level_value(const char* value)
+{
+    if (!value || value[0] == '\0')
+        return RDP_TRACE_LEVEL_INFO;
+    if (strcmp(value, "0") == 0 || rdp_ascii_equal_fold(value, "error"))
+        return RDP_TRACE_LEVEL_ERROR;
+    if (strcmp(value, "1") == 0 || rdp_ascii_equal_fold(value, "warn") ||
+        rdp_ascii_equal_fold(value, "warning"))
+        return RDP_TRACE_LEVEL_WARN;
+    if (strcmp(value, "2") == 0 || rdp_ascii_equal_fold(value, "info"))
+        return RDP_TRACE_LEVEL_INFO;
+    if (strcmp(value, "3") == 0 || rdp_ascii_equal_fold(value, "debug"))
+        return RDP_TRACE_LEVEL_DEBUG;
+    if (strcmp(value, "4") == 0 || rdp_ascii_equal_fold(value, "trace"))
+        return RDP_TRACE_LEVEL_TRACE;
+    return RDP_TRACE_LEVEL_INFO;
+}
+
 void rdp_trace_refresh_from_env(void)
 {
     g_trace.client = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_CLIENT"));
     g_trace.transport = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_TRANSPORT"));
     g_trace.protocol = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_PROTOCOL"));
     g_trace.hex_limit = rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
+    g_trace.level = rdp_trace_parse_level_value(getenv("LIBRDP_TRACE_LEVEL"));
     g_trace.initialized = true;
     g_trace.first_ns = 0;
     atomic_store(&g_trace_seq, 0);
@@ -99,6 +119,13 @@ bool rdp_trace_enabled(rdp_trace_category category)
     }
 }
 
+bool rdp_trace_enabled_level(rdp_trace_category category, rdp_trace_level level)
+{
+    if (!rdp_trace_enabled(category))
+        return false;
+    return level <= g_trace.level;
+}
+
 static const char* rdp_trace_category_name(rdp_trace_category category)
 {
     switch (category)
@@ -109,6 +136,25 @@ static const char* rdp_trace_category_name(rdp_trace_category category)
             return "transport";
         case RDP_TRACE_PROTOCOL:
             return "protocol";
+        default:
+            return "unknown";
+    }
+}
+
+static const char* rdp_trace_level_name(rdp_trace_level level)
+{
+    switch (level)
+    {
+        case RDP_TRACE_LEVEL_ERROR:
+            return "error";
+        case RDP_TRACE_LEVEL_WARN:
+            return "warn";
+        case RDP_TRACE_LEVEL_INFO:
+            return "info";
+        case RDP_TRACE_LEVEL_DEBUG:
+            return "debug";
+        case RDP_TRACE_LEVEL_TRACE:
+            return "trace";
         default:
             return "unknown";
     }
@@ -160,7 +206,11 @@ static void rdp_trace_escape_message(const char* in, char* out, size_t out_len)
     out[pos] = '\0';
 }
 
-void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...)
+static void rdp_trace_event_v(rdp_trace_category category,
+                              rdp_trace_level level,
+                              const char* event,
+                              const char* fmt,
+                              va_list ap)
 {
     uint64_t now = 0;
     uint64_t elapsed_us = 0;
@@ -168,28 +218,42 @@ void rdp_trace_event(rdp_trace_category category, const char* event, const char*
     char message[1024];
     char escaped[2048];
 
-    if (!event || !rdp_trace_enabled(category))
+    if (!event || !rdp_trace_enabled_level(category, level))
         return;
 
     message[0] = '\0';
     if (fmt)
-    {
-        va_list ap;
-        va_start(ap, fmt);
         (void)vsnprintf(message, sizeof(message), fmt, ap);
-        va_end(ap);
-    }
 
     rdp_trace_escape_message(message, escaped, sizeof(escaped));
     seq = rdp_trace_next_seq(&now, &elapsed_us);
     fprintf(stderr,
-            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=%s event=%s message=\"%s\"\n",
+            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=%s event=%s level=%s message=\"%s\"\n",
             seq,
             (unsigned long long)now,
             (unsigned long long)elapsed_us,
             rdp_trace_category_name(category),
             event,
+            rdp_trace_level_name(level),
             escaped);
+}
+
+void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    rdp_trace_event_v(category, RDP_TRACE_LEVEL_INFO, event, fmt, ap);
+    va_end(ap);
+}
+
+void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, const char* event, const char* fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    rdp_trace_event_v(category, level, event, fmt, ap);
+    va_end(ap);
 }
 
 void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_len)
@@ -206,7 +270,7 @@ void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_le
     size_t apos = 0;
     size_t i = 0;
 
-    if (!event || !rdp_trace_enabled(RDP_TRACE_PROTOCOL))
+    if (!event || !rdp_trace_enabled_level(RDP_TRACE_PROTOCOL, RDP_TRACE_LEVEL_TRACE))
         return;
 
     for (i = 0; i < dumped && hpos + 3 < sizeof(hex); i++)
@@ -226,7 +290,7 @@ void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_le
 
     seq = rdp_trace_next_seq(&now, &elapsed_us);
     fprintf(stderr,
-            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s payload_len=%llu dumped=%llu hex=%s ascii=\"%s\"\n",
+            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s level=trace payload_len=%llu dumped=%llu hex=%s ascii=\"%s\"\n",
             seq,
             (unsigned long long)now,
             (unsigned long long)elapsed_us,
