@@ -2269,6 +2269,18 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[2] == 7 &&
            clear_pixels.data[12] == 9 &&
            clear_pixels.data[15] == 0xff);
+    clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_glyph_hit,
+                                        sizeof(clear_glyph_hit),
+                                        2,
+                                        1,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.length == 8 &&
+           clear_pixels.data[0] == 9 &&
+           clear_pixels.data[2] == 7 &&
+           clear_pixels.data[7] == 0xff);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_mcs_parse_send_data_indication(indication_pdu, sizeof(indication_pdu), &indication) ==

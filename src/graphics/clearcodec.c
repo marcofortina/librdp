@@ -39,8 +39,7 @@ void rdp_clearcodec_context_reset(rdp_clearcodec_context* context)
     context->short_vbar_cursor = 0;
     for (i = 0; i < RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES; i++)
     {
-        context->glyphs[i].width = 0;
-        context->glyphs[i].height = 0;
+        context->glyphs[i].pixel_count = 0;
         context->glyphs[i].pixels.length = 0;
     }
 }
@@ -57,12 +56,17 @@ static librdp_status rdp_clearcodec_copy_glyph(const rdp_clearcodec_glyph* glyph
 
     if (!glyph || !pixels || !stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (glyph->width != width || glyph->height != height || glyph->pixels.length == 0)
+    if (width == 0 || height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((size_t)width > ((size_t)-1) / (size_t)height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    size = (size_t)width * (size_t)height;
+    if (size > ((size_t)-1) / 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (glyph->pixel_count < size || glyph->pixels.length < size * 4u)
         return LIBRDP_STATUS_UNSUPPORTED;
     row_stride = (size_t)width * 4u;
-    size = row_stride * (size_t)height;
-    if (glyph->pixels.length != size)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    size *= 4u;
     status = rdp_buffer_reserve(pixels, size);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -89,8 +93,7 @@ static librdp_status rdp_clearcodec_store_glyph(rdp_clearcodec_context* context,
         return status;
     memcpy(glyph->pixels.data, pixels->data, pixels->length);
     glyph->pixels.length = pixels->length;
-    glyph->width = width;
-    glyph->height = height;
+    glyph->pixel_count = (size_t)width * (size_t)height;
     return LIBRDP_STATUS_OK;
 }
 
