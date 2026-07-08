@@ -6,10 +6,7 @@
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
-#include <openssl/param_build.h>
-#include <openssl/params.h>
 #include <openssl/rand.h>
-#include <openssl/rsa.h>
 #include <openssl/x509.h>
 
 #include <limits.h>
@@ -51,6 +48,7 @@ static librdp_status rdp_security_parse_legacy_certificate(rdp_stream* stream,
     uint32_t bit_len = 0;
     uint32_t data_len = 0;
     uint32_t exponent = 0;
+    size_t modulus_len = 0;
 
     if (rdp_stream_read_u32_le(stream, &ignored32) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(stream, &ignored32) != LIBRDP_STATUS_OK ||
@@ -75,20 +73,21 @@ static librdp_status rdp_security_parse_legacy_certificate(rdp_stream* stream,
 
     if (magic != RDP_RSA1_MAGIC)
         return LIBRDP_STATUS_UNSUPPORTED;
-    if (exponent == 0 || data_len == 0 || bit_len == 0)
+    if (exponent == 0 || data_len == 0 || bit_len == 0 || key_len < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_remaining(&blob) < (size_t)data_len + 8u)
+    modulus_len = (size_t)key_len - 8u;
+    if (modulus_len == 0 || data_len > modulus_len || bit_len > modulus_len * 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (key_len != data_len + 8u || bit_len > data_len * 8u)
+    if (rdp_stream_remaining(&blob) < (size_t)key_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&blob, &modulus, data_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&blob, &modulus, modulus_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_skip(&blob, 8) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     public_key->exponent = exponent;
     public_key->modulus_le = modulus;
-    public_key->modulus_len = data_len;
+    public_key->modulus_len = modulus_len;
     public_key->bit_len = bit_len;
     return LIBRDP_STATUS_OK;
 }
@@ -234,78 +233,84 @@ librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* 
 {
     librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
     uint8_t* modulus_be = NULL;
-    uint8_t* output = NULL;
+    uint8_t* input_le = NULL;
+    uint8_t* input_be = NULL;
+    uint8_t* output_be = NULL;
+    uint8_t* output_le = NULL;
     BIGNUM* n = NULL;
     BIGNUM* e = NULL;
-    OSSL_PARAM_BLD* builder = NULL;
-    OSSL_PARAM* params = NULL;
-    EVP_PKEY_CTX* key_ctx = NULL;
-    EVP_PKEY_CTX* encrypt_ctx = NULL;
-    EVP_PKEY* key = NULL;
-    size_t output_len = 0;
+    BIGNUM* m = NULL;
+    BIGNUM* c = NULL;
+    BN_CTX* bn_ctx = NULL;
 
     if (!public_key || !random || !encrypted)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!public_key->modulus_le || public_key->modulus_len <= RDP_SECURITY_CLIENT_RANDOM_LEN + 11u ||
-        public_key->exponent == 0)
+    if (!public_key->modulus_le || public_key->modulus_len <= RDP_SECURITY_CLIENT_RANDOM_LEN ||
+        public_key->modulus_len > (size_t)INT_MAX || public_key->exponent == 0)
         return LIBRDP_STATUS_UNSUPPORTED;
 
     modulus_be = (uint8_t*)malloc(public_key->modulus_len);
-    if (!modulus_be)
-        return LIBRDP_STATUS_NO_MEMORY;
-    rdp_reverse_copy(modulus_be, public_key->modulus_le, public_key->modulus_len);
-
-    n = BN_bin2bn(modulus_be, (int)public_key->modulus_len, NULL);
-    e = BN_new();
-    builder = OSSL_PARAM_BLD_new();
-    key_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
-    if (!n || !e || !builder || !key_ctx || BN_set_word(e, public_key->exponent) != 1)
-        goto out;
-    if (OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_N, n) != 1 ||
-        OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_E, e) != 1)
-        goto out;
-    params = OSSL_PARAM_BLD_to_param(builder);
-    if (!params)
-        goto out;
-    if (EVP_PKEY_fromdata_init(key_ctx) != 1 ||
-        EVP_PKEY_fromdata(key_ctx, &key, EVP_PKEY_PUBLIC_KEY, params) != 1)
-        goto out;
-
-    encrypt_ctx = EVP_PKEY_CTX_new(key, NULL);
-    if (!encrypt_ctx)
-        goto out;
-    if (EVP_PKEY_encrypt_init(encrypt_ctx) != 1 ||
-        EVP_PKEY_CTX_set_rsa_padding(encrypt_ctx, RSA_PKCS1_PADDING) != 1)
-        goto out;
-    if (EVP_PKEY_encrypt(encrypt_ctx, NULL, &output_len, random, RDP_SECURITY_CLIENT_RANDOM_LEN) != 1 ||
-        output_len == 0)
-        goto out;
-
-    output = (uint8_t*)malloc(output_len);
-    if (!output)
+    input_le = (uint8_t*)calloc(public_key->modulus_len, 1);
+    input_be = (uint8_t*)malloc(public_key->modulus_len);
+    output_be = (uint8_t*)malloc(public_key->modulus_len);
+    output_le = (uint8_t*)malloc(public_key->modulus_len);
+    if (!modulus_be || !input_le || !input_be || !output_be || !output_le)
     {
         status = LIBRDP_STATUS_NO_MEMORY;
         goto out;
     }
-    if (EVP_PKEY_encrypt(encrypt_ctx, output, &output_len, random, RDP_SECURITY_CLIENT_RANDOM_LEN) != 1)
+
+    memcpy(input_le, random, RDP_SECURITY_CLIENT_RANDOM_LEN);
+    rdp_reverse_copy(input_be, input_le, public_key->modulus_len);
+    rdp_reverse_copy(modulus_be, public_key->modulus_le, public_key->modulus_len);
+
+    n = BN_bin2bn(modulus_be, (int)public_key->modulus_len, NULL);
+    m = BN_bin2bn(input_be, (int)public_key->modulus_len, NULL);
+    e = BN_new();
+    c = BN_new();
+    bn_ctx = BN_CTX_new();
+    if (!n || !m || !e || !c || !bn_ctx || BN_set_word(e, public_key->exponent) != 1)
+        goto out;
+    if (BN_cmp(m, n) >= 0)
+        goto out;
+    if (BN_mod_exp(c, m, e, n, bn_ctx) != 1)
+        goto out;
+    if (BN_bn2binpad(c, output_be, (int)public_key->modulus_len) != (int)public_key->modulus_len)
         goto out;
 
-    status = rdp_buffer_append(encrypted, output, output_len);
+    rdp_reverse_copy(output_le, output_be, public_key->modulus_len);
+    status = rdp_buffer_append(encrypted, output_le, public_key->modulus_len);
 
 out:
-    if (output)
-        free(output);
+    BN_CTX_free(bn_ctx);
+    BN_free(c);
+    BN_free(m);
+    BN_free(e);
+    BN_free(n);
+    if (output_le)
+    {
+        OPENSSL_cleanse(output_le, public_key->modulus_len);
+        free(output_le);
+    }
+    if (output_be)
+    {
+        OPENSSL_cleanse(output_be, public_key->modulus_len);
+        free(output_be);
+    }
+    if (input_be)
+    {
+        OPENSSL_cleanse(input_be, public_key->modulus_len);
+        free(input_be);
+    }
+    if (input_le)
+    {
+        OPENSSL_cleanse(input_le, public_key->modulus_len);
+        free(input_le);
+    }
     if (modulus_be)
     {
         OPENSSL_cleanse(modulus_be, public_key->modulus_len);
         free(modulus_be);
     }
-    EVP_PKEY_free(key);
-    EVP_PKEY_CTX_free(encrypt_ctx);
-    EVP_PKEY_CTX_free(key_ctx);
-    OSSL_PARAM_free(params);
-    OSSL_PARAM_BLD_free(builder);
-    BN_free(e);
-    BN_free(n);
     return status;
 }

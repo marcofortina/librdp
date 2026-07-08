@@ -321,7 +321,9 @@ static int validate_security_exchange(const uint8_t* input, size_t input_len)
         return 0;
     random_len = (uint32_t)payload[4] | ((uint32_t)payload[5] << 8) | ((uint32_t)payload[6] << 16) |
                  ((uint32_t)payload[7] << 24);
-    return payload[0] == RDP_SEC_EXCHANGE_PKT && payload[1] == 0 && payload[2] == 0 && payload[3] == 0 &&
+    return ((uint16_t)payload[0] | ((uint16_t)payload[1] << 8)) ==
+               (RDP_SEC_EXCHANGE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC) &&
+           payload[2] == 0 && payload[3] == 0 &&
            random_len == 136u && payload_len == 144u;
 }
 

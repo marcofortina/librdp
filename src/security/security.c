@@ -80,6 +80,31 @@ static librdp_status rdp_write_utf16le_text(rdp_buffer* buffer, const char* text
     return rdp_buffer_append_u16_le(buffer, 0);
 }
 
+static librdp_status rdp_security_write_extended_info(rdp_buffer* buffer)
+{
+    uint8_t time_zone[172];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(time_zone, 0, sizeof(time_zone));
+    status = rdp_buffer_append_u16_le(buffer, 2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, time_zone, sizeof(time_zone));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    return status;
+}
+
 static librdp_status rdp_security_write_per_length(rdp_buffer* buffer, size_t length)
 {
     if (!buffer || length > 0x7fffu)
@@ -323,7 +348,7 @@ librdp_status rdp_security_write_exchange_pdu(rdp_buffer* buffer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     memset(pad, 0, sizeof(pad));
-    status = rdp_security_write_header(buffer, (uint16_t)RDP_SEC_EXCHANGE_PKT);
+    status = rdp_security_write_header(buffer, (uint16_t)(RDP_SEC_EXCHANGE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)(encrypted_client_random_len + sizeof(pad)));
     if (status == LIBRDP_STATUS_OK)
@@ -385,6 +410,8 @@ librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_
         status = rdp_write_utf16le_text(buffer, info ? info->alternate_shell : NULL);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_write_utf16le_text(buffer, info ? info->working_dir : NULL);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_extended_info(buffer);
     return status;
 }
 

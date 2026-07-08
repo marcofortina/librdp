@@ -1617,6 +1617,7 @@ static int test_path_security_license_channels(void)
     info.username = "user";
     info.password = "secret";
     PCHECK(rdp_security_write_client_info_pdu(&security, &info) == LIBRDP_STATUS_OK);
+    PCHECK(security.length > 200u);
     PCHECK(rdp_security_parse_client_info_pdu(security.data, security.length, &info_summary) == LIBRDP_STATUS_OK);
     PCHECK(info_summary.domain_bytes == 2);
     PCHECK(info_summary.username_bytes == 8);
@@ -1742,7 +1743,7 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_security_write_exchange_pdu(&security, encrypted_random, sizeof(encrypted_random)) ==
            LIBRDP_STATUS_OK);
     PCHECK(security.length == sizeof(encrypted_random) + 16u);
-    PCHECK(security.data[0] == 0x01 && security.data[1] == 0x00);
+    PCHECK(test_read_u16_le(security.data) == (RDP_SEC_EXCHANGE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC));
     PCHECK(security.data[4] == (uint8_t)(sizeof(encrypted_random) + 8u));
     memset(client_random, 0x4a, sizeof(client_random));
     PCHECK(rdp_security_parse_server_certificate(server_certificate, sizeof(server_certificate), &public_key) ==
@@ -1755,6 +1756,26 @@ static int test_path_security_license_channels(void)
     rdp_security_public_key_clear(&public_key);
     rdp_buffer_free(&encrypted);
     rdp_buffer_init(&encrypted);
+    security.length = 0;
+    PCHECK(rdp_buffer_append_u32_le(&security, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&security, 6) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&security, 284) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 0x31415352u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 264) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 2048) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 255) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&security, 65537) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 256u; i++)
+        PCHECK(rdp_buffer_append_u8(&security, (uint8_t)(1u + (i & 0x7fu))) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u; i++)
+        PCHECK(rdp_buffer_append_u8(&security, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_parse_server_certificate(security.data, security.length, &public_key) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(public_key.exponent == 65537u && public_key.bit_len == 2048u && public_key.modulus_len == 256u);
+    PCHECK(public_key.modulus_le[0] == 1 && public_key.modulus_le[255] == 128);
+    rdp_security_public_key_clear(&public_key);
     PCHECK(rdp_buffer_append_u32_le(&x509_chain, 2) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u32_le(&x509_chain, 1) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u32_le(&x509_chain, (uint32_t)sizeof(x509_der)) == LIBRDP_STATUS_OK);
