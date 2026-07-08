@@ -4232,8 +4232,11 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     rdp_buffer input;
     librdp_event event;
     librdp_status status = LIBRDP_STATUS_OK;
+    const int use_unicode = key && ((key->flags & LIBRDP_KEY_FLAG_UNICODE) != 0);
+    const int use_core_input = key && !use_unicode && (key->flags & (LIBRDP_KEY_FLAG_EXTENDED | LIBRDP_KEY_FLAG_EXTENDED1)) == 0 &&
+                               session && session->core_input_ready;
 
-    if (!session)
+    if (!session || !key)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
@@ -4241,7 +4244,7 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
         return LIBRDP_STATUS_STATE;
 
     rdp_buffer_init(&input);
-    if (session->core_input_ready)
+    if (use_core_input)
     {
         if (key->scancode > 0xffu)
             status = LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -4260,7 +4263,13 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     else
     {
         status = rdp_input_make_keyboard_flags(key, &flags);
-        if (status == LIBRDP_STATUS_OK)
+        if (status == LIBRDP_STATUS_OK && use_unicode)
+            status = rdp_slowpath_write_client_unicode_keyboard_input(&input,
+                                                                      session->share_id,
+                                                                      session->mcs_user_id,
+                                                                      flags,
+                                                                      (uint16_t)key->unicode);
+        else if (status == LIBRDP_STATUS_OK)
             status = rdp_slowpath_write_client_keyboard_input(&input,
                                                               session->share_id,
                                                               session->mcs_user_id,
@@ -4280,10 +4289,11 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     rdp_session_emit(session, &event);
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.input.send",
-                    "kind=keyboard scancode=%u transport=%s flags=%u",
+                    "kind=keyboard scancode=%u unicode=%u transport=%s flags=%u",
                     key->scancode,
-                    session->core_input_ready ? "core_input" : "slowpath",
-                    session->core_input_ready ? (key->state == LIBRDP_KEY_RELEASED ? 1u : 0u) : flags);
+                    key->unicode,
+                    use_core_input ? "core_input" : "slowpath",
+                    use_core_input ? (key->state == LIBRDP_KEY_RELEASED ? 1u : 0u) : flags);
     rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;
 }
@@ -4294,8 +4304,9 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
     rdp_buffer input;
     librdp_event event;
     librdp_status status = LIBRDP_STATUS_OK;
+    int use_extended = 0;
 
-    if (!session)
+    if (!session || !mouse)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
@@ -4303,10 +4314,18 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
         return LIBRDP_STATUS_STATE;
 
     rdp_buffer_init(&input);
+    use_extended = rdp_input_mouse_uses_extended(mouse);
     status = rdp_input_make_pointer_flags(mouse, &flags);
     if (status == LIBRDP_STATUS_OK)
     {
-        if (session->core_input_ready)
+        if (use_extended)
+            status = rdp_slowpath_write_client_extended_mouse_input(&input,
+                                                                    session->share_id,
+                                                                    session->mcs_user_id,
+                                                                    flags,
+                                                                    mouse->x,
+                                                                    mouse->y);
+        else if (session->core_input_ready)
             status = rdp_core_input_write_mouse_event(&input, flags, mouse->x, mouse->y);
         else
             status = rdp_slowpath_write_client_mouse_input(&input,
@@ -4318,7 +4337,9 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
     }
     if (status == LIBRDP_STATUS_OK)
     {
-        if (session->core_input_ready)
+        if (use_extended)
+            status = rdp_session_write_slowpath_pdu(session, &input, "rdp.input.mousex");
+        else if (session->core_input_ready)
             status = rdp_session_send_dynamic_channel_data(session,
                                                            session->core_input_channel_id,
                                                            session->core_input_channel_id_bytes,
@@ -4342,7 +4363,7 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
                     "kind=mouse x=%u y=%u transport=%s flags=%u",
                     mouse->x,
                     mouse->y,
-                    session->core_input_ready ? "core_input" : "slowpath",
+                    use_extended ? "slowpath_mousex" : (session->core_input_ready ? "core_input" : "slowpath"),
                     flags);
     rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;

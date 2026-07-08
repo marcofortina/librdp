@@ -245,12 +245,13 @@ static librdp_status rdp_slowpath_write_pointer_capability(rdp_buffer* buffer)
 static librdp_status rdp_slowpath_write_input_capability(rdp_buffer* buffer)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    const uint16_t input_flags = 0x0001u | 0x0004u | 0x0010u | 0x0100u;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_INPUT, 88);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0x0001u);
+        status = rdp_buffer_append_u16_le(buffer, input_flags);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
@@ -633,6 +634,15 @@ librdp_status rdp_slowpath_write_client_keyboard_input(rdp_buffer* buffer,
     return rdp_slowpath_write_client_input_event(buffer, share_id, channel_id, 0x0004u, flags, scancode, 0);
 }
 
+librdp_status rdp_slowpath_write_client_unicode_keyboard_input(rdp_buffer* buffer,
+                                                               uint32_t share_id,
+                                                               uint16_t channel_id,
+                                                               uint16_t flags,
+                                                               uint16_t code)
+{
+    return rdp_slowpath_write_client_input_event(buffer, share_id, channel_id, 0x0005u, flags, code, 0);
+}
+
 librdp_status rdp_slowpath_write_client_mouse_input(rdp_buffer* buffer,
                                                     uint32_t share_id,
                                                     uint16_t channel_id,
@@ -641,6 +651,16 @@ librdp_status rdp_slowpath_write_client_mouse_input(rdp_buffer* buffer,
                                                     uint16_t y)
 {
     return rdp_slowpath_write_client_input_event(buffer, share_id, channel_id, 0x8001u, flags, x, y);
+}
+
+librdp_status rdp_slowpath_write_client_extended_mouse_input(rdp_buffer* buffer,
+                                                             uint32_t share_id,
+                                                             uint16_t channel_id,
+                                                             uint16_t flags,
+                                                             uint16_t x,
+                                                             uint16_t y)
+{
+    return rdp_slowpath_write_client_input_event(buffer, share_id, channel_id, 0x8002u, flags, x, y);
 }
 
 librdp_status rdp_slowpath_write_client_refresh_rect(rdp_buffer* buffer,

@@ -99,12 +99,23 @@ librdp_status rdp_slowpath_write_client_keyboard_input(rdp_buffer* buffer,
                                                        uint16_t channel_id,
                                                        uint16_t flags,
                                                        uint16_t scancode);
+librdp_status rdp_slowpath_write_client_unicode_keyboard_input(rdp_buffer* buffer,
+                                                               uint32_t share_id,
+                                                               uint16_t channel_id,
+                                                               uint16_t flags,
+                                                               uint16_t code);
 librdp_status rdp_slowpath_write_client_mouse_input(rdp_buffer* buffer,
                                                     uint32_t share_id,
                                                     uint16_t channel_id,
                                                     uint16_t flags,
                                                     uint16_t x,
                                                     uint16_t y);
+librdp_status rdp_slowpath_write_client_extended_mouse_input(rdp_buffer* buffer,
+                                                             uint32_t share_id,
+                                                             uint16_t channel_id,
+                                                             uint16_t flags,
+                                                             uint16_t x,
+                                                             uint16_t y);
 librdp_status rdp_slowpath_write_client_refresh_rect(rdp_buffer* buffer,
                                                      uint32_t share_id,
                                                      uint16_t channel_id,

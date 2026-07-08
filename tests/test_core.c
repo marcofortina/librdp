@@ -823,11 +823,19 @@ static int test_settings_surface_input_session(void)
     librdp_surface_free(surface);
 
     CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0);
+    key.flags = LIBRDP_KEY_FLAG_EXTENDED;
+    CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0x0100u);
+    key.flags = 0;
     key.state = LIBRDP_KEY_RELEASED;
     CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0x8000u);
     CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && (flags & 0x9000u) == 0x9000u);
     mouse.button = LIBRDP_MOUSE_BUTTON_WHEEL_DOWN;
     CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x0388u);
+    mouse.button = LIBRDP_MOUSE_BUTTON_WHEEL_LEFT;
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x0588u);
+    mouse.button = LIBRDP_MOUSE_BUTTON_X1;
+    CHECK(rdp_input_mouse_uses_extended(&mouse));
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x8001u);
     mouse.button = LIBRDP_MOUSE_BUTTON_LEFT;
 
     session = librdp_session_new(settings);
