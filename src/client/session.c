@@ -552,7 +552,7 @@ static librdp_status rdp_session_graphics_surface_map(librdp_session* session,
     surface->mapped = 1;
     surface->output_origin_x = map->output_origin_x;
     surface->output_origin_y = map->output_origin_y;
-    return rdp_session_graphics_surface_flush(session, surface, 0, 0, surface->width, surface->height);
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_session_graphics_surface_fill(librdp_session* session,
@@ -1300,7 +1300,6 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             if (status != LIBRDP_STATUS_OK)
                 break;
             rdp_session_graphics_surfaces_clear(session);
-            rdp_session_graphics_cache_clear(session);
             rdp_clearcodec_context_reset(&session->clearcodec);
             if (reset.width != librdp_surface_width(session->surface) ||
                 reset.height != librdp_surface_height(session->surface))
