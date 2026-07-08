@@ -1147,8 +1147,10 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (region->tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE ||
         region->rect_count == 0 ||
-        region->quant_count == 0 ||
-        region->tile_count == 0)
+        region->quant_count == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((region->tile_count == 0 && region->tile_data_size != 0) ||
+        (region->tile_count != 0 && region->tile_data_size == 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     rects_len = (size_t)region->rect_count * 8u;

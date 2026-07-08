@@ -567,6 +567,19 @@ static int test_path_security_license_channels(void)
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66
     };
     const uint8_t graphics_progressive_bad_block[] = {0xc3, 0xcc, 0x05, 0x00, 0x00, 0x00};
+    const uint8_t graphics_progressive_empty_region[] = {
+        0xc4, 0xcc, 0x1f, 0x00, 0x00, 0x00,
+        0x40,
+        0x01, 0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x0d, 0x02, 0xd8, 0x02,
+        0x40, 0x00, 0x20, 0x00,
+        0x66, 0x76, 0x88, 0x99, 0xa9
+    };
     const uint8_t graphics_progressive_bad_region[] = {
         0xc4, 0xcc, 0x17, 0x00, 0x00, 0x00,
         0x40,
@@ -1943,6 +1956,12 @@ static int test_path_security_license_channels(void)
            graphics_progressive_region.tile_count == 1 &&
            graphics_progressive_region.tile_data_size == 25 &&
            graphics_progressive_region.tiles_len == 25);
+    PCHECK(rdp_graphics_progressive_parse_region(graphics_progressive_empty_region,
+                                                 sizeof(graphics_progressive_empty_region),
+                                                 &graphics_progressive_region) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_region.tile_count == 0 &&
+           graphics_progressive_region.tile_data_size == 0 &&
+           graphics_progressive_region.tiles_len == 0);
     PCHECK(rdp_graphics_progressive_parse_tile_simple(graphics_progressive_stream + 69,
                                                       sizeof(graphics_progressive_stream) - 69u,
                                                       &graphics_progressive_simple) == LIBRDP_STATUS_OK);
