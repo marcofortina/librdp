@@ -628,6 +628,14 @@ static int test_path_security_license_channels(void)
         0x00, 0x00, 0x00, 0x00,
         0x01, 0x02, 0x03, 0x04
     };
+    const uint8_t clear_residual_zero_run_bitmap[] = {
+        0x00, 0x06,
+        0x08, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x02, 0x03, 0x04
+    };
     const uint8_t clear_raw_subcodec_bitmap[] = {
         0x00, 0x01,
         0x00, 0x00, 0x00, 0x00,
@@ -643,6 +651,23 @@ static int test_path_security_license_channels(void)
         4, 5, 6,
         7, 8, 9,
         10, 11, 12
+    };
+    const uint8_t clear_rlex_subcodec_bitmap[] = {
+        0x00, 0x07,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x0b, 0x00, 0x00, 0x00,
+        0x02,
+        0x02,
+        1, 2, 3,
+        4, 5, 6,
+        0x03, 0x00,
+        0x03, 0x00
     };
     const uint8_t clear_band_miss_bitmap[] = {
         0x04, 0x02,
@@ -1973,6 +1998,19 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[12] == 1 &&
            clear_pixels.data[15] == 0xff);
     clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_residual_zero_run_bitmap,
+                                        sizeof(clear_residual_zero_run_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.data[0] == 1 &&
+           clear_pixels.data[1] == 2 &&
+           clear_pixels.data[2] == 3 &&
+           clear_pixels.data[12] == 1 &&
+           clear_pixels.data[15] == 0xff);
+    clear_pixels.length = 0;
     PCHECK(rdp_clearcodec_parse_stream(clear_raw_subcodec_bitmap,
                                        sizeof(clear_raw_subcodec_bitmap),
                                        &clear_stream) == LIBRDP_STATUS_OK);
@@ -2005,6 +2043,34 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[10] == 9 &&
            clear_pixels.data[12] == 10 &&
            clear_pixels.data[14] == 12);
+    clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_parse_stream(clear_rlex_subcodec_bitmap,
+                                       sizeof(clear_rlex_subcodec_bitmap),
+                                       &clear_stream) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_clearcodec_parse_composite_payload(clear_stream.payload,
+                                                  clear_stream.payload_len,
+                                                  &clear_payload) == LIBRDP_STATUS_OK);
+    PCHECK(clear_payload.subcodec_len == 24);
+    PCHECK(rdp_clearcodec_parse_subcodec(clear_payload.subcodec,
+                                         clear_payload.subcodec_len,
+                                         &clear_subcodec) == LIBRDP_STATUS_OK);
+    PCHECK(clear_subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RLEX &&
+           clear_subcodec.bitmap_data_len == 11);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_rlex_subcodec_bitmap,
+                                        sizeof(clear_rlex_subcodec_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.data[0] == 1 &&
+           clear_pixels.data[1] == 2 &&
+           clear_pixels.data[2] == 3 &&
+           clear_pixels.data[4] == 4 &&
+           clear_pixels.data[5] == 5 &&
+           clear_pixels.data[6] == 6 &&
+           clear_pixels.data[8] == 1 &&
+           clear_pixels.data[12] == 4);
     clear_pixels.length = 0;
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_band_miss_bitmap,

@@ -147,7 +147,7 @@ static librdp_status rdp_clearcodec_read_run_length(rdp_stream* stream, uint32_t
 
     if (!stream || !run_length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (rdp_stream_read_u8(stream, &factor1) != LIBRDP_STATUS_OK || factor1 == 0)
+    if (rdp_stream_read_u8(stream, &factor1) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (factor1 < 0xffu)
     {
@@ -165,9 +165,30 @@ static librdp_status rdp_clearcodec_read_run_length(rdp_stream* stream, uint32_t
             return LIBRDP_STATUS_OK;
         }
     }
-    if (rdp_stream_read_u32_le(stream, run_length) != LIBRDP_STATUS_OK || *run_length == 0)
+    if (rdp_stream_read_u32_le(stream, run_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+static uint8_t rdp_clearcodec_low_mask(uint8_t bits)
+{
+    if (bits == 0)
+        return 0;
+    if (bits >= 8)
+        return 0xffu;
+    return (uint8_t)((1u << bits) - 1u);
+}
+
+static uint8_t rdp_clearcodec_log2_floor_u8(uint8_t value)
+{
+    uint8_t shift = 0;
+
+    while (value > 1u)
+    {
+        value = (uint8_t)(value >> 1u);
+        shift++;
+    }
+    return shift;
 }
 
 static uint8_t* rdp_clearcodec_vbar_slot(rdp_clearcodec_context* context, uint16_t index)
@@ -447,7 +468,154 @@ static librdp_status rdp_clearcodec_decode_residual(const uint8_t* data,
         }
         offset += run;
     }
+    if (offset != pixel_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_clearcodec_write_rlex_pixel(uint8_t* pixels,
+                                                     size_t stride,
+                                                     uint16_t dest_x,
+                                                     uint16_t dest_y,
+                                                     uint16_t width,
+                                                     uint32_t pixel_index,
+                                                     const uint8_t* color)
+{
+    uint16_t x = 0;
+    uint16_t y = 0;
+    uint8_t* pixel = NULL;
+
+    if (!pixels || !color || width == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    x = (uint16_t)(pixel_index % width);
+    y = (uint16_t)(pixel_index / width);
+    pixel = pixels + ((size_t)(dest_y + y) * stride) + ((size_t)(dest_x + x) * 4u);
+    pixel[0] = color[0];
+    pixel[1] = color[1];
+    pixel[2] = color[2];
+    pixel[3] = 0xffu;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_clearcodec_decode_rlex_subcodec(const rdp_clearcodec_subcodec* subcodec,
+                                                         uint16_t width,
+                                                         uint16_t height,
+                                                         uint8_t* pixels,
+                                                         size_t stride)
+{
+    const uint8_t* data = NULL;
+    uint8_t palette[128u][4u];
+    uint8_t palette_count = 0;
+    uint8_t index_bits = 0;
+    uint8_t index_mask = 0;
+    uint8_t suite_mask = 0;
+    uint32_t pixel_count = 0;
+    uint32_t pixel_index = 0;
+    size_t offset = 0;
+
+    if (!subcodec || !pixels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (subcodec->width == 0 || subcodec->height == 0 ||
+        subcodec->x > width || subcodec->y > height ||
+        subcodec->width > width - subcodec->x || subcodec->height > height - subcodec->y)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!subcodec->bitmap_data || subcodec->bitmap_data_len < 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    data = subcodec->bitmap_data;
+    palette_count = data[offset++];
+    if (palette_count == 0 || palette_count > 127u ||
+        subcodec->bitmap_data_len < 1u + ((uint32_t)palette_count * 3u))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(palette, 0, sizeof(palette));
+    for (uint8_t i = 0; i < palette_count; i++)
+    {
+        palette[i][0] = data[offset++];
+        palette[i][1] = data[offset++];
+        palette[i][2] = data[offset++];
+        palette[i][3] = 0xffu;
+    }
+
+    index_bits = (uint8_t)(rdp_clearcodec_log2_floor_u8((uint8_t)(palette_count - 1u)) + 1u);
+    index_mask = rdp_clearcodec_low_mask(index_bits);
+    suite_mask = rdp_clearcodec_low_mask((uint8_t)(8u - index_bits));
+    pixel_count = (uint32_t)subcodec->width * (uint32_t)subcodec->height;
+    while (offset < subcodec->bitmap_data_len)
+    {
+        uint8_t token = 0;
+        uint8_t run_factor1 = 0;
+        uint8_t stop_index = 0;
+        uint8_t suite_depth = 0;
+        uint8_t start_index = 0;
+        uint32_t run_length = 0;
+
+        if (subcodec->bitmap_data_len - offset < 2u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        token = data[offset++];
+        run_factor1 = data[offset++];
+        if (run_factor1 < 0xffu)
+        {
+            run_length = run_factor1;
+        }
+        else
+        {
+            if (subcodec->bitmap_data_len - offset < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            run_length = (uint32_t)data[offset] | ((uint32_t)data[offset + 1u] << 8u);
+            offset += 2u;
+            if (run_length >= 0xffffu)
+            {
+                if (subcodec->bitmap_data_len - offset < 4u)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                run_length = (uint32_t)data[offset] |
+                             ((uint32_t)data[offset + 1u] << 8u) |
+                             ((uint32_t)data[offset + 2u] << 16u) |
+                             ((uint32_t)data[offset + 3u] << 24u);
+                offset += 4u;
+            }
+        }
+        suite_depth = (uint8_t)((token >> index_bits) & suite_mask);
+        stop_index = (uint8_t)(token & index_mask);
+        if (suite_depth > stop_index)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        start_index = (uint8_t)(stop_index - suite_depth);
+        if (start_index >= palette_count || stop_index >= palette_count)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (run_length > pixel_count - pixel_index)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (uint32_t i = 0; i < run_length; i++)
+        {
+            librdp_status status = rdp_clearcodec_write_rlex_pixel(pixels,
+                                                                   stride,
+                                                                   subcodec->x,
+                                                                   subcodec->y,
+                                                                   subcodec->width,
+                                                                   pixel_index++,
+                                                                   palette[start_index]);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        if ((uint32_t)suite_depth + 1u > pixel_count - pixel_index)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (uint8_t i = 0; i <= suite_depth; i++)
+        {
+            uint8_t palette_index = (uint8_t)(start_index + i);
+            librdp_status status = LIBRDP_STATUS_OK;
+
+            if (palette_index >= palette_count)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_clearcodec_write_rlex_pixel(pixels,
+                                                     stride,
+                                                     subcodec->x,
+                                                     subcodec->y,
+                                                     subcodec->width,
+                                                     pixel_index++,
+                                                     palette[palette_index]);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    return pixel_index == pixel_count ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static librdp_status rdp_clearcodec_apply_raw_subcodec(const rdp_clearcodec_subcodec* subcodec,
@@ -504,9 +672,12 @@ static librdp_status rdp_clearcodec_decode_subcodecs(const uint8_t* data,
 
         if (status != LIBRDP_STATUS_OK)
             return status;
-        if (subcodec.subcodec_id != RDP_CLEARCODEC_SUBCODEC_RAW)
+        if (subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RAW)
+            status = rdp_clearcodec_apply_raw_subcodec(&subcodec, width, height, pixels, stride);
+        else if (subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RLEX)
+            status = rdp_clearcodec_decode_rlex_subcodec(&subcodec, width, height, pixels, stride);
+        else
             return LIBRDP_STATUS_UNSUPPORTED;
-        status = rdp_clearcodec_apply_raw_subcodec(&subcodec, width, height, pixels, stride);
         if (status != LIBRDP_STATUS_OK)
             return status;
         offset += subcodec.total_len;
@@ -599,7 +770,6 @@ librdp_status rdp_clearcodec_parse_subcodec(const void* data,
         rdp_stream_read_u8(&stream, &subcodec->subcodec_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (subcodec->width == 0 || subcodec->height == 0 ||
-        subcodec->bitmap_data_len > (uint32_t)subcodec->width * (uint32_t)subcodec->height * 3u ||
         rdp_stream_remaining(&stream) < subcodec->bitmap_data_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &subcodec->bitmap_data, subcodec->bitmap_data_len) != LIBRDP_STATUS_OK)
