@@ -122,7 +122,7 @@ if(LIBRDP_BUILD_FUZZ)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
-    find_package(X11 REQUIRED COMPONENTS Xcursor)
+    find_package(X11 REQUIRED COMPONENTS Xcursor Xfixes)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     add_executable(librdp-x11-viewer apps/x11-viewer/main.c)
@@ -131,5 +131,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
-    target_link_libraries(librdp-x11-viewer PRIVATE librdp ${X11_LIBRARIES} X11::Xcursor ${XKBCOMMON_LIBRARIES})
+    target_link_libraries(librdp-x11-viewer PRIVATE
+        librdp
+        ${X11_LIBRARIES}
+        X11::Xcursor
+        X11::Xfixes
+        ${XKBCOMMON_LIBRARIES}
+    )
 endif()
