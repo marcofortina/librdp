@@ -2633,12 +2633,13 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
         status = rdp_graphics_parse_header(pdu, remaining, &header);
         if (status != LIBRDP_STATUS_OK)
             break;
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "rdp.graphics.pdu",
-                        "dvc_channel_id=%u cmd_id=%u pdu_len=%u",
-                        channel_id,
-                        header.cmd_id,
-                        header.pdu_length);
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "rdp.graphics.pdu",
+                              "dvc_channel_id=%u cmd_id=%u pdu_len=%u",
+                              channel_id,
+                              header.cmd_id,
+                              header.pdu_length);
         rdp_trace_hexdump("rdp.graphics.pdu", pdu, header.pdu_length);
         if (header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM)
         {
@@ -2726,16 +2727,17 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                         rendered = 1;
                 }
                 if (rendered)
-                    rdp_trace_event(RDP_TRACE_CLIENT,
-                                    "client.graphics.wire_to_surface",
-                                    "dvc_channel_id=%u surface_id=%u codec_id=%u x=%u y=%u width=%u height=%u",
-                                    channel_id,
-                                    wire.surface_id,
-                                    wire.codec_id,
-                                    wire.dest_rect.left,
-                                    wire.dest_rect.top,
-                                    (unsigned)(wire.dest_rect.right - wire.dest_rect.left),
-                                    (unsigned)(wire.dest_rect.bottom - wire.dest_rect.top));
+                    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "client.graphics.wire_to_surface",
+                                          "dvc_channel_id=%u surface_id=%u codec_id=%u x=%u y=%u width=%u height=%u",
+                                          channel_id,
+                                          wire.surface_id,
+                                          wire.codec_id,
+                                          wire.dest_rect.left,
+                                          wire.dest_rect.top,
+                                          (unsigned)(wire.dest_rect.right - wire.dest_rect.left),
+                                          (unsigned)(wire.dest_rect.bottom - wire.dest_rect.top));
             }
             else
             {
@@ -2782,21 +2784,22 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                            &unsupported_tiles);
                     if (status != LIBRDP_STATUS_OK)
                         break;
-                    rdp_trace_event(RDP_TRACE_CLIENT,
-                                    "client.graphics.progressive",
-                                    "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u rendered_tiles=%u failed_tiles=%u unsupported_tiles=%u",
-                                    channel_id,
-                                    wire.surface_id,
-                                    wire.codec_context_id,
-                                    progressive.block_count,
-                                    progressive.region_count,
-                                    progressive.tile_count,
-                                    progressive.simple_tile_count,
-                                    progressive.first_tile_count,
-                                    progressive.upgrade_tile_count,
-                                    rendered_tiles,
-                                    failed_tiles,
-                                    unsupported_tiles);
+                    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "client.graphics.progressive",
+                                          "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u rendered_tiles=%u failed_tiles=%u unsupported_tiles=%u",
+                                          channel_id,
+                                          wire.surface_id,
+                                          wire.codec_context_id,
+                                          progressive.block_count,
+                                          progressive.region_count,
+                                          progressive.tile_count,
+                                          progressive.simple_tile_count,
+                                          progressive.first_tile_count,
+                                          progressive.upgrade_tile_count,
+                                          rendered_tiles,
+                                          failed_tiles,
+                                          unsupported_tiles);
                 }
                 else
                 {
@@ -2878,19 +2881,20 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             }
             if (status != LIBRDP_STATUS_OK)
                 break;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.surface_to_surface",
-                            "dvc_channel_id=%u source_id=%u dest_id=%u points=%u src_left=%u src_top=%u src_right=%u src_bottom=%u last_dst_x=%u last_dst_y=%u",
-                            channel_id,
-                            surface_to_surface.surface_id_src,
-                            surface_to_surface.surface_id_dest,
-                            surface_to_surface.dest_points_count,
-                            surface_to_surface.rect_src.left,
-                            surface_to_surface.rect_src.top,
-                            surface_to_surface.rect_src.right,
-                            surface_to_surface.rect_src.bottom,
-                            last_point.x,
-                            last_point.y);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.graphics.surface_to_surface",
+                                  "dvc_channel_id=%u source_id=%u dest_id=%u points=%u src_left=%u src_top=%u src_right=%u src_bottom=%u last_dst_x=%u last_dst_y=%u",
+                                  channel_id,
+                                  surface_to_surface.surface_id_src,
+                                  surface_to_surface.surface_id_dest,
+                                  surface_to_surface.dest_points_count,
+                                  surface_to_surface.rect_src.left,
+                                  surface_to_surface.rect_src.top,
+                                  surface_to_surface.rect_src.right,
+                                  surface_to_surface.rect_src.bottom,
+                                  last_point.x,
+                                  last_point.y);
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_SURFACE_TO_CACHE)
         {
@@ -2902,18 +2906,19 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_session_graphics_cache_store(session, &surface_to_cache);
             if (status != LIBRDP_STATUS_OK)
                 break;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.surface_to_cache",
-                            "dvc_channel_id=%u surface_id=%u cache_slot=%u width=%u height=%u src_left=%u src_top=%u src_right=%u src_bottom=%u",
-                            channel_id,
-                            surface_to_cache.surface_id,
-                            surface_to_cache.cache_slot,
-                            (unsigned)(surface_to_cache.rect_src.right - surface_to_cache.rect_src.left),
-                            (unsigned)(surface_to_cache.rect_src.bottom - surface_to_cache.rect_src.top),
-                            surface_to_cache.rect_src.left,
-                            surface_to_cache.rect_src.top,
-                            surface_to_cache.rect_src.right,
-                            surface_to_cache.rect_src.bottom);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.graphics.surface_to_cache",
+                                  "dvc_channel_id=%u surface_id=%u cache_slot=%u width=%u height=%u src_left=%u src_top=%u src_right=%u src_bottom=%u",
+                                  channel_id,
+                                  surface_to_cache.surface_id,
+                                  surface_to_cache.cache_slot,
+                                  (unsigned)(surface_to_cache.rect_src.right - surface_to_cache.rect_src.left),
+                                  (unsigned)(surface_to_cache.rect_src.bottom - surface_to_cache.rect_src.top),
+                                  surface_to_cache.rect_src.left,
+                                  surface_to_cache.rect_src.top,
+                                  surface_to_cache.rect_src.right,
+                                  surface_to_cache.rect_src.bottom);
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_CACHE_TO_SURFACE)
         {
@@ -2952,17 +2957,18 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             }
             if (status != LIBRDP_STATUS_OK)
                 break;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.cache_to_surface",
-                            "dvc_channel_id=%u cache_slot=%u surface_id=%u points=%u cache_width=%u cache_height=%u last_dst_x=%u last_dst_y=%u",
-                            channel_id,
-                            cache_to_surface.cache_slot,
-                            cache_to_surface.surface_id,
-                            cache_to_surface.dest_points_count,
-                            cache->width,
-                            cache->height,
-                            last_point.x,
-                            last_point.y);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.graphics.cache_to_surface",
+                                  "dvc_channel_id=%u cache_slot=%u surface_id=%u points=%u cache_width=%u cache_height=%u last_dst_x=%u last_dst_y=%u",
+                                  channel_id,
+                                  cache_to_surface.cache_slot,
+                                  cache_to_surface.surface_id,
+                                  cache_to_surface.dest_points_count,
+                                  cache->width,
+                                  cache->height,
+                                  last_point.x,
+                                  last_point.y);
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_EVICT_CACHE_ENTRY)
         {
@@ -3149,12 +3155,13 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             session->graphics_frame_active = 1;
             session->graphics_current_frame_id = start_frame.frame_id;
             session->graphics_dirty_pending = 0;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.frame.start",
-                            "dvc_channel_id=%u frame_id=%u timestamp=%u",
-                            channel_id,
-                            start_frame.frame_id,
-                            start_frame.timestamp);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.graphics.frame.start",
+                                  "dvc_channel_id=%u frame_id=%u timestamp=%u",
+                                  channel_id,
+                                  start_frame.frame_id,
+                                  start_frame.timestamp);
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_END_FRAME)
         {
@@ -3166,12 +3173,13 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             session->graphics_frame_active = 0;
             rdp_session_graphics_dirty_flush(session);
             session->graphics_frames_decoded++;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.graphics.frame.end",
-                            "dvc_channel_id=%u frame_id=%u total_frames_decoded=%u",
-                            channel_id,
-                            end_frame.frame_id,
-                            session->graphics_frames_decoded);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.graphics.frame.end",
+                                  "dvc_channel_id=%u frame_id=%u total_frames_decoded=%u",
+                                  channel_id,
+                                  end_frame.frame_id,
+                                  session->graphics_frames_decoded);
             status = rdp_session_send_graphics_frame_ack(session, end_frame.frame_id);
             if (status != LIBRDP_STATUS_OK)
                 break;
@@ -3483,12 +3491,13 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     if (!session || !entry || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.drdynvc.data",
-                    "dvc_channel_id=%u name=%s payload_len=%u",
-                    channel_id,
-                    entry->name,
-                    (unsigned)data_len);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.drdynvc.data",
+                          "dvc_channel_id=%u name=%s payload_len=%u",
+                          channel_id,
+                          entry->name,
+                          (unsigned)data_len);
     if (strcmp(entry->name, "ECHO") == 0)
     {
         status = rdp_session_send_dynamic_channel_data(session,
@@ -3700,13 +3709,14 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         if (first_pdu.total_length == 0 || first_pdu.total_length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         entry = rdp_session_dynamic_channel_find(session, first_pdu.channel_id);
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.drdynvc.fragment.start",
-                        "dvc_channel_id=%u name=%s total_len=%u payload_len=%u",
-                        first_pdu.channel_id,
-                        entry ? entry->name : "",
-                        first_pdu.total_length,
-                        (unsigned)first_pdu.data_len);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.drdynvc.fragment.start",
+                              "dvc_channel_id=%u name=%s total_len=%u payload_len=%u",
+                              first_pdu.channel_id,
+                              entry ? entry->name : "",
+                              first_pdu.total_length,
+                              (unsigned)first_pdu.data_len);
         if (!entry)
             return LIBRDP_STATUS_OK;
         rdp_buffer_free(&entry->fragment);
@@ -3742,11 +3752,12 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         entry = rdp_session_dynamic_channel_find(session, data_pdu.channel_id);
         if (!entry)
         {
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.drdynvc.data",
-                            "dvc_channel_id=%u name= payload_len=%u",
-                            data_pdu.channel_id,
-                            (unsigned)data_pdu.data_len);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.data",
+                                  "dvc_channel_id=%u name= payload_len=%u",
+                                  data_pdu.channel_id,
+                                  (unsigned)data_pdu.data_len);
             return LIBRDP_STATUS_OK;
         }
         if (entry->fragmenting)
@@ -3756,14 +3767,15 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             status = rdp_buffer_append(&entry->fragment, data_pdu.data, data_pdu.data_len);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.drdynvc.fragment.data",
-                            "dvc_channel_id=%u name=%s total_len=%u received=%u payload_len=%u",
-                            data_pdu.channel_id,
-                            entry->name,
-                            entry->fragment_expected,
-                            (unsigned)entry->fragment.length,
-                            (unsigned)data_pdu.data_len);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.fragment.data",
+                                  "dvc_channel_id=%u name=%s total_len=%u received=%u payload_len=%u",
+                                  data_pdu.channel_id,
+                                  entry->name,
+                                  entry->fragment_expected,
+                                  (unsigned)entry->fragment.length,
+                                  (unsigned)data_pdu.data_len);
             if (entry->fragment.length < entry->fragment_expected)
                 return LIBRDP_STATUS_OK;
             entry->fragmenting = 0;
@@ -3845,11 +3857,12 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
     }
     else
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.drdynvc.data",
-                        "command=%u payload_len=%u",
-                        header.command,
-                        (unsigned)channel_packet->payload_len);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.drdynvc.data",
+                              "command=%u payload_len=%u",
+                              header.command,
+                              (unsigned)channel_packet->payload_len);
     }
 
     return status;
@@ -4132,13 +4145,14 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
     {
         const rdp_fastpath_update* update = &updates.updates[i];
 
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "rdp.fastpath.update",
-                        "code=%u fragmentation=%u compression=%u payload_len=%u",
-                        update->update_code,
-                        update->fragmentation,
-                        update->compression,
-                        (unsigned)update->data_len);
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "rdp.fastpath.update",
+                              "code=%u fragmentation=%u compression=%u payload_len=%u",
+                              update->update_code,
+                              update->fragmentation,
+                              update->compression,
+                              (unsigned)update->data_len);
         if (update->update_code == RDP_FASTPATH_UPDATE_BITMAP)
         {
             rdp_bitmap_update bitmap;
@@ -5000,14 +5014,21 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         return LIBRDP_STATUS_STATE;
 
     rdp_buffer_init(&packet);
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.start", "timeout_ms=%d", timeout_ms);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.active.loop.start",
+                          "timeout_ms=%d",
+                          timeout_ms);
     if (session->state == LIBRDP_SESSION_CONNECTED)
         rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
 
     status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.done", "status=timeout");
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.active.loop.done",
+                              "status=timeout");
         return LIBRDP_STATUS_OK;
     }
     if (status != LIBRDP_STATUS_OK)
@@ -5097,13 +5118,14 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             indication_payload = security_payload.data;
             indication_payload_len = security_payload.length;
         }
-        rdp_trace_event(RDP_TRACE_PROTOCOL,
-                        "mcs.send_data.indication",
-                        "initiator=%u channel_id=%u payload_len=%u security_flags=%u",
-                        indication.initiator,
-                        indication.channel_id,
-                        (unsigned)indication_payload_len,
-                        security_flags);
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "mcs.send_data.indication",
+                              "initiator=%u channel_id=%u payload_len=%u security_flags=%u",
+                              indication.initiator,
+                              indication.channel_id,
+                              (unsigned)indication_payload_len,
+                              security_flags);
         if (session->dynamic_channel_id != 0 && indication.channel_id == session->dynamic_channel_id)
         {
             rdp_virtual_channel_packet channel_packet;
@@ -5115,12 +5137,13 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.drdynvc.data",
-                            "channel_id=%u flags=%u payload_len=%u",
-                            indication.channel_id,
-                            channel_packet.flags,
-                            (unsigned)channel_packet.payload_len);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.data",
+                                  "channel_id=%u flags=%u payload_len=%u",
+                                  indication.channel_id,
+                                  channel_packet.flags,
+                                  (unsigned)channel_packet.payload_len);
             status = rdp_session_handle_dynamic_channel(session, &channel_packet);
             if (status != LIBRDP_STATUS_OK)
             {
@@ -5212,12 +5235,13 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
-            rdp_trace_event(RDP_TRACE_PROTOCOL,
-                            "rdp.slowpath.data",
-                            "type=%u compressed_type=%u payload_len=%u",
-                            data_pdu.pdu_type2,
-                            data_pdu.compressed_type,
-                            (unsigned)data_pdu.payload_len);
+            rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "rdp.slowpath.data",
+                                  "type=%u compressed_type=%u payload_len=%u",
+                                  data_pdu.pdu_type2,
+                                  data_pdu.compressed_type,
+                                  (unsigned)data_pdu.payload_len);
             status = rdp_session_trace_slowpath_data_pdu(session, &data_pdu);
             if (status != LIBRDP_STATUS_OK)
             {
@@ -5246,11 +5270,12 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         rdp_buffer_free(&packet);
                         return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
                     }
-                    rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                    "rdp.slowpath.update",
-                                    "update_type=%u payload_len=%u",
-                                    update_type,
-                                    (unsigned)data_pdu.payload_len);
+                    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "rdp.slowpath.update",
+                                          "update_type=%u payload_len=%u",
+                                          update_type,
+                                          (unsigned)data_pdu.payload_len);
                     if (update_type == RDP_UPDATE_TYPE_BITMAP)
                     {
                         rdp_bitmap_update update;
@@ -5303,7 +5328,10 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
 
 done:
     rdp_buffer_free(&packet);
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.active.loop.done", "status=idle");
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.active.loop.done",
+                          "status=idle");
     return LIBRDP_STATUS_OK;
 }
 
