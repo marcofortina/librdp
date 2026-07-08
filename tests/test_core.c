@@ -833,9 +833,9 @@ static int test_pointer_decode(void)
     CHECK(rdp_pointer_decode_bgra32(&update, &output, &stride) == LIBRDP_STATUS_OK);
     CHECK(stride == 12);
     CHECK(output.length == 12);
-    CHECK(output.data[0] == 0xff && output.data[1] == 0xff && output.data[2] == 0xff && output.data[3] == 0xff);
-    CHECK(output.data[4] == 0 && output.data[5] == 0 && output.data[6] == 0 && output.data[7] == 0xff);
-    CHECK(output.data[8] == 0xff && output.data[9] == 0xff && output.data[10] == 0xff && output.data[11] == 0xff);
+    CHECK(output.data[0] == 0 && output.data[1] == 0 && output.data[2] == 0 && output.data[3] == 0);
+    CHECK(output.data[4] == 0xff && output.data[5] == 0xff && output.data[6] == 0xff && output.data[7] == 0);
+    CHECK(output.data[8] == 0 && output.data[9] == 0 && output.data[10] == 0 && output.data[11] == 0);
     rdp_buffer_free(&output);
     return 0;
 }

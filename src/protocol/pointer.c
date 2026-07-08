@@ -29,82 +29,6 @@ static int rdp_pointer_mask_bit(const uint8_t* data, size_t stride, uint16_t wid
     return (data[offset] & mask) != 0;
 }
 
-static int rdp_pointer_color_nonzero(const uint8_t* pixel)
-{
-    return pixel && (pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0);
-}
-
-static void rdp_pointer_write_visible_fallback(uint8_t* dst)
-{
-    dst[0] = 0x00u;
-    dst[1] = 0x00u;
-    dst[2] = 0x00u;
-    dst[3] = 0xffu;
-}
-
-static int rdp_pointer_pixel_is_visible_black(const uint8_t* pixel)
-{
-    return pixel && pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0 && pixel[3] == 0xffu;
-}
-
-static int rdp_pointer_pixel_is_transparent(const uint8_t* pixel)
-{
-    return pixel && pixel[3] == 0;
-}
-
-static void rdp_pointer_write_light_fallback(uint8_t* dst)
-{
-    dst[0] = 0xffu;
-    dst[1] = 0xffu;
-    dst[2] = 0xffu;
-    dst[3] = 0xffu;
-}
-
-static void rdp_pointer_add_visible_outline(rdp_buffer* output, uint16_t width, uint16_t height, size_t stride)
-{
-    uint16_t y = 0;
-
-    if (!output || !output->data || width == 0 || height == 0 || stride < (size_t)width * 4u)
-        return;
-
-    for (y = 0; y < height; y++)
-    {
-        uint16_t x = 0;
-
-        for (x = 0; x < width; x++)
-        {
-            uint8_t* pixel = output->data + ((size_t)y * stride) + ((size_t)x * 4u);
-
-            if (!rdp_pointer_pixel_is_visible_black(pixel))
-                continue;
-            if (x > 0)
-            {
-                uint8_t* neighbor = pixel - 4u;
-                if (rdp_pointer_pixel_is_transparent(neighbor))
-                    rdp_pointer_write_light_fallback(neighbor);
-            }
-            if (x + 1u < width)
-            {
-                uint8_t* neighbor = pixel + 4u;
-                if (rdp_pointer_pixel_is_transparent(neighbor))
-                    rdp_pointer_write_light_fallback(neighbor);
-            }
-            if (y > 0)
-            {
-                uint8_t* neighbor = pixel - stride;
-                if (rdp_pointer_pixel_is_transparent(neighbor))
-                    rdp_pointer_write_light_fallback(neighbor);
-            }
-            if (y + 1u < height)
-            {
-                uint8_t* neighbor = pixel + stride;
-                if (rdp_pointer_pixel_is_transparent(neighbor))
-                    rdp_pointer_write_light_fallback(neighbor);
-            }
-        }
-    }
-}
-
 static librdp_status rdp_pointer_parse_color_attributes(rdp_stream* stream,
                                                         uint16_t bpp,
                                                         int large_lengths,
@@ -289,7 +213,6 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
     size_t dst_stride = 0;
     size_t dst_size = 0;
     int has_alpha = 0;
-    int needs_outline = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!update || !output || !stride)
@@ -354,34 +277,18 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                 const uint8_t* pixel = src + ((size_t)x * 4u);
                 int alpha_visible = has_alpha && pixel[3] != 0;
 
-                if (transparent && !alpha_visible && rdp_pointer_color_nonzero(pixel))
-                {
-                    rdp_pointer_write_visible_fallback(dst + dst_pos);
-                    needs_outline = 1;
-                }
-                else
-                {
-                    dst[dst_pos + 0u] = pixel[0];
-                    dst[dst_pos + 1u] = pixel[1];
-                    dst[dst_pos + 2u] = pixel[2];
-                    dst[dst_pos + 3u] = transparent && !alpha_visible ? 0u : (has_alpha ? pixel[3] : 0xffu);
-                }
+                dst[dst_pos + 0u] = pixel[0];
+                dst[dst_pos + 1u] = pixel[1];
+                dst[dst_pos + 2u] = pixel[2];
+                dst[dst_pos + 3u] = transparent && !alpha_visible ? 0u : (has_alpha ? pixel[3] : 0xffu);
             }
             else if (update->xor_bpp == 24u)
             {
                 const uint8_t* pixel = src + ((size_t)x * 3u);
-                if (transparent && rdp_pointer_color_nonzero(pixel))
-                {
-                    rdp_pointer_write_visible_fallback(dst + dst_pos);
-                    needs_outline = 1;
-                }
-                else
-                {
-                    dst[dst_pos + 0u] = pixel[0];
-                    dst[dst_pos + 1u] = pixel[1];
-                    dst[dst_pos + 2u] = pixel[2];
-                    dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
-                }
+                dst[dst_pos + 0u] = pixel[0];
+                dst[dst_pos + 1u] = pixel[1];
+                dst[dst_pos + 2u] = pixel[2];
+                dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
             }
             else
             {
@@ -391,20 +298,16 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                                                    update->height,
                                                    x,
                                                    y);
-                uint8_t color = (transparent && xor_bit) ? 0x00u : (xor_bit ? 0xffu : 0x00u);
+                uint8_t color = xor_bit ? 0xffu : 0x00u;
 
-                if (transparent && xor_bit)
-                    needs_outline = 1;
                 dst[dst_pos + 0u] = color;
                 dst[dst_pos + 1u] = color;
                 dst[dst_pos + 2u] = color;
-                dst[dst_pos + 3u] = (transparent && !xor_bit) ? 0u : 0xffu;
+                dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
             }
         }
     }
 
-    if (needs_outline)
-        rdp_pointer_add_visible_outline(output, update->width, update->height, dst_stride);
     *stride = dst_stride;
     return LIBRDP_STATUS_OK;
 }
