@@ -52,6 +52,7 @@ typedef struct rdp_gcc_client_config
     uint32_t device_scale_factor;
     const char* client_name;
     uint8_t enable_dynamic_channels;
+    uint8_t enable_clipboard;
 } rdp_gcc_client_config;
 
 typedef struct rdp_gcc_client_data_summary

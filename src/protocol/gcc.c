@@ -306,20 +306,34 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
 {
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t channel_count = 0;
 
     if (!config)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    if (config->enable_dynamic_channels)
+        channel_count++;
+    if (config->enable_clipboard)
+        channel_count++;
+
     rdp_buffer_init(&payload);
-    status = rdp_buffer_append_u32_le(&payload, config->enable_dynamic_channels ? 1u : 0u);
-    if (status == LIBRDP_STATUS_OK)
+    status = rdp_buffer_append_u32_le(&payload, channel_count);
+    if (status == LIBRDP_STATUS_OK && config->enable_dynamic_channels)
     {
         static const uint8_t name[8] = {'d', 'r', 'd', 'y', 'n', 'v', 'c', 0};
-        if (config->enable_dynamic_channels)
-            status = rdp_buffer_append(&payload, name, sizeof(name));
+
+        status = rdp_buffer_append(&payload, name, sizeof(name));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, 0x80800000u);
     }
-    if (status == LIBRDP_STATUS_OK && config->enable_dynamic_channels)
-        status = rdp_buffer_append_u32_le(&payload, 0x80800000u);
+    if (status == LIBRDP_STATUS_OK && config->enable_clipboard)
+    {
+        static const uint8_t name[8] = {'c', 'l', 'i', 'p', 'r', 'd', 'r', 0};
+
+        status = rdp_buffer_append(&payload, name, sizeof(name));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, 0xc0a00000u);
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_CS_NETWORK, &payload);
     rdp_buffer_free(&payload);
