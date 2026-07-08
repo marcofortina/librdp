@@ -321,6 +321,186 @@ static void rdp_session_pointer_cache_clear(librdp_session* session)
     memset(session->pointer_cache, 0, sizeof(session->pointer_cache));
 }
 
+static size_t rdp_session_pointer_mask_stride(uint16_t width)
+{
+    return (((size_t)width + 15u) / 16u) * 2u;
+}
+
+static size_t rdp_session_pointer_xor_stride(uint16_t width, uint16_t bpp)
+{
+    return ((((size_t)width * bpp) + 15u) / 16u) * 2u;
+}
+
+static int rdp_session_pointer_mask_bit(const uint8_t* data,
+                                        size_t stride,
+                                        uint16_t width,
+                                        uint16_t height,
+                                        uint16_t x,
+                                        uint16_t y)
+{
+    size_t row = (size_t)(height - 1u - y);
+    size_t offset = row * stride + ((size_t)x / 8u);
+    uint8_t mask = (uint8_t)(0x80u >> (x % 8u));
+
+    if (!data || x >= width || y >= height)
+        return 0;
+    return (data[offset] & mask) != 0;
+}
+
+static uint64_t rdp_session_pointer_hash_bytes(const uint8_t* data, size_t length)
+{
+    uint64_t hash = 1469598103934665603ull;
+    size_t i = 0;
+
+    if (!data)
+        return 0;
+    for (i = 0; i < length; i++)
+    {
+        hash ^= data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static int rdp_session_pointer_xor_pixel_nonzero(const rdp_pointer_update* update,
+                                                 size_t xor_stride,
+                                                 uint16_t x,
+                                                 uint16_t y)
+{
+    const uint8_t* row = NULL;
+    const uint8_t* pixel = NULL;
+
+    if (!update || !update->xor_mask)
+        return 0;
+    if (update->xor_bpp == 1u)
+        return rdp_session_pointer_mask_bit(update->xor_mask,
+                                            xor_stride,
+                                            update->width,
+                                            update->height,
+                                            x,
+                                            y);
+    row = update->xor_mask + ((size_t)(update->height - 1u - y) * xor_stride);
+    if (update->xor_bpp == 24u)
+    {
+        pixel = row + ((size_t)x * 3u);
+        return pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0;
+    }
+    if (update->xor_bpp == 32u)
+    {
+        pixel = row + ((size_t)x * 4u);
+        return pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 || pixel[3] != 0;
+    }
+    return 0;
+}
+
+static void rdp_session_pointer_trace_shape(const rdp_pointer_update* update,
+                                            const rdp_buffer* decoded,
+                                            size_t decoded_stride)
+{
+    uint32_t and_set = 0;
+    uint32_t xor_nonzero = 0;
+    uint32_t invert_like = 0;
+    uint32_t decoded_opaque = 0;
+    uint32_t decoded_transparent = 0;
+    uint32_t decoded_rgb_nonzero = 0;
+    uint32_t decoded_alpha_nonzero = 0;
+    uint32_t has_alpha = 0;
+    uint16_t y = 0;
+    uint16_t x = 0;
+    size_t and_stride = 0;
+    size_t xor_stride = 0;
+
+    if (!rdp_trace_enabled_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_TRACE) ||
+        !update || !decoded || !decoded->data || update->kind != RDP_POINTER_UPDATE_KIND_SHAPE ||
+        decoded_stride < (size_t)update->width * 4u)
+        return;
+
+    and_stride = rdp_session_pointer_mask_stride(update->width);
+    xor_stride = rdp_session_pointer_xor_stride(update->width, update->xor_bpp);
+    if (and_stride == 0 || xor_stride == 0)
+        return;
+    if (update->and_mask_len < and_stride * update->height ||
+        update->xor_mask_len < xor_stride * update->height ||
+        decoded->length < decoded_stride * update->height)
+        return;
+
+    if (update->xor_bpp == 32u)
+    {
+        size_t i = 3;
+
+        for (i = 3; i < update->xor_mask_len; i += 4)
+        {
+            if (update->xor_mask[i] != 0)
+            {
+                has_alpha = 1;
+                break;
+            }
+        }
+    }
+
+    for (y = 0; y < update->height; y++)
+    {
+        const uint8_t* row = decoded->data + ((size_t)y * decoded_stride);
+
+        for (x = 0; x < update->width; x++)
+        {
+            int and_bit = rdp_session_pointer_mask_bit(update->and_mask,
+                                                       and_stride,
+                                                       update->width,
+                                                       update->height,
+                                                       x,
+                                                       y);
+            int xor_pixel = rdp_session_pointer_xor_pixel_nonzero(update, xor_stride, x, y);
+            const uint8_t* pixel = row + ((size_t)x * 4u);
+
+            if (and_bit)
+                and_set++;
+            if (xor_pixel)
+                xor_nonzero++;
+            if (and_bit && xor_pixel)
+                invert_like++;
+            if (pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)
+                decoded_rgb_nonzero++;
+            if (pixel[3] != 0)
+            {
+                decoded_alpha_nonzero++;
+                decoded_opaque++;
+            }
+            else
+            {
+                decoded_transparent++;
+            }
+        }
+    }
+
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.pointer.shape.stats",
+                          "cache_index=%u width=%u height=%u hot_x=%u hot_y=%u xor_bpp=%u has_alpha=%u xor_len=%u and_len=%u and_set=%u xor_nonzero=%u invert_like=%u decoded_opaque=%u decoded_transparent=%u decoded_rgb_nonzero=%u decoded_alpha_nonzero=%u hash_xor=%016llx hash_and=%016llx hash_bgra=%016llx",
+                          update->cache_index,
+                          update->width,
+                          update->height,
+                          update->hot_x,
+                          update->hot_y,
+                          update->xor_bpp,
+                          has_alpha,
+                          (unsigned)update->xor_mask_len,
+                          (unsigned)update->and_mask_len,
+                          and_set,
+                          xor_nonzero,
+                          invert_like,
+                          decoded_opaque,
+                          decoded_transparent,
+                          decoded_rgb_nonzero,
+                          decoded_alpha_nonzero,
+                          (unsigned long long)rdp_session_pointer_hash_bytes(update->xor_mask,
+                                                                              update->xor_mask_len),
+                          (unsigned long long)rdp_session_pointer_hash_bytes(update->and_mask,
+                                                                              update->and_mask_len),
+                          (unsigned long long)rdp_session_pointer_hash_bytes(decoded->data,
+                                                                              decoded->length));
+}
+
 static void rdp_session_pointer_emit_default(librdp_session* session)
 {
     librdp_event event;
@@ -424,6 +604,7 @@ static librdp_status rdp_session_pointer_store_shape(librdp_session* session, co
     entry->pointer.pixels_len = entry->pixels.length;
     entry->pointer.visible = 1;
     entry->active = 1;
+    rdp_session_pointer_trace_shape(update, &entry->pixels, stride);
     rdp_session_pointer_emit_shape(session, entry);
     return LIBRDP_STATUS_OK;
 }
