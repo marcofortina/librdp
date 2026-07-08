@@ -3766,13 +3766,20 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
     {
         rdp_dynamic_channel_capabilities capabilities;
         rdp_buffer response;
+        uint16_t client_version = 0;
 
         rdp_buffer_init(&response);
         status = rdp_dynamic_channel_parse_capabilities(channel_packet->payload,
                                                         channel_packet->payload_len,
                                                         &capabilities);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_dynamic_channel_write_capabilities_response(&response, 1);
+        {
+            client_version = rdp_dynamic_channel_select_version(capabilities.version);
+            if (client_version == 0)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_capabilities_response(&response, client_version);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_write_channel_pdu(session,
                                                    session->dynamic_channel_id,
@@ -3783,8 +3790,9 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             return status;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.drdynvc.capabilities",
-                        "server_version=%u client_version=1",
-                        capabilities.version);
+                        "server_version=%u client_version=%u",
+                        capabilities.version,
+                        client_version);
     }
     else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CREATE)
     {

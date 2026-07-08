@@ -61,6 +61,7 @@ typedef struct rdp_dynamic_channel_close_pdu
     uint8_t channel_id_bytes;
 } rdp_dynamic_channel_close_pdu;
 
+uint16_t rdp_dynamic_channel_select_version(uint16_t server_version);
 librdp_status rdp_dynamic_channel_parse_header(const void* data,
                                                size_t length,
                                                rdp_dynamic_channel_header* header);

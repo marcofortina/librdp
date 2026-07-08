@@ -154,6 +154,15 @@ static uint8_t rdp_dynamic_channel_length_code(uint8_t length_bytes)
     return 2;
 }
 
+uint16_t rdp_dynamic_channel_select_version(uint16_t server_version)
+{
+    if (server_version == 0)
+        return 0;
+    if (server_version > 3u)
+        return 3;
+    return server_version;
+}
+
 librdp_status rdp_dynamic_channel_parse_header(const void* data,
                                                size_t length,
                                                rdp_dynamic_channel_header* header)
@@ -204,6 +213,8 @@ librdp_status rdp_dynamic_channel_parse_capabilities(const void* data,
         rdp_stream_read_u16_le(&stream, &capabilities->version) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)pad;
+    if (capabilities->version == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 

@@ -527,6 +527,7 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
     const uint8_t dyn_caps[] = {0x50, 0x00, 0x03, 0x00, 0x33, 0x33, 0x11, 0x11};
+    const uint8_t dyn_caps_zero[] = {0x50, 0x00, 0x00, 0x00};
     const uint8_t dyn_create[] = {0x18, 0x07, 'E', 'C', 'H', 'O', 0};
     const uint8_t dyn_data[] = {0x30, 0x07, 0xaa, 0xbb, 0xcc};
     const uint8_t dyn_data_first[] = {0x24, 0x07, 0x2c, 0x01, 0xaa, 0xbb, 0xcc};
@@ -2117,6 +2118,12 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_dynamic_channel_parse_capabilities(dyn_caps, sizeof(dyn_caps), &dyn_parsed_caps) ==
            LIBRDP_STATUS_OK);
     PCHECK(dyn_parsed_caps.version == 3);
+    PCHECK(rdp_dynamic_channel_parse_capabilities(dyn_caps_zero, sizeof(dyn_caps_zero), &dyn_parsed_caps) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_dynamic_channel_select_version(0) == 0 &&
+           rdp_dynamic_channel_select_version(1) == 1 &&
+           rdp_dynamic_channel_select_version(3) == 3 &&
+           rdp_dynamic_channel_select_version(4) == 3);
     PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 1) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 1);
     dyn_response.length = 0;
