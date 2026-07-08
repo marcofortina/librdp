@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct rdp_settings_drive
+{
+    char name[8];
+    char* path;
+} rdp_settings_drive;
+
 struct librdp_settings
 {
     char* target;
@@ -15,6 +21,8 @@ struct librdp_settings
     uint32_t width;
     uint32_t height;
     librdp_security_mode security_mode;
+    uint32_t drive_count;
+    rdp_settings_drive drives[LIBRDP_SETTINGS_MAX_DRIVES];
 };
 
 static char* rdp_strdup(const char* value)
@@ -50,6 +58,27 @@ static librdp_status rdp_set_string(char** field, const char* value)
     free(*field);
     *field = copy;
     return LIBRDP_STATUS_OK;
+}
+
+static int rdp_settings_valid_drive_name(const char* name)
+{
+    size_t i = 0;
+    size_t length = 0;
+
+    if (!name || name[0] == '\0')
+        return 0;
+    length = strlen(name);
+    if (length > 7u)
+        return 0;
+    for (i = 0; i < length; i++)
+    {
+        if (name[i] == '<' || name[i] == '>' || name[i] == '"' ||
+            name[i] == '/' || name[i] == '\\' || name[i] == '|')
+            return 0;
+        if (name[i] == ':' && i + 1u != length)
+            return 0;
+    }
+    return 1;
 }
 
 librdp_settings* librdp_settings_new(void)
@@ -90,6 +119,15 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
         librdp_settings_free(copy);
         return NULL;
     }
+    for (uint32_t i = 0; i < settings->drive_count; i++)
+    {
+        if (librdp_settings_add_drive(copy, settings->drives[i].name, settings->drives[i].path) !=
+            LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
 
     return copy;
 }
@@ -103,6 +141,8 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->username);
     free(settings->password);
     free(settings->domain);
+    for (uint32_t i = 0; i < settings->drive_count; i++)
+        free(settings->drives[i].path);
     free(settings);
 }
 
@@ -159,6 +199,44 @@ librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librd
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path)
+{
+    char* path_copy = NULL;
+    rdp_settings_drive* drive = NULL;
+
+    if (!settings || !rdp_settings_valid_drive_name(name) || !path || path[0] == '\0' ||
+        settings->drive_count >= LIBRDP_SETTINGS_MAX_DRIVES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    path_copy = rdp_strdup(path);
+    if (!path_copy)
+        return LIBRDP_STATUS_NO_MEMORY;
+    drive = &settings->drives[settings->drive_count];
+    memset(drive, 0, sizeof(*drive));
+    memcpy(drive->name, name, strlen(name) + 1u);
+    drive->path = path_copy;
+    settings->drive_count++;
+    return LIBRDP_STATUS_OK;
+}
+
+uint32_t librdp_settings_drive_count(const librdp_settings* settings)
+{
+    return settings ? settings->drive_count : 0;
+}
+
+const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->drive_count)
+        return NULL;
+    return settings->drives[index].name;
+}
+
+const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->drive_count)
+        return NULL;
+    return settings->drives[index].path;
+}
+
 const char* librdp_settings_target(const librdp_settings* settings)
 {
     return settings ? settings->target : NULL;
@@ -197,4 +275,11 @@ librdp_security_mode librdp_settings_security_mode(const librdp_settings* settin
 const char* rdp_settings_password_internal(const librdp_settings* settings)
 {
     return settings ? settings->password : NULL;
+}
+
+uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->drive_count)
+        return 0;
+    return 0x00010000u + index;
 }

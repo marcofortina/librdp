@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#define LIBRDP_SETTINGS_MAX_DRIVES 8u
+
 typedef struct librdp_settings librdp_settings;
 
 typedef enum librdp_security_mode
@@ -29,6 +31,10 @@ librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* 
 librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port);
 librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32_t width, uint32_t height);
 librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
+librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path);
+uint32_t librdp_settings_drive_count(const librdp_settings* settings);
+const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t index);
+const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t index);
 const char* librdp_settings_target(const librdp_settings* settings);
 const char* librdp_settings_username(const librdp_settings* settings);
 const char* librdp_settings_domain(const librdp_settings* settings);

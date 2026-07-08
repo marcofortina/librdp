@@ -4,5 +4,6 @@
 #include <librdp/settings.h>
 
 const char* rdp_settings_password_internal(const librdp_settings* settings);
+uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, uint32_t index);
 
 #endif

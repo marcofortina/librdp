@@ -939,27 +939,66 @@ static librdp_status rdp_session_write_device_redirection_client_name(rdp_buffer
     return rdp_device_redirection_write_client_name_utf16le(buffer, utf16, (uint32_t)sizeof(utf16));
 }
 
-static librdp_status rdp_session_send_device_redirection_empty_device_list(librdp_session* session)
+static void rdp_session_drive_name_to_utf16le(const char* name, uint8_t* out, size_t out_len)
 {
+    size_t i = 0;
+    size_t length = 0;
+
+    if (!name || !out || out_len < 2u)
+        return;
+    memset(out, 0, out_len);
+    length = strlen(name);
+    if ((length + 1u) * 2u > out_len)
+        length = out_len / 2u - 1u;
+    for (i = 0; i < length; i++)
+        out[i * 2u] = (uint8_t)name[i];
+}
+
+static librdp_status rdp_session_send_device_redirection_device_list(librdp_session* session)
+{
+    rdp_device_redirection_device_announce devices[LIBRDP_SETTINGS_MAX_DRIVES];
+    uint8_t names[LIBRDP_SETTINGS_MAX_DRIVES][16];
     rdp_buffer packet;
+    uint32_t count = 0;
+    uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(devices, 0, sizeof(devices));
+    memset(names, 0, sizeof(names));
+    count = librdp_settings_drive_count(session->settings);
+    if (count > LIBRDP_SETTINGS_MAX_DRIVES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < count; i++)
+    {
+        const char* name = librdp_settings_drive_name(session->settings, i);
+        size_t name_len = name ? strlen(name) : 0;
+
+        if (!name || name_len == 0 || name_len > 7u)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        devices[i].device_type = RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM;
+        devices[i].device_id = rdp_settings_drive_device_id_internal(session->settings, i);
+        memcpy(devices[i].preferred_dos_name, name, name_len + 1u);
+        rdp_session_drive_name_to_utf16le(name, names[i], sizeof(names[i]));
+        devices[i].data = names[i];
+        devices[i].data_len = (uint32_t)((name_len + 1u) * 2u);
+    }
     rdp_buffer_init(&packet);
-    status = rdp_device_redirection_write_device_list_announce(&packet, NULL, 0);
+    status = rdp_device_redirection_write_device_list_announce(&packet, devices, count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_device_redirection_packet(session,
                                                             &packet,
-                                                            "client.rdpdr.device_list.empty");
+                                                            "client.rdpdr.device_list");
     rdp_buffer_free(&packet);
     if (status == LIBRDP_STATUS_OK)
     {
         session->device_redirection_ready = 1;
         rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.rdpdr.device_list.empty",
-                        "channel_id=%u",
-                        session->device_redirection_channel_id);
+                        "client.rdpdr.device_list",
+                        "channel_id=%u drive_count=%u",
+                        session->device_redirection_channel_id,
+                        count);
     }
     return status;
 }
@@ -1049,6 +1088,8 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
         if (status == LIBRDP_STATUS_OK && session->device_redirection_version_minor != 0)
             config.general.protocol_minor_version = session->device_redirection_version_minor;
         if (status == LIBRDP_STATUS_OK)
+            config.include_drive = librdp_settings_drive_count(session->settings) > 0 ? 1u : 0u;
+        if (status == LIBRDP_STATUS_OK)
             status = rdp_device_redirection_write_client_capability_response(&response, &config);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_send_device_redirection_packet(session,
@@ -1067,7 +1108,7 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
         if (data_len != 4u)
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
         else
-            status = rdp_session_send_device_redirection_empty_device_list(session);
+            status = rdp_session_send_device_redirection_device_list(session);
         if (status == LIBRDP_STATUS_OK)
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.rdpdr.user_loggedon",
