@@ -669,6 +669,26 @@ static int test_path_security_license_channels(void)
         0x03, 0x00,
         0x03, 0x00
     };
+    const uint8_t clear_nsc_subcodec_bitmap[] = {
+        0x00, 0x08,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x25, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x01, 0x00,
+        0x01, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x01,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01,
+        0x00,
+        0x00, 0x00,
+        10, 0, 0, 0xff
+    };
     const uint8_t clear_band_miss_bitmap[] = {
         0x04, 0x02,
         0x04, 0x00, 0x00, 0x00,
@@ -2071,6 +2091,19 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[6] == 6 &&
            clear_pixels.data[8] == 1 &&
            clear_pixels.data[12] == 4);
+    clear_pixels.length = 0;
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_nsc_subcodec_bitmap,
+                                        sizeof(clear_nsc_subcodec_bitmap),
+                                        1,
+                                        1,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 4 &&
+           clear_pixels.data[0] == 10 &&
+           clear_pixels.data[1] == 10 &&
+           clear_pixels.data[2] == 10 &&
+           clear_pixels.data[3] == 0xff);
     clear_pixels.length = 0;
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_band_miss_bitmap,
