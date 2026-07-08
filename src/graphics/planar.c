@@ -2,6 +2,21 @@
 
 #include <stdint.h>
 
+static uint8_t rdp_planar_clip_i32(int32_t value)
+{
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return (uint8_t)value;
+}
+
+static int16_t rdp_planar_decode_chroma(uint8_t value, uint8_t cll)
+{
+    uint8_t shifted = (uint8_t)(value << (cll - 1u));
+    return (int16_t)(int8_t)shifted;
+}
+
 librdp_status rdp_planar_decode_argb(const void* data,
                                      size_t length,
                                      uint32_t width,
@@ -11,14 +26,18 @@ librdp_status rdp_planar_decode_argb(const void* data,
 {
     const uint8_t* bytes = (const uint8_t*)data;
     const uint8_t* alpha = NULL;
-    const uint8_t* red = NULL;
-    const uint8_t* green = NULL;
-    const uint8_t* blue = NULL;
+    const uint8_t* plane0 = NULL;
+    const uint8_t* plane1 = NULL;
+    const uint8_t* plane2 = NULL;
     uint8_t header = 0;
     uint8_t cll = 0;
+    int chroma_subsampled = 0;
     int has_alpha = 0;
     size_t pixel_count = 0;
-    size_t plane_count = 0;
+    size_t chroma_width = 0;
+    size_t chroma_height = 0;
+    size_t chroma_count = 0;
+    size_t payload_size = 0;
     size_t expected = 0;
     size_t output_stride = 0;
     size_t output_size = 0;
@@ -38,16 +57,38 @@ librdp_status rdp_planar_decode_argb(const void* data,
     cll = (uint8_t)(header & RDP_PLANAR_FORMAT_CLL_MASK);
     if ((header & RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING) != 0 && cll == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (cll != 0 || (header & RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING) != 0 ||
-        (header & RDP_PLANAR_FORMAT_RLE) != 0)
+    if ((header & RDP_PLANAR_FORMAT_RLE) != 0)
         return LIBRDP_STATUS_UNSUPPORTED;
 
     pixel_count = (size_t)width * (size_t)height;
-    has_alpha = (header & RDP_PLANAR_FORMAT_NO_ALPHA) == 0;
-    plane_count = has_alpha ? 4u : 3u;
-    if (pixel_count > (SIZE_MAX - 1u) / plane_count)
+    chroma_subsampled = (header & RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING) != 0;
+    chroma_width = chroma_subsampled ? (((size_t)width + 1u) / 2u) : (size_t)width;
+    chroma_height = chroma_subsampled ? (((size_t)height + 1u) / 2u) : (size_t)height;
+    if (chroma_width == 0 || chroma_height == 0 || chroma_width > SIZE_MAX / chroma_height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    expected = 1u + (pixel_count * plane_count);
+    chroma_count = chroma_width * chroma_height;
+    has_alpha = (header & RDP_PLANAR_FORMAT_NO_ALPHA) == 0;
+    if (cll == 0)
+    {
+        if (pixel_count > (SIZE_MAX - 1u) / (has_alpha ? 4u : 3u))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        payload_size = pixel_count * (has_alpha ? 4u : 3u);
+    }
+    else
+    {
+        if (chroma_count > (SIZE_MAX - pixel_count) / 2u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        payload_size = pixel_count + (chroma_count * 2u);
+        if (has_alpha)
+        {
+            if (payload_size > SIZE_MAX - pixel_count)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            payload_size += pixel_count;
+        }
+    }
+    if (payload_size > SIZE_MAX - 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    expected = 1u + payload_size;
     if (length != expected && length != expected + 1u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if SIZE_MAX < UINT64_MAX
@@ -66,17 +107,34 @@ librdp_status rdp_planar_decode_argb(const void* data,
     *stride = output_stride;
 
     alpha = has_alpha ? bytes + 1u : NULL;
-    red = bytes + 1u + (has_alpha ? pixel_count : 0u);
-    green = red + pixel_count;
-    blue = green + pixel_count;
+    plane0 = bytes + 1u + (has_alpha ? pixel_count : 0u);
+    plane1 = plane0 + pixel_count;
+    plane2 = plane1 + (cll == 0 ? pixel_count : chroma_count);
 
     for (i = 0; i < pixel_count; i++)
     {
         uint8_t* dest = pixels->data + (i * 4u);
 
-        dest[0] = blue[i];
-        dest[1] = green[i];
-        dest[2] = red[i];
+        if (cll == 0)
+        {
+            dest[0] = plane2[i];
+            dest[1] = plane1[i];
+            dest[2] = plane0[i];
+        }
+        else
+        {
+            size_t x = i % (size_t)width;
+            size_t y = i / (size_t)width;
+            size_t chroma_index = chroma_subsampled ? ((y / 2u) * chroma_width) + (x / 2u) : i;
+            int16_t co = rdp_planar_decode_chroma(plane1[chroma_index], cll);
+            int16_t cg = rdp_planar_decode_chroma(plane2[chroma_index], cll);
+            int16_t yy = (int16_t)plane0[i];
+            int16_t t = (int16_t)(yy - cg);
+
+            dest[0] = rdp_planar_clip_i32((int32_t)t + co);
+            dest[1] = rdp_planar_clip_i32((int32_t)yy + cg);
+            dest[2] = rdp_planar_clip_i32((int32_t)t - co);
+        }
         dest[3] = has_alpha ? alpha[i] : 0xffu;
     }
     return LIBRDP_STATUS_OK;

@@ -407,6 +407,28 @@ static int test_path_security_license_channels(void)
         0x55, 0x66,
         0x00
     };
+    const uint8_t planar_ycocg_no_alpha[] = {
+        RDP_PLANAR_FORMAT_NO_ALPHA | 0x01,
+        100, 100,
+        10, 0xf6,
+        20, 0xec
+    };
+    const uint8_t planar_ycocg_alpha_padded[] = {
+        0x01,
+        0x7f,
+        100,
+        0,
+        0,
+        0
+    };
+    const uint8_t planar_ycocg_subsampled[] = {
+        RDP_PLANAR_FORMAT_NO_ALPHA | RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING | 0x01,
+        100, 100, 100,
+        100, 100, 100,
+        100, 100, 100,
+        0, 10, 20, 30,
+        0, 0, 0, 0
+    };
     const uint8_t planar_reserved[] = {0x80, 0, 0, 0};
     const uint8_t planar_subsample_without_loss[] = {RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING, 0, 0, 0};
     const uint8_t planar_rle[] = {RDP_PLANAR_FORMAT_RLE, 0, 0, 0};
@@ -1746,6 +1768,47 @@ static int test_path_security_license_channels(void)
            planar_pixels.data[5] == 0x44 &&
            planar_pixels.data[6] == 0x22 &&
            planar_pixels.data[7] == 0x80);
+    PCHECK(rdp_planar_decode_argb(planar_ycocg_no_alpha,
+                                  sizeof(planar_ycocg_no_alpha),
+                                  2,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 &&
+           planar_pixels.data[0] == 90 &&
+           planar_pixels.data[1] == 120 &&
+           planar_pixels.data[2] == 70 &&
+           planar_pixels.data[3] == 0xff &&
+           planar_pixels.data[4] == 110 &&
+           planar_pixels.data[5] == 80 &&
+           planar_pixels.data[6] == 130 &&
+           planar_pixels.data[7] == 0xff);
+    PCHECK(rdp_planar_decode_argb(planar_ycocg_alpha_padded,
+                                  sizeof(planar_ycocg_alpha_padded),
+                                  1,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 4 &&
+           planar_pixels.data[0] == 100 &&
+           planar_pixels.data[1] == 100 &&
+           planar_pixels.data[2] == 100 &&
+           planar_pixels.data[3] == 0x7f);
+    PCHECK(rdp_planar_decode_argb(planar_ycocg_subsampled,
+                                  sizeof(planar_ycocg_subsampled),
+                                  3,
+                                  3,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 12 &&
+           planar_pixels.data[0] == 100 &&
+           planar_pixels.data[2] == 100 &&
+           planar_pixels.data[8] == 110 &&
+           planar_pixels.data[10] == 90 &&
+           planar_pixels.data[24] == 120 &&
+           planar_pixels.data[26] == 80 &&
+           planar_pixels.data[32] == 130 &&
+           planar_pixels.data[34] == 70);
     PCHECK(rdp_planar_decode_argb(planar_reserved,
                                   sizeof(planar_reserved),
                                   1,
