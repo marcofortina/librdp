@@ -71,7 +71,7 @@ static int parse_security(const char* text, librdp_security_mode* mode)
         return 0;
     if (strcmp(text, "auto") == 0)
         *mode = LIBRDP_SECURITY_AUTO;
-    else if (strcmp(text, "standard") == 0)
+    else if (strcmp(text, "standard") == 0 || strcmp(text, "rdp") == 0)
         *mode = LIBRDP_SECURITY_STANDARD;
     else if (strcmp(text, "tls") == 0)
         *mode = LIBRDP_SECURITY_TLS;
@@ -315,7 +315,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|standard|tls|nla|credssp]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|standard|tls|nla|credssp]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;

@@ -114,8 +114,10 @@ struct librdp_session
     uint64_t progressive_tile_clock;
     size_t graphics_cache_bytes;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
+    rdp_standard_security_context standard_security;
     uint32_t share_id;
     librdp_session_state state;
+    uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
 };
@@ -188,21 +190,33 @@ static librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
                                                     const rdp_buffer* slowpath,
                                                     const char* event)
 {
+    rdp_buffer security_payload;
     rdp_buffer send_data;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !slowpath || !event)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    rdp_buffer_init(&security_payload);
     rdp_buffer_init(&send_data);
-    status = rdp_security_write_send_data_request(&send_data,
-                                                  session->mcs_user_id,
-                                                  (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+    if (session->standard_security_active)
+        status = rdp_security_write_encrypted_pdu(&security_payload,
+                                                  &session->standard_security,
+                                                  0,
                                                   slowpath->data,
                                                   slowpath->length);
+    else
+        status = rdp_buffer_append(&security_payload, slowpath->data, slowpath->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_send_data_request(&send_data,
+                                                      session->mcs_user_id,
+                                                      (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                      security_payload.data,
+                                                      security_payload.length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
     rdp_buffer_free(&send_data);
+    rdp_buffer_free(&security_payload);
     return status;
 }
 
@@ -212,6 +226,7 @@ static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
                                                    const char* event)
 {
     rdp_buffer channel_packet;
+    rdp_buffer security_payload;
     rdp_buffer send_data;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -219,17 +234,30 @@ static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&channel_packet);
+    rdp_buffer_init(&security_payload);
     rdp_buffer_init(&send_data);
     status = rdp_virtual_channel_write_packet(&channel_packet, payload->data, payload->length, 3);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (session->standard_security_active)
+            status = rdp_security_write_encrypted_pdu(&security_payload,
+                                                      &session->standard_security,
+                                                      0,
+                                                      channel_packet.data,
+                                                      channel_packet.length);
+        else
+            status = rdp_buffer_append(&security_payload, channel_packet.data, channel_packet.length);
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_security_write_send_data_request(&send_data,
                                                       session->mcs_user_id,
                                                       channel_id,
-                                                      channel_packet.data,
-                                                      channel_packet.length);
+                                                      security_payload.data,
+                                                      security_payload.length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
     rdp_buffer_free(&send_data);
+    rdp_buffer_free(&security_payload);
     rdp_buffer_free(&channel_packet);
     return status;
 }
@@ -2766,6 +2794,93 @@ static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, r
     return status;
 }
 
+static librdp_status rdp_session_write_fastpath_header(rdp_buffer* buffer,
+                                                       uint8_t first,
+                                                       uint16_t length,
+                                                       size_t header_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (header_len != 2u && header_len != 3u) || length < header_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append_u8(buffer, (uint8_t)(first & 0x3fu));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (header_len == 2u)
+    {
+        if (length > 0x7fu)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        return rdp_buffer_append_u8(buffer, (uint8_t)length);
+    }
+
+    status = rdp_buffer_append_u8(buffer, (uint8_t)(0x80u | ((length >> 8) & 0x7fu)));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u8(buffer, (uint8_t)(length & 0xffu));
+}
+
+static librdp_status rdp_session_unwrap_fastpath_packet(librdp_session* session,
+                                                        const rdp_buffer* packet,
+                                                        rdp_buffer* decoded,
+                                                        int* used_decoded)
+{
+    rdp_fastpath_header header;
+    const uint8_t* signature = NULL;
+    uint8_t* encrypted = NULL;
+    uint16_t decoded_len = 0;
+    size_t encrypted_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !packet || !decoded || !used_decoded)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    *used_decoded = 0;
+    status = rdp_fastpath_parse_header(packet->data, packet->length, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((header.security_flags & RDP_FASTPATH_OUTPUT_ENCRYPTED) == 0)
+    {
+        if (header.security_flags != 0)
+            return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_OK;
+    }
+    if (!session->standard_security_active || header.length < header.header_length + 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    decoded_len = (uint16_t)(header.length - 8u);
+    signature = packet->data + header.header_length;
+    encrypted = packet->data + header.header_length + 8u;
+    encrypted_len = header.length - header.header_length - 8u;
+
+    status = rdp_session_write_fastpath_header(decoded, packet->data[0], decoded_len, header.header_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(decoded, encrypted, encrypted_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_decrypt_payload(&session->standard_security,
+                                              decoded->data + header.header_length,
+                                              encrypted_len);
+    if (status == LIBRDP_STATUS_OK &&
+        (header.security_flags & RDP_FASTPATH_OUTPUT_SECURE_CHECKSUM) == 0)
+    {
+        uint8_t expected[8];
+        status = rdp_security_mac_signature(&session->standard_security,
+                                            decoded->data + header.header_length,
+                                            encrypted_len,
+                                            expected);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (memcmp(signature, expected, sizeof(expected)) != 0)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.fastpath.signature.mismatch",
+                            "payload_len=%u",
+                            (unsigned)encrypted_len);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        *used_decoded = 1;
+    return status;
+}
+
 static librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms)
 {
     uint8_t header[6];
@@ -2872,16 +2987,27 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
 
 static librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet)
 {
+    rdp_buffer decoded;
+    const rdp_buffer* parse_packet = packet;
     rdp_fastpath_update_list updates;
     uint16_t i = 0;
+    int used_decoded = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !packet)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_fastpath_parse_updates(packet->data, packet->length, &updates);
+    rdp_buffer_init(&decoded);
+    status = rdp_session_unwrap_fastpath_packet(session, packet, &decoded, &used_decoded);
+    if (status == LIBRDP_STATUS_OK && used_decoded)
+        parse_packet = &decoded;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_fastpath_parse_updates(parse_packet->data, parse_packet->length, &updates);
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&decoded);
         return status;
+    }
 
     for (i = 0; i < updates.count; i++)
     {
@@ -2914,13 +3040,15 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_session_apply_bitmap_update(session, &bitmap);
                 if (status != LIBRDP_STATUS_OK)
-                    return status;
+                    goto out;
                 rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
             }
         }
     }
 
-    return LIBRDP_STATUS_OK;
+out:
+    rdp_buffer_free(&decoded);
+    return status;
 }
 
 librdp_session* librdp_session_new(const librdp_settings* settings)
@@ -2971,6 +3099,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_clearcodec_context_free(&session->clearcodec);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
+    rdp_security_standard_clear(&session->standard_security);
     rdp_transport_close(&session->transport);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
@@ -3004,7 +3133,6 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_gcc_conference_response gcc_response;
     rdp_gcc_server_data server_data;
     rdp_mcs_attach_user_confirm attach_confirm;
-    rdp_standard_security_context standard_security;
     rdp_credssp_state credssp_state = RDP_CREDSSP_DISABLED;
     const uint8_t* mcs_pdu = NULL;
     size_t mcs_pdu_len = 0;
@@ -3039,9 +3167,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_init(&server_certificate);
     rdp_buffer_init(&request);
     rdp_buffer_init(&reply);
-    memset(&standard_security, 0, sizeof(standard_security));
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
+    rdp_security_standard_clear(&session->standard_security);
+    session->standard_security_active = 0;
     session->share_id = 0;
     session->dynamic_channel_id = 0;
     session->core_input_channel_id = 0;
@@ -3559,7 +3688,8 @@ librdp_status librdp_session_connect(librdp_session* session)
             goto fail;
     }
 
-    if (server_encryption_method != 0 || server_encryption_level != 0)
+    if (selected_protocol == RDP_X224_PROTOCOL_STANDARD &&
+        (server_encryption_method != 0 || server_encryption_level != 0))
     {
         uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
         rdp_security_public_key public_key;
@@ -3583,7 +3713,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status == LIBRDP_STATUS_OK)
             status = rdp_security_encrypt_client_random(&public_key, client_random, &encrypted_client_random);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_security_standard_client_init(&standard_security,
+            status = rdp_security_standard_client_init(&session->standard_security,
                                                        server_encryption_method,
                                                        client_random,
                                                        server_random.data);
@@ -3603,6 +3733,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status == LIBRDP_STATUS_OK)
         {
             standard_security_ready = 1;
+            session->standard_security_active = 1;
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "rdp.security_exchange.done",
                             "encrypted_random_len=%u",
@@ -3627,7 +3758,9 @@ librdp_status librdp_session_connect(librdp_session* session)
         info.alternate_shell = NULL;
         info.working_dir = NULL;
         if (standard_security_ready)
-            status = rdp_security_write_encrypted_client_info_pdu(&security_payload, &standard_security, &info);
+            status = rdp_security_write_encrypted_client_info_pdu(&security_payload,
+                                                                  &session->standard_security,
+                                                                  &info);
         else
             status = rdp_security_write_client_info_pdu(&security_payload, &info);
         if (status != LIBRDP_STATUS_OK)
@@ -3671,11 +3804,12 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
-    rdp_security_standard_clear(&standard_security);
     return LIBRDP_STATUS_OK;
 
 fail:
     rdp_transport_close(&session->transport);
+    rdp_security_standard_clear(&session->standard_security);
+    session->standard_security_active = 0;
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
@@ -3687,7 +3821,6 @@ fail:
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
-    rdp_security_standard_clear(&standard_security);
     return rdp_session_fail(session, status);
 }
 
@@ -3755,37 +3888,66 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         size_t pdu_len = 0;
         rdp_mcs_send_data_indication indication;
         rdp_slowpath_share_control_header slow_header;
+        rdp_buffer security_payload;
+        const uint8_t* indication_payload = NULL;
+        size_t indication_payload_len = 0;
+        uint16_t security_flags = 0;
         int have_slow_header = 0;
+
+        rdp_buffer_init(&security_payload);
         status = rdp_session_read_mcs_pdu(session, &packet, &pdu, &pdu_len, "rdp.slowpath.pdu");
         if (status == LIBRDP_STATUS_CLOSED)
         {
+            rdp_buffer_free(&security_payload);
             rdp_buffer_free(&packet);
             return librdp_session_disconnect(session);
         }
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_buffer_free(&security_payload);
             rdp_buffer_free(&packet);
             return rdp_session_fail(session, status);
         }
         status = rdp_mcs_parse_send_data_indication(pdu, pdu_len, &indication);
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_buffer_free(&security_payload);
             rdp_buffer_free(&packet);
             return rdp_session_fail(session, status);
         }
+        indication_payload = indication.payload;
+        indication_payload_len = indication.payload_len;
+        if (session->standard_security_active)
+        {
+            status = rdp_security_unwrap_pdu(&session->standard_security,
+                                             indication.payload,
+                                             indication.payload_len,
+                                             &security_payload,
+                                             &security_flags);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            indication_payload = security_payload.data;
+            indication_payload_len = security_payload.length;
+        }
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "mcs.send_data.indication",
-                        "initiator=%u channel_id=%u payload_len=%u",
+                        "initiator=%u channel_id=%u payload_len=%u security_flags=%u",
                         indication.initiator,
                         indication.channel_id,
-                        (unsigned)indication.payload_len);
+                        (unsigned)indication_payload_len,
+                        security_flags);
         if (session->dynamic_channel_id != 0 && indication.channel_id == session->dynamic_channel_id)
         {
             rdp_virtual_channel_packet channel_packet;
 
-            status = rdp_virtual_channel_parse_packet(indication.payload, indication.payload_len, &channel_packet);
+            status = rdp_virtual_channel_parse_packet(indication_payload, indication_payload_len, &channel_packet);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
@@ -3798,19 +3960,21 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             status = rdp_session_handle_dynamic_channel(session, &channel_packet);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
+            rdp_buffer_free(&security_payload);
             goto done;
         }
-        status = rdp_slowpath_parse_share_control_header(indication.payload, indication.payload_len, &slow_header);
+        status = rdp_slowpath_parse_share_control_header(indication_payload, indication_payload_len, &slow_header);
         if (status == LIBRDP_STATUS_OK)
             have_slow_header = 1;
         if (status != LIBRDP_STATUS_OK)
         {
             rdp_license_error_alert alert;
-            librdp_status license_status = rdp_license_parse_error_alert(indication.payload,
-                                                                         indication.payload_len,
+            librdp_status license_status = rdp_license_parse_error_alert(indication_payload,
+                                                                         indication_payload_len,
                                                                          &alert);
             if (license_status == LIBRDP_STATUS_OK)
             {
@@ -3833,7 +3997,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             rdp_buffer confirm;
 
             rdp_buffer_init(&confirm);
-            status = rdp_slowpath_parse_demand_active(indication.payload, indication.payload_len, &demand);
+            status = rdp_slowpath_parse_demand_active(indication_payload, indication_payload_len, &demand);
             if (status == LIBRDP_STATUS_OK)
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
                                 "rdp.activation.demand_active",
@@ -3854,6 +4018,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             rdp_buffer_free(&confirm);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
@@ -3861,6 +4026,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             status = rdp_session_send_activation_finalization(session, demand.share_id);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
@@ -3870,9 +4036,10 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         {
             rdp_slowpath_data_pdu data_pdu;
 
-            status = rdp_slowpath_parse_data_pdu(indication.payload, indication.payload_len, &data_pdu);
+            status = rdp_slowpath_parse_data_pdu(indication_payload, indication_payload_len, &data_pdu);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
@@ -3905,6 +4072,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                     status = rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &update_header);
                     if (status != LIBRDP_STATUS_OK)
                     {
+                        rdp_buffer_free(&security_payload);
                         rdp_buffer_free(&packet);
                         return rdp_session_fail(session, status);
                     }
@@ -3923,6 +4091,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                             status = rdp_session_apply_bitmap_update(session, &update);
                         if (status != LIBRDP_STATUS_OK)
                         {
+                            rdp_buffer_free(&security_payload);
                             rdp_buffer_free(&packet);
                             return rdp_session_fail(session, status);
                         }
@@ -3940,6 +4109,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 }
             }
         }
+        rdp_buffer_free(&security_payload);
     }
 
 done:
@@ -3960,6 +4130,8 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_trace_event(RDP_TRACE_CLIENT, "client.disconnect.start", "state=%d", (int)session->state);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
     rdp_transport_close(&session->transport);
+    rdp_security_standard_clear(&session->standard_security);
+    session->standard_security_active = 0;
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;

@@ -93,6 +93,7 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
 static int test_tpkt_x224(void)
 {
     rdp_buffer x224;
+    rdp_buffer standard_x224;
     rdp_buffer x224_data;
     rdp_buffer packet;
     rdp_tpkt parsed;
@@ -107,8 +108,14 @@ static int test_tpkt_x224(void)
     const uint8_t bad_tpkt[] = {0x03, 0x00, 0x00, 0x03};
 
     rdp_buffer_init(&x224);
+    rdp_buffer_init(&standard_x224);
     rdp_buffer_init(&x224_data);
     rdp_buffer_init(&packet);
+
+    PCHECK(rdp_x224_build_connection_request(&standard_x224, NULL, RDP_X224_PROTOCOL_STANDARD) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(standard_x224.length == 7);
+    PCHECK(standard_x224.data[0] == 6 && standard_x224.data[1] == 0xe0);
 
     PCHECK(rdp_x224_build_connection_request(&x224, "user", RDP_X224_PROTOCOL_TLS | RDP_X224_PROTOCOL_NLA) ==
            LIBRDP_STATUS_OK);
@@ -139,6 +146,7 @@ static int test_tpkt_x224(void)
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&x224_data);
+    rdp_buffer_free(&standard_x224);
     rdp_buffer_free(&x224);
     return 0;
 }
@@ -971,6 +979,11 @@ static int test_path_security_license_channels(void)
     rdp_buffer encrypted_info;
     rdp_buffer plain_info_body;
     rdp_buffer expected_cipher;
+    rdp_buffer protected_pdu;
+    rdp_buffer unwrapped_pdu;
+    rdp_buffer plain_security;
+    rdp_buffer encrypted_fastpath;
+    rdp_buffer decoded_fastpath;
     rdp_buffer confirm_active;
     rdp_buffer client_sync;
     rdp_buffer client_control;
@@ -1018,6 +1031,7 @@ static int test_path_security_license_channels(void)
     uint32_t nt_offset = 0;
     uint32_t key_offset = 0;
     uint32_t error_info = 0;
+    uint16_t security_flags = 0;
     uint8_t signature[8];
     size_t decoded_stride = 0;
     size_t i = 0;
@@ -1054,6 +1068,11 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&encrypted_info);
     rdp_buffer_init(&plain_info_body);
     rdp_buffer_init(&expected_cipher);
+    rdp_buffer_init(&protected_pdu);
+    rdp_buffer_init(&unwrapped_pdu);
+    rdp_buffer_init(&plain_security);
+    rdp_buffer_init(&encrypted_fastpath);
+    rdp_buffer_init(&decoded_fastpath);
     rdp_buffer_init(&confirm_active);
     rdp_buffer_init(&client_sync);
     rdp_buffer_init(&client_control);
@@ -1628,6 +1647,72 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_buffer_append(&expected_cipher, plain_info_body.data, plain_info_body.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_security_encrypt_payload(&secure_b, expected_cipher.data, expected_cipher.length) == LIBRDP_STATUS_OK);
     PCHECK(memcmp(encrypted_info.data + 12, expected_cipher.data, expected_cipher.length) == 0);
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_encrypted_pdu(&protected_pdu,
+                                            &secure_a,
+                                            0,
+                                            orders_update_payload,
+                                            sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(protected_pdu.length == sizeof(orders_update_payload) + 12u);
+    PCHECK((test_read_u16_le(protected_pdu.data) & RDP_SEC_ENCRYPT) != 0);
+    expected_cipher.length = 0;
+    PCHECK(rdp_buffer_append(&expected_cipher, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_encrypt_payload(&secure_b, expected_cipher.data, expected_cipher.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(protected_pdu.data + 12, expected_cipher.data, expected_cipher.length) == 0);
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    protected_pdu.length = 0;
+    PCHECK(rdp_security_mac_signature(&secure_a,
+                                      orders_update_payload,
+                                      sizeof(orders_update_payload),
+                                      signature) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_header(&protected_pdu, RDP_SEC_ENCRYPT) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, signature, sizeof(signature)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_decrypt_payload(&secure_a,
+                                        protected_pdu.data + 12,
+                                        sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_unwrap_pdu(&secure_b,
+                                   protected_pdu.data,
+                                   protected_pdu.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_OK);
+    PCHECK((security_flags & RDP_SEC_ENCRYPT) != 0);
+    PCHECK(unwrapped_pdu.length == sizeof(orders_update_payload) &&
+           memcmp(unwrapped_pdu.data, orders_update_payload, sizeof(orders_update_payload)) == 0);
+    PCHECK(rdp_security_write_header(&plain_security, RDP_SEC_LICENSE_PKT) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&plain_security, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    security_flags = 0;
+    unwrapped_pdu.length = 0;
+    PCHECK(rdp_security_unwrap_pdu(NULL,
+                                   plain_security.data,
+                                   plain_security.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_OK);
+    PCHECK(security_flags == RDP_SEC_LICENSE_PKT);
+    PCHECK(unwrapped_pdu.length == sizeof(orders_update_payload) &&
+           memcmp(unwrapped_pdu.data, orders_update_payload, sizeof(orders_update_payload)) == 0);
     rdp_security_standard_clear(&secure_a);
     rdp_security_standard_clear(&secure_b);
     PCHECK(rdp_security_standard_client_init(&secure_a,
@@ -2471,6 +2556,11 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&client_control);
     rdp_buffer_free(&client_sync);
     rdp_buffer_free(&expected_cipher);
+    rdp_buffer_free(&decoded_fastpath);
+    rdp_buffer_free(&encrypted_fastpath);
+    rdp_buffer_free(&plain_security);
+    rdp_buffer_free(&unwrapped_pdu);
+    rdp_buffer_free(&protected_pdu);
     rdp_buffer_free(&plain_info_body);
     rdp_buffer_free(&encrypted_info);
     rdp_buffer_free(&confirm_active);

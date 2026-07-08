@@ -12,6 +12,8 @@
 #define RDP_SEC_EXCHANGE_PKT 0x0001u
 #define RDP_SEC_ENCRYPT 0x0008u
 #define RDP_SEC_INFO_PKT 0x0040u
+#define RDP_SEC_LICENSE_PKT 0x0080u
+#define RDP_SEC_SECURE_CHECKSUM 0x0800u
 #define RDP_SECURITY_CLIENT_RANDOM_LEN 32u
 #define RDP_SECURITY_METHOD_40BIT 0x00000001u
 #define RDP_SECURITY_METHOD_128BIT 0x00000002u
@@ -104,6 +106,16 @@ librdp_status rdp_security_mac_signature(const rdp_standard_security_context* co
                                          uint8_t signature[8]);
 librdp_status rdp_security_encrypt_payload(rdp_standard_security_context* context, void* data, size_t length);
 librdp_status rdp_security_decrypt_payload(rdp_standard_security_context* context, void* data, size_t length);
+librdp_status rdp_security_write_encrypted_pdu(rdp_buffer* buffer,
+                                               rdp_standard_security_context* context,
+                                               uint16_t flags,
+                                               const void* payload,
+                                               size_t payload_len);
+librdp_status rdp_security_unwrap_pdu(rdp_standard_security_context* context,
+                                      const void* data,
+                                      size_t length,
+                                      rdp_buffer* payload,
+                                      uint16_t* flags);
 librdp_status rdp_security_write_encrypted_client_info_pdu(rdp_buffer* buffer,
                                                            rdp_standard_security_context* context,
                                                            const rdp_client_info* info);

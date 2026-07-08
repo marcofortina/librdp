@@ -24,10 +24,10 @@ librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* 
         cookie_len = (sizeof(prefix) - 1u) + user_len + (sizeof(suffix) - 1u);
     }
 
-    if (6u + cookie_len + 8u > 255u)
+    if (6u + cookie_len + (protocols == RDP_X224_PROTOCOL_STANDARD ? 0u : 8u) > 255u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    li = (uint8_t)(6u + cookie_len + 8u);
+    li = (uint8_t)(6u + cookie_len + (protocols == RDP_X224_PROTOCOL_STANDARD ? 0u : 8u));
     status = rdp_buffer_append_u8(buffer, li);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -56,6 +56,9 @@ librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* 
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
+
+    if (protocols == RDP_X224_PROTOCOL_STANDARD)
+        return LIBRDP_STATUS_OK;
 
     status = rdp_buffer_append_u8(buffer, 1);
     if (status != LIBRDP_STATUS_OK)
