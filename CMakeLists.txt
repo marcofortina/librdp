@@ -20,6 +20,7 @@ add_library(librdp
     src/channels/display_control.c
     src/channels/dynamic_channel.c
     src/channels/graphics_pipeline.c
+    src/channels/mouse_cursor.c
     src/channels/virtual_channel.c
     src/clipboard/clipboard.c
     src/common/buffer.c
@@ -99,6 +100,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_display_control fuzz/display_control_fuzzer.c)
     add_librdp_fuzzer(fuzz_core_input fuzz/core_input_fuzzer.c)
     add_librdp_fuzzer(fuzz_graphics_pipeline fuzz/graphics_pipeline_fuzzer.c)
+    add_librdp_fuzzer(fuzz_mouse_cursor fuzz/mouse_cursor_fuzzer.c)
     add_librdp_fuzzer(fuzz_clearcodec fuzz/clearcodec_fuzzer.c)
     add_librdp_fuzzer(fuzz_rfx_codec fuzz/rfx_codec_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)

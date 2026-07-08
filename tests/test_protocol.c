@@ -3,6 +3,7 @@
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/graphics_pipeline.h"
+#include "channels/mouse_cursor.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
@@ -425,6 +426,57 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t pointer_slow_large[] = {
         0x09, 0x00,
+        0x20, 0x00,
+        0x05, 0x00,
+        0x01, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
+    const uint8_t mouse_cursor_caps_confirm[] = {
+        0x02, 0x00, 0x00, 0x00,
+        0x43, 0x41, 0x50, 0x53,
+        0x01, 0x00, 0x00, 0x00,
+        0x0c, 0x00, 0x00, 0x00
+    };
+    const uint8_t mouse_cursor_hidden[] = {0x03, 0x05, 0x00, 0x00};
+    const uint8_t mouse_cursor_default[] = {0x03, 0x06, 0x00, 0x00};
+    const uint8_t mouse_cursor_position[] = {
+        0x03, 0x08, 0x00, 0x00,
+        0x22, 0x00,
+        0x33, 0x00
+    };
+    const uint8_t mouse_cursor_cached[] = {
+        0x03, 0x0a, 0x00, 0x00,
+        0x05, 0x00
+    };
+    const uint8_t mouse_cursor_shape_32[] = {
+        0x03, 0x0b, 0x00, 0x00,
+        0x20, 0x00,
+        0x05, 0x00,
+        0x01, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x04, 0x00,
+        0x10, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
+    const uint8_t mouse_cursor_large_32[] = {
+        0x03, 0x0c, 0x00, 0x00,
         0x20, 0x00,
         0x05, 0x00,
         0x01, 0x00,
@@ -975,6 +1027,8 @@ static int test_path_security_license_channels(void)
     rdp_dynamic_channel_data_pdu dyn_data_pdu;
     rdp_dynamic_channel_data_first_pdu dyn_first_pdu;
     rdp_dynamic_channel_close_pdu dyn_close_pdu;
+    rdp_mouse_cursor_header mouse_cursor_header;
+    rdp_mouse_cursor_capset mouse_cursor_capset;
     rdp_core_input_header core_header;
     rdp_core_input_init_response core_init_response;
     rdp_display_control_caps display_parsed_caps;
@@ -2011,6 +2065,72 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_parse_close(dyn_close, sizeof(dyn_close), &dyn_close_pdu) == LIBRDP_STATUS_OK);
     PCHECK(dyn_close_pdu.channel_id == 7 && dyn_close_pdu.channel_id_bytes == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_mouse_cursor_write_caps_advertise(&dyn_response) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 16 &&
+           dyn_response.data[0] == RDP_MOUSE_CURSOR_PDU_CS_CAPS_ADVERTISE &&
+           dyn_response.data[1] == 0 &&
+           test_read_u16_le(dyn_response.data + 2) == 0 &&
+           test_read_u32_le(dyn_response.data + 4) == RDP_MOUSE_CURSOR_CAPSET_SIGNATURE &&
+           test_read_u32_le(dyn_response.data + 8) == RDP_MOUSE_CURSOR_CAPSET_VERSION1 &&
+           test_read_u32_le(dyn_response.data + 12) == RDP_MOUSE_CURSOR_CAPSET_SIZE_VERSION1);
+    PCHECK(rdp_mouse_cursor_parse_header(dyn_response.data,
+                                         dyn_response.length,
+                                         &mouse_cursor_header) == LIBRDP_STATUS_OK);
+    PCHECK(mouse_cursor_header.pdu_type == RDP_MOUSE_CURSOR_PDU_CS_CAPS_ADVERTISE &&
+           mouse_cursor_header.update_type == 0);
+    PCHECK(rdp_mouse_cursor_parse_caps_confirm(mouse_cursor_caps_confirm,
+                                               sizeof(mouse_cursor_caps_confirm),
+                                               &mouse_cursor_capset) == LIBRDP_STATUS_OK);
+    PCHECK(mouse_cursor_capset.signature == RDP_MOUSE_CURSOR_CAPSET_SIGNATURE &&
+           mouse_cursor_capset.version == RDP_MOUSE_CURSOR_CAPSET_VERSION1 &&
+           mouse_cursor_capset.size == RDP_MOUSE_CURSOR_CAPSET_SIZE_VERSION1);
+    PCHECK(rdp_mouse_cursor_parse_caps_confirm(mouse_cursor_caps_confirm,
+                                               sizeof(mouse_cursor_caps_confirm) - 1u,
+                                               &mouse_cursor_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_hidden,
+                                         sizeof(mouse_cursor_hidden),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_NULL);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_default,
+                                         sizeof(mouse_cursor_default),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_DEFAULT);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_position,
+                                         sizeof(mouse_cursor_position),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_POSITION &&
+           pointer_update.x == 0x22 && pointer_update.y == 0x33);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_cached,
+                                         sizeof(mouse_cursor_cached),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_CACHED && pointer_update.cache_index == 5);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_32,
+                                         sizeof(mouse_cursor_shape_32),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.cache_index == 5 &&
+           pointer_update.hot_x == 1 &&
+           pointer_update.hot_y == 0 &&
+           pointer_update.width == 2 &&
+           pointer_update.height == 2 &&
+           pointer_update.xor_bpp == 32);
+    rdp_buffer_free(&decoded_pointer);
+    rdp_buffer_init(&decoded_pointer);
+    PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_stride == 8 && decoded_pointer.length == 16 && decoded_pointer.data[15] == 0x00);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_large_32,
+                                         sizeof(mouse_cursor_large_32),
+                                         &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.cache_index == 5 &&
+           pointer_update.width == 2 &&
+           pointer_update.height == 2 &&
+           pointer_update.xor_bpp == 32);
+    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_32,
+                                         sizeof(mouse_cursor_shape_32) - 1u,
+                                         &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_core_input_write_init_request(&dyn_response) == LIBRDP_STATUS_OK);

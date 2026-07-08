@@ -4,6 +4,7 @@
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/graphics_pipeline.h"
+#include "channels/mouse_cursor.h"
 #include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
 #include "common/stream.h"
@@ -44,6 +45,7 @@
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
+#define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
 
 typedef struct rdp_session_dynamic_channel
 {
@@ -116,6 +118,9 @@ struct librdp_session
     uint32_t graphics_selected_version;
     uint32_t graphics_selected_flags;
     uint32_t graphics_frames_decoded;
+    uint32_t mouse_cursor_channel_id;
+    uint8_t mouse_cursor_channel_id_bytes;
+    uint8_t mouse_cursor_ready;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_clearcodec_context clearcodec;
     rdp_session_graphics_surface graphics_surfaces[RDP_SESSION_MAX_GRAPHICS_SURFACES];
@@ -1716,6 +1721,33 @@ static librdp_status rdp_session_send_core_input_init(librdp_session* session)
     return status;
 }
 
+static librdp_status rdp_session_send_mouse_cursor_caps(librdp_session* session)
+{
+    rdp_buffer caps;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || session->mouse_cursor_channel_id_bytes == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&caps);
+    status = rdp_mouse_cursor_write_caps_advertise(&caps);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       session->mouse_cursor_channel_id,
+                                                       session->mouse_cursor_channel_id_bytes,
+                                                       caps.data,
+                                                       caps.length,
+                                                       "client.mouse_cursor.caps_advertise");
+    rdp_buffer_free(&caps);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.mouse_cursor.caps_advertise",
+                        "dvc_channel_id=%u version=%u",
+                        session->mouse_cursor_channel_id,
+                        RDP_MOUSE_CURSOR_CAPSET_VERSION1);
+    return status;
+}
+
 static librdp_status rdp_session_send_graphics_caps(librdp_session* session)
 {
     rdp_buffer caps;
@@ -2538,6 +2570,90 @@ static librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session
     return status;
 }
 
+static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* session,
+                                                             uint32_t channel_id,
+                                                             const uint8_t* data,
+                                                             size_t data_len)
+{
+    rdp_mouse_cursor_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_mouse_cursor_parse_header(data, data_len, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (header.pdu_type == RDP_MOUSE_CURSOR_PDU_SC_CAPS_CONFIRM)
+    {
+        rdp_mouse_cursor_capset capset;
+
+        status = rdp_mouse_cursor_parse_caps_confirm(data, data_len, &capset);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        session->mouse_cursor_ready = 1;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.mouse_cursor.caps_confirm",
+                        "dvc_channel_id=%u version=%u size=%u",
+                        channel_id,
+                        capset.version,
+                        capset.size);
+        return LIBRDP_STATUS_OK;
+    }
+
+    if (header.pdu_type == RDP_MOUSE_CURSOR_PDU_SC_MOUSEPTR_UPDATE)
+    {
+        rdp_pointer_update update;
+
+        status = rdp_mouse_cursor_parse_update(data, data_len, &update);
+        if (status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.mouse_cursor.update.unsupported",
+                            "dvc_channel_id=%u update_type=%u payload_len=%u",
+                            channel_id,
+                            header.update_type,
+                            (unsigned)data_len);
+            return LIBRDP_STATUS_OK;
+        }
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.mouse_cursor.update",
+                        "dvc_channel_id=%u update_type=%u kind=%u cache_index=%u width=%u height=%u",
+                        channel_id,
+                        header.update_type,
+                        update.kind,
+                        update.cache_index,
+                        update.width,
+                        update.height);
+        status = rdp_session_pointer_apply_update(session, &update);
+        if (status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.mouse_cursor.shape.unsupported",
+                            "dvc_channel_id=%u update_type=%u xor_bpp=%u width=%u height=%u",
+                            channel_id,
+                            header.update_type,
+                            update.xor_bpp,
+                            update.width,
+                            update.height);
+            return LIBRDP_STATUS_OK;
+        }
+        return status;
+    }
+
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.mouse_cursor.pdu.unsupported",
+                    "dvc_channel_id=%u pdu_type=%u update_type=%u payload_len=%u",
+                    channel_id,
+                    header.pdu_type,
+                    header.update_type,
+                    (unsigned)data_len);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,
                                                                 uint32_t channel_id,
@@ -2608,6 +2724,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                         channel_id,
                         response.selected_protocol_version,
                         response.protocol_version_max);
+    }
+    else if (strcmp(entry->name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0)
+    {
+        status = rdp_session_handle_mouse_cursor_message(session, channel_id, data, data_len);
     }
     else if (strcmp(entry->name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0)
     {
@@ -2702,6 +2822,20 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u",
                             request.channel_id);
             status = rdp_session_send_core_input_init(session);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_MOUSE_CURSOR_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_MOUSE_CURSOR_NAME, request.name_len) == 0)
+        {
+            session->mouse_cursor_channel_id = request.channel_id;
+            session->mouse_cursor_channel_id_bytes = request.channel_id_bytes;
+            session->mouse_cursor_ready = 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.mouse_cursor.channel",
+                            "dvc_channel_id=%u",
+                            request.channel_id);
+            status = rdp_session_send_mouse_cursor_caps(session);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
@@ -2860,6 +2994,13 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->core_input_channel_id = 0;
                 session->core_input_channel_id_bytes = 0;
                 session->core_input_ready = 0;
+            }
+            if (entry->channel_id == session->mouse_cursor_channel_id)
+            {
+                session->mouse_cursor_channel_id = 0;
+                session->mouse_cursor_channel_id_bytes = 0;
+                session->mouse_cursor_ready = 0;
+                rdp_session_pointer_emit_default(session);
             }
             if (entry->channel_id == session->graphics_channel_id)
             {
@@ -3388,6 +3529,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->graphics_selected_version = 0;
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
+    session->mouse_cursor_channel_id = 0;
+    session->mouse_cursor_channel_id_bytes = 0;
+    session->mouse_cursor_ready = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
@@ -4374,6 +4518,9 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->graphics_selected_version = 0;
     session->graphics_selected_flags = 0;
     session->graphics_frames_decoded = 0;
+    session->mouse_cursor_channel_id = 0;
+    session->mouse_cursor_channel_id_bytes = 0;
+    session->mouse_cursor_ready = 0;
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
