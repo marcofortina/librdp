@@ -35,6 +35,7 @@ typedef struct x11_app
     XkbDescPtr xkb;
     Cursor cursor;
     int cursor_mode;
+    int hidden_cursor_locally_visible;
     int suppress_motion;
     librdp_session* session;
     int running;
@@ -51,6 +52,7 @@ typedef struct x11_app
 #define X11_CURSOR_DEFAULT 0
 #define X11_CURSOR_HIDDEN 1
 #define X11_CURSOR_SHAPE 2
+#define X11_MAX_EVENTS_PER_TICK 128u
 
 typedef struct x11_scancode_map
 {
@@ -126,6 +128,22 @@ static void clear_viewer_cursor(x11_app* app)
         app->cursor = None;
     }
     app->cursor_mode = X11_CURSOR_DEFAULT;
+    app->hidden_cursor_locally_visible = 0;
+}
+
+static void restore_cursor_after_local_mouse(x11_app* app)
+{
+    if (!app || !app->display || !app->window || x11_window_invalid)
+        return;
+    if (app->cursor_mode != X11_CURSOR_HIDDEN || app->hidden_cursor_locally_visible)
+        return;
+    if (!window_is_live(app))
+        return;
+
+    XUndefineCursor(app->display, app->window);
+    XFlush(app->display);
+    app->hidden_cursor_locally_visible = 1;
+    rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.local_restore", "visible=1");
 }
 
 static Cursor create_hidden_cursor(x11_app* app)
@@ -218,6 +236,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
         clear_viewer_cursor(app);
         app->cursor = cursor;
         app->cursor_mode = X11_CURSOR_HIDDEN;
+        app->hidden_cursor_locally_visible = 0;
         apply_viewer_cursor(app);
         rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.hidden", "visible=0");
     }
@@ -239,6 +258,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
         clear_viewer_cursor(app);
         app->cursor = cursor;
         app->cursor_mode = X11_CURSOR_SHAPE;
+        app->hidden_cursor_locally_visible = 0;
         apply_viewer_cursor(app);
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "x11.pointer.shape",
@@ -1026,6 +1046,7 @@ static void handle_button(x11_app* app, XButtonEvent* button, librdp_mouse_state
         return;
 
     app->pointer_inside = 1;
+    restore_cursor_after_local_mouse(app);
     maybe_grab_keyboard(app, button->time);
     if (state == LIBRDP_MOUSE_RELEASED &&
         (button->button == Button4 || button->button == Button5 || button->button == 6 || button->button == 7))
@@ -1090,6 +1111,7 @@ static void handle_motion(x11_app* app, XMotionEvent* motion)
         return;
     }
     app->pointer_inside = 1;
+    restore_cursor_after_local_mouse(app);
     maybe_grab_keyboard(app, motion->time);
     event.x = clamp_surface_coord(app, motion->x, 0);
     event.y = clamp_surface_coord(app, motion->y, 1);
@@ -1272,14 +1294,17 @@ int main(int argc, char** argv)
     app.dirty = 1;
     while (app.running)
     {
+        unsigned int events_processed = 0;
+
         if (x11_window_invalid)
         {
             app.running = 0;
             break;
         }
-        while (XPending(app.display) > 0)
+        while (XPending(app.display) > 0 && events_processed < X11_MAX_EVENTS_PER_TICK)
         {
             XNextEvent(app.display, &event);
+            events_processed++;
             if ((event.type == KeyPress || event.type == KeyRelease) && XFilterEvent(&event, app.window))
                 continue;
             if (event.type == Expose)
@@ -1319,6 +1344,7 @@ int main(int argc, char** argv)
             else if (event.type == EnterNotify)
             {
                 app.pointer_inside = 1;
+                restore_cursor_after_local_mouse(&app);
                 maybe_grab_keyboard(&app, event.xcrossing.time);
             }
             else if (event.type == LeaveNotify)
@@ -1332,6 +1358,7 @@ int main(int argc, char** argv)
                 if (app.ic)
                     XSetICFocus(app.ic);
                 apply_viewer_cursor(&app);
+                restore_cursor_after_local_mouse(&app);
                 maybe_grab_keyboard(&app, CurrentTime);
             }
             else if (event.type == FocusOut)
@@ -1355,6 +1382,7 @@ int main(int argc, char** argv)
                                              0,
                                              (uint32_t)event.xconfigure.width,
                                              (uint32_t)event.xconfigure.height);
+                app.dirty = 1;
                 apply_viewer_cursor(&app);
             }
             if (x11_window_invalid)
@@ -1367,9 +1395,7 @@ int main(int argc, char** argv)
         if (!app.running)
             break;
         (void)librdp_session_run_once(app.session, 16);
-        if (!app.running || XPending(app.display) > 0)
-            continue;
-        if (app.dirty)
+        if (app.running && app.dirty)
             draw_surface(&app);
     }
 
