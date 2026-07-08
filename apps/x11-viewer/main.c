@@ -21,10 +21,14 @@ typedef struct x11_app
     int dirty;
 } x11_app;
 
+static volatile int x11_window_invalid = 0;
+
 static int handle_x_error(Display* display, XErrorEvent* error)
 {
     if (display && error)
     {
+        if (error->error_code == BadDrawable || error->error_code == BadWindow)
+            x11_window_invalid = 1;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "x11.error",
                         "code=%u request=%u resource=%lu",
@@ -127,7 +131,7 @@ static void draw_surface(x11_app* app)
     uint32_t width = 0;
     uint32_t height = 0;
 
-    if (!app || !app->display || !app->session)
+    if (!app || !app->display || !app->session || x11_window_invalid)
         return;
 
     surface = librdp_session_get_surface(app->session);
@@ -370,6 +374,11 @@ int main(int argc, char** argv)
     app.dirty = 1;
     while (app.running)
     {
+        if (x11_window_invalid)
+        {
+            app.running = 0;
+            break;
+        }
         while (XPending(app.display) > 0)
         {
             XNextEvent(app.display, &event);
@@ -405,6 +414,11 @@ int main(int argc, char** argv)
                                              0,
                                              (uint32_t)event.xconfigure.width,
                                              (uint32_t)event.xconfigure.height);
+            }
+            if (x11_window_invalid)
+            {
+                app.running = 0;
+                break;
             }
         }
 
