@@ -7,6 +7,7 @@
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/filesystem_redirection.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
@@ -36,10 +37,16 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
@@ -58,6 +65,23 @@
 #define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
 #define RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT 16u
 #define RDP_SESSION_DEVICE_NO_SUCH_DEVICE 0xc000000eu
+#define RDP_SESSION_DEVICE_NOT_SUPPORTED 0xc00000bbu
+#define RDP_SESSION_DEVICE_INVALID_PARAMETER 0xc000000du
+#define RDP_SESSION_DEVICE_NO_SUCH_FILE 0xc000000fu
+#define RDP_SESSION_DEVICE_ACCESS_DENIED 0xc0000022u
+#define RDP_SESSION_DEVICE_OBJECT_NAME_COLLISION 0xc0000035u
+#define RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES 0xc000011fu
+#define RDP_SESSION_MAX_REDIRECTED_FILES 256u
+#define RDP_SESSION_MAX_FILE_IO_BYTES (4u * 1024u * 1024u)
+#define RDP_SESSION_FILE_DIRECTORY_FILE 0x00000001u
+
+typedef struct rdp_session_redirected_file
+{
+    uint8_t active;
+    uint32_t device_id;
+    uint32_t file_id;
+    int fd;
+} rdp_session_redirected_file;
 
 typedef struct rdp_session_dynamic_channel
 {
@@ -201,6 +225,8 @@ struct librdp_session
     rdp_session_graphics_cache_entry graphics_cache[RDP_SESSION_GRAPHICS_CACHE_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
+    rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
+    uint32_t next_redirected_file_id;
     uint64_t progressive_tile_clock;
     size_t graphics_cache_bytes;
     uint32_t graphics_current_frame_id;
@@ -925,6 +951,862 @@ static librdp_status rdp_session_send_device_redirection_packet(librdp_session* 
     return rdp_session_write_channel_pdu(session, session->device_redirection_channel_id, payload, event);
 }
 
+static uint32_t rdp_session_errno_to_device_status(int error)
+{
+    switch (error)
+    {
+        case 0:
+            return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+        case ENOENT:
+        case ENOTDIR:
+            return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+        case EEXIST:
+            return RDP_SESSION_DEVICE_OBJECT_NAME_COLLISION;
+        case EACCES:
+        case EPERM:
+        case EISDIR:
+            return RDP_SESSION_DEVICE_ACCESS_DENIED;
+        case EINVAL:
+            return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+        case EMFILE:
+        case ENFILE:
+            return RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+        default:
+            return RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    }
+}
+
+static void rdp_session_redirected_files_clear(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    {
+        if (session->redirected_files[i].active)
+            (void)close(session->redirected_files[i].fd);
+    }
+    memset(session->redirected_files, 0, sizeof(session->redirected_files));
+    session->next_redirected_file_id = 1;
+}
+
+static rdp_session_redirected_file* rdp_session_redirected_file_find(librdp_session* session,
+                                                                     uint32_t device_id,
+                                                                     uint32_t file_id)
+{
+    size_t i = 0;
+
+    if (!session || file_id == 0)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    {
+        if (session->redirected_files[i].active &&
+            session->redirected_files[i].device_id == device_id &&
+            session->redirected_files[i].file_id == file_id)
+            return &session->redirected_files[i];
+    }
+    return NULL;
+}
+
+static rdp_session_redirected_file* rdp_session_redirected_file_alloc(librdp_session* session,
+                                                                      uint32_t device_id,
+                                                                      uint32_t* file_id)
+{
+    size_t i = 0;
+    uint32_t candidate = 0;
+
+    if (!session || !file_id)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    {
+        if (!session->redirected_files[i].active)
+        {
+            candidate = session->next_redirected_file_id++;
+            if (candidate == 0)
+                candidate = session->next_redirected_file_id++;
+            session->redirected_files[i].active = 1;
+            session->redirected_files[i].device_id = device_id;
+            session->redirected_files[i].file_id = candidate;
+            session->redirected_files[i].fd = -1;
+            *file_id = candidate;
+            return &session->redirected_files[i];
+        }
+    }
+    return NULL;
+}
+
+static uint32_t rdp_session_drive_index_from_device_id(const librdp_session* session, uint32_t device_id)
+{
+    uint32_t count = 0;
+    uint32_t i = 0;
+
+    if (!session)
+        return UINT32_MAX;
+    count = librdp_settings_drive_count(session->settings);
+    for (i = 0; i < count; i++)
+    {
+        if (rdp_settings_drive_device_id_internal(session->settings, i) == device_id)
+            return i;
+    }
+    return UINT32_MAX;
+}
+
+static librdp_status rdp_session_utf16le_path_to_utf8(const uint8_t* data, uint32_t data_len, char** out)
+{
+    char* text = NULL;
+    size_t chars = 0;
+    size_t position = 0;
+    size_t written = 0;
+
+    if (!data || !out || data_len < 2u || (data_len & 1u) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *out = NULL;
+    chars = data_len / 2u;
+    if (data[data_len - 2u] != 0 || data[data_len - 1u] != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    text = (char*)malloc(chars * 3u + 1u);
+    if (!text)
+        return LIBRDP_STATUS_NO_MEMORY;
+    while (position + 1u < chars)
+    {
+        uint32_t ch = (uint32_t)data[position * 2u] | ((uint32_t)data[position * 2u + 1u] << 8);
+
+        if (ch == 0)
+        {
+            free(text);
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (ch == '\\')
+            ch = '/';
+        if (ch < 0x80u)
+        {
+            text[written++] = (char)ch;
+        }
+        else if (ch < 0x800u)
+        {
+            text[written++] = (char)(0xc0u | (ch >> 6));
+            text[written++] = (char)(0x80u | (ch & 0x3fu));
+        }
+        else
+        {
+            text[written++] = (char)(0xe0u | (ch >> 12));
+            text[written++] = (char)(0x80u | ((ch >> 6) & 0x3fu));
+            text[written++] = (char)(0x80u | (ch & 0x3fu));
+        }
+        position++;
+    }
+    text[written] = '\0';
+    *out = text;
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_session_path_has_unsafe_segment(const char* path)
+{
+    const char* p = path;
+
+    if (!path)
+        return 1;
+    if (path[0] == '/' || path[0] == '\\')
+        return 1;
+    while (*p)
+    {
+        const char* start = p;
+        size_t length = 0;
+
+        while (*p && *p != '/')
+            p++;
+        length = (size_t)(p - start);
+        if ((length == 1u && start[0] == '.') ||
+            (length == 2u && start[0] == '.' && start[1] == '.'))
+            return 1;
+        if (memchr(start, ':', length) != NULL)
+            return 1;
+        if (*p == '/')
+            p++;
+    }
+    return 0;
+}
+
+static librdp_status rdp_session_make_local_drive_path(librdp_session* session,
+                                                       uint32_t device_id,
+                                                       const uint8_t* remote_path,
+                                                       uint32_t remote_path_len,
+                                                       char** local_path)
+{
+    uint32_t drive_index = 0;
+    const char* root = NULL;
+    char* relative = NULL;
+    size_t root_len = 0;
+    size_t relative_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !remote_path || !local_path)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *local_path = NULL;
+    drive_index = rdp_session_drive_index_from_device_id(session, device_id);
+    if (drive_index == UINT32_MAX)
+        return LIBRDP_STATUS_STATE;
+    root = librdp_settings_drive_path(session->settings, drive_index);
+    if (!root || root[0] == '\0')
+        return LIBRDP_STATUS_STATE;
+    status = rdp_session_utf16le_path_to_utf8(remote_path, remote_path_len, &relative);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    while (relative[0] == '/')
+        memmove(relative, relative + 1, strlen(relative));
+    if (rdp_session_path_has_unsafe_segment(relative))
+    {
+        free(relative);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    root_len = strlen(root);
+    relative_len = strlen(relative);
+    *local_path = (char*)malloc(root_len + 1u + relative_len + 1u);
+    if (!*local_path)
+    {
+        free(relative);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    memcpy(*local_path, root, root_len);
+    if (root_len > 0 && root[root_len - 1u] == '/')
+    {
+        memcpy(*local_path + root_len, relative, relative_len + 1u);
+    }
+    else
+    {
+        (*local_path)[root_len] = '/';
+        memcpy(*local_path + root_len + 1u, relative, relative_len + 1u);
+    }
+    free(relative);
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_session_open_flags_from_create(const rdp_filesystem_redirection_create_request* request,
+                                              uint8_t existed)
+{
+    int write_requested = 0;
+    int flags = O_RDONLY;
+
+    if (!request)
+        return -1;
+    write_requested = (request->desired_access & 0x40000000u) != 0 ||
+                      (request->desired_access & 0x00000006u) != 0 ||
+                      request->create_disposition == 0 ||
+                      request->create_disposition == 2 ||
+                      request->create_disposition == 4 ||
+                      request->create_disposition == 5;
+    if (write_requested)
+        flags = O_RDWR;
+    switch (request->create_disposition)
+    {
+        case 0:
+            flags |= O_CREAT | O_TRUNC;
+            break;
+        case 1:
+            break;
+        case 2:
+            flags |= O_CREAT | O_EXCL;
+            break;
+        case 3:
+            flags |= O_CREAT;
+            break;
+        case 4:
+            if (!existed)
+                return -1;
+            flags |= O_TRUNC;
+            break;
+        case 5:
+            flags |= O_CREAT | O_TRUNC;
+            break;
+        default:
+            return -1;
+    }
+    return flags;
+}
+
+static uint8_t rdp_session_create_information(const rdp_filesystem_redirection_create_request* request,
+                                              uint8_t existed)
+{
+    if (!request)
+        return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_SUPERSEDED;
+    if (request->create_disposition == 2 || (request->create_disposition == 3 && !existed) ||
+        (request->create_disposition == 5 && !existed))
+        return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_CREATED;
+    if (request->create_disposition == 3 && existed)
+        return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OPENED;
+    if (request->create_disposition == 4)
+        return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OVERWRITTEN;
+    if (request->create_disposition == 5 && existed)
+        return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OVERWRITTEN;
+    return RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_SUPERSEDED;
+}
+
+static uint32_t rdp_session_filesystem_error_from_status(librdp_status status)
+{
+    switch (status)
+    {
+        case LIBRDP_STATUS_OK:
+            return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+        case LIBRDP_STATUS_NO_MEMORY:
+            return RDP_SESSION_DEVICE_NOT_SUPPORTED;
+        case LIBRDP_STATUS_STATE:
+            return RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
+        case LIBRDP_STATUS_INVALID_ARGUMENT:
+        case LIBRDP_STATUS_PROTOCOL_ERROR:
+        default:
+            return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
+}
+
+static int rdp_session_seek_fd(int fd, uint64_t offset)
+{
+    if (sizeof(off_t) < sizeof(uint64_t) && offset > (uint64_t)LONG_MAX)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    if (offset > (uint64_t)INT64_MAX)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    return lseek(fd, (off_t)offset, SEEK_SET) == (off_t)-1 ? -1 : 0;
+}
+
+static uint32_t rdp_session_filesystem_prepare_directory(
+    const rdp_filesystem_redirection_create_request* request,
+    const char* path,
+    uint8_t existed)
+{
+    if (!request || !path)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    if (request->create_disposition == 1 && !existed)
+        return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    if (request->create_disposition == 2 && existed)
+        return RDP_SESSION_DEVICE_OBJECT_NAME_COLLISION;
+    if (request->create_disposition == 4 && !existed)
+        return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    if (!existed &&
+        (request->create_disposition == 0 || request->create_disposition == 2 ||
+         request->create_disposition == 3 || request->create_disposition == 5))
+    {
+        if (mkdir(path, 0700) != 0)
+            return rdp_session_errno_to_device_status(errno);
+    }
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static librdp_status rdp_session_send_filesystem_create_response(
+    librdp_session* session,
+    const rdp_filesystem_redirection_create_request* request,
+    uint32_t io_status,
+    uint32_t file_id,
+    uint8_t information)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&response);
+    status = rdp_filesystem_redirection_write_create_response(&response,
+                                                              request->io.device_id,
+                                                              request->io.completion_id,
+                                                              io_status,
+                                                              file_id,
+                                                              information);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.create.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.create",
+                        "device_id=%u completion_id=%u file_id=%u status=%u information=%u path_len=%u",
+                        request->io.device_id,
+                        request->io.completion_id,
+                        file_id,
+                        io_status,
+                        information,
+                        request->path_len);
+    return status;
+}
+
+static librdp_status rdp_session_handle_filesystem_create(librdp_session* session,
+                                                          const uint8_t* data,
+                                                          size_t data_len)
+{
+    rdp_filesystem_redirection_create_request request;
+    rdp_session_redirected_file* file = NULL;
+    char* path = NULL;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t file_id = 0;
+    uint8_t existed = 0;
+    uint8_t information = RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_SUPERSEDED;
+    int flags = -1;
+    int fd = -1;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_filesystem_redirection_parse_create_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_session_drive_index_from_device_id(session, request.io.device_id) == UINT32_MAX)
+        return rdp_session_send_filesystem_create_response(session,
+                                                           &request,
+                                                           RDP_SESSION_DEVICE_NO_SUCH_DEVICE,
+                                                           0,
+                                                           information);
+
+    status = rdp_session_make_local_drive_path(session,
+                                               request.io.device_id,
+                                               request.path,
+                                               request.path_len,
+                                               &path);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        io_status = rdp_session_filesystem_error_from_status(status);
+        return rdp_session_send_filesystem_create_response(session, &request, io_status, 0, information);
+    }
+
+    existed = access(path, F_OK) == 0 ? 1u : 0u;
+    information = rdp_session_create_information(&request, existed);
+    if ((request.create_options & RDP_SESSION_FILE_DIRECTORY_FILE) != 0)
+    {
+        io_status = rdp_session_filesystem_prepare_directory(&request, path, existed);
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+        {
+            fd = open(path, O_RDONLY);
+            if (fd < 0)
+                io_status = rdp_session_errno_to_device_status(errno);
+        }
+    }
+    else
+    {
+        flags = rdp_session_open_flags_from_create(&request, existed);
+        if (flags < 0)
+        {
+            io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+        }
+        else
+        {
+            fd = open(path, flags, 0600);
+            if (fd < 0)
+                io_status = rdp_session_errno_to_device_status(errno);
+        }
+    }
+
+    if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+    {
+        file = rdp_session_redirected_file_alloc(session, request.io.device_id, &file_id);
+        if (!file)
+        {
+            io_status = RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+            (void)close(fd);
+            fd = -1;
+            file_id = 0;
+        }
+        else
+        {
+            file->fd = fd;
+            fd = -1;
+        }
+    }
+    free(path);
+    if (fd >= 0)
+        (void)close(fd);
+    return rdp_session_send_filesystem_create_response(session,
+                                                       &request,
+                                                       io_status,
+                                                       file_id,
+                                                       information);
+}
+
+static librdp_status rdp_session_handle_filesystem_close(librdp_session* session,
+                                                         const uint8_t* data,
+                                                         size_t data_len)
+{
+    rdp_device_redirection_io_request request;
+    rdp_session_redirected_file* file = NULL;
+    rdp_buffer response;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_filesystem_redirection_parse_close_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    file = rdp_session_redirected_file_find(session, request.device_id, request.file_id);
+    if (!file)
+        io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    else
+    {
+        if (file->fd >= 0 && close(file->fd) != 0)
+            io_status = rdp_session_errno_to_device_status(errno);
+        memset(file, 0, sizeof(*file));
+        file->fd = -1;
+    }
+
+    rdp_buffer_init(&response);
+    status = rdp_filesystem_redirection_write_close_response(&response,
+                                                             request.device_id,
+                                                             request.completion_id,
+                                                             io_status);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.close.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.close",
+                        "device_id=%u file_id=%u completion_id=%u status=%u",
+                        request.device_id,
+                        request.file_id,
+                        request.completion_id,
+                        io_status);
+    return status;
+}
+
+static librdp_status rdp_session_handle_filesystem_read(librdp_session* session,
+                                                        const uint8_t* data,
+                                                        size_t data_len)
+{
+    rdp_filesystem_redirection_read_request request;
+    rdp_session_redirected_file* file = NULL;
+    rdp_buffer response;
+    uint8_t* bytes = NULL;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t read_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_filesystem_redirection_parse_read_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (request.length > RDP_SESSION_MAX_FILE_IO_BYTES)
+    {
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
+    else
+    {
+        file = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
+        if (!file)
+        {
+            io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+        }
+        else if (rdp_session_seek_fd(file->fd, request.offset) != 0)
+        {
+            io_status = rdp_session_errno_to_device_status(errno);
+        }
+        else if (request.length > 0)
+        {
+            ssize_t count = 0;
+
+            bytes = (uint8_t*)malloc(request.length);
+            if (!bytes)
+                io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+            else
+            {
+                do
+                {
+                    count = read(file->fd, bytes, request.length);
+                } while (count < 0 && errno == EINTR);
+                if (count < 0)
+                    io_status = rdp_session_errno_to_device_status(errno);
+                else
+                    read_len = (uint32_t)count;
+            }
+        }
+    }
+
+    rdp_buffer_init(&response);
+    status = rdp_filesystem_redirection_write_read_response(&response,
+                                                            request.io.device_id,
+                                                            request.io.completion_id,
+                                                            io_status,
+                                                            bytes,
+                                                            read_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.read.response");
+    rdp_buffer_free(&response);
+    free(bytes);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.read",
+                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u read=%u offset=%llu",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        io_status,
+                        request.length,
+                        read_len,
+                        (unsigned long long)request.offset);
+    return status;
+}
+
+static librdp_status rdp_session_handle_filesystem_write(librdp_session* session,
+                                                         const uint8_t* data,
+                                                         size_t data_len)
+{
+    rdp_filesystem_redirection_write_request request;
+    rdp_session_redirected_file* file = NULL;
+    rdp_buffer response;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t written = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_filesystem_redirection_parse_write_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (request.length > RDP_SESSION_MAX_FILE_IO_BYTES)
+    {
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
+    else
+    {
+        file = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
+        if (!file)
+        {
+            io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+        }
+        else if (request.offset == UINT64_MAX)
+        {
+            if (lseek(file->fd, 0, SEEK_END) == (off_t)-1)
+                io_status = rdp_session_errno_to_device_status(errno);
+        }
+        else if (rdp_session_seek_fd(file->fd, request.offset) != 0)
+        {
+            io_status = rdp_session_errno_to_device_status(errno);
+        }
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+        {
+            const uint8_t* cursor = request.data;
+            uint32_t remaining = request.length;
+
+            while (remaining > 0)
+            {
+                ssize_t count = write(file->fd, cursor, remaining);
+
+                if (count < 0 && errno == EINTR)
+                    continue;
+                if (count <= 0)
+                {
+                    io_status = count < 0 ? rdp_session_errno_to_device_status(errno)
+                                          : RDP_SESSION_DEVICE_NOT_SUPPORTED;
+                    break;
+                }
+                cursor += (size_t)count;
+                remaining -= (uint32_t)count;
+                written += (uint32_t)count;
+            }
+        }
+    }
+
+    rdp_buffer_init(&response);
+    status = rdp_filesystem_redirection_write_write_response(&response,
+                                                             request.io.device_id,
+                                                             request.io.completion_id,
+                                                             io_status,
+                                                             written);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.write.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.write",
+                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u written=%u offset=%llu",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        io_status,
+                        request.length,
+                        written,
+                        (unsigned long long)request.offset);
+    return status;
+}
+
+static librdp_status rdp_session_write_filesystem_unsupported_response(
+    rdp_buffer* response,
+    const rdp_device_redirection_io_request* request,
+    uint32_t io_status)
+{
+    if (!response || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (request->major_function)
+    {
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_VOLUME_INFORMATION:
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION:
+        case RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL:
+        case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
+            return rdp_filesystem_redirection_write_buffer_response(response,
+                                                                    request->device_id,
+                                                                    request->completion_id,
+                                                                    io_status,
+                                                                    NULL,
+                                                                    0);
+        case RDP_DEVICE_REDIRECTION_IRP_SET_VOLUME_INFORMATION:
+        case RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION:
+            return rdp_filesystem_redirection_write_length_response(response,
+                                                                    request->device_id,
+                                                                    request->completion_id,
+                                                                    io_status,
+                                                                    0);
+        case RDP_DEVICE_REDIRECTION_IRP_LOCK_CONTROL:
+            return rdp_filesystem_redirection_write_lock_response(response,
+                                                                  request->device_id,
+                                                                  request->completion_id,
+                                                                  io_status);
+        default:
+            return rdp_device_redirection_write_io_completion(response,
+                                                              request->device_id,
+                                                              request->completion_id,
+                                                              io_status,
+                                                              NULL,
+                                                              0);
+    }
+}
+
+static librdp_status rdp_session_validate_filesystem_unsupported_request(const uint8_t* data,
+                                                                         size_t data_len,
+                                                                         const rdp_device_redirection_io_request* request)
+{
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (request->major_function)
+    {
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_VOLUME_INFORMATION:
+        {
+            rdp_filesystem_redirection_information_request typed;
+            return rdp_filesystem_redirection_parse_query_volume_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_SET_VOLUME_INFORMATION:
+        {
+            rdp_filesystem_redirection_information_request typed;
+            return rdp_filesystem_redirection_parse_set_volume_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION:
+        {
+            rdp_filesystem_redirection_information_request typed;
+            return rdp_filesystem_redirection_parse_query_information_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION:
+        {
+            rdp_filesystem_redirection_information_request typed;
+            return rdp_filesystem_redirection_parse_set_information_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
+        {
+            rdp_filesystem_redirection_control_request typed;
+            return rdp_filesystem_redirection_parse_control_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL:
+            if (request->minor_function == RDP_FILESYSTEM_REDIRECTION_MINOR_QUERY_DIRECTORY)
+            {
+                rdp_filesystem_redirection_query_directory_request typed;
+                return rdp_filesystem_redirection_parse_query_directory_request(data, data_len, &typed);
+            }
+            if (request->minor_function == RDP_FILESYSTEM_REDIRECTION_MINOR_NOTIFY_CHANGE_DIRECTORY)
+            {
+                rdp_filesystem_redirection_notify_change_request typed;
+                return rdp_filesystem_redirection_parse_notify_change_request(data, data_len, &typed);
+            }
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        case RDP_DEVICE_REDIRECTION_IRP_LOCK_CONTROL:
+        {
+            rdp_filesystem_redirection_lock_request typed;
+            return rdp_filesystem_redirection_parse_lock_request(data, data_len, &typed);
+        }
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
+static librdp_status rdp_session_handle_filesystem_unsupported(librdp_session* session,
+                                                               const uint8_t* data,
+                                                               size_t data_len,
+                                                               const rdp_device_redirection_io_request* request,
+                                                               uint32_t io_status)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_validate_filesystem_unsupported_request(data, data_len, request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&response);
+    status = rdp_session_write_filesystem_unsupported_response(&response, request, io_status);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.unsupported.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.unsupported",
+                        "device_id=%u file_id=%u completion_id=%u major=%u minor=%u status=%u",
+                        request->device_id,
+                        request->file_id,
+                        request->completion_id,
+                        request->major_function,
+                        request->minor_function,
+                        io_status);
+    return status;
+}
+
+static librdp_status rdp_session_handle_filesystem_io_request(librdp_session* session,
+                                                              const uint8_t* data,
+                                                              size_t data_len)
+{
+    rdp_device_redirection_io_request request;
+    uint32_t io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_parse_io_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_session_drive_index_from_device_id(session, request.device_id) == UINT32_MAX)
+        io_status = RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
+    else
+        io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+
+    switch (request.major_function)
+    {
+        case RDP_DEVICE_REDIRECTION_IRP_CREATE:
+            return rdp_session_handle_filesystem_create(session, data, data_len);
+        case RDP_DEVICE_REDIRECTION_IRP_CLOSE:
+            return rdp_session_handle_filesystem_close(session, data, data_len);
+        case RDP_DEVICE_REDIRECTION_IRP_READ:
+            return rdp_session_handle_filesystem_read(session, data, data_len);
+        case RDP_DEVICE_REDIRECTION_IRP_WRITE:
+            return rdp_session_handle_filesystem_write(session, data, data_len);
+        default:
+            return rdp_session_handle_filesystem_unsupported(session,
+                                                             data,
+                                                             data_len,
+                                                             &request,
+                                                             io_status);
+    }
+}
+
 static librdp_status rdp_session_write_device_redirection_client_name(rdp_buffer* buffer)
 {
     static const char name[] = "librdp";
@@ -1130,34 +2012,7 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
     }
     else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST)
     {
-        rdp_device_redirection_io_request request;
-        rdp_buffer completion;
-
-        rdp_buffer_init(&completion);
-        status = rdp_device_redirection_parse_io_request(data, data_len, &request);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_device_redirection_write_io_completion(&completion,
-                                                                request.device_id,
-                                                                request.completion_id,
-                                                                RDP_SESSION_DEVICE_NO_SUCH_DEVICE,
-                                                                NULL,
-                                                                0);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_session_send_device_redirection_packet(session,
-                                                                &completion,
-                                                                "client.rdpdr.io_completion.no_device");
-        if (status == LIBRDP_STATUS_OK)
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.rdpdr.io_request",
-                            "channel_id=%u device_id=%u file_id=%u completion_id=%u major=%u minor=%u status=%u",
-                            session->device_redirection_channel_id,
-                            request.device_id,
-                            request.file_id,
-                            request.completion_id,
-                            request.major_function,
-                            request.minor_function,
-                            RDP_SESSION_DEVICE_NO_SUCH_DEVICE);
-        rdp_buffer_free(&completion);
+        status = rdp_session_handle_filesystem_io_request(session, data, data_len);
     }
     else
     {
@@ -6125,6 +6980,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
+    rdp_session_redirected_files_clear(session);
     session->avc = rdp_avc_decoder_new();
     if (!session->avc)
     {
@@ -6147,6 +7003,7 @@ void librdp_session_free(librdp_session* session)
     if (!session)
         return;
     (void)librdp_session_disconnect(session);
+    rdp_session_redirected_files_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
     rdp_session_clipboard_local_clear(session);
@@ -6297,6 +7154,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);
+    rdp_session_redirected_files_clear(session);
 
     status = rdp_transport_connect(&session->transport,
                                    librdp_settings_target(session->settings),
@@ -7007,6 +7865,7 @@ fail:
     session->device_redirection_fragment_expected = 0;
     rdp_buffer_free(&session->device_redirection_fragment);
     rdp_buffer_init(&session->device_redirection_fragment);
+    rdp_session_redirected_files_clear(session);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
@@ -7715,6 +8574,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);
+    rdp_session_redirected_files_clear(session);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 
     event.type = LIBRDP_EVENT_DISCONNECTED;
