@@ -27,6 +27,7 @@ add_library(librdp
     src/channels/device_redirection.c
     src/channels/display_control.c
     src/channels/dynamic_channel.c
+    src/channels/filesystem_redirection.c
     src/channels/graphics_pipeline.c
     src/channels/input_channel.c
     src/channels/mouse_cursor.c
@@ -118,6 +119,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_audio_input fuzz/audio_input_fuzzer.c)
     add_librdp_fuzzer(fuzz_display_control fuzz/display_control_fuzzer.c)
     add_librdp_fuzzer(fuzz_device_redirection fuzz/device_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_filesystem_redirection fuzz/filesystem_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_core_input fuzz/core_input_fuzzer.c)
     add_librdp_fuzzer(fuzz_input_channel fuzz/input_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_graphics_pipeline fuzz/graphics_pipeline_fuzzer.c)

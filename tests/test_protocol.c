@@ -6,6 +6,7 @@
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/filesystem_redirection.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
@@ -97,6 +98,61 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
             return 1;
     }
     return 0;
+}
+
+static librdp_status test_append_zeroes(rdp_buffer* buffer, size_t count)
+{
+    static const uint8_t zeroes[32] = {0};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    while (count > 0)
+    {
+        size_t chunk = count > sizeof(zeroes) ? sizeof(zeroes) : count;
+        status = rdp_buffer_append(buffer, zeroes, chunk);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        count -= chunk;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status test_append_u64_le(rdp_buffer* buffer, uint64_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_buffer_append_u32_le(buffer, (uint32_t)(value & 0xffffffffu));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, (uint32_t)((value >> 32) & 0xffffffffu));
+}
+
+static librdp_status test_append_device_io_request(rdp_buffer* buffer,
+                                                   uint32_t device_id,
+                                                   uint32_t file_id,
+                                                   uint32_t completion_id,
+                                                   uint32_t major,
+                                                   uint32_t minor)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_device_redirection_write_header(buffer,
+                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                 RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, device_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, file_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, completion_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, major);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, minor);
 }
 
 static int test_tpkt_x224(void)
@@ -4618,6 +4674,268 @@ static int test_device_redirection_channel(void)
     return 0;
 }
 
+static int test_filesystem_redirection_channel(void)
+{
+    const uint8_t path[] = {'f', 0, 'i', 0, 'l', 0, 'e', 0, 0, 0};
+    const uint8_t data[] = {'a', 'b', 'c'};
+    rdp_filesystem_redirection_create_request create_request;
+    rdp_device_redirection_io_request close_request;
+    rdp_filesystem_redirection_read_request read_request;
+    rdp_filesystem_redirection_write_request write_request;
+    rdp_filesystem_redirection_control_request control_request;
+    rdp_filesystem_redirection_information_request information_request;
+    rdp_filesystem_redirection_query_directory_request directory_request;
+    rdp_filesystem_redirection_notify_change_request notify_request;
+    rdp_filesystem_redirection_lock_request lock_request;
+    rdp_filesystem_redirection_create_response create_response;
+    rdp_filesystem_redirection_length_response length_response;
+    rdp_buffer request;
+    rdp_buffer response;
+
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&response);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         0x11111111u,
+                                         0x22222222u,
+                                         0x33333333u,
+                                         RDP_DEVICE_REDIRECTION_IRP_CREATE,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x0012019fu) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 0x0102030405060708ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x00000080u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x00000003u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x00000001u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x00000020u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, (uint32_t)sizeof(path)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&request, path, sizeof(path)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_create_request(request.data,
+                                                           request.length,
+                                                           &create_request) == LIBRDP_STATUS_OK);
+    PCHECK(create_request.io.device_id == 0x11111111u);
+    PCHECK(create_request.io.file_id == 0x22222222u);
+    PCHECK(create_request.desired_access == 0x0012019fu);
+    PCHECK(create_request.allocation_size == 0x0102030405060708ull);
+    PCHECK(create_request.path_len == sizeof(path));
+    PCHECK(memcmp(create_request.path, path, sizeof(path)) == 0);
+    PCHECK(rdp_filesystem_redirection_parse_create_request(request.data,
+                                                           request.length - 1u,
+                                                           &create_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_CLOSE,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 32u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_close_request(request.data,
+                                                          request.length,
+                                                          &close_request) == LIBRDP_STATUS_OK);
+    PCHECK(close_request.file_id == 2 && close_request.completion_id == 3);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request, 1, 2, 3, RDP_DEVICE_REDIRECTION_IRP_READ, 0) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 4096u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 0x1122334455667788ull) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 20u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_read_request(request.data,
+                                                         request.length,
+                                                         &read_request) == LIBRDP_STATUS_OK);
+    PCHECK(read_request.length == 4096u && read_request.offset == 0x1122334455667788ull);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request, 1, 2, 3, RDP_DEVICE_REDIRECTION_IRP_WRITE, 0) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, (uint32_t)sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 0xffffffffffffffffull) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 20u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&request, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_write_request(request.data,
+                                                          request.length,
+                                                          &write_request) == LIBRDP_STATUS_OK);
+    PCHECK(write_request.length == sizeof(data) && write_request.offset == 0xffffffffffffffffull);
+    PCHECK(memcmp(write_request.data, data, sizeof(data)) == 0);
+    request.data[24] = 4;
+    PCHECK(rdp_filesystem_redirection_parse_write_request(request.data,
+                                                          request.length,
+                                                          &write_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[24] = (uint8_t)sizeof(data);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, (uint32_t)sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x000900c0u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 20u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&request, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_control_request(request.data,
+                                                            request.length,
+                                                            &control_request) == LIBRDP_STATUS_OK);
+    PCHECK(control_request.output_buffer_length == 16u);
+    PCHECK(control_request.input_buffer_length == sizeof(data));
+    PCHECK(control_request.io_control_code == 0x000900c0u);
+    PCHECK(memcmp(control_request.input_buffer, data, sizeof(data)) == 0);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, (uint32_t)sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 24u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&request, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_query_information_request(request.data,
+                                                                      request.length,
+                                                                      &information_request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(information_request.information_class == 5u);
+    PCHECK(information_request.length == sizeof(data));
+    PCHECK(memcmp(information_request.buffer, data, sizeof(data)) == 0);
+    request.data[16] = RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION;
+    PCHECK(rdp_filesystem_redirection_parse_set_information_request(request.data,
+                                                                    request.length,
+                                                                    &information_request) ==
+           LIBRDP_STATUS_OK);
+    request.data[16] = RDP_DEVICE_REDIRECTION_IRP_QUERY_VOLUME_INFORMATION;
+    PCHECK(rdp_filesystem_redirection_parse_query_volume_request(request.data,
+                                                                 request.length,
+                                                                 &information_request) ==
+           LIBRDP_STATUS_OK);
+    request.data[16] = RDP_DEVICE_REDIRECTION_IRP_SET_VOLUME_INFORMATION;
+    PCHECK(rdp_filesystem_redirection_parse_set_volume_request(request.data,
+                                                               request.length,
+                                                               &information_request) ==
+           LIBRDP_STATUS_OK);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL,
+                                         RDP_FILESYSTEM_REDIRECTION_MINOR_QUERY_DIRECTORY) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&request, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, (uint32_t)sizeof(path)) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 23u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&request, path, sizeof(path)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_query_directory_request(request.data,
+                                                                    request.length,
+                                                                    &directory_request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(directory_request.information_class == 1u && directory_request.initial_query == 1u);
+    PCHECK(directory_request.path_len == sizeof(path));
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL,
+                                         RDP_FILESYSTEM_REDIRECTION_MINOR_NOTIFY_CHANGE_DIRECTORY) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&request, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 27u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_notify_change_request(request.data,
+                                                                  request.length,
+                                                                  &notify_request) == LIBRDP_STATUS_OK);
+    PCHECK(notify_request.watch_tree == 1u && notify_request.completion_filter == 0x11223344u);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request, 1, 2, 3, RDP_DEVICE_REDIRECTION_IRP_LOCK_CONTROL, 0) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 2u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 20u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 10u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 20u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 30u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_u64_le(&request, 40u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_lock_request(request.data,
+                                                         request.length,
+                                                         &lock_request) == LIBRDP_STATUS_OK);
+    PCHECK(lock_request.operation == RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK);
+    PCHECK(lock_request.flags == 1u && lock_request.lock_count == 2u);
+    PCHECK(lock_request.locks[1].length == 30u && lock_request.locks[1].offset == 40u);
+    request.data[24] = 0xff;
+    PCHECK(rdp_filesystem_redirection_parse_lock_request(request.data,
+                                                         request.length,
+                                                         &lock_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(rdp_filesystem_redirection_write_create_response(&response,
+                                                            1,
+                                                            3,
+                                                            RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                                                            9,
+                                                            RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OPENED) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_create_response(response.data,
+                                                            response.length,
+                                                            &create_response) == LIBRDP_STATUS_OK);
+    PCHECK(create_response.io.device_id == 1u && create_response.io.completion_id == 3u);
+    PCHECK(create_response.file_id == 9u);
+    PCHECK(create_response.information == RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OPENED);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+
+    PCHECK(rdp_filesystem_redirection_write_close_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 20u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_read_response(&response, 1, 3, 0, data, (uint32_t)sizeof(data)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_length_response(response.data,
+                                                            response.length,
+                                                            &length_response) == LIBRDP_STATUS_OK);
+    PCHECK(length_response.length == sizeof(data));
+    PCHECK(length_response.buffer_len == sizeof(data));
+    PCHECK(memcmp(length_response.buffer, data, sizeof(data)) == 0);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_write_response(&response, 1, 3, 0, 99u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_length_response(response.data,
+                                                            response.length,
+                                                            &length_response) == LIBRDP_STATUS_OK);
+    PCHECK(length_response.length == 99u && length_response.buffer_len == 0u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_buffer_response(&response, 1, 3, 0, data, (uint32_t)sizeof(data)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(response.length == 23u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_lock_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 21u);
+
+    rdp_buffer_free(&response);
+    rdp_buffer_free(&request);
+    return 0;
+}
+
 int test_protocol(void)
 {
     if (test_tpkt_x224() != 0)
@@ -4629,6 +4947,8 @@ int test_protocol(void)
     if (test_path_security_license_channels() != 0)
         return 1;
     if (test_device_redirection_channel() != 0)
+        return 1;
+    if (test_filesystem_redirection_channel() != 0)
         return 1;
     return 0;
 }
