@@ -106,7 +106,13 @@ endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
     find_package(X11 REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     add_executable(librdp-x11-viewer apps/x11-viewer/main.c)
-    target_include_directories(librdp-x11-viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${X11_INCLUDE_DIR})
-    target_link_libraries(librdp-x11-viewer PRIVATE librdp ${X11_LIBRARIES})
+    target_include_directories(librdp-x11-viewer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${X11_INCLUDE_DIR}
+        ${XKBCOMMON_INCLUDE_DIRS}
+    )
+    target_link_libraries(librdp-x11-viewer PRIVATE librdp ${X11_LIBRARIES} ${XKBCOMMON_LIBRARIES})
 endif()

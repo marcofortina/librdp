@@ -4289,9 +4289,9 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     rdp_session_emit(session, &event);
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.input.send",
-                    "kind=keyboard scancode=%u unicode=%u transport=%s flags=%u",
+                    "kind=keyboard scancode=%u unicode_present=%u transport=%s flags=%u",
                     key->scancode,
-                    key->unicode,
+                    use_unicode ? 1u : 0u,
                     use_core_input ? "core_input" : "slowpath",
                     use_core_input ? (key->state == LIBRDP_KEY_RELEASED ? 1u : 0u) : flags);
     rdp_buffer_free(&input);
