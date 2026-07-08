@@ -38,6 +38,20 @@ typedef struct rdp_capability_list
     rdp_capability_set sets[RDP_CAPABILITY_MAX_SETS];
 } rdp_capability_list;
 
+typedef struct rdp_capability_general
+{
+    uint16_t os_major_type;
+    uint16_t os_minor_type;
+    uint16_t protocol_version;
+    uint16_t compression_types;
+    uint16_t extra_flags;
+    uint16_t update_capability_flag;
+    uint16_t remote_unshare_flag;
+    uint16_t compression_level;
+    uint8_t refresh_rect_support;
+    uint8_t suppress_output_support;
+} rdp_capability_general;
+
 typedef struct rdp_capability_bitmap
 {
     uint16_t preferred_bits_per_pixel;
@@ -53,8 +67,135 @@ typedef struct rdp_capability_bitmap
     uint16_t multiple_rectangle_support;
 } rdp_capability_bitmap;
 
+typedef struct rdp_capability_order
+{
+    uint8_t terminal_descriptor[16];
+    uint32_t desktop_save_size;
+    uint16_t desktop_save_x_granularity;
+    uint16_t desktop_save_y_granularity;
+    uint16_t maximum_order_level;
+    uint16_t number_fonts;
+    uint16_t order_flags;
+    uint8_t order_support[32];
+    uint16_t text_flags;
+    uint16_t order_support_ex_flags;
+    uint16_t text_ansi_code_page;
+} rdp_capability_order;
+
+typedef struct rdp_capability_bitmap_cache_v2
+{
+    uint16_t cache_flags;
+    uint8_t num_cell_caches;
+    uint32_t cell_info[5];
+} rdp_capability_bitmap_cache_v2;
+
+typedef struct rdp_capability_pointer
+{
+    uint16_t color_pointer_flag;
+    uint16_t color_pointer_cache_size;
+    uint16_t pointer_cache_size;
+} rdp_capability_pointer;
+
+typedef struct rdp_capability_large_pointer
+{
+    uint16_t support_flags;
+} rdp_capability_large_pointer;
+
+typedef struct rdp_capability_input
+{
+    uint16_t input_flags;
+    uint32_t keyboard_layout;
+    uint32_t keyboard_type;
+    uint32_t keyboard_subtype;
+    uint32_t keyboard_function_key;
+    uint8_t ime_file_name[64];
+} rdp_capability_input;
+
+typedef struct rdp_capability_brush
+{
+    uint32_t support_level;
+} rdp_capability_brush;
+
+typedef struct rdp_capability_glyph_cache_entry
+{
+    uint16_t cache_entries;
+    uint16_t maximum_cell_size;
+} rdp_capability_glyph_cache_entry;
+
+typedef struct rdp_capability_glyph_cache
+{
+    rdp_capability_glyph_cache_entry glyph_cache[10];
+    uint16_t frag_cache_entries;
+    uint16_t frag_cache_maximum_cell_size;
+    uint16_t glyph_support_level;
+} rdp_capability_glyph_cache;
+
+typedef struct rdp_capability_virtual_channel
+{
+    uint32_t flags;
+    uint32_t chunk_size;
+    uint8_t has_chunk_size;
+} rdp_capability_virtual_channel;
+
+typedef struct rdp_capability_sound
+{
+    uint16_t flags;
+} rdp_capability_sound;
+
+typedef struct rdp_capability_share
+{
+    uint16_t node_id;
+} rdp_capability_share;
+
+typedef struct rdp_capability_font
+{
+    uint16_t support_flags;
+} rdp_capability_font;
+
+typedef struct rdp_capability_control
+{
+    uint16_t control_flags;
+    uint16_t remote_detach_flag;
+    uint16_t control_interest;
+    uint16_t detach_interest;
+} rdp_capability_control;
+
+typedef struct rdp_capability_color_cache
+{
+    uint16_t cache_size;
+} rdp_capability_color_cache;
+
+typedef struct rdp_capability_activation
+{
+    uint16_t help_key_flag;
+    uint16_t help_key_index_flag;
+    uint16_t help_extended_key_flag;
+    uint16_t window_manager_key_flag;
+} rdp_capability_activation;
+
 librdp_status rdp_capabilities_parse(const void* data, size_t length, rdp_capability_list* list);
 const rdp_capability_set* rdp_capabilities_find(const rdp_capability_list* list, uint16_t type);
+librdp_status rdp_capability_parse_general(const rdp_capability_set* set, rdp_capability_general* general);
 librdp_status rdp_capability_parse_bitmap(const rdp_capability_set* set, rdp_capability_bitmap* bitmap);
+librdp_status rdp_capability_parse_order(const rdp_capability_set* set, rdp_capability_order* order);
+librdp_status rdp_capability_parse_bitmap_cache_v2(const rdp_capability_set* set,
+                                                   rdp_capability_bitmap_cache_v2* cache);
+librdp_status rdp_capability_parse_pointer(const rdp_capability_set* set, rdp_capability_pointer* pointer);
+librdp_status rdp_capability_parse_large_pointer(const rdp_capability_set* set,
+                                                 rdp_capability_large_pointer* pointer);
+librdp_status rdp_capability_parse_input(const rdp_capability_set* set, rdp_capability_input* input);
+librdp_status rdp_capability_parse_brush(const rdp_capability_set* set, rdp_capability_brush* brush);
+librdp_status rdp_capability_parse_glyph_cache(const rdp_capability_set* set,
+                                               rdp_capability_glyph_cache* glyph);
+librdp_status rdp_capability_parse_virtual_channel(const rdp_capability_set* set,
+                                                   rdp_capability_virtual_channel* channel);
+librdp_status rdp_capability_parse_sound(const rdp_capability_set* set, rdp_capability_sound* sound);
+librdp_status rdp_capability_parse_share(const rdp_capability_set* set, rdp_capability_share* share);
+librdp_status rdp_capability_parse_font(const rdp_capability_set* set, rdp_capability_font* font);
+librdp_status rdp_capability_parse_control(const rdp_capability_set* set, rdp_capability_control* control);
+librdp_status rdp_capability_parse_color_cache(const rdp_capability_set* set,
+                                               rdp_capability_color_cache* color_cache);
+librdp_status rdp_capability_parse_activation(const rdp_capability_set* set,
+                                              rdp_capability_activation* activation);
 
 #endif
