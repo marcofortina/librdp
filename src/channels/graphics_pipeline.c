@@ -120,7 +120,9 @@ static librdp_status rdp_graphics_write_header(rdp_buffer* buffer, uint16_t cmd_
 
 static int rdp_graphics_capversion_supported(uint32_t version)
 {
-    return version == RDP_GRAPHICS_CAPVERSION_8 || version == RDP_GRAPHICS_CAPVERSION_10;
+    return version == RDP_GRAPHICS_CAPVERSION_8 ||
+           version == RDP_GRAPHICS_CAPVERSION_81 ||
+           version == RDP_GRAPHICS_CAPVERSION_10;
 }
 
 static int rdp_graphics_is_short_literal(uint32_t value)
@@ -445,11 +447,13 @@ librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
 {
     const rdp_graphics_capset capsets[] = {
 #if defined(RDP_HAVE_FFMPEG_AVC)
-        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED},
+        {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
+        {RDP_GRAPHICS_CAPVERSION_81, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED},
+        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
 #else
+        {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
         {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED},
 #endif
-        {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE}
     };
 
     return rdp_graphics_write_caps_advertise(buffer, capsets, (uint16_t)(sizeof(capsets) / sizeof(capsets[0])));
