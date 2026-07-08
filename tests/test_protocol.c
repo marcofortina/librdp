@@ -550,6 +550,11 @@ static int test_path_security_license_channels(void)
         0x04, 0x00, 0x00, 0x00,
         0x02, 0x00, 0x00, 0x00
     };
+    const uint8_t graphics_bad_capset[] = {
+        0x01, 0x00, 0x01, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00
+    };
     const uint8_t graphics_segment_single[] = {
         0xe0, 0x04,
         0x13, 0x00, 0x00, 0x00,
@@ -1069,6 +1074,7 @@ static int test_path_security_license_channels(void)
     rdp_display_control_monitor display_monitors[2];
     rdp_graphics_header graphics_header;
     rdp_graphics_caps_confirm graphics_caps_confirm;
+    rdp_graphics_capset graphics_capset;
     rdp_graphics_create_surface graphics_create;
     rdp_graphics_delete_surface graphics_delete;
     rdp_graphics_reset graphics_reset;
@@ -2353,10 +2359,22 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_graphics_write_default_caps_advertise(&dyn_response) == LIBRDP_STATUS_OK);
-    PCHECK(dyn_response.length == 22);
+    PCHECK(dyn_response.length == 34);
     PCHECK(test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
     PCHECK(test_read_u32_le(dyn_response.data + 4) == dyn_response.length);
-    PCHECK(test_read_u16_le(dyn_response.data + 8) == 1);
+    PCHECK(test_read_u16_le(dyn_response.data + 8) == 2);
+    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 10, dyn_response.length - 10, &graphics_capset) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_10 &&
+           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0 &&
+           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 22, dyn_response.length - 22, &graphics_capset) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_8 &&
+           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
+    PCHECK(rdp_graphics_parse_capset(graphics_bad_capset,
+                                     sizeof(graphics_bad_capset),
+                                     &graphics_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_parse_header(graphics_confirm, sizeof(graphics_confirm), &graphics_header) ==
            LIBRDP_STATUS_OK);
     PCHECK(graphics_header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM);
