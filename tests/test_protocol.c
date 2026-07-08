@@ -358,6 +358,7 @@ static int test_path_security_license_channels(void)
         0x03, 0x00, 0x0c, 0x00, 's',  'r',  'v',  0x01, 0x00, 0x00,
         0x00, 0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd
     };
+    const uint8_t capability_list_trailing[] = {0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0xff};
     const uint8_t bitmap_data_pdu[] = {
         0x3a, 0x00, 0x17, 0x00, 0xec, 0x03, 0x78, 0x56, 0x34, 0x12,
         0x00, 0x01, 0x28, 0x00, 0x02, 0x00, 0x00, 0x00,
@@ -1156,6 +1157,8 @@ static int test_path_security_license_channels(void)
     rdp_client_info no_password_info;
     rdp_client_info_summary info_summary;
     rdp_capability_list confirm_caps;
+    const rdp_capability_set* confirm_bitmap_set = NULL;
+    rdp_capability_bitmap confirm_bitmap;
     rdp_credssp_ts_request parsed_ts;
     rdp_ntlm_challenge ntlm_challenge;
     rdp_ntlm_challenge ntlm_v2_challenge;
@@ -1355,8 +1358,13 @@ static int test_path_security_license_channels(void)
     PCHECK(demand.share_id == 0x12345678u);
     PCHECK(demand.source_descriptor_len == 3 && memcmp(demand.source_descriptor, "srv", 3) == 0);
     PCHECK(demand.capabilities.count == 1 && demand.capabilities.sets[0].type == 1);
+    PCHECK(rdp_capabilities_find(&demand.capabilities, RDP_CAPABILITY_TYPE_GENERAL) == &demand.capabilities.sets[0]);
+    PCHECK(rdp_capabilities_find(&demand.capabilities, RDP_CAPABILITY_TYPE_BITMAP) == NULL);
     PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active) - 1u, &demand) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_capabilities_parse(capability_list_trailing,
+                                  sizeof(capability_list_trailing),
+                                  &confirm_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(data_pdu.share_id == 0x12345678u && data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
     PCHECK(data_pdu.payload_len == 40);
@@ -1689,6 +1697,16 @@ static int test_path_security_license_channels(void)
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
         PCHECK(confirm_caps.sets[i].length == expected_confirm_lengths[i]);
     }
+    confirm_bitmap_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BITMAP);
+    PCHECK(confirm_bitmap_set != NULL);
+    PCHECK(rdp_capability_parse_bitmap(confirm_bitmap_set, &confirm_bitmap) == LIBRDP_STATUS_OK);
+    PCHECK(confirm_bitmap.preferred_bits_per_pixel == 32 &&
+           confirm_bitmap.desktop_width == 800 &&
+           confirm_bitmap.desktop_height == 600 &&
+           confirm_bitmap.desktop_resize_flag == 1 &&
+           confirm_bitmap.bitmap_compression_flag == 1 &&
+           confirm_bitmap.multiple_rectangle_support == 1);
+    PCHECK(rdp_capability_parse_bitmap(confirm_caps.sets, &confirm_bitmap) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(confirm_caps.sets[0].data[0] == 1 && confirm_caps.sets[0].data[2] == 3 &&
            confirm_caps.sets[0].data[4] == 0x00 && confirm_caps.sets[0].data[5] == 0x02);
     PCHECK(confirm_caps.sets[1].data[0] == 32 && confirm_caps.sets[1].data[8] == 0x20 &&

@@ -38,6 +38,23 @@ typedef struct rdp_capability_list
     rdp_capability_set sets[RDP_CAPABILITY_MAX_SETS];
 } rdp_capability_list;
 
+typedef struct rdp_capability_bitmap
+{
+    uint16_t preferred_bits_per_pixel;
+    uint16_t receive_1_bit_per_pixel;
+    uint16_t receive_4_bits_per_pixel;
+    uint16_t receive_8_bits_per_pixel;
+    uint16_t desktop_width;
+    uint16_t desktop_height;
+    uint16_t desktop_resize_flag;
+    uint16_t bitmap_compression_flag;
+    uint8_t high_color_flags;
+    uint8_t drawing_flags;
+    uint16_t multiple_rectangle_support;
+} rdp_capability_bitmap;
+
 librdp_status rdp_capabilities_parse(const void* data, size_t length, rdp_capability_list* list);
+const rdp_capability_set* rdp_capabilities_find(const rdp_capability_list* list, uint16_t type);
+librdp_status rdp_capability_parse_bitmap(const rdp_capability_set* set, rdp_capability_bitmap* bitmap);
 
 #endif
