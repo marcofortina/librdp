@@ -21,6 +21,20 @@ typedef struct x11_app
     int dirty;
 } x11_app;
 
+static int handle_x_error(Display* display, XErrorEvent* error)
+{
+    if (display && error)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.error",
+                        "code=%u request=%u resource=%lu",
+                        (unsigned)error->error_code,
+                        (unsigned)error->request_code,
+                        error->resourceid);
+    }
+    return 0;
+}
+
 static int parse_u16(const char* text, uint16_t* value)
 {
     char* end = NULL;
@@ -313,6 +327,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    XSetErrorHandler(handle_x_error);
     app.screen = DefaultScreen(app.display);
     app.window = XCreateSimpleWindow(app.display,
                                      RootWindow(app.display, app.screen),
