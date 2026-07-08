@@ -1,6 +1,7 @@
 #include "protocol/slowpath.h"
 
 #include "common/stream.h"
+#include "graphics/nscodec.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +31,7 @@ static uint16_t rdp_slowpath_base_type(uint16_t pdu_type)
     return (uint16_t)(pdu_type & 0x000fu);
 }
 
-#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 16u
+#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 17u
 
 static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
 {
@@ -409,6 +410,28 @@ static librdp_status rdp_slowpath_write_activation_capability(rdp_buffer* buffer
     return status;
 }
 
+static librdp_status rdp_slowpath_write_bitmap_codecs_capability(rdp_buffer* buffer)
+{
+    static const uint8_t nscodec_guid[RDP_NSCODEC_GUID_LENGTH] = RDP_NSCODEC_GUID_BYTES;
+    const rdp_nscodec_capability nscodec = {1, 1, 7};
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_BITMAP_CODECS, 27);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, nscodec_guid, sizeof(nscodec_guid));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, RDP_NSCODEC_BITMAP_CODEC_ID);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, RDP_NSCODEC_CAPABILITY_LENGTH);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_nscodec_write_capability(buffer, &nscodec);
+    return status;
+}
+
 static librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
                                                  uint32_t share_id,
                                                  uint16_t channel_id,
@@ -504,6 +527,8 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
         status = rdp_slowpath_write_color_cache_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_activation_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_bitmap_codecs_capability(&capabilities);
     combined_len = capabilities.length;
     total = 6u + 4u + 2u + 2u + 2u + source_len + combined_len;
     if (status == LIBRDP_STATUS_OK && total > 0xffffu)

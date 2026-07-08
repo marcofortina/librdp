@@ -13,6 +13,7 @@
 #include "common/stream.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/nscodec.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
@@ -624,6 +625,36 @@ static int test_path_security_license_channels(void)
     const uint8_t planar_rle_bad_zero_control[] = {
         RDP_PLANAR_FORMAT_NO_ALPHA | RDP_PLANAR_FORMAT_RLE,
         0x00
+    };
+    const uint8_t nscodec_capability_data[] = {1, 1, 7};
+    const uint8_t nscodec_bad_capability_data[] = {1, 0, 0};
+    const uint8_t nscodec_guid[RDP_NSCODEC_GUID_LENGTH] = RDP_NSCODEC_GUID_BYTES;
+    const uint8_t nscodec_raw_argb[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        100, 10, 20, 0x7f
+    };
+    const uint8_t nscodec_subsampled_rle[] = {
+        0x07, 0x00, 0x00, 0x00,
+        0x07, 0x00, 0x00, 0x00,
+        0x07, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x01, 0x00, 0x00,
+        100, 100, 18, 100, 100, 100, 100,
+        0, 0, 2, 0, 0, 0, 0,
+        0, 0, 2, 0, 0, 0, 0
+    };
+    const uint8_t nscodec_rle_plane[] = {0x63, 0x63, 0x01, 0x64, 0x65, 0x65, 0x65};
+    const uint8_t nscodec_invalid_stream[] = {
+        0x02, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        1, 0, 0
     };
     const uint8_t planar_reserved[] = {0x80, 0, 0, 0};
     const uint8_t planar_subsample_without_loss[] = {RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING, 0, 0, 0};
@@ -1535,6 +1566,9 @@ static int test_path_security_license_channels(void)
     rdp_clearcodec_composite_payload clear_payload;
     rdp_clearcodec_subcodec clear_subcodec;
     rdp_clearcodec_context clear_context;
+    rdp_nscodec_context nscodec_context;
+    rdp_nscodec_stream nscodec_stream;
+    rdp_nscodec_capability nscodec_capability;
     rdp_clipboard_packet cb;
     rdp_clipboard_capabilities cb_caps;
     rdp_clipboard_format_list cb_list;
@@ -1571,6 +1605,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_suppress_output;
     rdp_buffer graphics_decoded;
     rdp_buffer planar_pixels;
+    rdp_buffer nscodec_pixels;
+    rdp_buffer nscodec_capability_buffer;
     rdp_buffer graphics_reset_pdu;
     rdp_buffer decoded_bitmap;
     rdp_buffer decoded_pointer;
@@ -1612,6 +1648,8 @@ static int test_path_security_license_channels(void)
     rdp_capability_control confirm_control;
     rdp_capability_color_cache confirm_color_cache;
     rdp_capability_activation confirm_activation;
+    rdp_capability_bitmap_codecs confirm_bitmap_codecs;
+    rdp_nscodec_capability confirm_nscodec;
     rdp_capability_set virtual_channel_minimal_set;
     rdp_credssp_ts_request parsed_ts;
     rdp_ntlm_challenge ntlm_challenge;
@@ -1636,6 +1674,7 @@ static int test_path_security_license_channels(void)
     size_t i = 0;
     uint16_t confirm_source_len = 0;
     uint16_t confirm_caps_len = 0;
+    uint8_t nscodec_rle_decoded[24];
     const uint16_t expected_confirm_types[] = {
         RDP_CAPABILITY_TYPE_GENERAL,
         RDP_CAPABILITY_TYPE_BITMAP,
@@ -1652,10 +1691,11 @@ static int test_path_security_license_channels(void)
         RDP_CAPABILITY_TYPE_FONT,
         RDP_CAPABILITY_TYPE_CONTROL,
         RDP_CAPABILITY_TYPE_COLOR_CACHE,
-        RDP_CAPABILITY_TYPE_ACTIVATION
+        RDP_CAPABILITY_TYPE_ACTIVATION,
+        RDP_CAPABILITY_TYPE_BITMAP_CODECS
     };
     const uint16_t expected_confirm_lengths[] = {
-        24, 28, 88, 40, 10, 6, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12
+        24, 28, 88, 40, 10, 6, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12, 27
     };
     const uint8_t virtual_channel_minimal_data[] = {1, 0, 0, 0};
     const uint8_t font_map_payload[] = {1, 0, 2, 0, 3, 0, 4, 0};
@@ -1685,8 +1725,11 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&client_suppress_output);
     rdp_graphics_decompressor_init(&graphics_decompressor);
     rdp_clearcodec_context_init(&clear_context);
+    rdp_nscodec_context_init(&nscodec_context);
     rdp_buffer_init(&graphics_decoded);
     rdp_buffer_init(&planar_pixels);
+    rdp_buffer_init(&nscodec_pixels);
+    rdp_buffer_init(&nscodec_capability_buffer);
     rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&decoded_bitmap);
     rdp_buffer_init(&decoded_pointer);
@@ -2252,6 +2295,76 @@ static int test_path_security_license_channels(void)
                                   1,
                                   &planar_pixels,
                                   &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_nscodec_parse_capability(nscodec_capability_data,
+                                        sizeof(nscodec_capability_data),
+                                        &nscodec_capability) == LIBRDP_STATUS_OK);
+    PCHECK(nscodec_capability.allow_dynamic_fidelity == 1 &&
+           nscodec_capability.allow_subsampling == 1 &&
+           nscodec_capability.color_loss_level == 7);
+    PCHECK(rdp_nscodec_parse_capability(nscodec_bad_capability_data,
+                                        sizeof(nscodec_bad_capability_data),
+                                        &nscodec_capability) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_nscodec_write_capability(&nscodec_capability_buffer,
+                                        &(rdp_nscodec_capability){1, 0, 3}) == LIBRDP_STATUS_OK);
+    PCHECK(nscodec_capability_buffer.length == 3 &&
+           nscodec_capability_buffer.data[0] == 1 &&
+           nscodec_capability_buffer.data[1] == 0 &&
+           nscodec_capability_buffer.data[2] == 3);
+    PCHECK(rdp_nscodec_parse_stream(nscodec_raw_argb,
+                                    sizeof(nscodec_raw_argb),
+                                    1,
+                                    1,
+                                    &nscodec_stream) == LIBRDP_STATUS_OK);
+    PCHECK(nscodec_stream.luma_len == 1 &&
+           nscodec_stream.orange_chroma_len == 1 &&
+           nscodec_stream.green_chroma_len == 1 &&
+           nscodec_stream.alpha_len == 1 &&
+           nscodec_stream.luma[0] == 100);
+    PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
+                                     nscodec_raw_argb,
+                                     sizeof(nscodec_raw_argb),
+                                     1,
+                                     1,
+                                     &nscodec_pixels,
+                                     &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 4 &&
+           nscodec_pixels.length == 4 &&
+           nscodec_pixels.data[0] == 70 &&
+           nscodec_pixels.data[1] == 120 &&
+           nscodec_pixels.data[2] == 90 &&
+           nscodec_pixels.data[3] == 0x7f);
+    PCHECK(rdp_nscodec_decode_rle_plane(nscodec_rle_plane,
+                                        sizeof(nscodec_rle_plane),
+                                        nscodec_rle_decoded,
+                                        7) == LIBRDP_STATUS_OK);
+    PCHECK(nscodec_rle_decoded[0] == 0x63 &&
+           nscodec_rle_decoded[1] == 0x63 &&
+           nscodec_rle_decoded[2] == 0x63 &&
+           nscodec_rle_decoded[3] == 0x64 &&
+           nscodec_rle_decoded[4] == 0x65 &&
+           nscodec_rle_decoded[5] == 0x65 &&
+           nscodec_rle_decoded[6] == 0x65);
+    nscodec_pixels.length = 0;
+    PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
+                                     nscodec_subsampled_rle,
+                                     sizeof(nscodec_subsampled_rle),
+                                     3,
+                                     3,
+                                     &nscodec_pixels,
+                                     &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 12 &&
+           nscodec_pixels.length == 36 &&
+           nscodec_pixels.data[0] == 100 &&
+           nscodec_pixels.data[1] == 100 &&
+           nscodec_pixels.data[2] == 100 &&
+           nscodec_pixels.data[3] == 0xff &&
+           nscodec_pixels.data[32] == 100 &&
+           nscodec_pixels.data[35] == 0xff);
+    PCHECK(rdp_nscodec_parse_stream(nscodec_invalid_stream,
+                                    sizeof(nscodec_invalid_stream),
+                                    1,
+                                    1,
+                                    &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
@@ -2276,7 +2389,7 @@ static int test_path_security_license_channels(void)
                                   confirm_caps_len,
                                   &confirm_caps) == LIBRDP_STATUS_OK);
     PCHECK(confirm_caps.count == sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]));
-    PCHECK(confirm_caps_len == 416);
+    PCHECK(confirm_caps_len == 443);
     for (i = 0; i < sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]); i++)
     {
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
@@ -2395,6 +2508,19 @@ static int test_path_security_license_channels(void)
            confirm_activation.help_key_index_flag == 0 &&
            confirm_activation.help_extended_key_flag == 0 &&
            confirm_activation.window_manager_key_flag == 0);
+    confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BITMAP_CODECS);
+    PCHECK(confirm_set != NULL);
+    PCHECK(rdp_capability_parse_bitmap_codecs(confirm_set, &confirm_bitmap_codecs) == LIBRDP_STATUS_OK);
+    PCHECK(confirm_bitmap_codecs.count == 1 &&
+           confirm_bitmap_codecs.codecs[0].codec_id == RDP_NSCODEC_BITMAP_CODEC_ID &&
+           confirm_bitmap_codecs.codecs[0].properties_len == RDP_NSCODEC_CAPABILITY_LENGTH &&
+           memcmp(confirm_bitmap_codecs.codecs[0].guid, nscodec_guid, sizeof(nscodec_guid)) == 0);
+    PCHECK(rdp_nscodec_parse_capability(confirm_bitmap_codecs.codecs[0].properties,
+                                        confirm_bitmap_codecs.codecs[0].properties_len,
+                                        &confirm_nscodec) == LIBRDP_STATUS_OK);
+    PCHECK(confirm_nscodec.allow_dynamic_fidelity == 1 &&
+           confirm_nscodec.allow_subsampling == 1 &&
+           confirm_nscodec.color_loss_level == 7);
     PCHECK(rdp_capability_parse_general(confirm_bitmap_set, &confirm_general) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(confirm_caps.sets[0].data[0] == 1 && confirm_caps.sets[0].data[2] == 3 &&
            confirm_caps.sets[0].data[4] == 0x00 && confirm_caps.sets[0].data[5] == 0x02);
@@ -4283,8 +4409,11 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_clearcodec_context_free(&clear_context);
+    rdp_nscodec_context_free(&nscodec_context);
     rdp_graphics_decompressor_free(&graphics_decompressor);
     rdp_buffer_free(&graphics_reset_pdu);
+    rdp_buffer_free(&nscodec_capability_buffer);
+    rdp_buffer_free(&nscodec_pixels);
     rdp_buffer_free(&planar_pixels);
     rdp_buffer_free(&graphics_decoded);
     rdp_buffer_free(&client_refresh_rect);

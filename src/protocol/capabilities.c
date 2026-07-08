@@ -448,3 +448,43 @@ librdp_status rdp_capability_parse_activation(const rdp_capability_set* set,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
+
+librdp_status rdp_capability_parse_bitmap_codecs(const rdp_capability_set* set,
+                                                 rdp_capability_bitmap_codecs* codecs)
+{
+    rdp_stream stream;
+    uint8_t count = 0;
+    uint8_t i = 0;
+
+    if (!codecs)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_capability_stream(set, RDP_CAPABILITY_TYPE_BITMAP_CODECS, 1u, (size_t)-1, &stream) !=
+        LIBRDP_STATUS_OK)
+        return set ? LIBRDP_STATUS_PROTOCOL_ERROR : LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(codecs, 0, sizeof(*codecs));
+    if (rdp_stream_read_u8(&stream, &count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (count > RDP_CAPABILITY_BITMAP_CODECS_MAX)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    for (i = 0; i < count; i++)
+    {
+        rdp_capability_bitmap_codec* codec = &codecs->codecs[i];
+        const uint8_t* guid = NULL;
+
+        if (rdp_stream_read_bytes(&stream, &guid, sizeof(codec->guid)) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &codec->codec_id) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(&stream, &codec->properties_len) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        memcpy(codec->guid, guid, sizeof(codec->guid));
+        if (codec->properties_len > rdp_stream_remaining(&stream))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (codec->properties_len > 0 &&
+            rdp_stream_read_bytes(&stream, &codec->properties, codec->properties_len) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    codecs->count = count;
+    return LIBRDP_STATUS_OK;
+}

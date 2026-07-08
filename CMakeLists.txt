@@ -37,6 +37,7 @@ add_library(librdp
     src/graphics/avc.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
+    src/graphics/nscodec.c
     src/graphics/planar.c
     src/graphics/rfx_codec.c
     src/graphics/surface.c
@@ -120,6 +121,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_graphics_pipeline fuzz/graphics_pipeline_fuzzer.c)
     add_librdp_fuzzer(fuzz_mouse_cursor fuzz/mouse_cursor_fuzzer.c)
     add_librdp_fuzzer(fuzz_clearcodec fuzz/clearcodec_fuzzer.c)
+    add_librdp_fuzzer(fuzz_nscodec fuzz/nscodec_fuzzer.c)
     add_librdp_fuzzer(fuzz_planar fuzz/planar_fuzzer.c)
     add_librdp_fuzzer(fuzz_rfx_codec fuzz/rfx_codec_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)

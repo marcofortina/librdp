@@ -23,6 +23,8 @@
 #define RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2 0x0013u
 #define RDP_CAPABILITY_TYPE_VIRTUAL_CHANNEL 0x0014u
 #define RDP_CAPABILITY_TYPE_LARGE_POINTER 0x001bu
+#define RDP_CAPABILITY_TYPE_BITMAP_CODECS 0x001du
+#define RDP_CAPABILITY_BITMAP_CODECS_MAX 16u
 
 typedef struct rdp_capability_set
 {
@@ -173,6 +175,20 @@ typedef struct rdp_capability_activation
     uint16_t window_manager_key_flag;
 } rdp_capability_activation;
 
+typedef struct rdp_capability_bitmap_codec
+{
+    uint8_t guid[16];
+    uint8_t codec_id;
+    uint16_t properties_len;
+    const uint8_t* properties;
+} rdp_capability_bitmap_codec;
+
+typedef struct rdp_capability_bitmap_codecs
+{
+    uint8_t count;
+    rdp_capability_bitmap_codec codecs[RDP_CAPABILITY_BITMAP_CODECS_MAX];
+} rdp_capability_bitmap_codecs;
+
 librdp_status rdp_capabilities_parse(const void* data, size_t length, rdp_capability_list* list);
 const rdp_capability_set* rdp_capabilities_find(const rdp_capability_list* list, uint16_t type);
 librdp_status rdp_capability_parse_general(const rdp_capability_set* set, rdp_capability_general* general);
@@ -197,5 +213,7 @@ librdp_status rdp_capability_parse_color_cache(const rdp_capability_set* set,
                                                rdp_capability_color_cache* color_cache);
 librdp_status rdp_capability_parse_activation(const rdp_capability_set* set,
                                               rdp_capability_activation* activation);
+librdp_status rdp_capability_parse_bitmap_codecs(const rdp_capability_set* set,
+                                                 rdp_capability_bitmap_codecs* codecs);
 
 #endif

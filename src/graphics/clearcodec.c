@@ -23,6 +23,7 @@ void rdp_clearcodec_context_init(rdp_clearcodec_context* context)
     if (!context)
         return;
     memset(context, 0, sizeof(*context));
+    rdp_nscodec_context_init(&context->nscodec);
 }
 
 void rdp_clearcodec_context_reset(rdp_clearcodec_context* context)
@@ -37,6 +38,7 @@ void rdp_clearcodec_context_reset(rdp_clearcodec_context* context)
         memset(context->short_vbar_lengths, 0, RDP_CLEARCODEC_SHORT_VBAR_STORAGE_ENTRIES);
     context->vbar_cursor = 0;
     context->short_vbar_cursor = 0;
+    rdp_nscodec_context_reset(&context->nscodec);
     for (i = 0; i < RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES; i++)
     {
         context->glyphs[i].pixel_count = 0;
@@ -107,8 +109,7 @@ void rdp_clearcodec_context_free(rdp_clearcodec_context* context)
     free(context->short_vbar_storage);
     free(context->vbar_lengths);
     free(context->short_vbar_lengths);
-    for (i = 0; i < 4u; i++)
-        free(context->nsc_planes[i]);
+    rdp_nscodec_context_free(&context->nscodec);
     for (i = 0; i < RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES; i++)
         rdp_buffer_free(&context->glyphs[i].pixels);
     memset(context, 0, sizeof(*context));
@@ -194,119 +195,6 @@ static uint8_t rdp_clearcodec_log2_floor_u8(uint8_t value)
         shift++;
     }
     return shift;
-}
-
-static size_t rdp_clearcodec_round_up(size_t value, size_t alignment)
-{
-    size_t remainder = 0;
-
-    if (alignment == 0)
-        return value;
-    remainder = value % alignment;
-    return remainder == 0 ? value : value + alignment - remainder;
-}
-
-static uint8_t rdp_clearcodec_clamp_byte(int value)
-{
-    if (value < 0)
-        return 0;
-    if (value > 255)
-        return 255;
-    return (uint8_t)value;
-}
-
-static librdp_status rdp_clearcodec_ensure_nsc_planes(rdp_clearcodec_context* context, size_t capacity)
-{
-    size_t old_capacity = 0;
-
-    if (!context)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (capacity <= context->nsc_plane_capacity)
-        return LIBRDP_STATUS_OK;
-    old_capacity = context->nsc_plane_capacity;
-    for (size_t i = 0; i < 4u; i++)
-    {
-        uint8_t* resized = (uint8_t*)realloc(context->nsc_planes[i], capacity);
-
-        if (!resized)
-            return LIBRDP_STATUS_NO_MEMORY;
-        if (capacity > old_capacity)
-            memset(resized + old_capacity, 0, capacity - old_capacity);
-        context->nsc_planes[i] = resized;
-    }
-    context->nsc_plane_capacity = capacity;
-    return LIBRDP_STATUS_OK;
-}
-
-static librdp_status rdp_clearcodec_nsc_rle_decode(const uint8_t* input,
-                                                   size_t input_len,
-                                                   uint8_t* output,
-                                                   size_t output_len,
-                                                   size_t original_size)
-{
-    size_t in_offset = 0;
-    size_t out_offset = 0;
-    size_t left = original_size;
-
-    if (!input || !output || output_len < original_size)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-
-    while (left > 4u)
-    {
-        uint8_t value = 0;
-        size_t run = 0;
-
-        if (in_offset >= input_len)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        value = input[in_offset++];
-        if (left == 5u)
-        {
-            output[out_offset++] = value;
-            left--;
-        }
-        else if (in_offset >= input_len)
-        {
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        }
-        else if (value == input[in_offset])
-        {
-            in_offset++;
-            if (in_offset >= input_len)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            if (input[in_offset] < 0xffu)
-            {
-                run = (size_t)input[in_offset++] + 2u;
-            }
-            else
-            {
-                in_offset++;
-                if (input_len - in_offset < 4u)
-                    return LIBRDP_STATUS_PROTOCOL_ERROR;
-                run = (size_t)input[in_offset] |
-                      ((size_t)input[in_offset + 1u] << 8u) |
-                      ((size_t)input[in_offset + 2u] << 16u) |
-                      ((size_t)input[in_offset + 3u] << 24u);
-                in_offset += 4u;
-            }
-            if (run > left || run > output_len - out_offset)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            memset(output + out_offset, value, run);
-            out_offset += run;
-            left -= run;
-        }
-        else
-        {
-            if (out_offset >= output_len)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            output[out_offset++] = value;
-            left--;
-        }
-    }
-
-    if (left != 4u || input_len - in_offset < 4u || output_len - out_offset < 4u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memcpy(output + out_offset, input + in_offset, 4u);
-    return LIBRDP_STATUS_OK;
 }
 
 static uint8_t* rdp_clearcodec_vbar_slot(rdp_clearcodec_context* context, uint16_t index)
@@ -763,128 +651,23 @@ static librdp_status rdp_clearcodec_decode_nsc_subcodec(rdp_clearcodec_context* 
                                                         uint8_t* pixels,
                                                         size_t stride)
 {
-    const uint8_t* data = NULL;
-    size_t offset = 0;
-    size_t plane_sizes[4];
-    size_t original_sizes[4];
-    size_t total_plane_size = 0;
-    size_t rounded_width = 0;
-    size_t rounded_height = 0;
-    size_t plane_capacity = 0;
-    uint8_t color_loss = 0;
-    uint8_t chroma_subsampling = 0;
-    uint8_t shift = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!context || !subcodec || !pixels)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (subcodec->width == 0 || subcodec->height == 0 ||
         subcodec->x > width || subcodec->y > height ||
         subcodec->width > width - subcodec->x || subcodec->height > height - subcodec->y)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!subcodec->bitmap_data || subcodec->bitmap_data_len < 20u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    data = subcodec->bitmap_data;
-    for (size_t i = 0; i < 4u; i++)
-    {
-        plane_sizes[i] = (size_t)data[offset] |
-                         ((size_t)data[offset + 1u] << 8u) |
-                         ((size_t)data[offset + 2u] << 16u) |
-                         ((size_t)data[offset + 3u] << 24u);
-        offset += 4u;
-        if (plane_sizes[i] > ((size_t)-1) - total_plane_size)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        total_plane_size += plane_sizes[i];
-    }
-    color_loss = data[offset++];
-    chroma_subsampling = data[offset++];
-    offset += 2u;
-    if (color_loss < 1u || color_loss > 7u || chroma_subsampling > 1u ||
-        total_plane_size > subcodec->bitmap_data_len - offset)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    rounded_width = rdp_clearcodec_round_up(subcodec->width, 8u);
-    rounded_height = rdp_clearcodec_round_up(subcodec->height, 2u);
-    for (size_t i = 0; i < 4u; i++)
-        original_sizes[i] = (size_t)subcodec->width * (size_t)subcodec->height;
-    if (chroma_subsampling)
-    {
-        original_sizes[0] = rounded_width * (size_t)subcodec->height;
-        original_sizes[1] = (rounded_width >> 1u) * (rounded_height >> 1u);
-        original_sizes[2] = original_sizes[1];
-    }
-    plane_capacity = rounded_width * rounded_height;
-    if (plane_capacity < (size_t)subcodec->width * (size_t)subcodec->height)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_clearcodec_ensure_nsc_planes(context, plane_capacity);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-
-    for (size_t i = 0; i < 4u; i++)
-    {
-        if (plane_sizes[i] > subcodec->bitmap_data_len - offset)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (plane_sizes[i] == 0)
-        {
-            memset(context->nsc_planes[i], 0xffu, original_sizes[i]);
-        }
-        else if (plane_sizes[i] < original_sizes[i])
-        {
-            status = rdp_clearcodec_nsc_rle_decode(data + offset,
-                                                   plane_sizes[i],
-                                                   context->nsc_planes[i],
-                                                   context->nsc_plane_capacity,
-                                                   original_sizes[i]);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
-        }
-        else
-        {
-            if (plane_sizes[i] < original_sizes[i] || context->nsc_plane_capacity < original_sizes[i])
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            memcpy(context->nsc_planes[i], data + offset, original_sizes[i]);
-        }
-        offset += plane_sizes[i];
-    }
-
-    shift = (uint8_t)(color_loss - 1u);
-    for (uint16_t y = 0; y < subcodec->height; y++)
-    {
-        const uint8_t* y_plane = NULL;
-        const uint8_t* co_plane = NULL;
-        const uint8_t* cg_plane = NULL;
-        const uint8_t* a_plane = context->nsc_planes[3] + ((size_t)y * subcodec->width);
-        uint8_t* dest = pixels + ((size_t)(subcodec->y + y) * stride) + ((size_t)subcodec->x * 4u);
-
-        if (chroma_subsampling)
-        {
-            y_plane = context->nsc_planes[0] + ((size_t)y * rounded_width);
-            co_plane = context->nsc_planes[1] + ((size_t)(y >> 1u) * (rounded_width >> 1u));
-            cg_plane = context->nsc_planes[2] + ((size_t)(y >> 1u) * (rounded_width >> 1u));
-        }
-        else
-        {
-            y_plane = context->nsc_planes[0] + ((size_t)y * subcodec->width);
-            co_plane = context->nsc_planes[1] + ((size_t)y * subcodec->width);
-            cg_plane = context->nsc_planes[2] + ((size_t)y * subcodec->width);
-        }
-
-        for (uint16_t x = 0; x < subcodec->width; x++)
-        {
-            size_t chroma_x = chroma_subsampling ? (size_t)(x >> 1u) : (size_t)x;
-            int y_value = y_plane[x];
-            int co_value = (int)(int8_t)((uint8_t)(co_plane[chroma_x] << shift));
-            int cg_value = (int)(int8_t)((uint8_t)(cg_plane[chroma_x] << shift));
-
-            dest[0] = rdp_clearcodec_clamp_byte(y_value - co_value - cg_value);
-            dest[1] = rdp_clearcodec_clamp_byte(y_value + cg_value);
-            dest[2] = rdp_clearcodec_clamp_byte(y_value + co_value - cg_value);
-            dest[3] = a_plane[x];
-            dest += 4u;
-        }
-    }
-    return LIBRDP_STATUS_OK;
+    return rdp_nscodec_decode_region_bgra32(&context->nscodec,
+                                            subcodec->bitmap_data,
+                                            subcodec->bitmap_data_len,
+                                            subcodec->width,
+                                            subcodec->height,
+                                            pixels,
+                                            stride,
+                                            subcodec->x,
+                                            subcodec->y,
+                                            width,
+                                            height);
 }
 
 static librdp_status rdp_clearcodec_apply_raw_subcodec(const rdp_clearcodec_subcodec* subcodec,

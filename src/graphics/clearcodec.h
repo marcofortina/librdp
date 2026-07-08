@@ -7,6 +7,7 @@
 #include <librdp/error.h>
 
 #include "common/buffer.h"
+#include "graphics/nscodec.h"
 
 #define RDP_CLEARCODEC_FLAG_GLYPH_INDEX 0x01u
 #define RDP_CLEARCODEC_FLAG_GLYPH_HIT 0x02u
@@ -33,8 +34,7 @@ typedef struct rdp_clearcodec_context
     uint8_t* short_vbar_lengths;
     uint16_t vbar_cursor;
     uint16_t short_vbar_cursor;
-    uint8_t* nsc_planes[4];
-    size_t nsc_plane_capacity;
+    rdp_nscodec_context nscodec;
     rdp_clearcodec_glyph glyphs[RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES];
 } rdp_clearcodec_context;
 
