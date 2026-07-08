@@ -29,6 +29,19 @@ static int rdp_pointer_mask_bit(const uint8_t* data, size_t stride, uint16_t wid
     return (data[offset] & mask) != 0;
 }
 
+static int rdp_pointer_color_nonzero(const uint8_t* pixel)
+{
+    return pixel && (pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0);
+}
+
+static void rdp_pointer_write_invert_approximation(uint8_t* dst)
+{
+    dst[0] = 0x00u;
+    dst[1] = 0x00u;
+    dst[2] = 0x00u;
+    dst[3] = 0xffu;
+}
+
 static librdp_status rdp_pointer_parse_color_attributes(rdp_stream* stream,
                                                         uint16_t bpp,
                                                         int large_lengths,
@@ -277,18 +290,32 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                 const uint8_t* pixel = src + ((size_t)x * 4u);
                 int alpha_visible = has_alpha && pixel[3] != 0;
 
-                dst[dst_pos + 0u] = pixel[0];
-                dst[dst_pos + 1u] = pixel[1];
-                dst[dst_pos + 2u] = pixel[2];
-                dst[dst_pos + 3u] = transparent && !alpha_visible ? 0u : (has_alpha ? pixel[3] : 0xffu);
+                if (transparent && !has_alpha && rdp_pointer_color_nonzero(pixel))
+                {
+                    rdp_pointer_write_invert_approximation(dst + dst_pos);
+                }
+                else
+                {
+                    dst[dst_pos + 0u] = pixel[0];
+                    dst[dst_pos + 1u] = pixel[1];
+                    dst[dst_pos + 2u] = pixel[2];
+                    dst[dst_pos + 3u] = transparent && !alpha_visible ? 0u : (has_alpha ? pixel[3] : 0xffu);
+                }
             }
             else if (update->xor_bpp == 24u)
             {
                 const uint8_t* pixel = src + ((size_t)x * 3u);
-                dst[dst_pos + 0u] = pixel[0];
-                dst[dst_pos + 1u] = pixel[1];
-                dst[dst_pos + 2u] = pixel[2];
-                dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
+                if (transparent && rdp_pointer_color_nonzero(pixel))
+                {
+                    rdp_pointer_write_invert_approximation(dst + dst_pos);
+                }
+                else
+                {
+                    dst[dst_pos + 0u] = pixel[0];
+                    dst[dst_pos + 1u] = pixel[1];
+                    dst[dst_pos + 2u] = pixel[2];
+                    dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
+                }
             }
             else
             {
@@ -300,10 +327,17 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                                                    y);
                 uint8_t color = xor_bit ? 0xffu : 0x00u;
 
-                dst[dst_pos + 0u] = color;
-                dst[dst_pos + 1u] = color;
-                dst[dst_pos + 2u] = color;
-                dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
+                if (transparent && xor_bit)
+                {
+                    rdp_pointer_write_invert_approximation(dst + dst_pos);
+                }
+                else
+                {
+                    dst[dst_pos + 0u] = color;
+                    dst[dst_pos + 1u] = color;
+                    dst[dst_pos + 2u] = color;
+                    dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
+                }
             }
         }
     }

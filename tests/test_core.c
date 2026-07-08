@@ -818,6 +818,8 @@ static int test_pointer_decode(void)
         0, 0, 0, 0
     };
     const uint8_t and_mask[2] = {0xe0, 0};
+    const uint8_t xor_mask_24[4] = {0xff, 0xff, 0xff, 0};
+    const uint8_t and_mask_24[2] = {0x80, 0};
 
     memset(&update, 0, sizeof(update));
     rdp_buffer_init(&output);
@@ -834,8 +836,25 @@ static int test_pointer_decode(void)
     CHECK(stride == 12);
     CHECK(output.length == 12);
     CHECK(output.data[0] == 0 && output.data[1] == 0 && output.data[2] == 0 && output.data[3] == 0);
-    CHECK(output.data[4] == 0xff && output.data[5] == 0xff && output.data[6] == 0xff && output.data[7] == 0);
+    CHECK(output.data[4] == 0 && output.data[5] == 0 && output.data[6] == 0 && output.data[7] == 0xff);
     CHECK(output.data[8] == 0 && output.data[9] == 0 && output.data[10] == 0 && output.data[11] == 0);
+
+    rdp_buffer_free(&output);
+    rdp_buffer_init(&output);
+    memset(&update, 0, sizeof(update));
+    update.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    update.width = 1;
+    update.height = 1;
+    update.xor_bpp = 24;
+    update.xor_mask = xor_mask_24;
+    update.xor_mask_len = sizeof(xor_mask_24);
+    update.and_mask = and_mask_24;
+    update.and_mask_len = sizeof(and_mask_24);
+
+    CHECK(rdp_pointer_decode_bgra32(&update, &output, &stride) == LIBRDP_STATUS_OK);
+    CHECK(stride == 4);
+    CHECK(output.length == 4);
+    CHECK(output.data[0] == 0 && output.data[1] == 0 && output.data[2] == 0 && output.data[3] == 0xff);
     rdp_buffer_free(&output);
     return 0;
 }

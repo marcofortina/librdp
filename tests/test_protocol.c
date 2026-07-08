@@ -1307,10 +1307,10 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
     PCHECK(pointer_stride == 4 &&
            decoded_pointer.length == 4 &&
-           decoded_pointer.data[0] == 0xff &&
-           decoded_pointer.data[1] == 0xff &&
-           decoded_pointer.data[2] == 0xff &&
-           decoded_pointer.data[3] == 0x00);
+           decoded_pointer.data[0] == 0x00 &&
+           decoded_pointer.data[1] == 0x00 &&
+           decoded_pointer.data[2] == 0x00 &&
+           decoded_pointer.data[3] == 0xff);
     PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
                                       pointer_shape_1bpp_transparent,
                                       sizeof(pointer_shape_1bpp_transparent),
