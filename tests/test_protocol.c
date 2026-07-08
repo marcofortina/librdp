@@ -1295,6 +1295,7 @@ static int test_path_security_license_channels(void)
     rdp_display_control_caps display_parsed_caps;
     rdp_display_control_monitor display_monitor;
     rdp_display_control_monitor display_monitors[2];
+    uint32_t display_monitor_count = 0;
     rdp_graphics_header graphics_header;
     rdp_graphics_caps_confirm graphics_caps_confirm;
     rdp_graphics_capset graphics_capset;
@@ -2894,6 +2895,15 @@ static int test_path_security_license_channels(void)
            test_read_u32_le(dyn_response.data + 16) == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
            test_read_u32_le(dyn_response.data + 28) == 800 &&
            test_read_u32_le(dyn_response.data + 32) == 200);
+    PCHECK(rdp_display_control_parse_monitor_layout(dyn_response.data,
+                                                    dyn_response.length,
+                                                    display_monitors,
+                                                    2,
+                                                    &display_monitor_count) == LIBRDP_STATUS_OK);
+    PCHECK(display_monitor_count == 1 &&
+           display_monitors[0].flags == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
+           display_monitors[0].width == 800 &&
+           display_monitors[0].height == 200);
     display_monitors[0] = display_monitor;
     display_monitors[1] = display_monitor;
     display_monitors[1].flags = 0;
@@ -2911,6 +2921,20 @@ static int test_path_security_license_channels(void)
            test_read_u32_le(dyn_response.data + 12) == 2 &&
            test_read_u32_le(dyn_response.data + 56) == 0 &&
            test_read_u32_le(dyn_response.data + 68) == 640);
+    PCHECK(rdp_display_control_parse_monitor_layout_with_caps(dyn_response.data,
+                                                              dyn_response.length,
+                                                              display_monitors,
+                                                              2,
+                                                              &display_monitor_count,
+                                                              &display_parsed_caps) == LIBRDP_STATUS_OK);
+    PCHECK(display_monitor_count == 2 &&
+           display_monitors[1].left == 800 &&
+           display_monitors[1].width == 640);
+    display_monitors[1].left = 700;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, display_monitors, 2) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_monitors[1].left = 800;
     display_parsed_caps.max_num_monitors = 1;
     dyn_response.length = 0;
     PCHECK(rdp_display_control_write_monitor_layout_with_caps(&dyn_response,

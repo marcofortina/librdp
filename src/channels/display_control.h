@@ -40,6 +40,17 @@ librdp_status rdp_display_control_parse_caps(const void* data,
 librdp_status rdp_display_control_make_single_monitor(rdp_display_control_monitor* monitor,
                                                       uint32_t width,
                                                       uint32_t height);
+librdp_status rdp_display_control_parse_monitor_layout(const void* data,
+                                                       size_t length,
+                                                       rdp_display_control_monitor* monitors,
+                                                       uint32_t monitor_capacity,
+                                                       uint32_t* monitor_count);
+librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* data,
+                                                                 size_t length,
+                                                                 rdp_display_control_monitor* monitors,
+                                                                 uint32_t monitor_capacity,
+                                                                 uint32_t* monitor_count,
+                                                                 const rdp_display_control_caps* caps);
 librdp_status rdp_display_control_write_monitor_layout(rdp_buffer* buffer,
                                                        const rdp_display_control_monitor* monitors,
                                                        uint32_t monitor_count);
