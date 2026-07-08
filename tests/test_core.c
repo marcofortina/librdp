@@ -42,6 +42,11 @@ typedef struct event_counter
     int channel_open;
     int channel_data;
     int channel_close;
+    int audio_output_formats;
+    int audio_output_data;
+    int audio_output_close;
+    int audio_input_formats;
+    int audio_input_open;
     int disconnected;
 } event_counter;
 
@@ -90,6 +95,21 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_CHANNEL_CLOSE:
             counter->channel_close++;
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+            counter->audio_output_formats++;
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+            counter->audio_output_data++;
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
+            counter->audio_output_close++;
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
+            counter->audio_input_formats++;
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+            counter->audio_input_open++;
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
@@ -991,6 +1011,13 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_channel_close(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_channel_close(session, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_channel_close(session, 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_audio_input_open_reply(NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_audio_input_open_reply(session, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_audio_input_send_data(NULL, "x", 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_audio_input_send_data(session, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_audio_input_send_data(session, "x", 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_audio_input_send_format_change(NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_audio_input_send_format_change(session, 0) == LIBRDP_STATUS_STATE);
     memset(&touch_contact, 0, sizeof(touch_contact));
     touch_contact.contact_id = 1;
     touch_contact.x = 100;

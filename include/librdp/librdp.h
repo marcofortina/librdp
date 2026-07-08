@@ -1,6 +1,7 @@
 #ifndef LIBRDP_H
 #define LIBRDP_H
 
+#include <librdp/audio.h>
 #include <librdp/channel.h>
 #include <librdp/clipboard.h>
 #include <librdp/error.h>

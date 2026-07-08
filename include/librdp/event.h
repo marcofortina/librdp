@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <librdp/audio.h>
 #include <librdp/channel.h>
 #include <librdp/clipboard.h>
 #include <librdp/error.h>
@@ -28,7 +29,12 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_CLIPBOARD_REQUEST = 10,
     LIBRDP_EVENT_CHANNEL_OPEN = 11,
     LIBRDP_EVENT_CHANNEL_DATA = 12,
-    LIBRDP_EVENT_CHANNEL_CLOSE = 13
+    LIBRDP_EVENT_CHANNEL_CLOSE = 13,
+    LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS = 14,
+    LIBRDP_EVENT_AUDIO_OUTPUT_DATA = 15,
+    LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE = 16,
+    LIBRDP_EVENT_AUDIO_INPUT_FORMATS = 17,
+    LIBRDP_EVENT_AUDIO_INPUT_OPEN = 18
 } librdp_event_type;
 
 typedef enum librdp_pointer_update_type
@@ -106,6 +112,37 @@ typedef struct librdp_channel_close_event
     size_t name_len;
 } librdp_channel_close_event;
 
+typedef struct librdp_audio_output_formats_event
+{
+    const librdp_audio_format* formats;
+    uint32_t count;
+    uint16_t version;
+} librdp_audio_output_formats_event;
+
+typedef struct librdp_audio_output_data_event
+{
+    uint16_t timestamp;
+    uint16_t format_no;
+    uint8_t block_no;
+    uint32_t audio_timestamp;
+    const uint8_t* data;
+    size_t data_len;
+} librdp_audio_output_data_event;
+
+typedef struct librdp_audio_input_formats_event
+{
+    const librdp_audio_format* formats;
+    uint32_t count;
+    uint32_t version;
+} librdp_audio_input_formats_event;
+
+typedef struct librdp_audio_input_open_event
+{
+    uint32_t frames_per_packet;
+    uint32_t initial_format;
+    librdp_audio_format format;
+} librdp_audio_input_open_event;
+
 typedef struct librdp_event
 {
     librdp_event_type type;
@@ -130,6 +167,10 @@ typedef struct librdp_event
         librdp_channel_open_event channel_open;
         librdp_channel_data_event channel_data;
         librdp_channel_close_event channel_close;
+        librdp_audio_output_formats_event audio_output_formats;
+        librdp_audio_output_data_event audio_output_data;
+        librdp_audio_input_formats_event audio_input_formats;
+        librdp_audio_input_open_event audio_input_open;
     } data;
 } librdp_event;
 
