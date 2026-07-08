@@ -2,6 +2,7 @@
 
 #include "common/stream.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1173,6 +1174,43 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
     region->quant_values_len = quant_values_len;
     region->progressive_quant_values_len = progressive_quant_values_len;
     region->tiles_len = (size_t)region->tile_data_size;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
+                                                         size_t length,
+                                                         rdp_graphics_rect16* rect)
+{
+    rdp_stream stream;
+    uint16_t x = 0;
+    uint16_t y = 0;
+    uint16_t width = 0;
+    uint16_t height = 0;
+    uint32_t right = 0;
+    uint32_t bottom = 0;
+
+    if (!data || !rect)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(rect, 0, sizeof(*rect));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u16_le(&stream, &x) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &y) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &height) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    right = (uint32_t)x + width;
+    bottom = (uint32_t)y + height;
+    if (right > UINT16_MAX || bottom > UINT16_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rect->left = x;
+    rect->top = y;
+    rect->right = (uint16_t)right;
+    rect->bottom = (uint16_t)bottom;
     return LIBRDP_STATUS_OK;
 }
 

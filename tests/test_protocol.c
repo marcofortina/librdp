@@ -720,6 +720,14 @@ static int test_path_security_license_channels(void)
         0x40, 0x00, 0x40, 0x00,
         0x11, 0x22, 0x33, 0x44, 0x55
     };
+    const uint8_t graphics_progressive_region_rect[] = {
+        0x80, 0x02, 0x20, 0x01,
+        0x40, 0x00, 0x20, 0x00
+    };
+    const uint8_t graphics_progressive_region_rect_overflow[] = {
+        0xff, 0xff, 0x00, 0x00,
+        0x02, 0x00, 0x01, 0x00
+    };
     const uint8_t graphics_surface_to_surface[] = {
         0x05, 0x00, 0x00, 0x00,
         0x1e, 0x00, 0x00, 0x00,
@@ -1084,6 +1092,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_progressive_tile_simple graphics_progressive_simple;
     rdp_graphics_progressive_tile_first graphics_progressive_first;
     rdp_graphics_progressive_tile_upgrade graphics_progressive_upgrade;
+    rdp_graphics_rect16 graphics_progressive_rect;
     rdp_graphics_progressive_stream graphics_progressive;
     rdp_clearcodec_stream clear_stream;
     rdp_clearcodec_composite_payload clear_payload;
@@ -2404,6 +2413,19 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_progressive_region.tile_count == 0 &&
            graphics_progressive_region.tile_data_size == 0 &&
            graphics_progressive_region.tiles_len == 0);
+    PCHECK(rdp_graphics_progressive_parse_region_rect(graphics_progressive_region_rect,
+                                                      sizeof(graphics_progressive_region_rect),
+                                                      &graphics_progressive_rect) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_rect.left == 640 &&
+           graphics_progressive_rect.top == 288 &&
+           graphics_progressive_rect.right == 704 &&
+           graphics_progressive_rect.bottom == 320);
+    PCHECK(rdp_graphics_progressive_parse_region_rect(graphics_progressive_region_rect_overflow,
+                                                      sizeof(graphics_progressive_region_rect_overflow),
+                                                      &graphics_progressive_rect) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_progressive_parse_region_rect(graphics_progressive_region_rect,
+                                                      sizeof(graphics_progressive_region_rect) - 1u,
+                                                      &graphics_progressive_rect) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_progressive_parse_tile_simple(graphics_progressive_stream + 69,
                                                       sizeof(graphics_progressive_stream) - 69u,
                                                       &graphics_progressive_simple) == LIBRDP_STATUS_OK);

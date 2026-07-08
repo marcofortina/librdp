@@ -408,6 +408,9 @@ librdp_status rdp_graphics_progressive_parse_frame_end(const void* data, size_t 
 librdp_status rdp_graphics_progressive_parse_region(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_region* region);
+librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
+                                                         size_t length,
+                                                         rdp_graphics_rect16* rect);
 librdp_status rdp_graphics_progressive_parse_tile_simple(
     const void* data,
     size_t length,
