@@ -56,6 +56,13 @@
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST 0xccc6u
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE 0xccc7u
 #define RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE 0x40u
+#define RDP_GRAPHICS_AVC420_MAX_REGION_RECTS 8192u
+#define RDP_GRAPHICS_AVC444_STREAM1_SIZE_MASK 0x3fffffffu
+#define RDP_GRAPHICS_AVC444_LC_SHIFT 30u
+#define RDP_GRAPHICS_AVC444_LC_BOTH 0u
+#define RDP_GRAPHICS_AVC444_LC_LUMA 1u
+#define RDP_GRAPHICS_AVC444_LC_CHROMA 2u
+#define RDP_GRAPHICS_AVC444_LC_INVALID 3u
 
 typedef struct rdp_graphics_header
 {
@@ -328,6 +335,41 @@ typedef struct rdp_graphics_progressive_stream
     uint8_t flags;
 } rdp_graphics_progressive_stream;
 
+typedef struct rdp_graphics_avc420_quant_quality
+{
+    uint8_t qp_val;
+    uint8_t qp;
+    uint8_t r;
+    uint8_t p;
+    uint8_t quality;
+} rdp_graphics_avc420_quant_quality;
+
+typedef struct rdp_graphics_avc420_metablock
+{
+    uint32_t rect_count;
+    const uint8_t* rects;
+    size_t rects_len;
+    const uint8_t* quant_quality;
+    size_t quant_quality_len;
+} rdp_graphics_avc420_metablock;
+
+typedef struct rdp_graphics_avc420_stream
+{
+    rdp_graphics_avc420_metablock meta;
+    const uint8_t* bitstream;
+    size_t bitstream_len;
+} rdp_graphics_avc420_stream;
+
+typedef struct rdp_graphics_avc444_stream
+{
+    uint32_t stream1_size;
+    uint8_t lc;
+    uint8_t has_stream1;
+    uint8_t has_stream2;
+    rdp_graphics_avc420_stream stream1;
+    rdp_graphics_avc420_stream stream2;
+} rdp_graphics_avc444_stream;
+
 void rdp_graphics_decompressor_init(rdp_graphics_decompressor* decompressor);
 void rdp_graphics_decompressor_reset(rdp_graphics_decompressor* decompressor);
 void rdp_graphics_decompressor_free(rdp_graphics_decompressor* decompressor);
@@ -425,5 +467,17 @@ librdp_status rdp_graphics_progressive_parse_tile_upgrade(
 librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_stream* stream);
+librdp_status rdp_graphics_parse_avc420_quant_quality(const void* data,
+                                                      size_t length,
+                                                      rdp_graphics_avc420_quant_quality* quant_quality);
+librdp_status rdp_graphics_parse_avc420_metablock(const void* data,
+                                                  size_t length,
+                                                  rdp_graphics_avc420_metablock* metablock);
+librdp_status rdp_graphics_parse_avc420_stream(const void* data,
+                                               size_t length,
+                                               rdp_graphics_avc420_stream* stream);
+librdp_status rdp_graphics_parse_avc444_stream(const void* data,
+                                               size_t length,
+                                               rdp_graphics_avc444_stream* stream);
 
 #endif

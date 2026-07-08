@@ -700,6 +700,76 @@ static int test_path_security_license_channels(void)
         0x03, 0x00, 0x00, 0x00,
         0xaa, 0xbb, 0xcc
     };
+    const uint8_t graphics_avc420_stream[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
+    const uint8_t graphics_avc420_bad_rect[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x05, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
+    const uint8_t graphics_avc420_empty_bits[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64
+    };
+    const uint8_t graphics_avc444_both[] = {
+        0x12, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x66
+    };
+    const uint8_t graphics_avc444_luma[] = {
+        0x12, 0x00, 0x00, 0x40,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
+    const uint8_t graphics_avc444_chroma[] = {
+        0x12, 0x00, 0x00, 0x80,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
+    const uint8_t graphics_avc444_invalid_lc[] = {
+        0x12, 0x00, 0x00, 0xc0,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
+    const uint8_t graphics_avc444_bad_split[] = {
+        0x05, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x65,
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x45, 0x64,
+        0x00, 0x00, 0x01, 0x66
+    };
     const uint8_t graphics_progressive_stream[] = {
         0xc3, 0xcc, 0x0a, 0x00, 0x00, 0x00,
         0x00, 0x40, 0x00, 0x01,
@@ -1163,6 +1233,10 @@ static int test_path_security_license_channels(void)
     rdp_graphics_progressive_tile_upgrade graphics_progressive_upgrade;
     rdp_graphics_rect16 graphics_progressive_rect;
     rdp_graphics_progressive_stream graphics_progressive;
+    rdp_graphics_avc420_quant_quality graphics_avc_quant;
+    rdp_graphics_avc420_metablock graphics_avc_meta;
+    rdp_graphics_avc420_stream graphics_avc420;
+    rdp_graphics_avc444_stream graphics_avc444;
     rdp_clearcodec_stream clear_stream;
     rdp_clearcodec_composite_payload clear_payload;
     rdp_clearcodec_subcodec clear_subcodec;
@@ -2812,6 +2886,65 @@ static int test_path_security_license_channels(void)
            graphics_wire2.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888 &&
            graphics_wire2.bitmap_data_length == 3 &&
            graphics_wire2.bitmap_data[2] == 0xcc);
+    PCHECK(rdp_graphics_parse_avc420_metablock(graphics_avc420_stream,
+                                               sizeof(graphics_avc420_stream) - 4u,
+                                               &graphics_avc_meta) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc_meta.rect_count == 1 &&
+           graphics_avc_meta.rects_len == 8 &&
+           graphics_avc_meta.quant_quality_len == 2);
+    PCHECK(rdp_graphics_parse_rect16(graphics_avc_meta.rects,
+                                     graphics_avc_meta.rects_len,
+                                     &graphics_rect) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_rect.left == 0 &&
+           graphics_rect.top == 0 &&
+           graphics_rect.right == 16 &&
+           graphics_rect.bottom == 16);
+    PCHECK(rdp_graphics_parse_avc420_quant_quality(graphics_avc_meta.quant_quality,
+                                                   graphics_avc_meta.quant_quality_len,
+                                                   &graphics_avc_quant) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc_quant.qp_val == 0x45 &&
+           graphics_avc_quant.qp == 5 &&
+           graphics_avc_quant.r == 1 &&
+           graphics_avc_quant.p == 0 &&
+           graphics_avc_quant.quality == 100);
+    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_stream,
+                                            sizeof(graphics_avc420_stream),
+                                            &graphics_avc420) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc420.meta.rect_count == 1 &&
+           graphics_avc420.bitstream_len == 4 &&
+           graphics_avc420.bitstream[3] == 0x65);
+    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_rect,
+                                            sizeof(graphics_avc420_bad_rect),
+                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_empty_bits,
+                                            sizeof(graphics_avc420_empty_bits),
+                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
+                                            sizeof(graphics_avc444_both),
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc444.lc == RDP_GRAPHICS_AVC444_LC_BOTH &&
+           graphics_avc444.stream1_size == sizeof(graphics_avc420_stream) &&
+           graphics_avc444.has_stream1 &&
+           graphics_avc444.has_stream2 &&
+           graphics_avc444.stream2.bitstream[3] == 0x66);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_luma,
+                                            sizeof(graphics_avc444_luma),
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc444.lc == RDP_GRAPHICS_AVC444_LC_LUMA &&
+           graphics_avc444.has_stream1 &&
+           !graphics_avc444.has_stream2);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_chroma,
+                                            sizeof(graphics_avc444_chroma),
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_avc444.lc == RDP_GRAPHICS_AVC444_LC_CHROMA &&
+           graphics_avc444.has_stream1 &&
+           !graphics_avc444.has_stream2);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_invalid_lc,
+                                            sizeof(graphics_avc444_invalid_lc),
+                                            &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_bad_split,
+                                            sizeof(graphics_avc444_bad_split),
+                                            &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_progressive_parse_block(graphics_progressive_stream,
                                                 sizeof(graphics_progressive_stream),
                                                 &graphics_progressive_block) == LIBRDP_STATUS_OK);

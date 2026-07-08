@@ -34,6 +34,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_progressive_tile_first progressive_first;
     rdp_graphics_progressive_tile_upgrade progressive_upgrade;
     rdp_graphics_progressive_stream progressive_stream;
+    rdp_graphics_avc420_quant_quality avc_quant;
+    rdp_graphics_avc420_metablock avc_meta;
+    rdp_graphics_avc420_stream avc420;
+    rdp_graphics_avc444_stream avc444;
     rdp_buffer output;
 
     rdp_graphics_decompressor_init(&decompressor);
@@ -67,6 +71,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_progressive_parse_tile_first(data, size, &progressive_first);
     (void)rdp_graphics_progressive_parse_tile_upgrade(data, size, &progressive_upgrade);
     (void)rdp_graphics_progressive_parse_stream(data, size, &progressive_stream);
+    (void)rdp_graphics_parse_avc420_quant_quality(data, size, &avc_quant);
+    (void)rdp_graphics_parse_avc420_metablock(data, size, &avc_meta);
+    (void)rdp_graphics_parse_avc420_stream(data, size, &avc420);
+    (void)rdp_graphics_parse_avc444_stream(data, size, &avc444);
     (void)rdp_graphics_decode_segmented_data(&decompressor, data, size, &output);
     output.length = 0;
     (void)rdp_graphics_write_default_caps_advertise(&output);
