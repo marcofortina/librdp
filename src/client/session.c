@@ -1002,6 +1002,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                         channel_id,
                         header.cmd_id,
                         header.pdu_length);
+        rdp_trace_hexdump("rdp.graphics.pdu", pdu, header.pdu_length);
         if (header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM)
         {
             rdp_graphics_caps_confirm confirm;
