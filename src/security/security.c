@@ -13,6 +13,7 @@
 
 #define RDP_INFO_MOUSE 0x00000001u
 #define RDP_INFO_DISABLE_CTRL_ALT_DEL 0x00000002u
+#define RDP_INFO_AUTOLOGON 0x00000008u
 #define RDP_INFO_UNICODE 0x00000010u
 #define RDP_INFO_MAXIMIZE_SHELL 0x00000020u
 #define RDP_INFO_ENABLE_WINDOWS_KEY 0x00000100u
@@ -378,14 +379,17 @@ librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_
     const size_t password_len = info ? rdp_ascii_len(info->password) : 0;
     const size_t shell_len = info ? rdp_ascii_len(info->alternate_shell) : 0;
     const size_t work_len = info ? rdp_ascii_len(info->working_dir) : 0;
-    const uint32_t flags = RDP_INFO_MOUSE | RDP_INFO_UNICODE | RDP_INFO_LOGON_ERRORS | RDP_INFO_MAXIMIZE_SHELL |
-                           RDP_INFO_ENABLE_WINDOWS_KEY | RDP_INFO_DISABLE_CTRL_ALT_DEL | RDP_INFO_MOUSE_HAS_WHEEL |
-                           RDP_INFO_FORCE_ENCRYPTED_CS_PDU;
+    uint32_t flags = RDP_INFO_MOUSE | RDP_INFO_UNICODE | RDP_INFO_LOGON_ERRORS | RDP_INFO_MAXIMIZE_SHELL |
+                     RDP_INFO_ENABLE_WINDOWS_KEY | RDP_INFO_DISABLE_CTRL_ALT_DEL | RDP_INFO_MOUSE_HAS_WHEEL |
+                     RDP_INFO_FORCE_ENCRYPTED_CS_PDU;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || domain_len > 0x7fffu || username_len > 0x7fffu || password_len > 0x7fffu ||
         shell_len > 0x7fffu || work_len > 0x7fffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (info && info->password)
+        flags |= RDP_INFO_AUTOLOGON;
 
     status = rdp_buffer_append_u32_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)

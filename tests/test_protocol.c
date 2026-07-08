@@ -1013,6 +1013,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer channel_packet;
     rdp_buffer dyn_response;
     rdp_client_info info;
+    rdp_client_info no_password_info;
     rdp_client_info_summary info_summary;
     rdp_capability_list confirm_caps;
     rdp_credssp_ts_request parsed_ts;
@@ -1623,6 +1624,14 @@ static int test_path_security_license_channels(void)
     PCHECK(info_summary.username_bytes == 8);
     PCHECK(info_summary.password_bytes == 12);
     PCHECK((info_summary.flags & 0x00000010u) != 0);
+    PCHECK((info_summary.flags & 0x00000008u) != 0);
+    security.length = 0;
+    no_password_info = info;
+    no_password_info.password = NULL;
+    PCHECK(rdp_security_write_client_info_pdu(&security, &no_password_info) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_parse_client_info_pdu(security.data, security.length, &info_summary) == LIBRDP_STATUS_OK);
+    PCHECK(info_summary.password_bytes == 0);
+    PCHECK((info_summary.flags & 0x00000008u) == 0);
     for (i = 0; i < sizeof(client_random); i++)
     {
         client_random[i] = (uint8_t)(i + 1u);
