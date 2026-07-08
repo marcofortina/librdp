@@ -843,10 +843,16 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_update_header bitmap_header;
     rdp_bitmap_rect bitmap_rect;
     int32_t rfx_coefficients[8];
+    int32_t rfx_component[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t rfx_y[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t rfx_cb[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t rfx_cr[RDP_RFX_TILE_COEFFICIENTS];
     size_t rfx_written = 0;
     rdp_rfx_component_quant rfx_quant;
+    rdp_rfx_component_quant rfx_decode_quant;
     rdp_rfx_progressive_quant rfx_progressive_quant;
     rdp_rfx_component_quant rfx_added_quant;
+    rdp_rfx_tile_pixels rfx_pixels;
     rdp_license_error_alert alert;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
@@ -1168,6 +1174,49 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_rfx_parse_component_quant(rfx_quant_values,
                                          sizeof(rfx_quant_values) - 1u,
                                          &rfx_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rfx_component[0] = 1;
+    rfx_component[1] = 2;
+    rfx_component[2] = -4;
+    PCHECK(rdp_rfx_differential_decode(rfx_component, 3) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_component[0] == 1 && rfx_component[1] == 3 && rfx_component[2] == -1);
+    memset(rfx_component, 0, sizeof(rfx_component));
+    memset(&rfx_decode_quant, 0, sizeof(rfx_decode_quant));
+    rfx_decode_quant.ll3 = 4;
+    rfx_decode_quant.hl3 = 1;
+    rfx_decode_quant.lh3 = 1;
+    rfx_decode_quant.hh3 = 1;
+    rfx_decode_quant.hl2 = 1;
+    rfx_decode_quant.lh2 = 1;
+    rfx_decode_quant.hh2 = 1;
+    rfx_decode_quant.hl1 = 3;
+    rfx_decode_quant.lh1 = 2;
+    rfx_decode_quant.hh1 = 1;
+    rfx_component[0] = 1;
+    rfx_component[1024] = 1;
+    rfx_component[4032] = 1;
+    PCHECK(rdp_rfx_inverse_quantize(rfx_component,
+                                    RDP_RFX_TILE_COEFFICIENTS,
+                                    &rfx_decode_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_component[0] == 4 && rfx_component[1024] == 2 && rfx_component[4032] == 8);
+    PCHECK(rdp_rfx_inverse_quantize(rfx_component,
+                                    RDP_RFX_TILE_COEFFICIENTS - 1u,
+                                    &rfx_decode_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(rfx_component, 0, sizeof(rfx_component));
+    PCHECK(rdp_rfx_inverse_dwt_2d(rfx_component, RDP_RFX_TILE_COEFFICIENTS) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_component[0] == 0 && rfx_component[RDP_RFX_TILE_COEFFICIENTS - 1u] == 0);
+    memset(rfx_y, 0, sizeof(rfx_y));
+    memset(rfx_cb, 0, sizeof(rfx_cb));
+    memset(rfx_cr, 0, sizeof(rfx_cr));
+    memset(&rfx_pixels, 0, sizeof(rfx_pixels));
+    PCHECK(rdp_rfx_ycbcr_to_bgra(rfx_y, rfx_cb, rfx_cr, rfx_pixels.bgra, 64u * 4u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rfx_pixels.bgra[0] == 128 && rfx_pixels.bgra[1] == 128 &&
+           rfx_pixels.bgra[2] == 128 && rfx_pixels.bgra[3] == 0xff);
+    rfx_y[0] = -4096;
+    PCHECK(rdp_rfx_ycbcr_to_bgra(rfx_y, rfx_cb, rfx_cr, rfx_pixels.bgra, 64u * 4u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rfx_pixels.bgra[0] == 0 && rfx_pixels.bgra[1] == 0 &&
+           rfx_pixels.bgra[2] == 0 && rfx_pixels.bgra[3] == 0xff);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==

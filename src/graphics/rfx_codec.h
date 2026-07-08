@@ -36,6 +36,12 @@ typedef struct rdp_rfx_progressive_quant
     rdp_rfx_component_quant cr;
 } rdp_rfx_progressive_quant;
 
+typedef struct rdp_rfx_tile_pixels
+{
+    uint8_t bgra[RDP_RFX_TILE_COEFFICIENTS * 4u];
+    size_t stride;
+} rdp_rfx_tile_pixels;
+
 librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,
                                   const void* data,
                                   size_t length,
@@ -51,5 +57,32 @@ librdp_status rdp_rfx_parse_progressive_quant(const void* data,
 librdp_status rdp_rfx_add_component_quant(const rdp_rfx_component_quant* base,
                                           const rdp_rfx_component_quant* delta,
                                           rdp_rfx_component_quant* output);
+librdp_status rdp_rfx_differential_decode(int32_t* coefficients, size_t coefficient_count);
+librdp_status rdp_rfx_inverse_quantize(int32_t* coefficients,
+                                       size_t coefficient_count,
+                                       const rdp_rfx_component_quant* quant);
+librdp_status rdp_rfx_inverse_dwt_2d(int32_t* coefficients, size_t coefficient_count);
+librdp_status rdp_rfx_ycbcr_to_bgra(const int32_t* y,
+                                    const int32_t* cb,
+                                    const int32_t* cr,
+                                    uint8_t* bgra,
+                                    size_t stride);
+librdp_status rdp_rfx_decode_component(rdp_rfx_rlgr_mode mode,
+                                       const void* data,
+                                       size_t length,
+                                       const rdp_rfx_component_quant* quant,
+                                       int32_t* coefficients,
+                                       size_t coefficient_count);
+librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
+                                  const void* y_data,
+                                  size_t y_len,
+                                  const void* cb_data,
+                                  size_t cb_len,
+                                  const void* cr_data,
+                                  size_t cr_len,
+                                  const rdp_rfx_component_quant* y_quant,
+                                  const rdp_rfx_component_quant* cb_quant,
+                                  const rdp_rfx_component_quant* cr_quant,
+                                  rdp_rfx_tile_pixels* pixels);
 
 #endif
