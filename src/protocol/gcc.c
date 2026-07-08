@@ -315,6 +315,8 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
         channel_count++;
     if (config->enable_clipboard)
         channel_count++;
+    if (config->enable_audio_output)
+        channel_count++;
 
     rdp_buffer_init(&payload);
     status = rdp_buffer_append_u32_le(&payload, channel_count);
@@ -333,6 +335,14 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
         status = rdp_buffer_append(&payload, name, sizeof(name));
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u32_le(&payload, 0xc0a00000u);
+    }
+    if (status == LIBRDP_STATUS_OK && config->enable_audio_output)
+    {
+        static const uint8_t name[8] = {'r', 'd', 'p', 's', 'n', 'd', 0, 0};
+
+        status = rdp_buffer_append(&payload, name, sizeof(name));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, 0xc0000000u);
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_CS_NETWORK, &payload);

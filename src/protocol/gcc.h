@@ -53,6 +53,7 @@ typedef struct rdp_gcc_client_config
     const char* client_name;
     uint8_t enable_dynamic_channels;
     uint8_t enable_clipboard;
+    uint8_t enable_audio_output;
 } rdp_gcc_client_config;
 
 typedef struct rdp_gcc_client_data_summary
