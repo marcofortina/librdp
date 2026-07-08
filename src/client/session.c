@@ -1946,7 +1946,6 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             if (status != LIBRDP_STATUS_OK)
                 break;
             rdp_session_graphics_surfaces_clear(session);
-            rdp_clearcodec_context_reset(&session->clearcodec);
             if (reset.width != librdp_surface_width(session->surface) ||
                 reset.height != librdp_surface_height(session->surface))
             {
