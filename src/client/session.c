@@ -4,6 +4,7 @@
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/graphics_pipeline.h"
+#include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
 #include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
@@ -46,6 +47,7 @@
 #define RDP_SESSION_POINTER_CACHE_SLOTS 128u
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
+#define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
 #define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
 
@@ -113,6 +115,12 @@ struct librdp_session
     uint32_t core_input_channel_id;
     uint8_t core_input_channel_id_bytes;
     uint8_t core_input_ready;
+    uint32_t input_channel_id;
+    uint8_t input_channel_id_bytes;
+    uint8_t input_channel_ready;
+    uint8_t input_channel_suspended;
+    uint32_t input_channel_protocol_version;
+    uint32_t input_channel_supported_features;
     uint32_t display_control_channel_id;
     uint8_t display_control_channel_id_bytes;
     uint8_t display_control_ready;
@@ -2748,6 +2756,45 @@ static librdp_status rdp_session_send_core_input_init(librdp_session* session)
     return status;
 }
 
+static librdp_status rdp_session_send_input_channel_ready(librdp_session* session,
+                                                          const rdp_input_channel_sc_ready* ready)
+{
+    rdp_buffer response;
+    uint32_t flags = 0;
+    uint32_t protocol_version = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !ready || session->input_channel_id_bytes == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    protocol_version = ready->protocol_version;
+    if (protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V101)
+        flags |= RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION;
+    if (protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
+        (ready->supported_features & RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0)
+        flags |= RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN;
+
+    rdp_buffer_init(&response);
+    status = rdp_input_channel_write_cs_ready(&response, flags, protocol_version, 10);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       session->input_channel_id,
+                                                       session->input_channel_id_bytes,
+                                                       response.data,
+                                                       response.length,
+                                                       "client.input_channel.ready");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.input_channel.ready",
+                        "dvc_channel_id=%u protocol_version=%u flags=%u max_contacts=%u",
+                        session->input_channel_id,
+                        protocol_version,
+                        flags,
+                        10u);
+    return status;
+}
+
 static librdp_status rdp_session_send_mouse_cursor_caps(librdp_session* session)
 {
     rdp_buffer caps;
@@ -3886,6 +3933,87 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                         response.selected_protocol_version,
                         response.protocol_version_max);
     }
+    else if (strcmp(entry->name, RDP_SESSION_INPUT_CHANNEL_NAME) == 0)
+    {
+        rdp_input_channel_header header;
+
+        status = rdp_input_channel_parse_header(data, data_len, &header);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "rdp.input_channel.pdu",
+                              "dvc_channel_id=%u event_id=%u pdu_len=%u",
+                              channel_id,
+                              header.event_id,
+                              header.pdu_length);
+        if (header.event_id == RDP_INPUT_CHANNEL_EVENT_SC_READY)
+        {
+            rdp_input_channel_sc_ready ready;
+
+            status = rdp_input_channel_parse_sc_ready(data, data_len, &ready);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            session->input_channel_protocol_version = ready.protocol_version;
+            session->input_channel_supported_features = ready.supported_features;
+            session->input_channel_suspended = 0;
+            status = rdp_session_send_input_channel_ready(session, &ready);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            session->input_channel_ready = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.input_channel.sc_ready",
+                            "dvc_channel_id=%u protocol_version=%u features=%u",
+                            channel_id,
+                            ready.protocol_version,
+                            ready.supported_features);
+        }
+        else if (header.event_id == RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT)
+        {
+            status = rdp_input_channel_parse_empty(data, data_len, RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            session->input_channel_suspended = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.input_channel.suspend",
+                            "dvc_channel_id=%u",
+                            channel_id);
+        }
+        else if (header.event_id == RDP_INPUT_CHANNEL_EVENT_RESUME_INPUT)
+        {
+            status = rdp_input_channel_parse_empty(data, data_len, RDP_INPUT_CHANNEL_EVENT_RESUME_INPUT);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            session->input_channel_suspended = 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.input_channel.resume",
+                            "dvc_channel_id=%u",
+                            channel_id);
+        }
+        else if (header.event_id == RDP_INPUT_CHANNEL_EVENT_DISMISS_HOVERING_TOUCH_CONTACT)
+        {
+            uint8_t contact_id = 0;
+
+            status = rdp_input_channel_parse_dismiss_hovering(data, data_len, &contact_id);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.input_channel.dismiss_hovering",
+                            "dvc_channel_id=%u contact_id=%u",
+                            channel_id,
+                            contact_id);
+        }
+        else
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.input_channel.server_event",
+                                  "dvc_channel_id=%u event_id=%u payload_len=%u",
+                                  channel_id,
+                                  header.event_id,
+                                  (unsigned)data_len);
+        }
+    }
     else if (strcmp(entry->name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0)
     {
         status = rdp_session_handle_mouse_cursor_message(session, channel_id, data, data_len);
@@ -3993,6 +4121,20 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             status = rdp_session_send_core_input_init(session);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_INPUT_CHANNEL_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_INPUT_CHANNEL_NAME, request.name_len) == 0)
+        {
+            session->input_channel_id = request.channel_id;
+            session->input_channel_id_bytes = request.channel_id_bytes;
+            session->input_channel_ready = 0;
+            session->input_channel_suspended = 0;
+            session->input_channel_protocol_version = 0;
+            session->input_channel_supported_features = 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.input_channel.channel",
+                            "dvc_channel_id=%u",
+                            request.channel_id);
         }
         else if (request.name_len == sizeof(RDP_SESSION_MOUSE_CURSOR_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_MOUSE_CURSOR_NAME, request.name_len) == 0)
@@ -4177,6 +4319,15 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->core_input_channel_id = 0;
                 session->core_input_channel_id_bytes = 0;
                 session->core_input_ready = 0;
+            }
+            if (entry->channel_id == session->input_channel_id)
+            {
+                session->input_channel_id = 0;
+                session->input_channel_id_bytes = 0;
+                session->input_channel_ready = 0;
+                session->input_channel_suspended = 0;
+                session->input_channel_protocol_version = 0;
+                session->input_channel_supported_features = 0;
             }
             if (entry->channel_id == session->mouse_cursor_channel_id)
             {
@@ -4751,6 +4902,12 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;
+    session->input_channel_id = 0;
+    session->input_channel_id_bytes = 0;
+    session->input_channel_ready = 0;
+    session->input_channel_suspended = 0;
+    session->input_channel_protocol_version = 0;
+    session->input_channel_supported_features = 0;
     session->display_control_channel_id = 0;
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
@@ -5756,6 +5913,12 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;
+    session->input_channel_id = 0;
+    session->input_channel_id_bytes = 0;
+    session->input_channel_ready = 0;
+    session->input_channel_suspended = 0;
+    session->input_channel_protocol_version = 0;
+    session->input_channel_supported_features = 0;
     session->display_control_channel_id = 0;
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
