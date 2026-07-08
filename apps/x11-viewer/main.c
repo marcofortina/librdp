@@ -96,7 +96,6 @@ static uint64_t x11_trace_hash_bgra(const uint8_t* pixels, uint32_t width, uint3
 
     hash = x11_trace_hash_seed(hash, width);
     hash = x11_trace_hash_seed(hash, height);
-    hash = x11_trace_hash_seed(hash, stride);
     pixel_count = (uint64_t)width * (uint64_t)height;
     samples = pixel_count < 8192u ? pixel_count : 8192u;
     if (samples == 0)

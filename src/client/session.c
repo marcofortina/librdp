@@ -1250,7 +1250,6 @@ static uint64_t rdp_session_trace_hash_bgra(const uint8_t* pixels,
 
     hash = rdp_session_trace_hash_seed(hash, width);
     hash = rdp_session_trace_hash_seed(hash, height);
-    hash = rdp_session_trace_hash_seed(hash, stride);
     pixel_count = (uint64_t)width * (uint64_t)height;
     samples = pixel_count < 8192u ? pixel_count : 8192u;
     if (samples == 0)
