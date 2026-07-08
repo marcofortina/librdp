@@ -4138,6 +4138,15 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST_COMPRESSED ||
+             header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.compressed_unsupported",
+                        "command=%u",
+                        header.command);
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
     else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
     {
         rdp_dynamic_channel_close_pdu close_pdu;
@@ -4197,12 +4206,54 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
     }
     else
     {
-        rdp_trace_event_level(RDP_TRACE_CLIENT,
-                              RDP_TRACE_LEVEL_DEBUG,
-                              "client.drdynvc.data",
-                              "command=%u payload_len=%u",
-                              header.command,
-                              (unsigned)channel_packet->payload_len);
+        if (header.command == RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST)
+        {
+            rdp_dynamic_channel_soft_sync_request request;
+            rdp_buffer response;
+
+            rdp_buffer_init(&response);
+            status = rdp_dynamic_channel_parse_soft_sync_request(channel_packet->payload,
+                                                                 channel_packet->payload_len,
+                                                                 &request);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_dynamic_channel_write_soft_sync_response(&response, NULL, 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_write_channel_pdu(session,
+                                                       session->dynamic_channel_id,
+                                                       &response,
+                                                       "client.drdynvc.soft_sync");
+            rdp_buffer_free(&response);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.drdynvc.soft_sync",
+                            "flags=%u tunnel_count=%u",
+                            request.flags,
+                            request.tunnel_count);
+        }
+        else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_RESPONSE)
+        {
+            rdp_dynamic_channel_soft_sync_response response;
+
+            status = rdp_dynamic_channel_parse_soft_sync_response(channel_packet->payload,
+                                                                  channel_packet->payload_len,
+                                                                  &response);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.drdynvc.soft_sync_response",
+                            "tunnel_count=%u",
+                            response.tunnel_count);
+        }
+        else
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.data",
+                                  "command=%u payload_len=%u",
+                                  header.command,
+                                  (unsigned)channel_packet->payload_len);
+        }
     }
 
     return status;
