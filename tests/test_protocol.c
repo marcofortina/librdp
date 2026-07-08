@@ -423,6 +423,23 @@ static int test_path_security_license_channels(void)
         0x01, 0x00,
         0x00, 0x7f, 0x00, 0x00
     };
+    const uint8_t pointer_slow_large[] = {
+        0x09, 0x00,
+        0x20, 0x00,
+        0x05, 0x00,
+        0x01, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
     const uint8_t license[] = {
         0xff, 0x03, 0x12, 0x00,
         1, 0, 0, 0,
@@ -1073,6 +1090,7 @@ static int test_path_security_license_channels(void)
         RDP_CAPABILITY_TYPE_ORDER,
         RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2,
         RDP_CAPABILITY_TYPE_POINTER,
+        RDP_CAPABILITY_TYPE_LARGE_POINTER,
         RDP_CAPABILITY_TYPE_INPUT,
         RDP_CAPABILITY_TYPE_BRUSH,
         RDP_CAPABILITY_TYPE_GLYPH_CACHE,
@@ -1085,7 +1103,7 @@ static int test_path_security_license_channels(void)
         RDP_CAPABILITY_TYPE_ACTIVATION
     };
     const uint16_t expected_confirm_lengths[] = {
-        24, 28, 88, 40, 10, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12
+        24, 28, 88, 40, 10, 6, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12
     };
     const uint8_t font_map_payload[] = {1, 0, 2, 0, 3, 0, 4, 0};
     const uint8_t set_error_info_payload[] = {0x34, 0x12, 0, 0};
@@ -1205,6 +1223,14 @@ static int test_path_security_license_channels(void)
                                       sizeof(pointer_slow_system_default),
                                       &pointer_update) == LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_DEFAULT);
+    PCHECK(rdp_pointer_parse_slowpath(pointer_slow_large,
+                                      sizeof(pointer_slow_large),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.cache_index == 5 &&
+           pointer_update.width == 2 &&
+           pointer_update.height == 2 &&
+           pointer_update.xor_bpp == 32);
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);
@@ -1519,7 +1545,7 @@ static int test_path_security_license_channels(void)
                                   confirm_caps_len,
                                   &confirm_caps) == LIBRDP_STATUS_OK);
     PCHECK(confirm_caps.count == sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]));
-    PCHECK(confirm_caps_len == 410);
+    PCHECK(confirm_caps_len == 416);
     for (i = 0; i < sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]); i++)
     {
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
@@ -1531,8 +1557,9 @@ static int test_path_security_license_channels(void)
            confirm_caps.sets[1].data[9] == 0x03 && confirm_caps.sets[1].data[10] == 0x58 &&
            confirm_caps.sets[1].data[11] == 0x02);
     PCHECK(confirm_caps.sets[2].data[30] == 0x2a && confirm_caps.sets[2].data[31] == 0x00);
-    PCHECK(confirm_caps.sets[5].data[0] == 0x15 && confirm_caps.sets[5].data[1] == 0x01 &&
-           confirm_caps.sets[5].data[4] == 0x09 && confirm_caps.sets[5].data[5] == 0x04);
+    PCHECK(confirm_caps.sets[5].data[0] == 1 && confirm_caps.sets[5].data[1] == 0);
+    PCHECK(confirm_caps.sets[6].data[0] == 0x15 && confirm_caps.sets[6].data[1] == 0x01 &&
+           confirm_caps.sets[6].data[4] == 0x09 && confirm_caps.sets[6].data[5] == 0x04);
     PCHECK(rdp_slowpath_write_client_synchronize(&client_sync, 0x12345678u, 1004) == LIBRDP_STATUS_OK);
     PCHECK(rdp_slowpath_parse_data_pdu(client_sync.data, client_sync.length, &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(data_pdu.share_id == 0x12345678u &&

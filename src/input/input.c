@@ -27,9 +27,12 @@ librdp_status rdp_input_make_pointer_flags(const librdp_mouse_event* event, uint
     if (!event || !flags)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    *flags = rdp_input_mouse_uses_extended(event) ? 0x0000u : 0x0800u;
+    *flags = 0;
     if (event->state == LIBRDP_MOUSE_MOVED)
+    {
+        *flags = 0x0800u;
         return LIBRDP_STATUS_OK;
+    }
 
     switch (event->button)
     {
@@ -61,7 +64,7 @@ librdp_status rdp_input_make_pointer_flags(const librdp_mouse_event* event, uint
             *flags = 0x0002u;
             break;
         case LIBRDP_MOUSE_BUTTON_NONE:
-            break;
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
         default:
             return LIBRDP_STATUS_INVALID_ARGUMENT;
     }

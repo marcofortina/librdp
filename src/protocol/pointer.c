@@ -192,6 +192,13 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             return rdp_pointer_parse_color_attributes(&stream, bpp, 0, update);
         }
+        case RDP_POINTER_MESSAGE_TYPE_LARGE:
+        {
+            uint16_t bpp = 0;
+            if (rdp_stream_read_u16_le(&stream, &bpp) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            return rdp_pointer_parse_color_attributes(&stream, bpp, 1, update);
+        }
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }

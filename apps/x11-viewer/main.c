@@ -251,13 +251,38 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
     }
 }
 
-static uint16_t clamp_coord(int value)
+static uint16_t clamp_u16_coord(int value)
 {
     if (value <= 0)
         return 0;
     if (value > UINT16_MAX)
         return UINT16_MAX;
     return (uint16_t)value;
+}
+
+static uint16_t clamp_surface_coord(x11_app* app, int value, int y_axis)
+{
+    const librdp_surface* surface = NULL;
+    uint32_t limit = 0;
+
+    if (value <= 0)
+        return 0;
+    if (!app || !app->session)
+        return clamp_u16_coord(value);
+
+    surface = librdp_session_get_surface(app->session);
+    if (!surface)
+        return clamp_u16_coord(value);
+
+    limit = y_axis ? librdp_surface_height(surface) : librdp_surface_width(surface);
+    if (limit == 0)
+        return 0;
+    if ((uint32_t)value >= limit)
+    {
+        uint32_t clipped = limit - 1u;
+        return clipped > UINT16_MAX ? UINT16_MAX : (uint16_t)clipped;
+    }
+    return clamp_u16_coord(value);
 }
 
 static void set_window_identity(x11_app* app)
@@ -1006,8 +1031,8 @@ static void handle_button(x11_app* app, XButtonEvent* button, librdp_mouse_state
         (button->button == Button4 || button->button == Button5 || button->button == 6 || button->button == 7))
         return;
 
-    event.x = clamp_coord(button->x);
-    event.y = clamp_coord(button->y);
+    event.x = clamp_surface_coord(app, button->x, 0);
+    event.y = clamp_surface_coord(app, button->y, 1);
     event.state = state;
 
     switch (button->button)
@@ -1066,8 +1091,8 @@ static void handle_motion(x11_app* app, XMotionEvent* motion)
     }
     app->pointer_inside = 1;
     maybe_grab_keyboard(app, motion->time);
-    event.x = clamp_coord(motion->x);
-    event.y = clamp_coord(motion->y);
+    event.x = clamp_surface_coord(app, motion->x, 0);
+    event.y = clamp_surface_coord(app, motion->y, 1);
     event.button = LIBRDP_MOUSE_BUTTON_NONE;
     event.state = LIBRDP_MOUSE_MOVED;
     (void)librdp_session_send_mouse(app->session, &event);

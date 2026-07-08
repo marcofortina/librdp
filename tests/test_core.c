@@ -832,7 +832,13 @@ static int test_settings_surface_input_session(void)
     key.flags = 0;
     key.state = LIBRDP_KEY_RELEASED;
     CHECK(rdp_input_make_keyboard_flags(&key, &flags) == LIBRDP_STATUS_OK && flags == 0x8000u);
-    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && (flags & 0x9000u) == 0x9000u);
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x9000u);
+    mouse.state = LIBRDP_MOUSE_RELEASED;
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x1000u);
+    mouse.state = LIBRDP_MOUSE_MOVED;
+    mouse.button = LIBRDP_MOUSE_BUTTON_NONE;
+    CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x0800u);
+    mouse.state = LIBRDP_MOUSE_PRESSED;
     mouse.button = LIBRDP_MOUSE_BUTTON_WHEEL_DOWN;
     CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x0388u);
     mouse.button = LIBRDP_MOUSE_BUTTON_WHEEL_LEFT;

@@ -30,7 +30,7 @@ static uint16_t rdp_slowpath_base_type(uint16_t pdu_type)
     return (uint16_t)(pdu_type & 0x000fu);
 }
 
-#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 15u
+#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 16u
 
 static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
 {
@@ -239,6 +239,18 @@ static librdp_status rdp_slowpath_write_pointer_capability(rdp_buffer* buffer)
     status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_POINTER, 10);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_append_u16s(buffer, fields, sizeof(fields) / sizeof(fields[0]));
+    return status;
+}
+
+static librdp_status rdp_slowpath_write_large_pointer_capability(rdp_buffer* buffer)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_LARGE_POINTER, 6);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 1);
     return status;
 }
 
@@ -470,6 +482,8 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
         status = rdp_slowpath_write_bitmap_cache_v2_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_pointer_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_large_pointer_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_input_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
