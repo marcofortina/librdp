@@ -847,6 +847,7 @@ static int test_path_security_license_channels(void)
     int32_t rfx_y[RDP_RFX_TILE_COEFFICIENTS];
     int32_t rfx_cb[RDP_RFX_TILE_COEFFICIENTS];
     int32_t rfx_cr[RDP_RFX_TILE_COEFFICIENTS];
+    uint8_t rfx_zero_rlgr[4];
     size_t rfx_written = 0;
     rdp_rfx_component_quant rfx_quant;
     rdp_rfx_component_quant rfx_decode_quant;
@@ -1217,6 +1218,50 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_OK);
     PCHECK(rfx_pixels.bgra[0] == 0 && rfx_pixels.bgra[1] == 0 &&
            rfx_pixels.bgra[2] == 0 && rfx_pixels.bgra[3] == 0xff);
+    rfx_zero_rlgr[0] = 0x00;
+    rfx_zero_rlgr[1] = 0x00;
+    rfx_zero_rlgr[2] = 0x08;
+    rfx_zero_rlgr[3] = 0x08;
+    memset(&rfx_decode_quant, 0, sizeof(rfx_decode_quant));
+    rfx_decode_quant.ll3 = 1;
+    rfx_decode_quant.hl3 = 1;
+    rfx_decode_quant.lh3 = 1;
+    rfx_decode_quant.hh3 = 1;
+    rfx_decode_quant.hl2 = 1;
+    rfx_decode_quant.lh2 = 1;
+    rfx_decode_quant.hh2 = 1;
+    rfx_decode_quant.hl1 = 1;
+    rfx_decode_quant.lh1 = 1;
+    rfx_decode_quant.hh1 = 1;
+    PCHECK(rdp_rfx_decode_progressive_tile(rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           &rfx_decode_quant,
+                                           &rfx_decode_quant,
+                                           &rfx_decode_quant,
+                                           0,
+                                           &rfx_pixels) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_pixels.stride == 64u * 4u &&
+           rfx_pixels.bgra[0] == 128 &&
+           rfx_pixels.bgra[1] == 128 &&
+           rfx_pixels.bgra[2] == 128 &&
+           rfx_pixels.bgra[3] == 0xff);
+    PCHECK(rdp_rfx_decode_progressive_tile(rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           rfx_zero_rlgr,
+                                           sizeof(rfx_zero_rlgr),
+                                           &rfx_decode_quant,
+                                           &rfx_decode_quant,
+                                           &rfx_decode_quant,
+                                           1,
+                                           &rfx_pixels) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_pixels.bgra[0] == 128 &&
+           rfx_pixels.bgra[(63u * 64u * 4u) + (63u * 4u)] == 128);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==

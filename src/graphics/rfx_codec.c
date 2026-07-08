@@ -364,6 +364,243 @@ librdp_status rdp_rfx_inverse_dwt_2d(int32_t* coefficients, size_t coefficient_c
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_rfx_extrapolate_idwt_x(const int32_t* low,
+                                       size_t low_step,
+                                       const int32_t* high,
+                                       size_t high_step,
+                                       int32_t* dest,
+                                       size_t dest_step,
+                                       size_t low_count,
+                                       size_t high_count,
+                                       size_t row_count)
+{
+    size_t row = 0;
+
+    for (row = 0; row < row_count; row++)
+    {
+        const int32_t* low_pixel = low;
+        const int32_t* high_pixel = high;
+        int32_t* out = dest;
+        int32_t high0 = *high_pixel++;
+        int32_t low0 = *low_pixel++;
+        int32_t even0 = rdp_rfx_clamp_i32((int64_t)low0 - high0);
+        int32_t even2 = even0;
+        size_t column = 0;
+
+        for (column = 0; column + 1u < high_count; column++)
+        {
+            int32_t high1 = *high_pixel++;
+
+            low0 = *low_pixel++;
+            even2 = rdp_rfx_clamp_i32((int64_t)low0 - (((int64_t)high0 + high1) / 2));
+            out[0] = even0;
+            out[1] = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+            out += 2u;
+            even0 = even2;
+            high0 = high1;
+        }
+
+        if (low_count <= high_count + 1u)
+        {
+            if (low_count <= high_count)
+            {
+                out[0] = even2;
+                out[1] = rdp_rfx_clamp_i32((int64_t)even2 + ((int64_t)high0 * 2));
+            }
+            else
+            {
+                low0 = *low_pixel;
+                even0 = rdp_rfx_clamp_i32((int64_t)low0 - high0);
+                out[0] = even2;
+                out[1] = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+                out[2] = even0;
+            }
+        }
+        else
+        {
+            low0 = *low_pixel++;
+            even0 = rdp_rfx_clamp_i32((int64_t)low0 - ((int64_t)high0 / 2));
+            out[0] = even2;
+            out[1] = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+            out[2] = even0;
+            low0 = *low_pixel;
+            out[3] = rdp_rfx_clamp_i32(((int64_t)even0 + low0) / 2);
+        }
+
+        low += low_step;
+        high += high_step;
+        dest += dest_step;
+    }
+}
+
+static void rdp_rfx_extrapolate_idwt_y(const int32_t* low,
+                                       size_t low_step,
+                                       const int32_t* high,
+                                       size_t high_step,
+                                       int32_t* dest,
+                                       size_t dest_step,
+                                       size_t low_count,
+                                       size_t high_count,
+                                       size_t column_count)
+{
+    size_t column = 0;
+
+    for (column = 0; column < column_count; column++)
+    {
+        const int32_t* low_pixel = low;
+        const int32_t* high_pixel = high;
+        int32_t* out = dest;
+        int32_t high0 = *high_pixel;
+        int32_t low0 = *low_pixel;
+        int32_t even0 = rdp_rfx_clamp_i32((int64_t)low0 - high0);
+        int32_t even2 = even0;
+        size_t row = 0;
+
+        high_pixel += high_step;
+        low_pixel += low_step;
+        for (row = 0; row + 1u < high_count; row++)
+        {
+            int32_t high1 = *high_pixel;
+
+            high_pixel += high_step;
+            low0 = *low_pixel;
+            low_pixel += low_step;
+            even2 = rdp_rfx_clamp_i32((int64_t)low0 - (((int64_t)high0 + high1) / 2));
+            *out = even0;
+            out += dest_step;
+            *out = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+            out += dest_step;
+            even0 = even2;
+            high0 = high1;
+        }
+
+        if (low_count <= high_count + 1u)
+        {
+            if (low_count <= high_count)
+            {
+                *out = even2;
+                out += dest_step;
+                *out = rdp_rfx_clamp_i32((int64_t)even2 + ((int64_t)high0 * 2));
+            }
+            else
+            {
+                low0 = *low_pixel;
+                even0 = rdp_rfx_clamp_i32((int64_t)low0 - high0);
+                *out = even2;
+                out += dest_step;
+                *out = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+                out += dest_step;
+                *out = even0;
+            }
+        }
+        else
+        {
+            low0 = *low_pixel;
+            low_pixel += low_step;
+            even0 = rdp_rfx_clamp_i32((int64_t)low0 - ((int64_t)high0 / 2));
+            *out = even2;
+            out += dest_step;
+            *out = rdp_rfx_clamp_i32((((int64_t)even0 + even2) / 2) + ((int64_t)high0 * 2));
+            out += dest_step;
+            *out = even0;
+            out += dest_step;
+            low0 = *low_pixel;
+            *out = rdp_rfx_clamp_i32(((int64_t)even0 + low0) / 2);
+        }
+
+        low++;
+        high++;
+        dest++;
+    }
+}
+
+static size_t rdp_rfx_extrapolate_low_count(size_t level)
+{
+    return (64u >> level) + 1u;
+}
+
+static size_t rdp_rfx_extrapolate_high_count(size_t level)
+{
+    if (level == 1u)
+        return (64u >> 1u) - 1u;
+    return (64u + (1u << (level - 1u))) >> level;
+}
+
+static void rdp_rfx_inverse_dwt_extrapolated_block(int32_t* coefficients, int32_t* work, size_t level)
+{
+    size_t low_count = rdp_rfx_extrapolate_low_count(level);
+    size_t high_count = rdp_rfx_extrapolate_high_count(level);
+    size_t output_step = low_count + high_count;
+    size_t offset = 0;
+    const int32_t* hl = coefficients;
+    const int32_t* lh = NULL;
+    const int32_t* hh = NULL;
+    int32_t* ll = NULL;
+    int32_t* low = work;
+    int32_t* high = work + (low_count * output_step);
+
+    offset += high_count * low_count;
+    lh = coefficients + offset;
+    offset += low_count * high_count;
+    hh = coefficients + offset;
+    offset += high_count * high_count;
+    ll = coefficients + offset;
+
+    rdp_rfx_extrapolate_idwt_x(ll, low_count, hl, high_count, low, output_step, low_count, high_count, low_count);
+    rdp_rfx_extrapolate_idwt_x(lh, low_count, hh, high_count, high, output_step, low_count, high_count, high_count);
+    rdp_rfx_extrapolate_idwt_y(low,
+                               output_step,
+                               high,
+                               output_step,
+                               coefficients,
+                               output_step,
+                               low_count,
+                               high_count,
+                               output_step);
+}
+
+static librdp_status rdp_rfx_inverse_quantize_extrapolated(int32_t* coefficients,
+                                                          size_t coefficient_count,
+                                                          const rdp_rfx_component_quant* quant)
+{
+    if (!coefficients || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (coefficient_count != RDP_RFX_TILE_COEFFICIENTS || !rdp_rfx_component_quant_in_range(quant, 15))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (quant->ll3 == 0 || quant->hl3 == 0 || quant->lh3 == 0 || quant->hh3 == 0 ||
+        quant->hl2 == 0 || quant->lh2 == 0 || quant->hh2 == 0 ||
+        quant->hl1 == 0 || quant->lh1 == 0 || quant->hh1 == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (rdp_rfx_shift_band(coefficients, 0u, 1023u, quant->hl1) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 1023u, 1023u, quant->lh1) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 2046u, 961u, quant->hh1) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3007u, 272u, quant->hl2) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3279u, 272u, quant->lh2) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3551u, 256u, quant->hh2) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3807u, 72u, quant->hl3) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3879u, 72u, quant->lh3) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 3951u, 64u, quant->hh3) != LIBRDP_STATUS_OK ||
+        rdp_rfx_shift_band(coefficients, 4015u, 81u, quant->ll3) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_inverse_dwt_2d_extrapolated(int32_t* coefficients, size_t coefficient_count)
+{
+    int32_t work[RDP_RFX_TILE_COEFFICIENTS];
+
+    if (!coefficients)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (coefficient_count != RDP_RFX_TILE_COEFFICIENTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(work, 0, sizeof(work));
+    rdp_rfx_inverse_dwt_extrapolated_block(coefficients + 3807u, work, 3u);
+    rdp_rfx_inverse_dwt_extrapolated_block(coefficients + 3007u, work, 2u);
+    rdp_rfx_inverse_dwt_extrapolated_block(coefficients, work, 1u);
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_rfx_ycbcr_to_bgra(const int32_t* y,
                                     const int32_t* cb,
                                     const int32_t* cr,
@@ -465,6 +702,89 @@ librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
                                           cr_quant,
                                           cr_coefficients,
                                           RDP_RFX_TILE_COEFFICIENTS);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        pixels->stride = 64u * 4u;
+        status = rdp_rfx_ycbcr_to_bgra(y_coefficients,
+                                       cb_coefficients,
+                                       cr_coefficients,
+                                       pixels->bgra,
+                                       pixels->stride);
+    }
+    return status;
+}
+
+librdp_status rdp_rfx_decode_progressive_component(const void* data,
+                                                   size_t length,
+                                                   const rdp_rfx_component_quant* quant,
+                                                   int extrapolate,
+                                                   int32_t* coefficients,
+                                                   size_t coefficient_count)
+{
+    size_t written = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !quant || !coefficients)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (coefficient_count != RDP_RFX_TILE_COEFFICIENTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_rfx_rlgr_decode(RDP_RFX_RLGR1, data, length, coefficients, coefficient_count, &written);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (written != coefficient_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = extrapolate ? rdp_rfx_differential_decode(coefficients + 4015u, 81u)
+                         : rdp_rfx_differential_decode(coefficients + 4032u, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = extrapolate ? rdp_rfx_inverse_quantize_extrapolated(coefficients, coefficient_count, quant)
+                             : rdp_rfx_inverse_quantize(coefficients, coefficient_count, quant);
+    if (status == LIBRDP_STATUS_OK)
+        status = extrapolate ? rdp_rfx_inverse_dwt_2d_extrapolated(coefficients, coefficient_count)
+                             : rdp_rfx_inverse_dwt_2d(coefficients, coefficient_count);
+    return status;
+}
+
+librdp_status rdp_rfx_decode_progressive_tile(const void* y_data,
+                                              size_t y_len,
+                                              const void* cb_data,
+                                              size_t cb_len,
+                                              const void* cr_data,
+                                              size_t cr_len,
+                                              const rdp_rfx_component_quant* y_quant,
+                                              const rdp_rfx_component_quant* cb_quant,
+                                              const rdp_rfx_component_quant* cr_quant,
+                                              int extrapolate,
+                                              rdp_rfx_tile_pixels* pixels)
+{
+    int32_t y_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t cb_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t cr_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!y_data || !cb_data || !cr_data || !y_quant || !cb_quant || !cr_quant || !pixels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(pixels, 0, sizeof(*pixels));
+    status = rdp_rfx_decode_progressive_component(y_data,
+                                                  y_len,
+                                                  y_quant,
+                                                  extrapolate,
+                                                  y_coefficients,
+                                                  RDP_RFX_TILE_COEFFICIENTS);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_decode_progressive_component(cb_data,
+                                                      cb_len,
+                                                      cb_quant,
+                                                      extrapolate,
+                                                      cb_coefficients,
+                                                      RDP_RFX_TILE_COEFFICIENTS);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_decode_progressive_component(cr_data,
+                                                      cr_len,
+                                                      cr_quant,
+                                                      extrapolate,
+                                                      cr_coefficients,
+                                                      RDP_RFX_TILE_COEFFICIENTS);
     if (status == LIBRDP_STATUS_OK)
     {
         pixels->stride = 64u * 4u;

@@ -84,5 +84,22 @@ librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
                                   const rdp_rfx_component_quant* cb_quant,
                                   const rdp_rfx_component_quant* cr_quant,
                                   rdp_rfx_tile_pixels* pixels);
+librdp_status rdp_rfx_decode_progressive_component(const void* data,
+                                                   size_t length,
+                                                   const rdp_rfx_component_quant* quant,
+                                                   int extrapolate,
+                                                   int32_t* coefficients,
+                                                   size_t coefficient_count);
+librdp_status rdp_rfx_decode_progressive_tile(const void* y_data,
+                                              size_t y_len,
+                                              const void* cb_data,
+                                              size_t cb_len,
+                                              const void* cr_data,
+                                              size_t cr_len,
+                                              const rdp_rfx_component_quant* y_quant,
+                                              const rdp_rfx_component_quant* cb_quant,
+                                              const rdp_rfx_component_quant* cr_quant,
+                                              int extrapolate,
+                                              rdp_rfx_tile_pixels* pixels);
 
 #endif
