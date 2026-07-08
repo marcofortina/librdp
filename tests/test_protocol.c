@@ -2106,7 +2106,10 @@ static int test_path_security_license_channels(void)
                                         2,
                                         2,
                                         &clear_pixels,
-                                        &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.length == 16 &&
+           clear_pixels.data[0] == 0 &&
+           clear_pixels.data[8] == 0);
     clear_pixels.length = 0;
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_glyph_store_bitmap,

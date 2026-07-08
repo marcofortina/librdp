@@ -226,6 +226,10 @@ static void rdp_clearcodec_fill_vbar(uint8_t* vbar,
 {
     uint8_t y = 0;
 
+    if (y_on > height)
+        y_on = height;
+    if (short_count > height - y_on)
+        short_count = (uint8_t)(height - y_on);
     for (y = 0; y < height; y++)
     {
         uint8_t* pixel = vbar + ((size_t)y * 4u);
@@ -245,6 +249,18 @@ static void rdp_clearcodec_fill_vbar(uint8_t* vbar,
         pixel[2] = source[2];
         pixel[3] = 0xffu;
     }
+}
+
+static void rdp_clearcodec_normalize_vbar(uint8_t* vbar, uint8_t* length, uint8_t height)
+{
+    uint8_t old_length = 0;
+
+    if (!vbar || !length)
+        return;
+    old_length = *length;
+    if (old_length < height)
+        memset(vbar + ((size_t)old_length * 4u), 0, (size_t)(height - old_length) * 4u);
+    *length = height;
 }
 
 static void rdp_clearcodec_copy_vbar_to_pixels(const uint8_t* vbar,
@@ -326,7 +342,9 @@ static librdp_status rdp_clearcodec_decode_band_vbar(rdp_clearcodec_context* con
         uint16_t index = (uint16_t)(header & 0x7fffu);
 
         if (context->vbar_lengths[index] != band_height)
-            return LIBRDP_STATUS_UNSUPPORTED;
+            rdp_clearcodec_normalize_vbar(rdp_clearcodec_vbar_slot(context, index),
+                                          &context->vbar_lengths[index],
+                                          band_height);
         rdp_clearcodec_copy_vbar_to_pixels(rdp_clearcodec_vbar_slot(context, index),
                                            x,
                                            band->y_start,
@@ -344,8 +362,10 @@ static librdp_status rdp_clearcodec_decode_band_vbar(rdp_clearcodec_context* con
         if (rdp_stream_read_u8(stream, &y_on) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         short_count = context->short_vbar_lengths[index];
-        if (y_on > band_height || short_count > band_height - y_on)
-            return LIBRDP_STATUS_UNSUPPORTED;
+        if (y_on > band_height)
+            y_on = band_height;
+        if (short_count > band_height - y_on)
+            short_count = (uint8_t)(band_height - y_on);
         rdp_clearcodec_fill_vbar(vbar,
                                  band->b,
                                  band->g,
