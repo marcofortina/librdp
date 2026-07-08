@@ -54,6 +54,70 @@ typedef struct librdp_mouse_event
     librdp_mouse_state state;
 } librdp_mouse_event;
 
+#define LIBRDP_TOUCH_CONTACTRECT_PRESENT 0x0001u
+#define LIBRDP_TOUCH_ORIENTATION_PRESENT 0x0002u
+#define LIBRDP_TOUCH_PRESSURE_PRESENT 0x0004u
+
+#define LIBRDP_PEN_FLAGS_PRESENT 0x0001u
+#define LIBRDP_PEN_PRESSURE_PRESENT 0x0002u
+#define LIBRDP_PEN_ROTATION_PRESENT 0x0004u
+#define LIBRDP_PEN_TILTX_PRESENT 0x0008u
+#define LIBRDP_PEN_TILTY_PRESENT 0x0010u
+
+#define LIBRDP_CONTACT_DOWN 0x00000001u
+#define LIBRDP_CONTACT_UPDATE 0x00000002u
+#define LIBRDP_CONTACT_UP 0x00000004u
+#define LIBRDP_CONTACT_INRANGE 0x00000008u
+#define LIBRDP_CONTACT_INCONTACT 0x00000010u
+#define LIBRDP_CONTACT_CANCELED 0x00000020u
+
+#define LIBRDP_PEN_BARREL_PRESSED 0x00000001u
+#define LIBRDP_PEN_ERASER_PRESSED 0x00000002u
+#define LIBRDP_PEN_INVERTED 0x00000004u
+
+typedef struct librdp_touch_contact
+{
+    uint8_t contact_id;
+    uint16_t fields_present;
+    int32_t x;
+    int32_t y;
+    uint32_t contact_flags;
+    int16_t contact_rect_left;
+    int16_t contact_rect_top;
+    int16_t contact_rect_right;
+    int16_t contact_rect_bottom;
+    uint32_t orientation;
+    uint32_t pressure;
+} librdp_touch_contact;
+
+typedef struct librdp_touch_frame
+{
+    uint16_t contact_count;
+    uint64_t frame_offset;
+    const librdp_touch_contact* contacts;
+} librdp_touch_frame;
+
+typedef struct librdp_pen_contact
+{
+    uint8_t device_id;
+    uint16_t fields_present;
+    int32_t x;
+    int32_t y;
+    uint32_t contact_flags;
+    uint32_t pen_flags;
+    uint32_t pressure;
+    uint16_t rotation;
+    int16_t tilt_x;
+    int16_t tilt_y;
+} librdp_pen_contact;
+
+typedef struct librdp_pen_frame
+{
+    uint16_t contact_count;
+    uint64_t frame_offset;
+    const librdp_pen_contact* contacts;
+} librdp_pen_frame;
+
 #ifdef __cplusplus
 }
 #endif
