@@ -15,7 +15,18 @@
 #define RDP_CORE_INPUT_PROTOCOL_VERSION_100 0x0100u
 #define RDP_CORE_INPUT_EVENT_SCANCODE 0x00u
 #define RDP_CORE_INPUT_EVENT_MOUSE 0x01u
+#define RDP_CORE_INPUT_EVENT_MOUSEX 0x02u
+#define RDP_CORE_INPUT_EVENT_SYNC 0x03u
+#define RDP_CORE_INPUT_EVENT_UNICODE 0x04u
+#define RDP_CORE_INPUT_EVENT_RELMOUSE 0x05u
+#define RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP 0x06u
 #define RDP_CORE_INPUT_KBDFLAGS_RELEASE 0x01u
+#define RDP_CORE_INPUT_KBDFLAGS_EXTENDED 0x02u
+#define RDP_CORE_INPUT_KBDFLAGS_EXTENDED1 0x04u
+#define RDP_CORE_INPUT_SYNC_SCROLL_LOCK 0x01u
+#define RDP_CORE_INPUT_SYNC_NUM_LOCK 0x02u
+#define RDP_CORE_INPUT_SYNC_CAPS_LOCK 0x04u
+#define RDP_CORE_INPUT_SYNC_KANA_LOCK 0x08u
 
 typedef struct rdp_core_input_header
 {
@@ -31,6 +42,20 @@ typedef struct rdp_core_input_init_response
     uint16_t protocol_version_max;
 } rdp_core_input_init_response;
 
+typedef struct rdp_core_input_event
+{
+    uint8_t type;
+    uint8_t flags;
+    uint16_t pointer_flags;
+    uint16_t x;
+    uint16_t y;
+    int16_t dx;
+    int16_t dy;
+    uint32_t timestamp;
+    uint16_t unicode_code;
+    uint8_t scancode;
+} rdp_core_input_event;
+
 librdp_status rdp_core_input_parse_header(const void* data,
                                           size_t length,
                                           rdp_core_input_header* header);
@@ -38,7 +63,27 @@ librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer);
 librdp_status rdp_core_input_parse_init_response(const void* data,
                                                  size_t length,
                                                  rdp_core_input_init_response* response);
+librdp_status rdp_core_input_parse_events(const void* data,
+                                          size_t length,
+                                          rdp_core_input_event* events,
+                                          uint8_t capacity,
+                                          uint8_t* event_count);
+librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
+                                          const rdp_core_input_event* events,
+                                          uint8_t event_count);
 librdp_status rdp_core_input_write_keyboard_event(rdp_buffer* buffer, uint8_t scancode, uint8_t released);
+librdp_status rdp_core_input_write_keyboard_event_ex(rdp_buffer* buffer, uint8_t scancode, uint8_t flags);
+librdp_status rdp_core_input_write_unicode_event(rdp_buffer* buffer, uint16_t code, uint8_t released);
+librdp_status rdp_core_input_write_sync_event(rdp_buffer* buffer, uint8_t flags);
 librdp_status rdp_core_input_write_mouse_event(rdp_buffer* buffer, uint16_t pointer_flags, uint16_t x, uint16_t y);
+librdp_status rdp_core_input_write_extended_mouse_event(rdp_buffer* buffer,
+                                                       uint16_t pointer_flags,
+                                                       uint16_t x,
+                                                       uint16_t y);
+librdp_status rdp_core_input_write_relative_mouse_event(rdp_buffer* buffer,
+                                                       uint16_t pointer_flags,
+                                                       int16_t dx,
+                                                       int16_t dy);
+librdp_status rdp_core_input_write_qoe_timestamp_event(rdp_buffer* buffer, uint32_t timestamp);
 
 #endif

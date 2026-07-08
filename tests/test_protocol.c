@@ -1292,6 +1292,8 @@ static int test_path_security_license_channels(void)
     rdp_mouse_cursor_capset mouse_cursor_capset;
     rdp_core_input_header core_header;
     rdp_core_input_init_response core_init_response;
+    rdp_core_input_event core_events[8];
+    uint8_t core_event_count = 0;
     rdp_display_control_caps display_parsed_caps;
     rdp_display_control_monitor display_monitor;
     rdp_display_control_monitor display_monitors[2];
@@ -2870,6 +2872,98 @@ static int test_path_security_license_channels(void)
            test_read_u16_le(dyn_response.data + 5) == 0x8800u &&
            test_read_u16_le(dyn_response.data + 7) == 10 &&
            test_read_u16_le(dyn_response.data + 9) == 11);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_event_count == 1 &&
+           core_events[0].type == RDP_CORE_INPUT_EVENT_MOUSE &&
+           core_events[0].pointer_flags == 0x8800u &&
+           core_events[0].x == 10 &&
+           core_events[0].y == 11);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_keyboard_event_ex(&dyn_response,
+                                                  0x1d,
+                                                  RDP_CORE_INPUT_KBDFLAGS_EXTENDED |
+                                                  RDP_CORE_INPUT_KBDFLAGS_RELEASE) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_event_count == 1 &&
+           core_events[0].type == RDP_CORE_INPUT_EVENT_SCANCODE &&
+           core_events[0].flags == (RDP_CORE_INPUT_KBDFLAGS_EXTENDED |
+                                    RDP_CORE_INPUT_KBDFLAGS_RELEASE) &&
+           core_events[0].scancode == 0x1d);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_unicode_event(&dyn_response, 0x20ac, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_event_count == 1 &&
+           core_events[0].type == RDP_CORE_INPUT_EVENT_UNICODE &&
+           core_events[0].unicode_code == 0x20ac);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_sync_event(&dyn_response,
+                                           RDP_CORE_INPUT_SYNC_NUM_LOCK |
+                                           RDP_CORE_INPUT_SYNC_CAPS_LOCK) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_event_count == 1 &&
+           core_events[0].type == RDP_CORE_INPUT_EVENT_SYNC &&
+           core_events[0].flags == (RDP_CORE_INPUT_SYNC_NUM_LOCK | RDP_CORE_INPUT_SYNC_CAPS_LOCK));
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_extended_mouse_event(&dyn_response, 0x8001u, 12, 13) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_events[0].type == RDP_CORE_INPUT_EVENT_MOUSEX &&
+           core_events[0].pointer_flags == 0x8001u &&
+           core_events[0].x == 12 &&
+           core_events[0].y == 13);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_core_input_write_relative_mouse_event(&dyn_response, 0x0800u, -3, 4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_events[0].type == RDP_CORE_INPUT_EVENT_RELMOUSE &&
+           core_events[0].pointer_flags == 0x0800u &&
+           core_events[0].dx == -3 &&
+           core_events[0].dy == 4);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    core_events[0].type = RDP_CORE_INPUT_EVENT_SCANCODE;
+    core_events[0].flags = 0;
+    core_events[0].scancode = 0x1e;
+    core_events[1].type = RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP;
+    core_events[1].flags = 0;
+    core_events[1].timestamp = 0x12345678u;
+    PCHECK(rdp_core_input_write_events(&dyn_response, core_events, 2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_core_input_parse_events(dyn_response.data,
+                                       dyn_response.length,
+                                       core_events,
+                                       8,
+                                       &core_event_count) == LIBRDP_STATUS_OK);
+    PCHECK(core_event_count == 2 &&
+           core_events[0].scancode == 0x1e &&
+           core_events[1].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP &&
+           core_events[1].timestamp == 0x12345678u);
     PCHECK(rdp_display_control_parse_caps(display_caps,
                                           sizeof(display_caps),
                                           &display_parsed_caps) == LIBRDP_STATUS_OK);
