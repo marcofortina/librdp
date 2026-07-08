@@ -296,9 +296,11 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                                                    update->height,
                                                    x,
                                                    y);
-                dst[dst_pos + 0u] = xor_bit ? 0xffu : 0x00u;
-                dst[dst_pos + 1u] = xor_bit ? 0xffu : 0x00u;
-                dst[dst_pos + 2u] = xor_bit ? 0xffu : 0x00u;
+                uint8_t color = (transparent && xor_bit) ? 0x00u : (xor_bit ? 0xffu : 0x00u);
+
+                dst[dst_pos + 0u] = color;
+                dst[dst_pos + 1u] = color;
+                dst[dst_pos + 2u] = color;
                 dst[dst_pos + 3u] = (transparent && !xor_bit) ? 0u : 0xffu;
             }
         }

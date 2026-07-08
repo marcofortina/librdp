@@ -415,6 +415,30 @@ static int test_path_security_license_channels(void)
         0x40, 0x00,
         0x00, 0x00
     };
+    const uint8_t pointer_shape_1bpp_invert[] = {
+        0x01, 0x00,
+        0x06, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x01, 0x00,
+        0x01, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x80, 0x00,
+        0x80, 0x00
+    };
+    const uint8_t pointer_shape_1bpp_transparent[] = {
+        0x01, 0x00,
+        0x07, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x01, 0x00,
+        0x01, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x00, 0x00,
+        0x80, 0x00
+    };
     const uint8_t pointer_slow_position[] = {
         0x03, 0x00,
         0x22, 0x00,
@@ -1265,6 +1289,28 @@ static int test_path_security_license_channels(void)
            decoded_pointer.data[7] == 0xff &&
            decoded_pointer.data[15] == 0x00);
     PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                      pointer_shape_1bpp_invert,
+                                      sizeof(pointer_shape_1bpp_invert),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.xor_bpp == 1 &&
+           pointer_update.cache_index == 6);
+    PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_stride == 4 &&
+           decoded_pointer.length == 4 &&
+           decoded_pointer.data[0] == 0x00 &&
+           decoded_pointer.data[1] == 0x00 &&
+           decoded_pointer.data[2] == 0x00 &&
+           decoded_pointer.data[3] == 0xff);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                      pointer_shape_1bpp_transparent,
+                                      sizeof(pointer_shape_1bpp_transparent),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_stride == 4 &&
+           decoded_pointer.length == 4 &&
+           decoded_pointer.data[3] == 0x00);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
                                       pointer_shape_32,
                                       sizeof(pointer_shape_32) - 1u,
                                       &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -1558,6 +1604,27 @@ static int test_path_security_license_channels(void)
            rfx_upgrade_pixels.bgra[1] == 128 &&
            rfx_upgrade_pixels.bgra[2] == 128 &&
            rfx_upgrade_pixels.bgra[3] == 0xff);
+    rfx_progressive_state.y.current[0] = 64;
+    rfx_progressive_state.y.sign[0] = 1;
+    PCHECK(rdp_rfx_decode_progressive_tile_state(rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 &rfx_decode_quant,
+                                                 &rfx_zero_delta,
+                                                 &rfx_decode_quant,
+                                                 &rfx_zero_delta,
+                                                 &rfx_decode_quant,
+                                                 &rfx_zero_delta,
+                                                 1,
+                                                 1,
+                                                 &rfx_progressive_state,
+                                                 &rfx_pixels) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_progressive_state.pass == 3 &&
+           rfx_progressive_state.y.current[0] == 64 &&
+           rfx_progressive_state.y.sign[0] == 1);
     memset(&rfx_progressive_state, 0, sizeof(rfx_progressive_state));
     PCHECK(rdp_rfx_decode_progressive_upgrade_tile(NULL,
                                                    0,

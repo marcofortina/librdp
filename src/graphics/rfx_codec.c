@@ -926,6 +926,23 @@ static librdp_status rdp_rfx_render_progressive_component(const rdp_rfx_progress
                        : rdp_rfx_inverse_dwt_2d(coefficients, RDP_RFX_TILE_COEFFICIENTS);
 }
 
+static void rdp_rfx_refresh_progressive_signs(rdp_rfx_progressive_component_state* component)
+{
+    size_t i = 0;
+
+    if (!component)
+        return;
+    for (i = 0; i < RDP_RFX_TILE_COEFFICIENTS; i++)
+    {
+        if (component->current[i] > 0)
+            component->sign[i] = 1;
+        else if (component->current[i] < 0)
+            component->sign[i] = -1;
+        else
+            component->sign[i] = 0;
+    }
+}
+
 static librdp_status rdp_rfx_decode_progressive_component_state(
     const void* data,
     size_t length,
@@ -961,7 +978,6 @@ static librdp_status rdp_rfx_decode_progressive_component_state(
     if (written != RDP_RFX_TILE_COEFFICIENTS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memcpy(component->sign, decoded, sizeof(component->sign));
     status = extrapolate ? rdp_rfx_differential_decode(decoded + 4015u, 81u)
                          : rdp_rfx_differential_decode(decoded + 4032u, 64u);
     if (status == LIBRDP_STATUS_OK)
@@ -982,6 +998,7 @@ static librdp_status rdp_rfx_decode_progressive_component_state(
     component->quant = *quant;
     component->progressive_quant = *delta;
     component->valid = 1;
+    rdp_rfx_refresh_progressive_signs(component);
     return rdp_rfx_render_progressive_component(component, extrapolate, coefficients);
 }
 
