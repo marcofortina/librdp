@@ -20,6 +20,9 @@ add_library(librdp
     src/client/error.c
     src/client/settings.c
     src/client/session.c
+    src/channels/audio_format.c
+    src/channels/audio_input.c
+    src/channels/audio_output.c
     src/channels/core_input.c
     src/channels/display_control.c
     src/channels/dynamic_channel.c

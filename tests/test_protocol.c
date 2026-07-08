@@ -1,4 +1,7 @@
 #include "channels/virtual_channel.h"
+#include "channels/audio_format.h"
+#include "channels/audio_input.h"
+#include "channels/audio_output.h"
 #include "channels/core_input.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
@@ -350,6 +353,173 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_free(&ber);
+    return 0;
+}
+
+static int test_audio_channels(void)
+{
+    static const uint8_t pcm_format[] = {
+        0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
+        0x04, 0x00, 0x10, 0x00, 0x00, 0x00
+    };
+    static const uint8_t bad_extensible[] = {
+        0xfe, 0xff, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
+        0x04, 0x00, 0x10, 0x00, 0x02, 0x00, 0x00, 0x00
+    };
+    static const uint8_t server_formats[] = {
+        0x07, 0x2b, 0x26, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0xff, 0xff, 0xff, 0xff,
+        0x00, 0x00, 0x01, 0x00,
+        0x00, 0x00,
+        0x01, 0x00,
+        0x28,
+        0x06, 0x00,
+        0x00,
+        0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
+        0x04, 0x00, 0x10, 0x00, 0x00, 0x00
+    };
+    static const uint8_t training_pdu[] = {
+        0x06, 0x23, 0x06, 0x00, 0x34, 0x12, 0x02, 0x00, 0xaa, 0xbb
+    };
+    static const uint8_t wave_info_pdu[] = {
+        0x02, 0x7e, 0x14, 0x00, 0xd7, 0xad, 0x0f, 0x00,
+        0x08, 0x00, 0x00, 0x00, 0x20, 0x48, 0x17, 0xd6
+    };
+    static const uint8_t wave_data_pdu[] = {0x00, 0x00, 0x00, 0x00, 0x84, 0x02, 0x80};
+    static const uint8_t wave2_pdu[] = {
+        0x0d, 0x00, 0x0f, 0x00, 0x16, 0xa1, 0x03, 0x00, 0x02, 0x00,
+        0x00, 0x00, 0xc2, 0xb8, 0xac, 0x0d, 0x27, 0x0c, 0x45
+    };
+    rdp_audio_format pcm;
+    rdp_audio_format parsed_pcm;
+    rdp_audio_output_formats output_formats;
+    rdp_audio_output_training training;
+    rdp_audio_output_wave_info wave_info;
+    rdp_audio_output_wave_data wave_data;
+    rdp_audio_output_wave2 wave2;
+    rdp_audio_input_formats input_formats;
+    rdp_audio_input_open input_open;
+    rdp_audio_input_data input_data;
+    rdp_buffer out;
+    uint32_t version = 0;
+    uint32_t result = 0;
+    uint32_t new_format = 0;
+    size_t consumed = 0;
+
+    memset(&pcm, 0, sizeof(pcm));
+    rdp_buffer_init(&out);
+
+    PCHECK(rdp_audio_format_parse(pcm_format, sizeof(pcm_format), &pcm, &consumed) == LIBRDP_STATUS_OK);
+    PCHECK(consumed == sizeof(pcm_format));
+    PCHECK(pcm.format_tag == RDP_AUDIO_FORMAT_PCM);
+    PCHECK(pcm.channels == 2 && pcm.samples_per_sec == 44100 && pcm.avg_bytes_per_sec == 176400);
+    PCHECK(pcm.block_align == 4 && pcm.bits_per_sample == 16 && pcm.extra_data_len == 0);
+    PCHECK(rdp_audio_format_write(&out, &pcm) == LIBRDP_STATUS_OK);
+    PCHECK(out.length == sizeof(pcm_format) && memcmp(out.data, pcm_format, sizeof(pcm_format)) == 0);
+    PCHECK(rdp_audio_format_parse(bad_extensible, sizeof(bad_extensible), &parsed_pcm, &consumed) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_audio_output_parse_formats(server_formats, sizeof(server_formats), &output_formats) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(output_formats.flags == 1 && output_formats.format_count == 1 && output_formats.version == 6);
+    PCHECK(rdp_audio_format_get_from_list(output_formats.formats,
+                                          output_formats.formats_len,
+                                          output_formats.format_count,
+                                          0,
+                                          &parsed_pcm) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_format_wire_equal(&pcm, &parsed_pcm));
+    PCHECK(rdp_audio_output_parse_formats(server_formats, sizeof(server_formats) - 1u, &output_formats) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_output_write_client_formats(&out,
+                                                 RDP_AUDIO_OUTPUT_CAP_ALIVE | RDP_AUDIO_OUTPUT_CAP_VOLUME,
+                                                 0xffffffffu,
+                                                 0x00010000u,
+                                                 0,
+                                                 0x28,
+                                                 6,
+                                                 &pcm,
+                                                 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_output_parse_formats(out.data, out.length, &output_formats) == LIBRDP_STATUS_OK);
+    PCHECK(output_formats.flags == (RDP_AUDIO_OUTPUT_CAP_ALIVE | RDP_AUDIO_OUTPUT_CAP_VOLUME));
+    PCHECK(output_formats.format_count == 1 && output_formats.last_block_confirmed == 0x28);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_output_write_quality_mode(&out, RDP_AUDIO_OUTPUT_QUALITY_HIGH) == LIBRDP_STATUS_OK);
+    PCHECK(out.length == 8 && out.data[0] == RDP_AUDIO_OUTPUT_QUALITYMODE && test_read_u16_le(out.data + 4) == 2);
+
+    PCHECK(rdp_audio_output_parse_training(training_pdu, sizeof(training_pdu), &training) == LIBRDP_STATUS_OK);
+    PCHECK(training.timestamp == 0x1234 && training.packet_size == 2);
+    PCHECK(training.data_len == 2 && training.data[0] == 0xaa && training.data[1] == 0xbb);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_output_write_training_confirm(&out, training.timestamp, training.packet_size) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(out.length == 8 && out.data[0] == RDP_AUDIO_OUTPUT_TRAINING && test_read_u16_le(out.data + 4) == 0x1234);
+
+    PCHECK(rdp_audio_output_parse_wave_info(wave_info_pdu, sizeof(wave_info_pdu), &wave_info) == LIBRDP_STATUS_OK);
+    PCHECK(wave_info.timestamp == 0xadd7 && wave_info.format_no == 15 && wave_info.block_no == 8);
+    PCHECK(wave_info.expected_data_len == 8 && wave_info.first_data_len == 4 && wave_info.first_data[0] == 0x20);
+    PCHECK(rdp_audio_output_parse_wave_data(wave_data_pdu, sizeof(wave_data_pdu), &wave_data) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(wave_data.data_len == 3 && wave_data.data[0] == 0x84);
+    PCHECK(rdp_audio_output_parse_wave2(wave2_pdu, sizeof(wave2_pdu), &wave2) == LIBRDP_STATUS_OK);
+    PCHECK(wave2.timestamp == 0xa116 && wave2.format_no == 3 && wave2.block_no == 2);
+    PCHECK(wave2.audio_timestamp == 0x0dacb8c2u && wave2.data_len == 3 && wave2.data[2] == 0x45);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_output_write_wave_confirm(&out, 0x5ab7, 8) == LIBRDP_STATUS_OK);
+    PCHECK(out.length == 8 && out.data[0] == RDP_AUDIO_OUTPUT_WAVECONFIRM &&
+           test_read_u16_le(out.data + 4) == 0x5ab7 && out.data[6] == 8);
+
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_version(&out, RDP_AUDIO_INPUT_VERSION_2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_version(out.data, out.length, &version) == LIBRDP_STATUS_OK);
+    PCHECK(version == RDP_AUDIO_INPUT_VERSION_2);
+    PCHECK(rdp_audio_input_parse_version("\x01\x03\x00\x00\x00", 5, &version) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_formats(&out, &pcm, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_formats(out.data, out.length, &input_formats) == LIBRDP_STATUS_OK);
+    PCHECK(input_formats.format_count == 1 && input_formats.formats_len == sizeof(pcm_format));
+    PCHECK(input_formats.formats_packet_size == out.length && input_formats.extra_data_len == 0);
+
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_buffer_append_u8(&out, RDP_AUDIO_INPUT_OPEN) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&out, 128) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&out, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_format_write(&out, &pcm) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_open(out.data, out.length, &input_open) == LIBRDP_STATUS_OK);
+    PCHECK(input_open.frames_per_packet == 128 && input_open.initial_format == 0);
+    PCHECK(rdp_audio_format_wire_equal(&pcm, &input_open.format));
+
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_open_reply(&out, RDP_AUDIO_INPUT_RESULT_FAIL) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_open_reply(out.data, out.length, &result) == LIBRDP_STATUS_OK);
+    PCHECK(result == RDP_AUDIO_INPUT_RESULT_FAIL);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_incoming_data(&out) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_empty(out.data, out.length, RDP_AUDIO_INPUT_DATA_INCOMING) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_data(&out, "abc", 3) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_data(out.data, out.length, &input_data) == LIBRDP_STATUS_OK);
+    PCHECK(input_data.data_len == 3 && memcmp(input_data.data, "abc", 3) == 0);
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_input_write_format_change(&out, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_input_parse_format_change(out.data, out.length, &new_format) == LIBRDP_STATUS_OK);
+    PCHECK(new_format == 1);
+
+    rdp_buffer_free(&out);
     return 0;
 }
 
@@ -4145,6 +4315,8 @@ int test_protocol(void)
     if (test_tpkt_x224() != 0)
         return 1;
     if (test_mcs_gcc_capabilities() != 0)
+        return 1;
+    if (test_audio_channels() != 0)
         return 1;
     if (test_path_security_license_channels() != 0)
         return 1;
