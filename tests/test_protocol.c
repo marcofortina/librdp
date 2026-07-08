@@ -352,6 +352,7 @@ static int test_path_security_license_channels(void)
 {
     const uint8_t fast_short[] = {0x00, 0x06, 1, 2, 3, 4};
     const uint8_t fast_long[] = {0x40, 0x80, 0x08, 1, 2, 3, 4, 5};
+    const uint8_t fast_bad_update_compression[] = {0x00, 0x05, 0x40, 0x00, 0x00};
     const uint8_t slow[] = {0x06, 0x00, 0x13, 0x00, 0xea, 0x03};
     const uint8_t demand_active[] = {
         0x1d, 0x00, 0x11, 0x00, 0xea, 0x03, 0x78, 0x56, 0x34, 0x12,
@@ -1267,6 +1268,9 @@ static int test_path_security_license_channels(void)
     PCHECK(bitmap_update.count == 1 && bitmap_update.rects[0].data_len == 16);
     PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update) - 1u, &fast_updates) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_fastpath_parse_updates(fast_bad_update_compression,
+                                      sizeof(fast_bad_update_compression),
+                                      &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NULL, NULL, 0, &pointer_update) ==
            LIBRDP_STATUS_OK);

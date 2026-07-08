@@ -74,6 +74,8 @@ librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fa
         update->update_code = (uint8_t)(update_header & 0x0fu);
         update->fragmentation = (uint8_t)((update_header >> 4) & 0x03u);
         update->compression = (uint8_t)((update_header >> 6) & 0x03u);
+        if (update->compression != 0 && update->compression != RDP_FASTPATH_OUTPUT_COMPRESSION_USED)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (update->compression == RDP_FASTPATH_OUTPUT_COMPRESSION_USED &&
             rdp_stream_read_u8(&stream, &update->compression_flags) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
