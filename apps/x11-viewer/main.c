@@ -324,6 +324,7 @@ int main(int argc, char** argv)
                                      BlackPixel(app.display, app.screen),
                                      BlackPixel(app.display, app.screen));
     app.gc = XCreateGC(app.display, app.window, 0, NULL);
+    XStoreName(app.display, app.window, "librdp-x11-viewer");
     app.wm_delete = XInternAtom(app.display, "WM_DELETE_WINDOW", False);
     (void)XSetWMProtocols(app.display, app.window, &app.wm_delete, 1);
     XSelectInput(app.display,
