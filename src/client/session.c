@@ -2617,7 +2617,10 @@ static librdp_status rdp_session_send_display_control_layout(librdp_session* ses
     rdp_buffer_init(&layout);
     status = rdp_display_control_make_single_monitor(&monitor, width, height);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_display_control_write_monitor_layout(&layout, &monitor, 1);
+        status = rdp_display_control_write_monitor_layout_with_caps(&layout,
+                                                                    &monitor,
+                                                                    1,
+                                                                    &session->display_control_caps);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_dynamic_channel_data(session,
                                                        session->display_control_channel_id,

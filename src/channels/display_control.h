@@ -43,5 +43,9 @@ librdp_status rdp_display_control_make_single_monitor(rdp_display_control_monito
 librdp_status rdp_display_control_write_monitor_layout(rdp_buffer* buffer,
                                                        const rdp_display_control_monitor* monitors,
                                                        uint32_t monitor_count);
+librdp_status rdp_display_control_write_monitor_layout_with_caps(rdp_buffer* buffer,
+                                                                 const rdp_display_control_monitor* monitors,
+                                                                 uint32_t monitor_count,
+                                                                 const rdp_display_control_caps* caps);
 
 #endif

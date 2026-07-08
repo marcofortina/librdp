@@ -1066,6 +1066,7 @@ static int test_path_security_license_channels(void)
     rdp_core_input_init_response core_init_response;
     rdp_display_control_caps display_parsed_caps;
     rdp_display_control_monitor display_monitor;
+    rdp_display_control_monitor display_monitors[2];
     rdp_graphics_header graphics_header;
     rdp_graphics_caps_confirm graphics_caps_confirm;
     rdp_graphics_create_surface graphics_create;
@@ -2302,6 +2303,50 @@ static int test_path_security_license_channels(void)
            test_read_u32_le(dyn_response.data + 16) == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
            test_read_u32_le(dyn_response.data + 28) == 800 &&
            test_read_u32_le(dyn_response.data + 32) == 200);
+    display_monitors[0] = display_monitor;
+    display_monitors[1] = display_monitor;
+    display_monitors[1].flags = 0;
+    display_monitors[1].left = 800;
+    display_monitors[1].width = 640;
+    display_monitors[1].height = 480;
+    display_monitors[1].physical_width = 169;
+    display_monitors[1].physical_height = 127;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout_with_caps(&dyn_response,
+                                                              display_monitors,
+                                                              2,
+                                                              &display_parsed_caps) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 96 &&
+           test_read_u32_le(dyn_response.data + 12) == 2 &&
+           test_read_u32_le(dyn_response.data + 56) == 0 &&
+           test_read_u32_le(dyn_response.data + 68) == 640);
+    display_parsed_caps.max_num_monitors = 1;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout_with_caps(&dyn_response,
+                                                              display_monitors,
+                                                              2,
+                                                              &display_parsed_caps) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_parsed_caps.max_num_monitors = 1;
+    display_parsed_caps.max_monitor_area_factor_a = 200;
+    display_parsed_caps.max_monitor_area_factor_b = 200;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout_with_caps(&dyn_response,
+                                                              &display_monitor,
+                                                              1,
+                                                              &display_parsed_caps) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_parsed_caps.max_monitor_area_factor_a = 8192;
+    display_parsed_caps.max_monitor_area_factor_b = 8192;
+    display_monitor.left = 1;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_monitor.left = 0;
+    display_monitor.device_scale_factor = 120;
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_monitor.device_scale_factor = 100;
     display_monitor.width = 801;
     PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, &display_monitor, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
