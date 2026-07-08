@@ -8,6 +8,10 @@
 
 #include "common/buffer.h"
 
+#define RDP_VIRTUAL_CHANNEL_FLAG_FIRST 0x00000001u
+#define RDP_VIRTUAL_CHANNEL_FLAG_LAST 0x00000002u
+#define RDP_VIRTUAL_CHANNEL_FLAG_SHOW_PROTOCOL 0x00000010u
+
 typedef struct rdp_virtual_channel_packet
 {
     uint32_t length;

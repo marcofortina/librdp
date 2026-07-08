@@ -115,7 +115,10 @@ struct librdp_session
     uint16_t dynamic_channel_id;
     uint16_t clipboard_channel_id;
     uint8_t clipboard_ready;
+    uint8_t clipboard_fragmenting;
+    uint32_t clipboard_fragment_expected;
     uint32_t clipboard_general_flags;
+    rdp_buffer clipboard_fragment;
     uint32_t core_input_channel_id;
     uint8_t core_input_channel_id_bytes;
     uint8_t core_input_ready;
@@ -974,6 +977,17 @@ static void rdp_session_dynamic_channels_clear(librdp_session* session)
     for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
         rdp_buffer_free(&session->dynamic_channels[i].fragment);
     memset(session->dynamic_channels, 0, sizeof(session->dynamic_channels));
+}
+
+static void rdp_session_clipboard_clear(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_buffer_free(&session->clipboard_fragment);
+    session->clipboard_fragmenting = 0;
+    session->clipboard_fragment_expected = 0;
+    session->clipboard_ready = 0;
+    session->clipboard_general_flags = 0;
 }
 
 static rdp_session_graphics_surface* rdp_session_graphics_surface_find(librdp_session* session, uint16_t surface_id)
@@ -5045,6 +5059,7 @@ void librdp_session_free(librdp_session* session)
         return;
     (void)librdp_session_disconnect(session);
     rdp_session_dynamic_channels_clear(session);
+    rdp_session_clipboard_clear(session);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -5125,8 +5140,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->share_id = 0;
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
-    session->clipboard_ready = 0;
-    session->clipboard_general_flags = 0;
+    rdp_session_clipboard_clear(session);
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;
@@ -5602,8 +5616,7 @@ librdp_status librdp_session_connect(librdp_session* session)
             if (server_data.channel_count > 1)
             {
                 session->clipboard_channel_id = server_data.channel_ids[1];
-                session->clipboard_ready = 0;
-                session->clipboard_general_flags = 0;
+                rdp_session_clipboard_clear(session);
                 rdp_trace_event(RDP_TRACE_CLIENT,
                                 "client.clipboard.channel",
                                 "channel_id=%u",
@@ -5795,8 +5808,7 @@ fail:
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
     session->clipboard_channel_id = 0;
-    session->clipboard_ready = 0;
-    session->clipboard_general_flags = 0;
+    rdp_session_clipboard_clear(session);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.failed", "status=%d", (int)status);
     rdp_buffer_free(&reply);
     rdp_buffer_free(&request);
@@ -5966,6 +5978,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
         if (session->clipboard_channel_id != 0 && indication.channel_id == session->clipboard_channel_id)
         {
             rdp_virtual_channel_packet channel_packet;
+            uint32_t fragment_flags = 0;
 
             status = rdp_virtual_channel_parse_packet(indication_payload, indication_payload_len, &channel_packet);
             if (status != LIBRDP_STATUS_OK)
@@ -5974,26 +5987,79 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
-            if ((channel_packet.flags & 0x03u) != 0x03u)
-            {
-                rdp_trace_event(RDP_TRACE_CLIENT,
-                                "client.clipboard.fragment.unsupported",
-                                "channel_id=%u flags=%u payload_len=%u",
-                                indication.channel_id,
-                                channel_packet.flags,
-                                (unsigned)channel_packet.payload_len);
-            }
-            else
+            fragment_flags = channel_packet.flags & (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST);
+            if (fragment_flags == (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST))
             {
                 status = rdp_session_handle_clipboard_message(session,
                                                               channel_packet.payload,
                                                               channel_packet.payload_len);
-                if (status != LIBRDP_STATUS_OK)
+            }
+            else if (fragment_flags == RDP_VIRTUAL_CHANNEL_FLAG_FIRST)
+            {
+                rdp_buffer_free(&session->clipboard_fragment);
+                rdp_buffer_init(&session->clipboard_fragment);
+                if (channel_packet.length == 0 || channel_packet.length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else
+                    status = rdp_buffer_reserve(&session->clipboard_fragment, channel_packet.length);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(&session->clipboard_fragment,
+                                               channel_packet.payload,
+                                               channel_packet.payload_len);
+                if (status == LIBRDP_STATUS_OK)
                 {
-                    rdp_buffer_free(&security_payload);
-                    rdp_buffer_free(&packet);
-                    return rdp_session_fail(session, status);
+                    session->clipboard_fragmenting = 1;
+                    session->clipboard_fragment_expected = channel_packet.length;
+                    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "client.clipboard.fragment.start",
+                                          "channel_id=%u total_len=%u payload_len=%u",
+                                          indication.channel_id,
+                                          channel_packet.length,
+                                          (unsigned)channel_packet.payload_len);
                 }
+            }
+            else if (session->clipboard_fragmenting)
+            {
+                if (session->clipboard_fragment.length > session->clipboard_fragment_expected ||
+                    channel_packet.payload_len >
+                    (size_t)session->clipboard_fragment_expected - session->clipboard_fragment.length)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(&session->clipboard_fragment,
+                                               channel_packet.payload,
+                                               channel_packet.payload_len);
+                rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                      RDP_TRACE_LEVEL_DEBUG,
+                                      "client.clipboard.fragment.data",
+                                      "channel_id=%u total_len=%u received=%u payload_len=%u flags=%u",
+                                      indication.channel_id,
+                                      session->clipboard_fragment_expected,
+                                      (unsigned)session->clipboard_fragment.length,
+                                      (unsigned)channel_packet.payload_len,
+                                      channel_packet.flags);
+                if (status == LIBRDP_STATUS_OK && (channel_packet.flags & RDP_VIRTUAL_CHANNEL_FLAG_LAST) != 0)
+                {
+                    if (session->clipboard_fragment.length != session->clipboard_fragment_expected)
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    if (status == LIBRDP_STATUS_OK)
+                        status = rdp_session_handle_clipboard_message(session,
+                                                                      session->clipboard_fragment.data,
+                                                                      session->clipboard_fragment.length);
+                    rdp_buffer_free(&session->clipboard_fragment);
+                    session->clipboard_fragmenting = 0;
+                    session->clipboard_fragment_expected = 0;
+                }
+            }
+            else
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
             goto done;
@@ -6205,8 +6271,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
     session->clipboard_channel_id = 0;
-    session->clipboard_ready = 0;
-    session->clipboard_general_flags = 0;
+    rdp_session_clipboard_clear(session);
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;

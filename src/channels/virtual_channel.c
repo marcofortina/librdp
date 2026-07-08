@@ -7,6 +7,7 @@
 librdp_status rdp_virtual_channel_parse_packet(const void* data, size_t length, rdp_virtual_channel_packet* packet)
 {
     rdp_stream stream;
+    size_t remaining = 0;
 
     if (!data || !packet)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -16,10 +17,13 @@ librdp_status rdp_virtual_channel_parse_packet(const void* data, size_t length, 
     if (rdp_stream_read_u32_le(&stream, &packet->length) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &packet->flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((size_t)packet->length > rdp_stream_remaining(&stream))
+    remaining = rdp_stream_remaining(&stream);
+    if ((size_t)packet->length > remaining &&
+        (packet->flags & (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST)) ==
+            (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    packet->payload_len = packet->length;
+    packet->payload_len = (size_t)packet->length < remaining ? (size_t)packet->length : remaining;
     return rdp_stream_read_bytes(&stream, &packet->payload, packet->payload_len);
 }
 

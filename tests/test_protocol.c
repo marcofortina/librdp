@@ -588,6 +588,7 @@ static int test_path_security_license_channels(void)
         9, 8
     };
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
+    const uint8_t channel_fragment[] = {8, 0, 0, 0, RDP_VIRTUAL_CHANNEL_FLAG_FIRST, 0, 0, 0, 1, 2, 3};
     const uint8_t dyn_caps[] = {
         0x50, 0x00, 0x03, 0x00,
         0xa8, 0x03, 0xcc, 0x0c,
@@ -2618,6 +2619,8 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_virtual_channel_parse_packet(channel, sizeof(channel), &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == 3 && vc.flags == 0x10 && vc.payload[2] == 3);
+    PCHECK(rdp_virtual_channel_parse_packet(channel_fragment, sizeof(channel_fragment), &vc) == LIBRDP_STATUS_OK);
+    PCHECK(vc.length == 8 && vc.flags == RDP_VIRTUAL_CHANNEL_FLAG_FIRST && vc.payload_len == 3 && vc.payload[2] == 3);
     PCHECK(rdp_virtual_channel_write_packet(&channel_packet, dyn_create, sizeof(dyn_create), 3) == LIBRDP_STATUS_OK);
     PCHECK(rdp_virtual_channel_parse_packet(channel_packet.data, channel_packet.length, &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == sizeof(dyn_create) && vc.flags == 3 && memcmp(vc.payload, dyn_create, sizeof(dyn_create)) == 0);
