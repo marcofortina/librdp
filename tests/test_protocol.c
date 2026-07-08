@@ -3,6 +3,7 @@
 #include "channels/audio_input.h"
 #include "channels/audio_output.h"
 #include "channels/core_input.h"
+#include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/graphics_pipeline.h"
@@ -4442,6 +4443,178 @@ static int test_path_security_license_channels(void)
     return 0;
 }
 
+static int test_device_redirection_channel(void)
+{
+    const uint8_t server_announce[] = {
+        0x72, 0x44, 0x6e, 0x49, 0x01, 0x00, 0x0d, 0x00, 0x44, 0x33, 0x22, 0x11
+    };
+    const uint8_t io_request_data[] = {
+        0x72, 0x44, 0x52, 0x49, 0x04, 0x03, 0x02, 0x01, 0x08, 0x07, 0x06, 0x05,
+        0x0d, 0x0c, 0x0b, 0x0a, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xaa, 0xbb
+    };
+    const uint8_t machine_utf16[] = {'T', 0, 'E', 0, 'S', 0, 'T', 0, 0, 0};
+    const uint8_t drive_name_utf16[] = {'C', 0, 'l', 0, 'i', 0, 'e', 0, 'n', 0, 't', 0, 0, 0};
+    rdp_device_redirection_header header;
+    rdp_device_redirection_announce announce;
+    rdp_device_redirection_announce confirm;
+    rdp_device_redirection_client_name client_name;
+    rdp_device_redirection_capability_config cap_config;
+    rdp_device_redirection_capability_list caps;
+    rdp_device_redirection_general_capability general;
+    rdp_device_redirection_device_announce device;
+    rdp_device_redirection_device_list device_list;
+    rdp_device_redirection_device_remove remove;
+    rdp_device_redirection_device_reply reply;
+    rdp_device_redirection_io_request request;
+    rdp_device_redirection_io_completion completion;
+    rdp_device_redirection_capability bad_cap;
+    rdp_buffer buffer;
+    uint32_t remove_ids[2] = {0x10203040u, 0x50607080u};
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_parse_header(server_announce, sizeof(server_announce), &header) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(header.component == RDP_DEVICE_REDIRECTION_COMPONENT_CORE);
+    PCHECK(header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_ANNOUNCE);
+    PCHECK(rdp_device_redirection_parse_server_announce(server_announce,
+                                                        sizeof(server_announce),
+                                                        &announce) == LIBRDP_STATUS_OK);
+    PCHECK(announce.version_major == RDP_DEVICE_REDIRECTION_VERSION_MAJOR);
+    PCHECK(announce.version_minor == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13);
+    PCHECK(announce.client_id == 0x11223344u);
+    PCHECK(rdp_device_redirection_parse_server_announce(server_announce,
+                                                        sizeof(server_announce) - 1u,
+                                                        &announce) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_device_redirection_write_client_announce(&buffer,
+                                                        RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
+                                                        announce.client_id) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == sizeof(server_announce));
+    PCHECK(buffer.data[2] == 0x43 && buffer.data[3] == 0x43);
+    PCHECK(rdp_device_redirection_parse_client_id_confirm(buffer.data, buffer.length, &confirm) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(confirm.client_id == announce.client_id);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_write_client_name_utf16le(&buffer,
+                                                            machine_utf16,
+                                                            (uint32_t)sizeof(machine_utf16)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_client_name(buffer.data, buffer.length, &client_name) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(client_name.unicode == 1 && client_name.code_page == 0);
+    PCHECK(client_name.name_len == sizeof(machine_utf16));
+    PCHECK(memcmp(client_name.name, machine_utf16, sizeof(machine_utf16)) == 0);
+    PCHECK(rdp_device_redirection_write_client_name_utf16le(&buffer, machine_utf16, 9) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_make_default_capability_config(&cap_config) == LIBRDP_STATUS_OK);
+    cap_config.include_drive = 1;
+    cap_config.include_smartcard = 1;
+    PCHECK(rdp_device_redirection_write_client_capability_response(&buffer, &cap_config) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_capability_list(buffer.data,
+                                                        buffer.length,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+                                                        &caps) == LIBRDP_STATUS_OK);
+    PCHECK(caps.count == 3);
+    PCHECK(caps.capabilities[0].type == RDP_DEVICE_REDIRECTION_CAP_GENERAL);
+    PCHECK(caps.capabilities[0].length == 44);
+    PCHECK(rdp_device_redirection_parse_general_capability(&caps.capabilities[0], &general) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(general.protocol_minor_version == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13);
+    PCHECK((general.io_code1 & RDP_DEVICE_REDIRECTION_IRP_MASK_READ) != 0);
+    PCHECK((general.extended_pdu & RDP_DEVICE_REDIRECTION_EXT_USER_LOGGEDON) != 0);
+    PCHECK(caps.capabilities[1].type == RDP_DEVICE_REDIRECTION_CAP_DRIVE);
+    PCHECK(caps.capabilities[1].version == RDP_DEVICE_REDIRECTION_CAP_VERSION_2);
+    PCHECK(caps.capabilities[2].type == RDP_DEVICE_REDIRECTION_CAP_SMARTCARD);
+    bad_cap = caps.capabilities[0];
+    bad_cap.length = 43;
+    PCHECK(rdp_device_redirection_parse_general_capability(&bad_cap, &general) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&device, 0, sizeof(device));
+    device.device_type = RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM;
+    device.device_id = 7;
+    memcpy(device.preferred_dos_name, "C:", 3);
+    device.data = drive_name_utf16;
+    device.data_len = sizeof(drive_name_utf16);
+    PCHECK(rdp_device_redirection_write_device_list_announce(&buffer, &device, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_device_list_announce(buffer.data, buffer.length, &device_list) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(device_list.count == 1);
+    PCHECK(device_list.devices[0].device_type == RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM);
+    PCHECK(device_list.devices[0].device_id == 7);
+    PCHECK(memcmp(device_list.devices[0].preferred_dos_name, "C:", 3) == 0);
+    PCHECK(device_list.devices[0].data_len == sizeof(drive_name_utf16));
+    PCHECK(memcmp(device_list.devices[0].data, drive_name_utf16, sizeof(drive_name_utf16)) == 0);
+    device.preferred_dos_name[0] = 'B';
+    device.preferred_dos_name[1] = '/';
+    device.preferred_dos_name[2] = 0;
+    PCHECK(rdp_device_redirection_write_device_list_announce(&buffer, &device, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_device_redirection_write_device_list_announce(&buffer, NULL, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_device_list_announce(buffer.data, buffer.length, &device_list) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(device_list.count == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_write_device_remove(&buffer, remove_ids, 2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_device_remove(buffer.data, buffer.length, &remove) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(remove.count == 2 && remove.device_ids[0] == remove_ids[0] && remove.device_ids[1] == remove_ids[1]);
+    PCHECK(rdp_device_redirection_parse_device_remove(buffer.data, buffer.length - 1u, &remove) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_write_device_reply(&buffer,
+                                                     7,
+                                                     RDP_DEVICE_REDIRECTION_STATUS_SUCCESS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_device_reply(buffer.data, buffer.length, &reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(reply.device_id == 7 && reply.result_code == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_device_redirection_parse_io_request(io_request_data, sizeof(io_request_data), &request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(request.device_id == 0x01020304u);
+    PCHECK(request.file_id == 0x05060708u);
+    PCHECK(request.completion_id == 0x0a0b0c0du);
+    PCHECK(request.major_function == RDP_DEVICE_REDIRECTION_IRP_READ);
+    PCHECK(request.payload_len == 2 && request.payload[0] == 0xaa && request.payload[1] == 0xbb);
+    PCHECK(rdp_device_redirection_parse_io_request(io_request_data, 23, &request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_device_redirection_write_io_completion(&buffer,
+                                                      request.device_id,
+                                                      request.completion_id,
+                                                      RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                                                      request.payload,
+                                                      request.payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_completion(buffer.data, buffer.length, &completion) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(completion.device_id == request.device_id);
+    PCHECK(completion.completion_id == request.completion_id);
+    PCHECK(completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS);
+    PCHECK(completion.payload_len == 2 && completion.payload[0] == 0xaa && completion.payload[1] == 0xbb);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
 int test_protocol(void)
 {
     if (test_tpkt_x224() != 0)
@@ -4451,6 +4624,8 @@ int test_protocol(void)
     if (test_audio_channels() != 0)
         return 1;
     if (test_path_security_license_channels() != 0)
+        return 1;
+    if (test_device_redirection_channel() != 0)
         return 1;
     return 0;
 }
