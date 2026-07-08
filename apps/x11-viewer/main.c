@@ -58,6 +58,64 @@ typedef struct x11_app
 #define X11_MAX_EVENTS_PER_TICK 128u
 #define X11_MAX_NETWORK_PUMP 64u
 
+static uint64_t x11_trace_hash_seed(uint64_t hash, uint64_t value)
+{
+    unsigned int i = 0;
+
+    for (i = 0; i < 8; i++)
+    {
+        hash ^= (uint8_t)((value >> (i * 8u)) & 0xffu);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static uint64_t x11_trace_hash_bytes(uint64_t hash, const uint8_t* bytes, size_t length)
+{
+    size_t i = 0;
+
+    for (i = 0; i < length; i++)
+    {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static uint64_t x11_trace_hash_bgra(const uint8_t* pixels, uint32_t width, uint32_t height, size_t stride)
+{
+    const size_t row_bytes = (size_t)width * 4u;
+    const uint64_t offset = 1469598103934665603ull;
+    uint64_t hash = offset;
+    uint64_t pixel_count = 0;
+    uint64_t samples = 0;
+    uint64_t i = 0;
+
+    if (!rdp_trace_enabled(RDP_TRACE_CLIENT) || !pixels || width == 0 || height == 0 || stride < row_bytes)
+        return 0;
+
+    hash = x11_trace_hash_seed(hash, width);
+    hash = x11_trace_hash_seed(hash, height);
+    hash = x11_trace_hash_seed(hash, stride);
+    pixel_count = (uint64_t)width * (uint64_t)height;
+    samples = pixel_count < 8192u ? pixel_count : 8192u;
+    if (samples == 0)
+        return hash;
+    if (samples == 1)
+        return x11_trace_hash_bytes(hash, pixels, 4u);
+
+    for (i = 0; i < samples; i++)
+    {
+        const uint64_t pixel_index = (i * (pixel_count - 1u)) / (samples - 1u);
+        const uint32_t row = (uint32_t)(pixel_index / width);
+        const uint32_t column = (uint32_t)(pixel_index % width);
+        const uint8_t* p = pixels + ((size_t)row * stride) + ((size_t)column * 4u);
+
+        hash = x11_trace_hash_bytes(hash, p, 4u);
+    }
+    return hash;
+}
+
 typedef struct x11_scancode_map
 {
     const char* name;
@@ -911,15 +969,21 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
     switch (event->type)
     {
         case LIBRDP_EVENT_SURFACE_INVALIDATED:
+        {
+            const int dirty_before = app->dirty;
+
             app->dirty = 1;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.active.framebuffer.blit",
-                            "x=%u y=%u width=%u height=%u",
+                            "x=%u y=%u width=%u height=%u dirty_before=%u event_serial=%llu",
                             event->data.surface.x,
                             event->data.surface.y,
                             event->data.surface.width,
-                            event->data.surface.height);
+                            event->data.surface.height,
+                            dirty_before ? 1u : 0u,
+                            (unsigned long long)app->event_serial);
             break;
+        }
         case LIBRDP_EVENT_DISCONNECTED:
             app->running = 0;
             break;
@@ -973,6 +1037,9 @@ static void draw_surface(x11_app* app)
     XImage* image = NULL;
     uint32_t width = 0;
     uint32_t height = 0;
+    size_t stride = 0;
+    uint64_t surface_hash = 0;
+    int put_result = 0;
 
     if (!app || !app->display || !app->session || x11_window_invalid)
         return;
@@ -983,9 +1050,30 @@ static void draw_surface(x11_app* app)
 
     width = librdp_surface_width(surface);
     height = librdp_surface_height(surface);
+    stride = librdp_surface_stride(surface);
+    surface_hash = x11_trace_hash_bgra(librdp_surface_pixels(surface), width, height, stride);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.surface.draw.start",
+                    "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
+                    width,
+                    height,
+                    (unsigned)stride,
+                    app->window_width,
+                    app->window_height,
+                    app->dirty ? 1u : 0u,
+                    (unsigned long long)surface_hash);
     if ((app->window_width != 0 && app->window_width != width) ||
         (app->window_height != 0 && app->window_height != height))
+    {
         XClearWindow(app->display, app->window);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.window.clear",
+                        "reason=surface_window_mismatch surface_width=%u surface_height=%u window_width=%u window_height=%u",
+                        width,
+                        height,
+                        app->window_width,
+                        app->window_height);
+    }
     image = XCreateImage(app->display,
                          DefaultVisual(app->display, app->screen),
                          (unsigned)DefaultDepth(app->display, app->screen),
@@ -995,14 +1083,32 @@ static void draw_surface(x11_app* app)
                          width,
                          height,
                          32,
-                         (int)librdp_surface_stride(surface));
+                         (int)stride);
     if (!image)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.surface.draw.failed",
+                        "stage=create_image surface_width=%u surface_height=%u surface_stride=%u",
+                        width,
+                        height,
+                        (unsigned)stride);
         return;
+    }
 
-    XPutImage(app->display, app->window, app->gc, image, 0, 0, 0, 0, width, height);
+    put_result = XPutImage(app->display, app->window, app->gc, image, 0, 0, 0, 0, width, height);
     image->data = NULL;
     XDestroyImage(image);
     XFlush(app->display);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.surface.draw.done",
+                    "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
+                    width,
+                    height,
+                    (unsigned)stride,
+                    app->window_width,
+                    app->window_height,
+                    put_result,
+                    (unsigned long long)surface_hash);
     app->dirty = 0;
 }
 
@@ -1351,6 +1457,15 @@ int main(int argc, char** argv)
                 continue;
             if (event.type == Expose)
             {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "x11.window.expose",
+                                "x=%d y=%d width=%d height=%d count=%d dirty_before=%u",
+                                event.xexpose.x,
+                                event.xexpose.y,
+                                event.xexpose.width,
+                                event.xexpose.height,
+                                event.xexpose.count,
+                                app.dirty ? 1u : 0u);
                 if (event.xexpose.width > 0 && event.xexpose.height > 0)
                     (void)librdp_session_refresh(app.session,
                                                  event.xexpose.x < 0 ? 0u : (uint32_t)event.xexpose.x,
@@ -1421,10 +1536,22 @@ int main(int argc, char** argv)
 
                 if (configured_width == app.window_width && configured_height == app.window_height)
                     continue;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "x11.window.configure",
+                                "old_width=%u old_height=%u new_width=%u new_height=%u",
+                                app.window_width,
+                                app.window_height,
+                                configured_width,
+                                configured_height);
                 app.window_width = configured_width;
                 app.window_height = configured_height;
                 (void)librdp_session_resize(app.session, configured_width, configured_height);
                 XClearWindow(app.display, app.window);
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "x11.window.clear",
+                                "reason=configure width=%u height=%u",
+                                configured_width,
+                                configured_height);
                 app.dirty = 1;
                 apply_viewer_cursor(&app);
             }

@@ -165,8 +165,8 @@ void rdp_trace_event(rdp_trace_category category, const char* event, const char*
     uint64_t now = 0;
     uint64_t elapsed_us = 0;
     unsigned long long seq = 0;
-    char message[512];
-    char escaped[1024];
+    char message[1024];
+    char escaped[2048];
 
     if (!event || !rdp_trace_enabled(category))
         return;
