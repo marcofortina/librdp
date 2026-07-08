@@ -1,0 +1,912 @@
+#include "graphics/avc.h"
+
+#include "common/trace.h"
+
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(RDP_HAVE_FFMPEG_AVC)
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>
+#include <libswscale/swscale.h>
+#endif
+
+typedef struct rdp_avc_yuv420
+{
+    rdp_buffer planes[3];
+    uint32_t width;
+    uint32_t height;
+    size_t stride[3];
+} rdp_avc_yuv420;
+
+#if defined(RDP_HAVE_FFMPEG_AVC)
+typedef struct rdp_avc_h264
+{
+    AVCodecContext* context;
+    AVPacket* packet;
+    AVFrame* frame;
+    struct SwsContext* to_bgra;
+    struct SwsContext* to_yuv420;
+} rdp_avc_h264;
+#endif
+
+struct rdp_avc_decoder
+{
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    rdp_avc_h264 main_stream;
+    rdp_avc_h264 aux_stream;
+    rdp_avc_yuv420 main_yuv;
+    rdp_avc_yuv420 aux_yuv;
+    rdp_buffer yuv444[3];
+    size_t yuv444_stride[3];
+    uint32_t yuv444_width;
+    uint32_t yuv444_height;
+    uint8_t yuv444_valid;
+    struct SwsContext* yuv444_to_bgra;
+#endif
+    uint8_t unused;
+};
+
+static int rdp_avc_mul_overflow_size(size_t a, size_t b, size_t* out)
+{
+    if (!out)
+        return 1;
+    if (a != 0 && b > ((size_t)-1) / a)
+        return 1;
+    *out = a * b;
+    return 0;
+}
+
+static librdp_status rdp_avc_frame_prepare(rdp_avc_frame* frame, uint32_t width, uint32_t height)
+{
+    size_t stride = 0;
+    size_t length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!frame || width == 0 || height == 0 || width > (uint32_t)INT_MAX / 4u ||
+        height > (uint32_t)INT_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    stride = (size_t)width * 4u;
+    if (rdp_avc_mul_overflow_size(stride, height, &length))
+        return LIBRDP_STATUS_NO_MEMORY;
+    status = rdp_buffer_reserve(&frame->pixels, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    frame->pixels.length = length;
+    frame->width = width;
+    frame->height = height;
+    frame->stride = stride;
+    return LIBRDP_STATUS_OK;
+}
+
+void rdp_avc_frame_init(rdp_avc_frame* frame)
+{
+    if (!frame)
+        return;
+    memset(frame, 0, sizeof(*frame));
+    rdp_buffer_init(&frame->pixels);
+}
+
+void rdp_avc_frame_free(rdp_avc_frame* frame)
+{
+    if (!frame)
+        return;
+    rdp_buffer_free(&frame->pixels);
+    frame->width = 0;
+    frame->height = 0;
+    frame->stride = 0;
+}
+
+#if defined(RDP_HAVE_FFMPEG_AVC)
+static void rdp_avc_yuv420_init(rdp_avc_yuv420* yuv)
+{
+    size_t i = 0;
+
+    if (!yuv)
+        return;
+    memset(yuv, 0, sizeof(*yuv));
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_init(&yuv->planes[i]);
+}
+
+static void rdp_avc_yuv420_free(rdp_avc_yuv420* yuv)
+{
+    size_t i = 0;
+
+    if (!yuv)
+        return;
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_free(&yuv->planes[i]);
+    memset(yuv, 0, sizeof(*yuv));
+}
+
+static librdp_status rdp_avc_yuv420_prepare(rdp_avc_yuv420* yuv, uint32_t width, uint32_t height)
+{
+    size_t y_length = 0;
+    size_t c_width = 0;
+    size_t c_height = 0;
+    size_t c_length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!yuv || width == 0 || height == 0 || width > (uint32_t)INT_MAX || height > (uint32_t)INT_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    yuv->stride[0] = width;
+    yuv->stride[1] = ((size_t)width + 1u) / 2u;
+    yuv->stride[2] = yuv->stride[1];
+    c_width = yuv->stride[1];
+    c_height = ((size_t)height + 1u) / 2u;
+    if (rdp_avc_mul_overflow_size(width, height, &y_length) ||
+        rdp_avc_mul_overflow_size(c_width, c_height, &c_length))
+        return LIBRDP_STATUS_NO_MEMORY;
+    status = rdp_buffer_reserve(&yuv->planes[0], y_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_reserve(&yuv->planes[1], c_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_reserve(&yuv->planes[2], c_length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    yuv->planes[0].length = y_length;
+    yuv->planes[1].length = c_length;
+    yuv->planes[2].length = c_length;
+    yuv->width = width;
+    yuv->height = height;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_avc_h264_reset(rdp_avc_h264* h264)
+{
+    if (!h264)
+        return;
+    if (h264->context)
+        avcodec_flush_buffers(h264->context);
+    if (h264->packet)
+        av_packet_unref(h264->packet);
+    if (h264->frame)
+        av_frame_unref(h264->frame);
+}
+
+static void rdp_avc_h264_free(rdp_avc_h264* h264)
+{
+    if (!h264)
+        return;
+    sws_freeContext(h264->to_bgra);
+    sws_freeContext(h264->to_yuv420);
+    h264->to_bgra = NULL;
+    h264->to_yuv420 = NULL;
+    av_frame_free(&h264->frame);
+    av_packet_free(&h264->packet);
+    avcodec_free_context(&h264->context);
+}
+
+static librdp_status rdp_avc_h264_open(rdp_avc_h264* h264)
+{
+    const AVCodec* codec = NULL;
+
+    if (!h264)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (h264->context)
+        return LIBRDP_STATUS_OK;
+
+    codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (!codec)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    h264->context = avcodec_alloc_context3(codec);
+    h264->packet = av_packet_alloc();
+    h264->frame = av_frame_alloc();
+    if (!h264->context || !h264->packet || !h264->frame)
+        return LIBRDP_STATUS_NO_MEMORY;
+    h264->context->thread_count = 1;
+    if (avcodec_open2(h264->context, codec, NULL) < 0)
+    {
+        rdp_avc_h264_free(h264);
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_h264_decode(rdp_avc_h264* h264, const uint8_t* data, size_t length)
+{
+    int rc = 0;
+    int got = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!h264 || !data || length == 0 || length > (size_t)INT_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_avc_h264_open(h264);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    av_packet_unref(h264->packet);
+    av_frame_unref(h264->frame);
+    rc = av_new_packet(h264->packet, (int)length);
+    if (rc < 0)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memcpy(h264->packet->data, data, length);
+    rc = avcodec_send_packet(h264->context, h264->packet);
+    av_packet_unref(h264->packet);
+    if (rc < 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    for (;;)
+    {
+        rc = avcodec_receive_frame(h264->context, h264->frame);
+        if (rc == 0)
+        {
+            got = 1;
+            break;
+        }
+        if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF)
+            break;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return got ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static void rdp_avc_configure_sws_colorspace(struct SwsContext* context)
+{
+    const int* coefficients = NULL;
+
+    if (!context)
+        return;
+    coefficients = sws_getCoefficients(SWS_CS_ITU709);
+    if (!coefficients)
+        return;
+    (void)sws_setColorspaceDetails(context,
+                                   coefficients,
+                                   1,
+                                   coefficients,
+                                   1,
+                                   0,
+                                   1 << 16,
+                                   1 << 16);
+}
+
+static librdp_status rdp_avc_frame_to_bgra(rdp_avc_h264* h264,
+                                           uint32_t surface_width,
+                                           uint32_t surface_height,
+                                           rdp_avc_frame* frame)
+{
+    uint8_t* dst_data[4] = {0};
+    int dst_stride[4] = {0};
+    int rows = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!h264 || !h264->frame || !frame || h264->frame->width <= 0 || h264->frame->height <= 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((uint32_t)h264->frame->width > surface_width || (uint32_t)h264->frame->height > surface_height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_avc_frame_prepare(frame, (uint32_t)h264->frame->width, (uint32_t)h264->frame->height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    h264->to_bgra = sws_getCachedContext(h264->to_bgra,
+                                         h264->frame->width,
+                                         h264->frame->height,
+                                         (enum AVPixelFormat)h264->frame->format,
+                                         h264->frame->width,
+                                         h264->frame->height,
+                                         AV_PIX_FMT_BGRA,
+                                         SWS_FAST_BILINEAR,
+                                         NULL,
+                                         NULL,
+                                         NULL);
+    if (!h264->to_bgra)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    rdp_avc_configure_sws_colorspace(h264->to_bgra);
+    dst_data[0] = frame->pixels.data;
+    dst_stride[0] = (int)frame->stride;
+    rows = sws_scale(h264->to_bgra,
+                     (const uint8_t* const*)h264->frame->data,
+                     h264->frame->linesize,
+                     0,
+                     h264->frame->height,
+                     dst_data,
+                     dst_stride);
+    return rows == h264->frame->height ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_avc_frame_to_yuv420(rdp_avc_h264* h264,
+                                             uint32_t surface_width,
+                                             uint32_t surface_height,
+                                             rdp_avc_yuv420* yuv)
+{
+    uint8_t* dst_data[4] = {0};
+    int dst_stride[4] = {0};
+    int rows = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!h264 || !h264->frame || !yuv || h264->frame->width <= 0 || h264->frame->height <= 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((uint32_t)h264->frame->width > surface_width || (uint32_t)h264->frame->height > surface_height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_avc_yuv420_prepare(yuv, (uint32_t)h264->frame->width, (uint32_t)h264->frame->height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    h264->to_yuv420 = sws_getCachedContext(h264->to_yuv420,
+                                           h264->frame->width,
+                                           h264->frame->height,
+                                           (enum AVPixelFormat)h264->frame->format,
+                                           h264->frame->width,
+                                           h264->frame->height,
+                                           AV_PIX_FMT_YUV420P,
+                                           SWS_FAST_BILINEAR,
+                                           NULL,
+                                           NULL,
+                                           NULL);
+    if (!h264->to_yuv420)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    rdp_avc_configure_sws_colorspace(h264->to_yuv420);
+    dst_data[0] = yuv->planes[0].data;
+    dst_data[1] = yuv->planes[1].data;
+    dst_data[2] = yuv->planes[2].data;
+    dst_stride[0] = (int)yuv->stride[0];
+    dst_stride[1] = (int)yuv->stride[1];
+    dst_stride[2] = (int)yuv->stride[2];
+    rows = sws_scale(h264->to_yuv420,
+                     (const uint8_t* const*)h264->frame->data,
+                     h264->frame->linesize,
+                     0,
+                     h264->frame->height,
+                     dst_data,
+                     dst_stride);
+    return rows == h264->frame->height ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_avc_ensure_yuv444(rdp_avc_decoder* decoder, uint32_t width, uint32_t height)
+{
+    size_t length = 0;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!decoder || width == 0 || height == 0 || width > (uint32_t)INT_MAX || height > (uint32_t)INT_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_avc_mul_overflow_size(width, height, &length))
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (decoder->yuv444_width != width || decoder->yuv444_height != height)
+    {
+        decoder->yuv444_valid = 0;
+        decoder->yuv444_width = width;
+        decoder->yuv444_height = height;
+        decoder->yuv444_stride[0] = width;
+        decoder->yuv444_stride[1] = width;
+        decoder->yuv444_stride[2] = width;
+    }
+    for (i = 0; i < 3u; i++)
+    {
+        status = rdp_buffer_reserve(&decoder->yuv444[i], length);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        decoder->yuv444[i].length = length;
+    }
+    if (!decoder->yuv444_valid)
+    {
+        memset(decoder->yuv444[0].data, 0, decoder->yuv444[0].length);
+        memset(decoder->yuv444[1].data, 128, decoder->yuv444[1].length);
+        memset(decoder->yuv444[2].data, 128, decoder->yuv444[2].length);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_validate_rect(const rdp_avc_yuv420* yuv,
+                                           uint32_t surface_width,
+                                           uint32_t surface_height,
+                                           const rdp_graphics_rect16* rect)
+{
+    if (!yuv || !rect || rect->left >= rect->right || rect->top >= rect->bottom ||
+        rect->right > surface_width || rect->bottom > surface_height ||
+        rect->right > yuv->width || rect->bottom > yuv->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* meta,
+                                          uint32_t index,
+                                          rdp_graphics_rect16* rect)
+{
+    if (!meta || !rect || index >= meta->rect_count || meta->rects_len < ((size_t)index + 1u) * 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_graphics_parse_rect16(meta->rects + ((size_t)index * 8u), 8u, rect);
+}
+
+static librdp_status rdp_avc_copy_luma420(rdp_avc_decoder* decoder,
+                                          const rdp_avc_yuv420* yuv,
+                                          const rdp_graphics_rect16* rect)
+{
+    uint32_t y = 0;
+
+    if (!decoder || !yuv || !rect)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (y = rect->top; y < rect->bottom; y++)
+    {
+        uint8_t* dst_y = decoder->yuv444[0].data + ((size_t)y * decoder->yuv444_stride[0]) + rect->left;
+        const uint8_t* src_y = yuv->planes[0].data + ((size_t)y * yuv->stride[0]) + rect->left;
+        uint8_t* dst_u = decoder->yuv444[1].data + ((size_t)y * decoder->yuv444_stride[1]) + rect->left;
+        uint8_t* dst_v = decoder->yuv444[2].data + ((size_t)y * decoder->yuv444_stride[2]) + rect->left;
+        uint32_t x = 0;
+
+        memcpy(dst_y, src_y, (size_t)(rect->right - rect->left));
+        for (x = rect->left; x < rect->right; x++)
+        {
+            size_t src_offset = ((size_t)y / 2u) * yuv->stride[1] + ((size_t)x / 2u);
+
+            dst_u[x - rect->left] = yuv->planes[1].data[src_offset];
+            dst_v[x - rect->left] = yuv->planes[2].data[src_offset];
+        }
+    }
+    decoder->yuv444_valid = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_apply_chroma_v1(rdp_avc_decoder* decoder,
+                                             const rdp_avc_yuv420* yuv,
+                                             const rdp_graphics_rect16* rect)
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t padded_height = 0;
+    uint32_t u_row = 0;
+    uint32_t v_row = 0;
+    uint32_t y = 0;
+    uint32_t half_width = 0;
+    uint32_t half_height = 0;
+
+    if (!decoder || !yuv || !rect || !decoder->yuv444_valid)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    width = (uint32_t)(rect->right - rect->left);
+    height = (uint32_t)(rect->bottom - rect->top);
+    padded_height = height + 16u - (height % 16u);
+    half_width = width / 2u;
+    half_height = height / 2u;
+
+    for (y = 0; y < padded_height; y++)
+    {
+        uint32_t dest_row = 0;
+        uint8_t* dest = NULL;
+        const uint8_t* src = NULL;
+
+        if ((y % 16u) < 8u)
+        {
+            dest_row = rect->top + 2u * u_row + 1u;
+            u_row++;
+            if (dest_row >= rect->bottom)
+                continue;
+            dest = decoder->yuv444[1].data + ((size_t)dest_row * decoder->yuv444_stride[1]) + rect->left;
+        }
+        else
+        {
+            dest_row = rect->top + 2u * v_row + 1u;
+            v_row++;
+            if (dest_row >= rect->bottom)
+                continue;
+            dest = decoder->yuv444[2].data + ((size_t)dest_row * decoder->yuv444_stride[2]) + rect->left;
+        }
+        if (rect->top + y >= yuv->height || rect->left + width > yuv->stride[0])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src = yuv->planes[0].data + ((size_t)(rect->top + y) * yuv->stride[0]) + rect->left;
+        memcpy(dest, src, width);
+    }
+
+    for (y = 0; y < half_height; y++)
+    {
+        uint32_t dest_row = rect->top + 2u * y;
+        const uint8_t* src_u = NULL;
+        const uint8_t* src_v = NULL;
+        uint8_t* dest_u = NULL;
+        uint8_t* dest_v = NULL;
+        uint32_t x = 0;
+
+        if ((size_t)(rect->top / 2u + y) >= (((size_t)yuv->height + 1u) / 2u))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if ((size_t)(rect->left / 2u) + half_width > yuv->stride[1])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src_u = yuv->planes[1].data + ((size_t)(rect->top / 2u + y) * yuv->stride[1]) +
+                (rect->left / 2u);
+        src_v = yuv->planes[2].data + ((size_t)(rect->top / 2u + y) * yuv->stride[2]) +
+                (rect->left / 2u);
+        dest_u = decoder->yuv444[1].data + ((size_t)dest_row * decoder->yuv444_stride[1]) + rect->left;
+        dest_v = decoder->yuv444[2].data + ((size_t)dest_row * decoder->yuv444_stride[2]) + rect->left;
+        for (x = 0; x < half_width; x++)
+        {
+            uint32_t dest_col = 2u * x + 1u;
+
+            if (rect->left + dest_col >= rect->right)
+                break;
+            dest_u[dest_col] = src_u[x];
+            dest_v[dest_col] = src_v[x];
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
+                                             const rdp_avc_yuv420* yuv,
+                                             const rdp_graphics_rect16* rect)
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t half_width = 0;
+    uint32_t half_height = 0;
+    uint32_t quarter_width = 0;
+    uint32_t y = 0;
+
+    if (!decoder || !yuv || !rect || !decoder->yuv444_valid)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    width = (uint32_t)(rect->right - rect->left);
+    height = (uint32_t)(rect->bottom - rect->top);
+    half_width = (width + 1u) / 2u;
+    half_height = (height + 1u) / 2u;
+    quarter_width = (width + 3u) / 4u;
+
+    for (y = 0; y < height; y++)
+    {
+        const uint8_t* src_u = NULL;
+        const uint8_t* src_v = NULL;
+        uint8_t* dest_u = NULL;
+        uint8_t* dest_v = NULL;
+        uint32_t x = 0;
+
+        if (rect->top + y >= yuv->height ||
+            (size_t)(rect->left / 2u) + (size_t)yuv->width / 2u + half_width > yuv->stride[0])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src_u = yuv->planes[0].data + ((size_t)(rect->top + y) * yuv->stride[0]) + rect->left / 2u;
+        src_v = src_u + yuv->width / 2u;
+        dest_u = decoder->yuv444[1].data + ((size_t)(rect->top + y) * decoder->yuv444_stride[1]) +
+                 rect->left;
+        dest_v = decoder->yuv444[2].data + ((size_t)(rect->top + y) * decoder->yuv444_stride[2]) +
+                 rect->left;
+        for (x = 0; x < half_width; x++)
+        {
+            uint32_t dest_col = 2u * x + 1u;
+
+            if (rect->left + dest_col >= rect->right)
+                break;
+            dest_u[dest_col] = src_u[x];
+            dest_v[dest_col] = src_v[x];
+        }
+    }
+
+    for (y = 0; y < half_height; y++)
+    {
+        const uint8_t* src_uu = NULL;
+        const uint8_t* src_uv = NULL;
+        const uint8_t* src_vu = NULL;
+        const uint8_t* src_vv = NULL;
+        uint8_t* dest_u = NULL;
+        uint8_t* dest_v = NULL;
+        uint32_t x = 0;
+        uint32_t dest_row = rect->top + 2u * y + 1u;
+        size_t src_row = (size_t)(rect->top / 2u + y);
+
+        if (src_row >= (((size_t)yuv->height + 1u) / 2u))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (dest_row >= rect->bottom)
+            break;
+        if ((size_t)(rect->left / 4u) + (size_t)yuv->width / 4u + quarter_width > yuv->stride[1] ||
+            (size_t)(rect->left / 4u) + (size_t)yuv->width / 4u + quarter_width > yuv->stride[2])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src_uu = yuv->planes[1].data + src_row * yuv->stride[1] + rect->left / 4u;
+        src_uv = src_uu + yuv->width / 4u;
+        src_vu = yuv->planes[2].data + src_row * yuv->stride[2] + rect->left / 4u;
+        src_vv = src_vu + yuv->width / 4u;
+        dest_u = decoder->yuv444[1].data + ((size_t)dest_row * decoder->yuv444_stride[1]) +
+                 rect->left;
+        dest_v = decoder->yuv444[2].data + ((size_t)dest_row * decoder->yuv444_stride[2]) +
+                 rect->left;
+        for (x = 0; x < quarter_width; x++)
+        {
+            uint32_t col0 = 4u * x;
+            uint32_t col2 = col0 + 2u;
+
+            if (rect->left + col0 < rect->right)
+            {
+                dest_u[col0] = src_uu[x];
+                dest_v[col0] = src_uv[x];
+            }
+            if (rect->left + col2 < rect->right)
+            {
+                dest_u[col2] = src_vu[x];
+                dest_v[col2] = src_vv[x];
+            }
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_apply_regions_420(rdp_avc_decoder* decoder,
+                                               const rdp_avc_yuv420* yuv,
+                                               uint32_t surface_width,
+                                               uint32_t surface_height,
+                                               const rdp_graphics_avc420_metablock* meta)
+{
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    for (i = 0; i < meta->rect_count; i++)
+    {
+        rdp_graphics_rect16 rect;
+
+        status = rdp_avc_parse_region(meta, i, &rect);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_validate_rect(yuv, surface_width, surface_height, &rect);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_copy_luma420(decoder, yuv, &rect);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_apply_regions_chroma(rdp_avc_decoder* decoder,
+                                                  uint16_t codec_id,
+                                                  const rdp_avc_yuv420* yuv,
+                                                  uint32_t surface_width,
+                                                  uint32_t surface_height,
+                                                  const rdp_graphics_avc420_metablock* meta)
+{
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    for (i = 0; i < meta->rect_count; i++)
+    {
+        rdp_graphics_rect16 rect;
+
+        status = rdp_avc_parse_region(meta, i, &rect);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_validate_rect(yuv, surface_width, surface_height, &rect);
+        if (status == LIBRDP_STATUS_OK && codec_id == RDP_GRAPHICS_CODECID_AVC444V2)
+            status = rdp_avc_apply_chroma_v2(decoder, yuv, &rect);
+        else if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_apply_chroma_v1(decoder, yuv, &rect);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_yuv444_to_bgra(rdp_avc_decoder* decoder, rdp_avc_frame* frame)
+{
+    const uint8_t* src_data[4] = {0};
+    int src_stride[4] = {0};
+    uint8_t* dst_data[4] = {0};
+    int dst_stride[4] = {0};
+    int rows = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!decoder || !frame || !decoder->yuv444_valid)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_avc_frame_prepare(frame, decoder->yuv444_width, decoder->yuv444_height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    decoder->yuv444_to_bgra = sws_getCachedContext(decoder->yuv444_to_bgra,
+                                                   (int)decoder->yuv444_width,
+                                                   (int)decoder->yuv444_height,
+                                                   AV_PIX_FMT_YUV444P,
+                                                   (int)decoder->yuv444_width,
+                                                   (int)decoder->yuv444_height,
+                                                   AV_PIX_FMT_BGRA,
+                                                   SWS_FAST_BILINEAR,
+                                                   NULL,
+                                                   NULL,
+                                                   NULL);
+    if (!decoder->yuv444_to_bgra)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    rdp_avc_configure_sws_colorspace(decoder->yuv444_to_bgra);
+    src_data[0] = decoder->yuv444[0].data;
+    src_data[1] = decoder->yuv444[1].data;
+    src_data[2] = decoder->yuv444[2].data;
+    src_stride[0] = (int)decoder->yuv444_stride[0];
+    src_stride[1] = (int)decoder->yuv444_stride[1];
+    src_stride[2] = (int)decoder->yuv444_stride[2];
+    dst_data[0] = frame->pixels.data;
+    dst_stride[0] = (int)frame->stride;
+    rows = sws_scale(decoder->yuv444_to_bgra,
+                     src_data,
+                     src_stride,
+                     0,
+                     (int)decoder->yuv444_height,
+                     dst_data,
+                     dst_stride);
+    return rows == (int)decoder->yuv444_height ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+#endif
+
+rdp_avc_decoder* rdp_avc_decoder_new(void)
+{
+    rdp_avc_decoder* decoder = (rdp_avc_decoder*)calloc(1, sizeof(*decoder));
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    size_t i = 0;
+#endif
+
+    if (!decoder)
+        return NULL;
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    rdp_avc_yuv420_init(&decoder->main_yuv);
+    rdp_avc_yuv420_init(&decoder->aux_yuv);
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_init(&decoder->yuv444[i]);
+#endif
+    return decoder;
+}
+
+void rdp_avc_decoder_reset(rdp_avc_decoder* decoder)
+{
+    if (!decoder)
+        return;
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    rdp_avc_h264_reset(&decoder->main_stream);
+    rdp_avc_h264_reset(&decoder->aux_stream);
+    decoder->yuv444_valid = 0;
+#endif
+}
+
+void rdp_avc_decoder_free(rdp_avc_decoder* decoder)
+{
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    size_t i = 0;
+#endif
+
+    if (!decoder)
+        return;
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    rdp_avc_h264_free(&decoder->main_stream);
+    rdp_avc_h264_free(&decoder->aux_stream);
+    rdp_avc_yuv420_free(&decoder->main_yuv);
+    rdp_avc_yuv420_free(&decoder->aux_yuv);
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_free(&decoder->yuv444[i]);
+    sws_freeContext(decoder->yuv444_to_bgra);
+#endif
+    free(decoder);
+}
+
+librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
+                                 const rdp_graphics_avc420_stream* stream,
+                                 uint32_t surface_width,
+                                 uint32_t surface_height,
+                                 rdp_avc_frame* frame)
+{
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!decoder || !stream || !frame)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.graphics.avc420.decode.start",
+                          "surface_width=%u surface_height=%u rect_count=%u payload_len=%u",
+                          surface_width,
+                          surface_height,
+                          stream->meta.rect_count,
+                          (unsigned)stream->bitstream_len);
+    status = rdp_avc_h264_decode(&decoder->main_stream, stream->bitstream, stream->bitstream_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_avc_frame_to_bgra(&decoder->main_stream, surface_width, surface_height, frame);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
+                          status == LIBRDP_STATUS_OK ? "client.graphics.avc420.decode.done" :
+                                                        "client.graphics.avc420.decode.failed",
+                          "status=%d frame_width=%u frame_height=%u stride=%u",
+                          (int)status,
+                          frame ? frame->width : 0u,
+                          frame ? frame->height : 0u,
+                          frame ? (unsigned)frame->stride : 0u);
+    return status;
+#else
+    (void)decoder;
+    (void)stream;
+    (void)surface_width;
+    (void)surface_height;
+    (void)frame;
+    return LIBRDP_STATUS_UNSUPPORTED;
+#endif
+}
+
+librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
+                                 uint16_t codec_id,
+                                 const rdp_graphics_avc444_stream* stream,
+                                 uint32_t surface_width,
+                                 uint32_t surface_height,
+                                 rdp_avc_frame* frame)
+{
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!decoder || !stream || !frame)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (codec_id != RDP_GRAPHICS_CODECID_AVC444 && codec_id != RDP_GRAPHICS_CODECID_AVC444V2)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.graphics.avc444.decode.start",
+                          "codec_id=%u lc=%u surface_width=%u surface_height=%u stream1_len=%u stream2_len=%u",
+                          codec_id,
+                          stream->lc,
+                          surface_width,
+                          surface_height,
+                          stream->has_stream1 ? (unsigned)stream->stream1.bitstream_len : 0u,
+                          stream->has_stream2 ? (unsigned)stream->stream2.bitstream_len : 0u);
+    status = rdp_avc_ensure_yuv444(decoder, surface_width, surface_height);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+
+    if (stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH || stream->lc == RDP_GRAPHICS_AVC444_LC_LUMA)
+    {
+        status = rdp_avc_h264_decode(&decoder->main_stream,
+                                     stream->stream1.bitstream,
+                                     stream->stream1.bitstream_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_frame_to_yuv420(&decoder->main_stream,
+                                             surface_width,
+                                             surface_height,
+                                             &decoder->main_yuv);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_apply_regions_420(decoder,
+                                               &decoder->main_yuv,
+                                               surface_width,
+                                               surface_height,
+                                               &stream->stream1.meta);
+    }
+    if (status == LIBRDP_STATUS_OK && stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH)
+    {
+        status = rdp_avc_h264_decode(&decoder->aux_stream,
+                                     stream->stream2.bitstream,
+                                     stream->stream2.bitstream_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_frame_to_yuv420(&decoder->aux_stream,
+                                             surface_width,
+                                             surface_height,
+                                             &decoder->aux_yuv);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_apply_regions_chroma(decoder,
+                                                  codec_id,
+                                                  &decoder->aux_yuv,
+                                                  surface_width,
+                                                  surface_height,
+                                                  &stream->stream2.meta);
+    }
+    else if (status == LIBRDP_STATUS_OK && stream->lc == RDP_GRAPHICS_AVC444_LC_CHROMA)
+    {
+        status = rdp_avc_h264_decode(&decoder->aux_stream,
+                                     stream->stream1.bitstream,
+                                     stream->stream1.bitstream_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_frame_to_yuv420(&decoder->aux_stream,
+                                             surface_width,
+                                             surface_height,
+                                             &decoder->aux_yuv);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_apply_regions_chroma(decoder,
+                                                  codec_id,
+                                                  &decoder->aux_yuv,
+                                                  surface_width,
+                                                  surface_height,
+                                                  &stream->stream1.meta);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_avc_yuv444_to_bgra(decoder, frame);
+
+out:
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
+                          status == LIBRDP_STATUS_OK ? "client.graphics.avc444.decode.done" :
+                                                        "client.graphics.avc444.decode.failed",
+                          "status=%d codec_id=%u lc=%u frame_width=%u frame_height=%u stride=%u",
+                          (int)status,
+                          codec_id,
+                          stream->lc,
+                          frame ? frame->width : 0u,
+                          frame ? frame->height : 0u,
+                          frame ? (unsigned)frame->stride : 0u);
+    return status;
+#else
+    (void)decoder;
+    (void)codec_id;
+    (void)stream;
+    (void)surface_width;
+    (void)surface_height;
+    (void)frame;
+    return LIBRDP_STATUS_UNSUPPORTED;
+#endif
+}

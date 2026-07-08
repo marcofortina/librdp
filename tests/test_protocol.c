@@ -2777,8 +2777,9 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_graphics_parse_capset(dyn_response.data + 10, dyn_response.length - 10, &graphics_capset) ==
            LIBRDP_STATUS_OK);
     PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_10 &&
-           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0 &&
-           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+           (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
+    PCHECK(((graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0) !=
+           ((graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED) != 0));
     PCHECK(rdp_graphics_parse_capset(dyn_response.data + 22, dyn_response.length - 22, &graphics_capset) ==
            LIBRDP_STATUS_OK);
     PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_8 &&

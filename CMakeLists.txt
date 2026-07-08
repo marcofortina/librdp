@@ -11,6 +11,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(OpenSSL 3.0 REQUIRED)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBRDP_FFMPEG_AVC QUIET IMPORTED_TARGET libavcodec libavutil libswscale)
+endif()
 
 add_library(librdp
     src/client/error.c
@@ -26,6 +30,7 @@ add_library(librdp
     src/common/buffer.c
     src/common/stream.c
     src/common/trace.c
+    src/graphics/avc.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
     src/graphics/planar.c
@@ -58,6 +63,10 @@ target_include_directories(librdp
 
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
 target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+if(LIBRDP_FFMPEG_AVC_FOUND)
+    target_compile_definitions(librdp PRIVATE RDP_HAVE_FFMPEG_AVC=1)
+    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)

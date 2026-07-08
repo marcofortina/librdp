@@ -444,7 +444,11 @@ librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
 librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
 {
     const rdp_graphics_capset capsets[] = {
+#if defined(RDP_HAVE_FFMPEG_AVC)
+        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED},
+#else
         {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED},
+#endif
         {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE}
     };
 
