@@ -17,6 +17,37 @@ typedef struct rdp_rfx_bit_reader
     size_t bit_pos;
 } rdp_rfx_bit_reader;
 
+typedef struct rdp_rfx_band
+{
+    size_t offset;
+    size_t count;
+    uint8_t quant_index;
+    uint8_t non_ll;
+} rdp_rfx_band;
+
+typedef struct rdp_rfx_upgrade_reader
+{
+    rdp_rfx_bit_reader srl;
+    rdp_rfx_bit_reader raw;
+    int kp;
+    uint32_t nz;
+    uint8_t mode;
+} rdp_rfx_upgrade_reader;
+
+static const rdp_rfx_band rdp_rfx_normal_bands[] = {
+    {0u, 1024u, 7u, 1u},    {1024u, 1024u, 8u, 1u}, {2048u, 1024u, 9u, 1u},
+    {3072u, 256u, 4u, 1u},  {3328u, 256u, 5u, 1u},  {3584u, 256u, 6u, 1u},
+    {3840u, 64u, 1u, 1u},   {3904u, 64u, 2u, 1u},   {3968u, 64u, 3u, 1u},
+    {4032u, 64u, 0u, 0u}
+};
+
+static const rdp_rfx_band rdp_rfx_extrapolated_bands[] = {
+    {0u, 1023u, 7u, 1u},    {1023u, 1023u, 8u, 1u}, {2046u, 961u, 9u, 1u},
+    {3007u, 272u, 4u, 1u},  {3279u, 272u, 5u, 1u},  {3551u, 256u, 6u, 1u},
+    {3807u, 72u, 1u, 1u},   {3879u, 72u, 2u, 1u},   {3951u, 64u, 3u, 1u},
+    {4015u, 81u, 0u, 0u}
+};
+
 static librdp_status rdp_rfx_read_bits(rdp_rfx_bit_reader* reader, uint8_t count, uint32_t* value)
 {
     uint32_t output = 0;
@@ -35,6 +66,8 @@ static librdp_status rdp_rfx_read_bits(rdp_rfx_bit_reader* reader, uint8_t count
     }
     if (reader->bit_pos > max_bits || count > max_bits - reader->bit_pos)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!reader->data)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     for (i = 0; i < count; i++)
     {
         size_t byte_index = reader->bit_pos / 8u;
@@ -44,6 +77,18 @@ static librdp_status rdp_rfx_read_bits(rdp_rfx_bit_reader* reader, uint8_t count
         reader->bit_pos++;
     }
     *value = output;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_bit_reader_attach(rdp_rfx_bit_reader* reader,
+                                               const void* data,
+                                               size_t length)
+{
+    if (!reader || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    reader->data = (const uint8_t*)data;
+    reader->length = length;
+    reader->bit_pos = 0;
     return LIBRDP_STATUS_OK;
 }
 
@@ -224,6 +269,45 @@ librdp_status rdp_rfx_add_component_quant(const rdp_rfx_component_quant* base,
         output_values[i] = value;
     }
     rdp_rfx_component_quant_from_values(output, output_values);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_sub_component_quant(const rdp_rfx_component_quant* old_quant,
+                                                 const rdp_rfx_component_quant* new_quant,
+                                                 rdp_rfx_component_quant* output)
+{
+    uint8_t old_values[10];
+    uint8_t new_values[10];
+    uint8_t output_values[10];
+    size_t i = 0;
+
+    if (!old_quant || !new_quant || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_rfx_component_quant_in_range(old_quant, 15) ||
+        !rdp_rfx_component_quant_in_range(new_quant, 15))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_rfx_component_quant_to_values(old_quant, old_values);
+    rdp_rfx_component_quant_to_values(new_quant, new_values);
+    for (i = 0; i < sizeof(output_values) / sizeof(output_values[0]); i++)
+    {
+        if (old_values[i] < new_values[i])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        output_values[i] = (uint8_t)(old_values[i] - new_values[i]);
+    }
+    rdp_rfx_component_quant_from_values(output, output_values);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_component_quant_values_checked(const rdp_rfx_component_quant* quant,
+                                                            uint8_t max_value,
+                                                            uint8_t values[10])
+{
+    if (!quant || !values)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_rfx_component_quant_in_range(quant, max_value))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_rfx_component_quant_to_values(quant, values);
     return LIBRDP_STATUS_OK;
 }
 
@@ -756,35 +840,206 @@ librdp_status rdp_rfx_decode_progressive_tile(const void* y_data,
                                               int extrapolate,
                                               rdp_rfx_tile_pixels* pixels)
 {
+    rdp_rfx_component_quant zero_delta;
+    rdp_rfx_progressive_tile_state state;
+
+    if (!y_data || !cb_data || !cr_data || !y_quant || !cb_quant || !cr_quant || !pixels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(&zero_delta, 0, sizeof(zero_delta));
+    memset(&state, 0, sizeof(state));
+    return rdp_rfx_decode_progressive_tile_state(y_data,
+                                                 y_len,
+                                                 cb_data,
+                                                 cb_len,
+                                                 cr_data,
+                                                 cr_len,
+                                                 y_quant,
+                                                 &zero_delta,
+                                                 cb_quant,
+                                                 &zero_delta,
+                                                 cr_quant,
+                                                 &zero_delta,
+                                                 extrapolate,
+                                                 0,
+                                                 &state,
+                                                 pixels);
+}
+
+static const rdp_rfx_band* rdp_rfx_component_bands(int extrapolate, size_t* count)
+{
+    if (count)
+    {
+        *count = extrapolate ? sizeof(rdp_rfx_extrapolated_bands) / sizeof(rdp_rfx_extrapolated_bands[0])
+                             : sizeof(rdp_rfx_normal_bands) / sizeof(rdp_rfx_normal_bands[0]);
+    }
+    return extrapolate ? rdp_rfx_extrapolated_bands : rdp_rfx_normal_bands;
+}
+
+static librdp_status rdp_rfx_shift_progressive_coefficients(int32_t* coefficients,
+                                                            const rdp_rfx_component_quant* bit_pos,
+                                                            int extrapolate)
+{
+    const rdp_rfx_band* bands = NULL;
+    size_t band_count = 0;
+    uint8_t values[10];
+    size_t i = 0;
+
+    if (!coefficients || !bit_pos)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_rfx_component_quant_values_checked(bit_pos, 15, values) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    bands = rdp_rfx_component_bands(extrapolate, &band_count);
+    for (i = 0; i < band_count; i++)
+    {
+        const rdp_rfx_band* band = &bands[i];
+        uint8_t shift = 0;
+        size_t n = 0;
+
+        if (band->offset > RDP_RFX_TILE_COEFFICIENTS ||
+            band->count > RDP_RFX_TILE_COEFFICIENTS - band->offset ||
+            values[band->quant_index] == 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        shift = (uint8_t)(values[band->quant_index] - 1u);
+        if (shift == 0)
+            continue;
+        for (n = 0; n < band->count; n++)
+        {
+            size_t index = band->offset + n;
+
+            coefficients[index] = rdp_rfx_clamp_i32((int64_t)coefficients[index] << shift);
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_render_progressive_component(const rdp_rfx_progressive_component_state* component,
+                                                          int extrapolate,
+                                                          int32_t* coefficients)
+{
+    if (!component || !coefficients || !component->valid)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memcpy(coefficients, component->current, RDP_RFX_TILE_COEFFICIENTS * sizeof(coefficients[0]));
+    return extrapolate ? rdp_rfx_inverse_dwt_2d_extrapolated(coefficients, RDP_RFX_TILE_COEFFICIENTS)
+                       : rdp_rfx_inverse_dwt_2d(coefficients, RDP_RFX_TILE_COEFFICIENTS);
+}
+
+static librdp_status rdp_rfx_decode_progressive_component_state(
+    const void* data,
+    size_t length,
+    const rdp_rfx_component_quant* quant,
+    const rdp_rfx_component_quant* delta,
+    int extrapolate,
+    int difference,
+    rdp_rfx_progressive_component_state* component,
+    int32_t* coefficients)
+{
+    int32_t decoded[RDP_RFX_TILE_COEFFICIENTS];
+    rdp_rfx_component_quant bit_pos;
+    size_t written = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    if (!data || !quant || !delta || !component || !coefficients)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (difference && !component->valid)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(decoded, 0, sizeof(decoded));
+    status = rdp_rfx_add_component_quant(quant, delta, &bit_pos);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                                     data,
+                                     length,
+                                     decoded,
+                                     RDP_RFX_TILE_COEFFICIENTS,
+                                     &written);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (written != RDP_RFX_TILE_COEFFICIENTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memcpy(component->sign, decoded, sizeof(component->sign));
+    status = extrapolate ? rdp_rfx_differential_decode(decoded + 4015u, 81u)
+                         : rdp_rfx_differential_decode(decoded + 4032u, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_shift_progressive_coefficients(decoded, &bit_pos, extrapolate);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (difference)
+    {
+        for (i = 0; i < RDP_RFX_TILE_COEFFICIENTS; i++)
+            component->current[i] = rdp_rfx_clamp_i32((int64_t)component->current[i] + decoded[i]);
+    }
+    else
+    {
+        memcpy(component->current, decoded, sizeof(component->current));
+    }
+    component->bit_pos = bit_pos;
+    component->quant = *quant;
+    component->progressive_quant = *delta;
+    component->valid = 1;
+    return rdp_rfx_render_progressive_component(component, extrapolate, coefficients);
+}
+
+librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
+                                                    size_t y_len,
+                                                    const void* cb_data,
+                                                    size_t cb_len,
+                                                    const void* cr_data,
+                                                    size_t cr_len,
+                                                    const rdp_rfx_component_quant* y_quant,
+                                                    const rdp_rfx_component_quant* y_delta,
+                                                    const rdp_rfx_component_quant* cb_quant,
+                                                    const rdp_rfx_component_quant* cb_delta,
+                                                    const rdp_rfx_component_quant* cr_quant,
+                                                    const rdp_rfx_component_quant* cr_delta,
+                                                    int extrapolate,
+                                                    int difference,
+                                                    rdp_rfx_progressive_tile_state* state,
+                                                    rdp_rfx_tile_pixels* pixels)
+{
+    rdp_rfx_progressive_tile_state next;
     int32_t y_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cb_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cr_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!y_data || !cb_data || !cr_data || !y_quant || !cb_quant || !cr_quant || !pixels)
+    if (!y_data || !cb_data || !cr_data || !y_quant || !y_delta || !cb_quant || !cb_delta ||
+        !cr_quant || !cr_delta || !state || !pixels)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    next = *state;
     memset(pixels, 0, sizeof(*pixels));
-    status = rdp_rfx_decode_progressive_component(y_data,
-                                                  y_len,
-                                                  y_quant,
-                                                  extrapolate,
-                                                  y_coefficients,
-                                                  RDP_RFX_TILE_COEFFICIENTS);
+    status = rdp_rfx_decode_progressive_component_state(y_data,
+                                                        y_len,
+                                                        y_quant,
+                                                        y_delta,
+                                                        extrapolate,
+                                                        difference,
+                                                        &next.y,
+                                                        y_coefficients);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_decode_progressive_component(cb_data,
-                                                      cb_len,
-                                                      cb_quant,
-                                                      extrapolate,
-                                                      cb_coefficients,
-                                                      RDP_RFX_TILE_COEFFICIENTS);
+        status = rdp_rfx_decode_progressive_component_state(cb_data,
+                                                            cb_len,
+                                                            cb_quant,
+                                                            cb_delta,
+                                                            extrapolate,
+                                                            difference,
+                                                            &next.cb,
+                                                            cb_coefficients);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_decode_progressive_component(cr_data,
-                                                      cr_len,
-                                                      cr_quant,
-                                                      extrapolate,
-                                                      cr_coefficients,
-                                                      RDP_RFX_TILE_COEFFICIENTS);
+        status = rdp_rfx_decode_progressive_component_state(cr_data,
+                                                            cr_len,
+                                                            cr_quant,
+                                                            cr_delta,
+                                                            extrapolate,
+                                                            difference,
+                                                            &next.cr,
+                                                            cr_coefficients);
     if (status == LIBRDP_STATUS_OK)
     {
         pixels->stride = 64u * 4u;
@@ -793,6 +1048,307 @@ librdp_status rdp_rfx_decode_progressive_tile(const void* y_data,
                                        cr_coefficients,
                                        pixels->bgra,
                                        pixels->stride);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        next.pass = difference && state->valid ? (uint16_t)(state->pass + 1u) : 1u;
+        next.extrapolate = extrapolate ? 1u : 0u;
+        next.valid = 1;
+        *state = next;
+    }
+    return status;
+}
+
+static librdp_status rdp_rfx_upgrade_srl_read(rdp_rfx_upgrade_reader* reader,
+                                              uint8_t num_bits,
+                                              int32_t* value)
+{
+    uint32_t bit = 0;
+    uint32_t sign = 0;
+    uint32_t magnitude = 0;
+    uint32_t max_magnitude = 0;
+    uint32_t k = 0;
+
+    if (!reader || !value || num_bits == 0 || num_bits > 15u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (reader->nz > 0)
+    {
+        reader->nz--;
+        *value = 0;
+        return LIBRDP_STATUS_OK;
+    }
+
+    k = (uint32_t)reader->kp / 8u;
+    if (k > 10u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (reader->mode == 0)
+    {
+        if (rdp_rfx_read_bits(&reader->srl, 1, &bit) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (bit == 0)
+        {
+            reader->nz = 1u << k;
+            reader->kp += 4;
+            if (reader->kp > RDP_RFX_RLGR_KP_MAX)
+                reader->kp = RDP_RFX_RLGR_KP_MAX;
+            reader->nz--;
+            *value = 0;
+            return LIBRDP_STATUS_OK;
+        }
+
+        reader->mode = 1;
+        reader->nz = 0;
+        if (k > 0 && rdp_rfx_read_bits(&reader->srl, (uint8_t)k, &reader->nz) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (reader->nz > 0)
+        {
+            reader->nz--;
+            *value = 0;
+            return LIBRDP_STATUS_OK;
+        }
+    }
+
+    reader->mode = 0;
+    if (rdp_rfx_read_bits(&reader->srl, 1, &sign) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    reader->kp = reader->kp < 6 ? 0 : reader->kp - 6;
+    if (num_bits == 1)
+    {
+        *value = sign ? -1 : 1;
+        return LIBRDP_STATUS_OK;
+    }
+
+    magnitude = 1;
+    max_magnitude = ((uint32_t)1u << num_bits) - 1u;
+    while (magnitude < max_magnitude)
+    {
+        if (rdp_rfx_read_bits(&reader->srl, 1, &bit) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (bit != 0)
+            break;
+        magnitude++;
+    }
+    *value = sign ? -(int32_t)magnitude : (int32_t)magnitude;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_upgrade_raw_read(rdp_rfx_upgrade_reader* reader,
+                                              uint8_t num_bits,
+                                              int32_t* value)
+{
+    uint32_t raw = 0;
+
+    if (!reader || !value || num_bits == 0 || num_bits > 15u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_rfx_read_bits(&reader->raw, num_bits, &raw) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = (int32_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_upgrade_block(rdp_rfx_upgrade_reader* reader,
+                                           int32_t* current,
+                                           int32_t* sign,
+                                           size_t offset,
+                                           size_t count,
+                                           uint8_t bit_pos,
+                                           uint8_t num_bits,
+                                           int non_ll)
+{
+    size_t i = 0;
+    uint8_t shift = 0;
+
+    if (!reader || !current || !sign ||
+        offset > RDP_RFX_TILE_COEFFICIENTS ||
+        count > RDP_RFX_TILE_COEFFICIENTS - offset)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (num_bits == 0)
+        return LIBRDP_STATUS_OK;
+    if (bit_pos == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    shift = (uint8_t)(bit_pos - 1u);
+    for (i = 0; i < count; i++)
+    {
+        size_t index = offset + i;
+        int32_t input = 0;
+
+        if (non_ll)
+        {
+            if (sign[index] > 0)
+            {
+                if (rdp_rfx_upgrade_raw_read(reader, num_bits, &input) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            else if (sign[index] < 0)
+            {
+                if (rdp_rfx_upgrade_raw_read(reader, num_bits, &input) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                input = -input;
+            }
+            else
+            {
+                if (rdp_rfx_upgrade_srl_read(reader, num_bits, &input) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                sign[index] = input;
+            }
+        }
+        else
+        {
+            if (rdp_rfx_upgrade_raw_read(reader, num_bits, &input) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        current[index] = rdp_rfx_clamp_i32((int64_t)current[index] + ((int64_t)input << shift));
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
+                                                     size_t srl_len,
+                                                     const void* raw_data,
+                                                     size_t raw_len,
+                                                     const rdp_rfx_component_quant* quant,
+                                                     const rdp_rfx_component_quant* delta,
+                                                     int extrapolate,
+                                                     rdp_rfx_progressive_component_state* component,
+                                                     int32_t* coefficients)
+{
+    rdp_rfx_upgrade_reader reader;
+    rdp_rfx_component_quant bit_pos;
+    rdp_rfx_component_quant num_bits;
+    uint8_t bit_pos_values[10];
+    uint8_t num_bit_values[10];
+    const rdp_rfx_band* bands = NULL;
+    size_t band_count = 0;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!quant || !delta || !component || !coefficients)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!component->valid)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_rfx_add_component_quant(quant, delta, &bit_pos);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_sub_component_quant(&component->bit_pos, &bit_pos, &num_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_component_quant_values_checked(&bit_pos, 15, bit_pos_values);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_component_quant_values_checked(&num_bits, 15, num_bit_values);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_bit_reader_attach(&reader.srl, srl_data, srl_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_bit_reader_attach(&reader.raw, raw_data, raw_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    reader.kp = 8;
+    reader.nz = 0;
+    reader.mode = 0;
+    bands = rdp_rfx_component_bands(extrapolate, &band_count);
+    for (i = 0; i < band_count; i++)
+    {
+        const rdp_rfx_band* band = &bands[i];
+
+        status = rdp_rfx_upgrade_block(&reader,
+                                       component->current,
+                                       component->sign,
+                                       band->offset,
+                                       band->count,
+                                       bit_pos_values[band->quant_index],
+                                       num_bit_values[band->quant_index],
+                                       band->non_ll != 0);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+
+    component->bit_pos = bit_pos;
+    component->quant = *quant;
+    component->progressive_quant = *delta;
+    component->valid = 1;
+    return rdp_rfx_render_progressive_component(component, extrapolate, coefficients);
+}
+
+librdp_status rdp_rfx_decode_progressive_upgrade_tile(const void* y_srl_data,
+                                                      size_t y_srl_len,
+                                                      const void* y_raw_data,
+                                                      size_t y_raw_len,
+                                                      const void* cb_srl_data,
+                                                      size_t cb_srl_len,
+                                                      const void* cb_raw_data,
+                                                      size_t cb_raw_len,
+                                                      const void* cr_srl_data,
+                                                      size_t cr_srl_len,
+                                                      const void* cr_raw_data,
+                                                      size_t cr_raw_len,
+                                                      const rdp_rfx_component_quant* y_quant,
+                                                      const rdp_rfx_component_quant* y_delta,
+                                                      const rdp_rfx_component_quant* cb_quant,
+                                                      const rdp_rfx_component_quant* cb_delta,
+                                                      const rdp_rfx_component_quant* cr_quant,
+                                                      const rdp_rfx_component_quant* cr_delta,
+                                                      int extrapolate,
+                                                      rdp_rfx_progressive_tile_state* state,
+                                                      rdp_rfx_tile_pixels* pixels)
+{
+    rdp_rfx_progressive_tile_state next;
+    int32_t y_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t cb_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t cr_coefficients[RDP_RFX_TILE_COEFFICIENTS];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!y_quant || !y_delta || !cb_quant || !cb_delta || !cr_quant || !cr_delta || !state || !pixels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!state->valid || !state->y.valid || !state->cb.valid || !state->cr.valid ||
+        state->extrapolate != (extrapolate ? 1u : 0u) ||
+        state->pass == UINT16_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    next = *state;
+    memset(pixels, 0, sizeof(*pixels));
+    status = rdp_rfx_upgrade_component_state(y_srl_data,
+                                             y_srl_len,
+                                             y_raw_data,
+                                             y_raw_len,
+                                             y_quant,
+                                             y_delta,
+                                             extrapolate,
+                                             &next.y,
+                                             y_coefficients);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_upgrade_component_state(cb_srl_data,
+                                                 cb_srl_len,
+                                                 cb_raw_data,
+                                                 cb_raw_len,
+                                                 cb_quant,
+                                                 cb_delta,
+                                                 extrapolate,
+                                                 &next.cb,
+                                                 cb_coefficients);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_upgrade_component_state(cr_srl_data,
+                                                 cr_srl_len,
+                                                 cr_raw_data,
+                                                 cr_raw_len,
+                                                 cr_quant,
+                                                 cr_delta,
+                                                 extrapolate,
+                                                 &next.cr,
+                                                 cr_coefficients);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        pixels->stride = 64u * 4u;
+        status = rdp_rfx_ycbcr_to_bgra(y_coefficients,
+                                       cb_coefficients,
+                                       cr_coefficients,
+                                       pixels->bgra,
+                                       pixels->stride);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        next.pass = (uint16_t)(state->pass + 1u);
+        next.extrapolate = extrapolate ? 1u : 0u;
+        next.valid = 1;
+        *state = next;
     }
     return status;
 }

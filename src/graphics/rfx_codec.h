@@ -42,6 +42,28 @@ typedef struct rdp_rfx_tile_pixels
     size_t stride;
 } rdp_rfx_tile_pixels;
 
+typedef struct rdp_rfx_progressive_component_state
+{
+    int32_t current[RDP_RFX_TILE_COEFFICIENTS];
+    int32_t sign[RDP_RFX_TILE_COEFFICIENTS];
+    rdp_rfx_component_quant bit_pos;
+    rdp_rfx_component_quant quant;
+    rdp_rfx_component_quant progressive_quant;
+    uint8_t valid;
+} rdp_rfx_progressive_component_state;
+
+typedef struct rdp_rfx_progressive_tile_state
+{
+    rdp_rfx_progressive_component_state y;
+    rdp_rfx_progressive_component_state cb;
+    rdp_rfx_progressive_component_state cr;
+    uint16_t x_idx;
+    uint16_t y_idx;
+    uint16_t pass;
+    uint8_t extrapolate;
+    uint8_t valid;
+} rdp_rfx_progressive_tile_state;
+
 librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,
                                   const void* data,
                                   size_t length,
@@ -101,5 +123,42 @@ librdp_status rdp_rfx_decode_progressive_tile(const void* y_data,
                                               const rdp_rfx_component_quant* cr_quant,
                                               int extrapolate,
                                               rdp_rfx_tile_pixels* pixels);
+librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
+                                                    size_t y_len,
+                                                    const void* cb_data,
+                                                    size_t cb_len,
+                                                    const void* cr_data,
+                                                    size_t cr_len,
+                                                    const rdp_rfx_component_quant* y_quant,
+                                                    const rdp_rfx_component_quant* y_delta,
+                                                    const rdp_rfx_component_quant* cb_quant,
+                                                    const rdp_rfx_component_quant* cb_delta,
+                                                    const rdp_rfx_component_quant* cr_quant,
+                                                    const rdp_rfx_component_quant* cr_delta,
+                                                    int extrapolate,
+                                                    int difference,
+                                                    rdp_rfx_progressive_tile_state* state,
+                                                    rdp_rfx_tile_pixels* pixels);
+librdp_status rdp_rfx_decode_progressive_upgrade_tile(const void* y_srl_data,
+                                                      size_t y_srl_len,
+                                                      const void* y_raw_data,
+                                                      size_t y_raw_len,
+                                                      const void* cb_srl_data,
+                                                      size_t cb_srl_len,
+                                                      const void* cb_raw_data,
+                                                      size_t cb_raw_len,
+                                                      const void* cr_srl_data,
+                                                      size_t cr_srl_len,
+                                                      const void* cr_raw_data,
+                                                      size_t cr_raw_len,
+                                                      const rdp_rfx_component_quant* y_quant,
+                                                      const rdp_rfx_component_quant* y_delta,
+                                                      const rdp_rfx_component_quant* cb_quant,
+                                                      const rdp_rfx_component_quant* cb_delta,
+                                                      const rdp_rfx_component_quant* cr_quant,
+                                                      const rdp_rfx_component_quant* cr_delta,
+                                                      int extrapolate,
+                                                      rdp_rfx_progressive_tile_state* state,
+                                                      rdp_rfx_tile_pixels* pixels);
 
 #endif
