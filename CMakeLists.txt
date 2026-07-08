@@ -37,6 +37,7 @@ add_library(librdp
     src/protocol/fastpath.c
     src/protocol/gcc.c
     src/protocol/mcs.c
+    src/protocol/pointer.c
     src/protocol/slowpath.c
     src/protocol/tpkt.c
     src/protocol/x224.c
@@ -87,6 +88,7 @@ if(LIBRDP_BUILD_FUZZ)
 
     add_librdp_fuzzer(fuzz_x224 fuzz/x224_fuzzer.c)
     add_librdp_fuzzer(fuzz_mcs fuzz/mcs_fuzzer.c)
+    add_librdp_fuzzer(fuzz_pointer fuzz/pointer_fuzzer.c)
     add_librdp_fuzzer(fuzz_gcc fuzz/gcc_fuzzer.c)
     add_librdp_fuzzer(fuzz_capabilities fuzz/capabilities_fuzzer.c)
     add_librdp_fuzzer(fuzz_fastpath fuzz/fastpath_fuzzer.c)
@@ -105,7 +107,7 @@ if(LIBRDP_BUILD_FUZZ)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
-    find_package(X11 REQUIRED)
+    find_package(X11 REQUIRED COMPONENTS Xcursor)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     add_executable(librdp-x11-viewer apps/x11-viewer/main.c)
@@ -114,5 +116,5 @@ if(LIBRDP_BUILD_X11_VIEWER)
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
-    target_link_libraries(librdp-x11-viewer PRIVATE librdp ${X11_LIBRARIES} ${XKBCOMMON_LIBRARIES})
+    target_link_libraries(librdp-x11-viewer PRIVATE librdp ${X11_LIBRARIES} X11::Xcursor ${XKBCOMMON_LIBRARIES})
 endif()

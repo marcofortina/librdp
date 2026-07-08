@@ -15,6 +15,7 @@
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
+#include "protocol/pointer.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
@@ -396,6 +397,31 @@ static int test_path_security_license_channels(void)
         0x10, 0x00, 0x00, 0x00,
         1,    2,    3,    4,    5,    6,    7,    8,
         9,    10,   11,   12,   13,   14,   15,   16
+    };
+    const uint8_t pointer_shape_32[] = {
+        0x20, 0x00,
+        0x05, 0x00,
+        0x01, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x04, 0x00,
+        0x10, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
+    const uint8_t pointer_slow_position[] = {
+        0x03, 0x00,
+        0x22, 0x00,
+        0x33, 0x00
+    };
+    const uint8_t pointer_slow_system_default[] = {
+        0x01, 0x00,
+        0x00, 0x7f, 0x00, 0x00
     };
     const uint8_t license[] = {
         0xff, 0x03, 0x12, 0x00,
@@ -908,6 +934,7 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_update bitmap_update;
     rdp_bitmap_update_header bitmap_header;
     rdp_bitmap_rect bitmap_rect;
+    rdp_pointer_update pointer_update;
     int32_t rfx_coefficients[8];
     int32_t rfx_component[RDP_RFX_TILE_COEFFICIENTS];
     int32_t rfx_y[RDP_RFX_TILE_COEFFICIENTS];
@@ -996,6 +1023,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer graphics_decoded;
     rdp_buffer graphics_reset_pdu;
     rdp_buffer decoded_bitmap;
+    rdp_buffer decoded_pointer;
     rdp_buffer clear_pixels;
     rdp_buffer x509_chain;
     rdp_buffer ntlm_negotiate;
@@ -1035,6 +1063,7 @@ static int test_path_security_license_channels(void)
     uint16_t security_flags = 0;
     uint8_t signature[8];
     size_t decoded_stride = 0;
+    size_t pointer_stride = 0;
     size_t i = 0;
     uint16_t confirm_source_len = 0;
     uint16_t confirm_caps_len = 0;
@@ -1088,6 +1117,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&graphics_decoded);
     rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&decoded_bitmap);
+    rdp_buffer_init(&decoded_pointer);
     rdp_buffer_init(&clear_pixels);
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&ntlm_negotiate);
@@ -1122,6 +1152,59 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update) - 1u, &fast_updates) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NULL, NULL, 0, &pointer_update) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_NULL);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_DEFAULT, NULL, 0, &pointer_update) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_DEFAULT);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_POSITION,
+                                      pointer_slow_position + 2,
+                                      sizeof(pointer_slow_position) - 2u,
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_POSITION &&
+           pointer_update.x == 0x22 && pointer_update.y == 0x33);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_CACHED,
+                                      pointer_shape_32 + 2,
+                                      2,
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_CACHED && pointer_update.cache_index == 5);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                      pointer_shape_32,
+                                      sizeof(pointer_shape_32),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.cache_index == 5 &&
+           pointer_update.hot_x == 1 &&
+           pointer_update.hot_y == 0 &&
+           pointer_update.width == 2 &&
+           pointer_update.height == 2 &&
+           pointer_update.xor_bpp == 32);
+    PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_stride == 8 &&
+           decoded_pointer.length == 16 &&
+           decoded_pointer.data[0] == 0x00 &&
+           decoded_pointer.data[1] == 0x00 &&
+           decoded_pointer.data[2] == 0xff &&
+           decoded_pointer.data[3] == 0xff &&
+           decoded_pointer.data[4] == 0x00 &&
+           decoded_pointer.data[5] == 0xff &&
+           decoded_pointer.data[6] == 0x00 &&
+           decoded_pointer.data[7] == 0xff &&
+           decoded_pointer.data[15] == 0x00);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                      pointer_shape_32,
+                                      sizeof(pointer_shape_32) - 1u,
+                                      &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_pointer_parse_slowpath(pointer_slow_position,
+                                      sizeof(pointer_slow_position),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_POSITION &&
+           pointer_update.x == 0x22 && pointer_update.y == 0x33);
+    PCHECK(rdp_pointer_parse_slowpath(pointer_slow_system_default,
+                                      sizeof(pointer_slow_system_default),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_DEFAULT);
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);
@@ -2608,6 +2691,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);
     rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_free(&decoded_pointer);
     rdp_buffer_free(&clear_pixels);
     rdp_buffer_free(&client_mouse_input);
     rdp_buffer_free(&client_keyboard_input);

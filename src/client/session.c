@@ -6,6 +6,7 @@
 #include "channels/graphics_pipeline.h"
 #include "channels/virtual_channel.h"
 #include "client/settings_internal.h"
+#include "common/stream.h"
 #include "common/trace.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
@@ -15,6 +16,7 @@
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
+#include "protocol/pointer.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
@@ -38,6 +40,7 @@
 #define RDP_SESSION_GRAPHICS_CACHE_SLOTS 4096u
 #define RDP_SESSION_GRAPHICS_CACHE_MAX_BYTES (16u * 1024u * 1024u)
 #define RDP_SESSION_PROGRESSIVE_TILE_STATES 2048u
+#define RDP_SESSION_POINTER_CACHE_SLOTS 128u
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
@@ -86,6 +89,13 @@ typedef struct rdp_session_progressive_tile_cache
     rdp_rfx_progressive_tile_state* state;
 } rdp_session_progressive_tile_cache;
 
+typedef struct rdp_session_pointer_cache_entry
+{
+    uint8_t active;
+    librdp_pointer_event pointer;
+    rdp_buffer pixels;
+} rdp_session_pointer_cache_entry;
+
 struct librdp_session
 {
     librdp_settings* settings;
@@ -111,6 +121,7 @@ struct librdp_session
     rdp_session_graphics_surface graphics_surfaces[RDP_SESSION_MAX_GRAPHICS_SURFACES];
     rdp_session_graphics_cache_entry graphics_cache[RDP_SESSION_GRAPHICS_CACHE_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
+    rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
     uint64_t progressive_tile_clock;
     size_t graphics_cache_bytes;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
@@ -154,6 +165,159 @@ static librdp_status rdp_session_fail(librdp_session* session, librdp_status sta
     event.data.error.status = status;
     rdp_session_emit(session, &event);
     return status;
+}
+
+static void rdp_session_pointer_cache_clear(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_POINTER_CACHE_SLOTS; i++)
+        rdp_buffer_free(&session->pointer_cache[i].pixels);
+    memset(session->pointer_cache, 0, sizeof(session->pointer_cache));
+}
+
+static void rdp_session_pointer_emit_default(librdp_session* session)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_POINTER;
+    event.data.pointer.update_type = LIBRDP_POINTER_UPDATE_DEFAULT;
+    event.data.pointer.visible = 1;
+    rdp_session_emit(session, &event);
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.pointer.default", "visible=1");
+}
+
+static void rdp_session_pointer_emit_hidden(librdp_session* session)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_POINTER;
+    event.data.pointer.update_type = LIBRDP_POINTER_UPDATE_HIDDEN;
+    event.data.pointer.visible = 0;
+    rdp_session_emit(session, &event);
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.pointer.hidden", "visible=0");
+}
+
+static void rdp_session_pointer_emit_position(librdp_session* session, uint16_t x, uint16_t y)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_POINTER;
+    event.data.pointer.update_type = LIBRDP_POINTER_UPDATE_POSITION;
+    event.data.pointer.x = x;
+    event.data.pointer.y = y;
+    event.data.pointer.visible = 1;
+    rdp_session_emit(session, &event);
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.pointer.position", "x=%u y=%u", x, y);
+}
+
+static void rdp_session_pointer_emit_shape(librdp_session* session, const rdp_session_pointer_cache_entry* entry)
+{
+    librdp_event event;
+
+    if (!session || !entry || !entry->active)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_POINTER;
+    event.data.pointer = entry->pointer;
+    event.data.pointer.pixels = entry->pixels.data;
+    event.data.pointer.pixels_len = entry->pixels.length;
+    event.data.pointer.visible = 1;
+    rdp_session_emit(session, &event);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.pointer.shape",
+                    "cache_index=%u width=%u height=%u hot_x=%u hot_y=%u pixels=%u",
+                    event.data.pointer.cache_index,
+                    event.data.pointer.width,
+                    event.data.pointer.height,
+                    event.data.pointer.hot_x,
+                    event.data.pointer.hot_y,
+                    (unsigned)event.data.pointer.pixels_len);
+}
+
+static librdp_status rdp_session_pointer_store_shape(librdp_session* session, const rdp_pointer_update* update)
+{
+    rdp_session_pointer_cache_entry* entry = NULL;
+    rdp_buffer decoded;
+    size_t stride = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !update || update->kind != RDP_POINTER_UPDATE_KIND_SHAPE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (update->cache_index >= RDP_SESSION_POINTER_CACHE_SLOTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_buffer_init(&decoded);
+    status = rdp_pointer_decode_bgra32(update, &decoded, &stride);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&decoded);
+        return status;
+    }
+
+    entry = &session->pointer_cache[update->cache_index];
+    rdp_buffer_free(&entry->pixels);
+    entry->pixels = decoded;
+    memset(&entry->pointer, 0, sizeof(entry->pointer));
+    entry->pointer.update_type = LIBRDP_POINTER_UPDATE_SHAPE;
+    entry->pointer.cache_index = update->cache_index;
+    entry->pointer.hot_x = update->hot_x;
+    entry->pointer.hot_y = update->hot_y;
+    entry->pointer.width = update->width;
+    entry->pointer.height = update->height;
+    entry->pointer.stride = (uint32_t)stride;
+    entry->pointer.pixels = entry->pixels.data;
+    entry->pointer.pixels_len = entry->pixels.length;
+    entry->pointer.visible = 1;
+    entry->active = 1;
+    rdp_session_pointer_emit_shape(session, entry);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_pointer_apply_update(librdp_session* session, const rdp_pointer_update* update)
+{
+    if (!session || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    switch (update->kind)
+    {
+        case RDP_POINTER_UPDATE_KIND_NULL:
+            rdp_session_pointer_emit_hidden(session);
+            return LIBRDP_STATUS_OK;
+        case RDP_POINTER_UPDATE_KIND_DEFAULT:
+            rdp_session_pointer_emit_default(session);
+            return LIBRDP_STATUS_OK;
+        case RDP_POINTER_UPDATE_KIND_POSITION:
+            rdp_session_pointer_emit_position(session, update->x, update->y);
+            return LIBRDP_STATUS_OK;
+        case RDP_POINTER_UPDATE_KIND_CACHED:
+            if (update->cache_index >= RDP_SESSION_POINTER_CACHE_SLOTS ||
+                !session->pointer_cache[update->cache_index].active)
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.pointer.cached.missing",
+                                "cache_index=%u",
+                                update->cache_index);
+                return LIBRDP_STATUS_OK;
+            }
+            rdp_session_pointer_emit_shape(session, &session->pointer_cache[update->cache_index]);
+            return LIBRDP_STATUS_OK;
+        case RDP_POINTER_UPDATE_KIND_SHAPE:
+            return rdp_session_pointer_store_shape(session, update);
+        default:
+            return LIBRDP_STATUS_UNSUPPORTED;
+    }
 }
 
 static librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
@@ -3044,6 +3208,43 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                 rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
             }
         }
+        else if (update->update_code == RDP_FASTPATH_UPDATE_POINTER_NULL ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_DEFAULT ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_POSITION ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_COLOR ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_CACHED ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_NEW ||
+                 update->update_code == RDP_FASTPATH_UPDATE_POINTER_LARGE)
+        {
+            rdp_pointer_update pointer;
+
+            if (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || update->compression != 0)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.fastpath.pointer.unsupported",
+                                "code=%u fragmentation=%u compression=%u payload_len=%u",
+                                update->update_code,
+                                update->fragmentation,
+                                update->compression,
+                                (unsigned)update->data_len);
+            }
+            else
+            {
+                status = rdp_pointer_parse_fastpath(update->update_code, update->data, update->data_len, &pointer);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_pointer_apply_update(session, &pointer);
+                if (status != LIBRDP_STATUS_OK)
+                    goto out;
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.fastpath.pointer",
+                                "code=%u kind=%u cache_index=%u width=%u height=%u",
+                                update->update_code,
+                                pointer.kind,
+                                pointer.cache_index,
+                                pointer.width,
+                                pointer.height);
+            }
+        }
     }
 
 out:
@@ -3097,6 +3298,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_dynamic_channels_clear(session);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
+    rdp_session_pointer_cache_clear(session);
     rdp_clearcodec_context_free(&session->clearcodec);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
@@ -3190,6 +3392,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
+    rdp_session_pointer_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);
 
     status = rdp_transport_connect(&session->transport,
@@ -3792,6 +3995,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     event.data.surface.width = librdp_surface_width(session->surface);
     event.data.surface.height = librdp_surface_height(session->surface);
     rdp_session_emit(session, &event);
+    rdp_session_pointer_emit_default(session);
 
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.done", "transport=tcp");
     rdp_buffer_free(&reply);
@@ -4007,6 +4211,11 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             if (status == LIBRDP_STATUS_OK)
                 session->share_id = demand.share_id;
             if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_session_pointer_cache_clear(session);
+                rdp_session_pointer_emit_default(session);
+            }
+            if (status == LIBRDP_STATUS_OK)
                 status = rdp_slowpath_write_confirm_active(&confirm,
                                                            demand.share_id,
                                                            session->mcs_user_id,
@@ -4067,22 +4276,22 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                 }
                 else
                 {
-                    rdp_bitmap_update_header update_header;
+                    rdp_stream update_stream;
+                    uint16_t update_type = 0;
 
-                    status = rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &update_header);
-                    if (status != LIBRDP_STATUS_OK)
+                    rdp_stream_init(&update_stream, data_pdu.payload, data_pdu.payload_len);
+                    if (rdp_stream_read_u16_le(&update_stream, &update_type) != LIBRDP_STATUS_OK)
                     {
                         rdp_buffer_free(&security_payload);
                         rdp_buffer_free(&packet);
-                        return rdp_session_fail(session, status);
+                        return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
                     }
                     rdp_trace_event(RDP_TRACE_PROTOCOL,
                                     "rdp.slowpath.update",
-                                    "update_type=%u count=%u payload_len=%u",
-                                    update_header.update_type,
-                                    update_header.count,
+                                    "update_type=%u payload_len=%u",
+                                    update_type,
                                     (unsigned)data_pdu.payload_len);
-                    if (update_header.update_type == RDP_UPDATE_TYPE_BITMAP)
+                    if (update_type == RDP_UPDATE_TYPE_BITMAP)
                     {
                         rdp_bitmap_update update;
 
@@ -4097,13 +4306,33 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         }
                         rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.bitmap_update", "rectangles=%u", update.count);
                     }
+                    else if (update_type == RDP_UPDATE_TYPE_POINTER)
+                    {
+                        rdp_pointer_update pointer;
+
+                        status = rdp_pointer_parse_slowpath(data_pdu.payload + 2u, data_pdu.payload_len - 2u, &pointer);
+                        if (status == LIBRDP_STATUS_OK)
+                            status = rdp_session_pointer_apply_update(session, &pointer);
+                        if (status != LIBRDP_STATUS_OK)
+                        {
+                            rdp_buffer_free(&security_payload);
+                            rdp_buffer_free(&packet);
+                            return rdp_session_fail(session, status);
+                        }
+                        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                        "rdp.slowpath.pointer",
+                                        "kind=%u cache_index=%u width=%u height=%u",
+                                        pointer.kind,
+                                        pointer.cache_index,
+                                        pointer.width,
+                                        pointer.height);
+                    }
                     else
                     {
                         rdp_trace_event(RDP_TRACE_PROTOCOL,
                                         "rdp.slowpath.update.unsupported",
-                                        "update_type=%u count=%u payload_len=%u",
-                                        update_header.update_type,
-                                        update_header.count,
+                                        "update_type=%u payload_len=%u",
+                                        update_type,
                                         (unsigned)data_pdu.payload_len);
                     }
                 }
@@ -4149,6 +4378,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
+    rdp_session_pointer_cache_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 
@@ -4176,6 +4406,7 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
     event.data.surface.width = width;
     event.data.surface.height = height;
     rdp_session_emit(session, &event);
+    rdp_session_pointer_emit_default(session);
     status = rdp_session_send_display_control_layout(session, width, height);
     if (status == LIBRDP_STATUS_STATE)
     {
@@ -4325,8 +4556,6 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
                                                                     flags,
                                                                     mouse->x,
                                                                     mouse->y);
-        else if (session->core_input_ready)
-            status = rdp_core_input_write_mouse_event(&input, flags, mouse->x, mouse->y);
         else
             status = rdp_slowpath_write_client_mouse_input(&input,
                                                            session->share_id,
@@ -4339,13 +4568,6 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
     {
         if (use_extended)
             status = rdp_session_write_slowpath_pdu(session, &input, "rdp.input.mousex");
-        else if (session->core_input_ready)
-            status = rdp_session_send_dynamic_channel_data(session,
-                                                           session->core_input_channel_id,
-                                                           session->core_input_channel_id_bytes,
-                                                           input.data,
-                                                           input.length,
-                                                           "client.core_input.mouse");
         else
             status = rdp_session_write_slowpath_pdu(session, &input, "rdp.input.mouse");
     }
@@ -4363,7 +4585,7 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
                     "kind=mouse x=%u y=%u transport=%s flags=%u",
                     mouse->x,
                     mouse->y,
-                    use_extended ? "slowpath_mousex" : (session->core_input_ready ? "core_input" : "slowpath"),
+                    use_extended ? "slowpath_mousex" : "slowpath",
                     flags);
     rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;

@@ -34,6 +34,7 @@ typedef struct event_counter
     int surfaces;
     int keys;
     int mouse;
+    int pointer;
     int disconnected;
 } event_counter;
 
@@ -61,6 +62,9 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_MOUSE_SENT:
             counter->mouse++;
+            break;
+        case LIBRDP_EVENT_POINTER:
+            counter->pointer++;
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
@@ -851,6 +855,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
     CHECK(counter.states == 2);
     CHECK(counter.surfaces == 1);
+    CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
@@ -871,6 +876,7 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
     CHECK(counter.surfaces == 3);
+    CHECK(counter.pointer >= 2);
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
     CHECK(counter.disconnected == 1);
     librdp_session_free(session);
