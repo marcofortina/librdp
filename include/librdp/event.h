@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <librdp/channel.h>
 #include <librdp/clipboard.h>
 #include <librdp/error.h>
 #include <librdp/input.h>
@@ -24,7 +25,10 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_POINTER = 7,
     LIBRDP_EVENT_CLIPBOARD_FORMATS = 8,
     LIBRDP_EVENT_CLIPBOARD_DATA = 9,
-    LIBRDP_EVENT_CLIPBOARD_REQUEST = 10
+    LIBRDP_EVENT_CLIPBOARD_REQUEST = 10,
+    LIBRDP_EVENT_CHANNEL_OPEN = 11,
+    LIBRDP_EVENT_CHANNEL_DATA = 12,
+    LIBRDP_EVENT_CHANNEL_CLOSE = 13
 } librdp_event_type;
 
 typedef enum librdp_pointer_update_type
@@ -79,6 +83,29 @@ typedef struct librdp_clipboard_request_event
     uint32_t format_id;
 } librdp_clipboard_request_event;
 
+typedef struct librdp_channel_open_event
+{
+    librdp_channel_id channel_id;
+    const char* name;
+    size_t name_len;
+} librdp_channel_open_event;
+
+typedef struct librdp_channel_data_event
+{
+    librdp_channel_id channel_id;
+    const char* name;
+    size_t name_len;
+    const uint8_t* data;
+    size_t data_len;
+} librdp_channel_data_event;
+
+typedef struct librdp_channel_close_event
+{
+    librdp_channel_id channel_id;
+    const char* name;
+    size_t name_len;
+} librdp_channel_close_event;
+
 typedef struct librdp_event
 {
     librdp_event_type type;
@@ -100,6 +127,9 @@ typedef struct librdp_event
         librdp_clipboard_formats_event clipboard_formats;
         librdp_clipboard_data_event clipboard_data;
         librdp_clipboard_request_event clipboard_request;
+        librdp_channel_open_event channel_open;
+        librdp_channel_data_event channel_data;
+        librdp_channel_close_event channel_close;
     } data;
 } librdp_event;
 

@@ -39,6 +39,9 @@ typedef struct event_counter
     int clipboard_formats;
     int clipboard_data;
     int clipboard_requests;
+    int channel_open;
+    int channel_data;
+    int channel_close;
     int disconnected;
 } event_counter;
 
@@ -78,6 +81,15 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_CLIPBOARD_REQUEST:
             counter->clipboard_requests++;
+            break;
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+            counter->channel_open++;
+            break;
+        case LIBRDP_EVENT_CHANNEL_DATA:
+            counter->channel_data++;
+            break;
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            counter->channel_close++;
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
@@ -972,6 +984,13 @@ static int test_settings_surface_input_session(void)
                                             1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_clipboard_set_data(session, 0, "x", 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_clipboard_request_data(session, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_send(NULL, 1, "x", 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_send(session, 0, "x", 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_send(session, 1, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_send(session, 1, "x", 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_channel_close(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_close(session, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_close(session, 1) == LIBRDP_STATUS_STATE);
     memset(&touch_contact, 0, sizeof(touch_contact));
     touch_contact.contact_id = 1;
     touch_contact.x = 100;
