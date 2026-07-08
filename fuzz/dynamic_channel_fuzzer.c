@@ -22,6 +22,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_dynamic_channel_parse_close(data, size, &close_pdu);
     (void)rdp_dynamic_channel_write_capabilities_response(&response, 1);
     response.length = 0;
+    (void)rdp_dynamic_channel_write_close(&response, 1, 1);
+    response.length = 0;
     if (size > 0)
         (void)rdp_dynamic_channel_write_data_first(&response, 1, 1, (uint32_t)size, data, size > 8u ? 8u : size);
     rdp_buffer_free(&response);

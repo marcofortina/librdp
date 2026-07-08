@@ -56,6 +56,34 @@ static librdp_status rdp_dynamic_channel_write_channel_id(rdp_buffer* buffer,
     return LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
+static librdp_status rdp_dynamic_channel_channel_id_code(uint32_t channel_id,
+                                                         uint8_t channel_id_bytes,
+                                                         uint8_t* cb_id)
+{
+    if (!cb_id)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (channel_id_bytes == 1)
+    {
+        if (channel_id > 0xffu)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        *cb_id = 0;
+        return LIBRDP_STATUS_OK;
+    }
+    if (channel_id_bytes == 2)
+    {
+        if (channel_id > 0xffffu)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        *cb_id = 1;
+        return LIBRDP_STATUS_OK;
+    }
+    if (channel_id_bytes == 4)
+    {
+        *cb_id = 2;
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 static librdp_status rdp_dynamic_channel_read_length(rdp_stream* stream,
                                                      uint8_t length_bytes,
                                                      uint32_t* length)
@@ -247,14 +275,9 @@ librdp_status rdp_dynamic_channel_write_create_response(rdp_buffer* buffer,
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (channel_id_bytes == 1)
-        cb_id = 0;
-    else if (channel_id_bytes == 2)
-        cb_id = 1;
-    else if (channel_id_bytes == 4)
-        cb_id = 2;
-    else
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_CREATE << 4) | cb_id));
     if (status == LIBRDP_STATUS_OK)
@@ -303,14 +326,9 @@ librdp_status rdp_dynamic_channel_write_data(rdp_buffer* buffer,
 
     if (!buffer || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (channel_id_bytes == 1)
-        cb_id = 0;
-    else if (channel_id_bytes == 2)
-        cb_id = 1;
-    else if (channel_id_bytes == 4)
-        cb_id = 2;
-    else
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA << 4) | cb_id));
     if (status == LIBRDP_STATUS_OK)
@@ -366,14 +384,9 @@ librdp_status rdp_dynamic_channel_write_data_first(rdp_buffer* buffer,
 
     if (!buffer || (!data && data_len > 0) || data_len > total_length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (channel_id_bytes == 1)
-        cb_id = 0;
-    else if (channel_id_bytes == 2)
-        cb_id = 1;
-    else if (channel_id_bytes == 4)
-        cb_id = 2;
-    else
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     length_bytes = rdp_dynamic_channel_length_bytes(total_length);
     length_code = rdp_dynamic_channel_length_code(length_bytes);
@@ -415,4 +428,22 @@ librdp_status rdp_dynamic_channel_parse_close(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     pdu->channel_id_bytes = header.channel_id_bytes;
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_dynamic_channel_write_close(rdp_buffer* buffer,
+                                             uint32_t channel_id,
+                                             uint8_t channel_id_bytes)
+{
+    uint8_t cb_id = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_CLOSE << 4) | cb_id));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_dynamic_channel_write_channel_id(buffer, channel_id, channel_id_bytes);
+    return status;
 }

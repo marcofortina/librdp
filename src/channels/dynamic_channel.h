@@ -95,5 +95,8 @@ librdp_status rdp_dynamic_channel_write_data_first(rdp_buffer* buffer,
 librdp_status rdp_dynamic_channel_parse_close(const void* data,
                                               size_t length,
                                               rdp_dynamic_channel_close_pdu* pdu);
+librdp_status rdp_dynamic_channel_write_close(rdp_buffer* buffer,
+                                             uint32_t channel_id,
+                                             uint8_t channel_id_bytes);
 
 #endif
