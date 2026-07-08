@@ -36,6 +36,9 @@ typedef struct event_counter
     int keys;
     int mouse;
     int pointer;
+    int clipboard_formats;
+    int clipboard_data;
+    int clipboard_requests;
     int disconnected;
 } event_counter;
 
@@ -66,6 +69,15 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_POINTER:
             counter->pointer++;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
+            counter->clipboard_formats++;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_DATA:
+            counter->clipboard_data++;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
+            counter->clipboard_requests++;
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
@@ -943,6 +955,19 @@ static int test_settings_surface_input_session(void)
     session = librdp_session_new(settings);
     CHECK(session != NULL);
     CHECK(librdp_session_refresh(session, 0, 0, 1, 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_clipboard_set_data(session,
+                                            LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
+                                            "t\0e\0x\0t\0\0",
+                                            10) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_clipboard_request_data(session,
+                                                LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_clipboard_clear(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_clipboard_set_data(NULL,
+                                            LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
+                                            "x",
+                                            1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_set_data(session, 0, "x", 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_request_data(session, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);

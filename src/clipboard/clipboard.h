@@ -122,6 +122,10 @@ librdp_status rdp_clipboard_parse_capabilities(const rdp_clipboard_packet* packe
 librdp_status rdp_clipboard_write_capabilities(rdp_buffer* buffer, uint32_t general_flags);
 librdp_status rdp_clipboard_parse_format_list(const rdp_clipboard_packet* packet,
                                               rdp_clipboard_format_list* list);
+librdp_status rdp_clipboard_write_format_list(rdp_buffer* buffer,
+                                              const rdp_clipboard_format_entry* entries,
+                                              uint32_t count,
+                                              int long_names);
 librdp_status rdp_clipboard_format_list_entry_count(const rdp_clipboard_format_list* list,
                                                     int long_names,
                                                     uint32_t* count);

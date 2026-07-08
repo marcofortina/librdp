@@ -171,6 +171,68 @@ librdp_status rdp_clipboard_parse_format_list(const rdp_clipboard_packet* packet
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_clipboard_write_format_list(rdp_buffer* buffer,
+                                              const rdp_clipboard_format_entry* entries,
+                                              uint32_t count,
+                                              int long_names)
+{
+    uint32_t i = 0;
+    uint32_t data_len = 0;
+    uint16_t flags = long_names ? 0 : RDP_CLIPBOARD_CB_ASCII_NAMES;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!entries && count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < count; i++)
+    {
+        uint32_t item_len = 0;
+
+        if (!entries[i].name && entries[i].name_len > 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (long_names)
+        {
+            if ((entries[i].name_len & 1u) != 0)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            if (entries[i].name_len > UINT32_MAX - 6u)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            item_len = (uint32_t)entries[i].name_len + 6u;
+        }
+        else
+        {
+            if (entries[i].name_len > 32u)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            item_len = RDP_CLIPBOARD_SHORT_FORMAT_NAME_LEN;
+        }
+        if (data_len > UINT32_MAX - item_len)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        data_len += item_len;
+    }
+
+    status = rdp_clipboard_write_header(buffer, RDP_CLIPBOARD_CB_FORMAT_LIST, flags, data_len);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < count; i++)
+    {
+        status = rdp_buffer_append_u32_le(buffer, entries[i].format_id);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        if (long_names)
+        {
+            status = rdp_buffer_append(buffer, entries[i].name, entries[i].name_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, 0);
+        }
+        else
+        {
+            uint8_t name[32];
+
+            memset(name, 0, sizeof(name));
+            if (entries[i].name_len > 0)
+                memcpy(name, entries[i].name, entries[i].name_len);
+            status = rdp_buffer_append(buffer, name, sizeof(name));
+        }
+    }
+    return status;
+}
+
 librdp_status rdp_clipboard_format_list_entry_count(const rdp_clipboard_format_list* list,
                                                     int long_names,
                                                     uint32_t* count)

@@ -46,6 +46,7 @@
 #define RDP_SESSION_GRAPHICS_CACHE_MAX_BYTES (16u * 1024u * 1024u)
 #define RDP_SESSION_PROGRESSIVE_TILE_STATES 2048u
 #define RDP_SESSION_POINTER_CACHE_SLOTS 128u
+#define RDP_SESSION_CLIPBOARD_MAX_FORMATS 64u
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
@@ -118,7 +119,13 @@ struct librdp_session
     uint8_t clipboard_fragmenting;
     uint32_t clipboard_fragment_expected;
     uint32_t clipboard_general_flags;
+    uint32_t clipboard_local_format_id;
+    uint32_t clipboard_pending_request_format_id;
+    uint8_t clipboard_local_available;
     rdp_buffer clipboard_fragment;
+    rdp_buffer clipboard_local_data;
+    uint32_t clipboard_remote_formats[RDP_SESSION_CLIPBOARD_MAX_FORMATS];
+    uint32_t clipboard_remote_format_count;
     uint32_t core_input_channel_id;
     uint8_t core_input_channel_id_bytes;
     uint8_t core_input_ready;
@@ -873,6 +880,39 @@ static librdp_status rdp_session_send_clipboard_packet(librdp_session* session,
     return rdp_session_write_channel_pdu(session, session->clipboard_channel_id, payload, event);
 }
 
+static librdp_status rdp_session_send_clipboard_format_list(librdp_session* session)
+{
+    rdp_buffer packet;
+    rdp_clipboard_format_entry entry;
+    uint32_t count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->clipboard_ready || session->clipboard_channel_id == 0)
+        return LIBRDP_STATUS_OK;
+
+    memset(&entry, 0, sizeof(entry));
+    if (session->clipboard_local_available)
+    {
+        entry.format_id = session->clipboard_local_format_id;
+        count = 1;
+    }
+
+    rdp_buffer_init(&packet);
+    status = rdp_clipboard_write_format_list(&packet, count ? &entry : NULL, count, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_clipboard_packet(session, &packet, "client.clipboard.format_list");
+    rdp_buffer_free(&packet);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.clipboard.format_list",
+                        "channel_id=%u count=%u",
+                        session->clipboard_channel_id,
+                        count);
+    return status;
+}
+
 static librdp_status rdp_session_send_clipboard_handshake(librdp_session* session)
 {
     rdp_buffer packet;
@@ -912,6 +952,7 @@ static librdp_status rdp_session_send_clipboard_handshake(librdp_session* sessio
                         "client.clipboard.monitor_ready",
                         "channel_id=%u",
                         session->clipboard_channel_id);
+        status = rdp_session_send_clipboard_format_list(session);
     }
     return status;
 }
@@ -988,6 +1029,17 @@ static void rdp_session_clipboard_clear(librdp_session* session)
     session->clipboard_fragment_expected = 0;
     session->clipboard_ready = 0;
     session->clipboard_general_flags = 0;
+    session->clipboard_pending_request_format_id = 0;
+    session->clipboard_remote_format_count = 0;
+}
+
+static void rdp_session_clipboard_local_clear(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_buffer_free(&session->clipboard_local_data);
+    session->clipboard_local_format_id = 0;
+    session->clipboard_local_available = 0;
 }
 
 static rdp_session_graphics_surface* rdp_session_graphics_surface_find(librdp_session* session, uint16_t surface_id)
@@ -3977,38 +4029,88 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
     else if (packet.type == RDP_CLIPBOARD_CB_FORMAT_LIST)
     {
         rdp_clipboard_format_list list;
+        librdp_clipboard_format formats[RDP_SESSION_CLIPBOARD_MAX_FORMATS];
+        librdp_event event;
         uint32_t count = 0;
+        uint32_t stored = 0;
+        uint32_t i = 0;
         int long_names = (packet.flags & RDP_CLIPBOARD_CB_ASCII_NAMES) == 0;
 
+        memset(formats, 0, sizeof(formats));
         status = rdp_clipboard_parse_format_list(&packet, &list);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_clipboard_format_list_entry_count(&list, long_names, &count);
         if (status == LIBRDP_STATUS_OK)
         {
+            session->clipboard_remote_format_count = 0;
+            for (i = 0; i < count && i < RDP_SESSION_CLIPBOARD_MAX_FORMATS; i++)
+            {
+                rdp_clipboard_format_entry item;
+
+                status = rdp_clipboard_format_list_get_entry(&list, long_names, i, &item);
+                if (status != LIBRDP_STATUS_OK)
+                    break;
+                formats[i].format_id = item.format_id;
+                formats[i].name = item.name;
+                formats[i].name_len = item.name_len;
+                session->clipboard_remote_formats[i] = item.format_id;
+                stored++;
+            }
+        }
+        if (status == LIBRDP_STATUS_OK)
+        {
+            session->clipboard_remote_format_count = stored;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.clipboard.format_list",
-                            "channel_id=%u count=%u long_names=%u",
+                            "channel_id=%u count=%u stored=%u long_names=%u",
                             session->clipboard_channel_id,
                             count,
+                            stored,
                             long_names ? 1u : 0u);
             status = rdp_clipboard_write_format_list_response(&response, 1);
         }
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_send_clipboard_packet(session, &response, "client.clipboard.format_list_response");
+        if (status == LIBRDP_STATUS_OK)
+        {
+            memset(&event, 0, sizeof(event));
+            event.type = LIBRDP_EVENT_CLIPBOARD_FORMATS;
+            event.data.clipboard_formats.formats = formats;
+            event.data.clipboard_formats.count = stored;
+            event.data.clipboard_formats.total_count = count;
+            rdp_session_emit(session, &event);
+        }
     }
     else if (packet.type == RDP_CLIPBOARD_CB_FORMAT_DATA_REQUEST)
     {
         rdp_clipboard_format_data_request request;
+        librdp_event event;
 
         status = rdp_clipboard_parse_format_data_request(&packet, &request);
         if (status == LIBRDP_STATUS_OK)
         {
+            memset(&event, 0, sizeof(event));
+            event.type = LIBRDP_EVENT_CLIPBOARD_REQUEST;
+            event.data.clipboard_request.format_id = request.format_id;
+            rdp_session_emit(session, &event);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.clipboard.format_data_request",
-                            "channel_id=%u format_id=%u status=unavailable",
+                            "channel_id=%u format_id=%u available=%u data_len=%u",
                             session->clipboard_channel_id,
-                            request.format_id);
-            status = rdp_clipboard_write_format_data_response(&response, 0, NULL, 0);
+                            request.format_id,
+                            session->clipboard_local_available &&
+                                session->clipboard_local_format_id == request.format_id ? 1u : 0u,
+                            session->clipboard_local_available &&
+                                session->clipboard_local_format_id == request.format_id ?
+                                (unsigned)session->clipboard_local_data.length :
+                                0u);
+            if (session->clipboard_local_available && session->clipboard_local_format_id == request.format_id)
+                status = rdp_clipboard_write_format_data_response(&response,
+                                                                  1,
+                                                                  session->clipboard_local_data.data,
+                                                                  session->clipboard_local_data.length);
+            else
+                status = rdp_clipboard_write_format_data_response(&response, 0, NULL, 0);
         }
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_send_clipboard_packet(session, &response, "client.clipboard.format_data_response");
@@ -4016,15 +4118,28 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
     else if (packet.type == RDP_CLIPBOARD_CB_FORMAT_DATA_RESPONSE)
     {
         rdp_clipboard_format_data_response data_response;
+        librdp_event event;
 
         status = rdp_clipboard_parse_format_data_response(&packet, &data_response);
         if (status == LIBRDP_STATUS_OK)
+        {
+            memset(&event, 0, sizeof(event));
+            event.type = LIBRDP_EVENT_CLIPBOARD_DATA;
+            event.data.clipboard_data.format_id = session->clipboard_pending_request_format_id;
+            event.data.clipboard_data.data = data_response.data;
+            event.data.clipboard_data.data_len = data_response.data_len;
+            event.data.clipboard_data.ok =
+                data_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1 : 0;
+            rdp_session_emit(session, &event);
+            session->clipboard_pending_request_format_id = 0;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.clipboard.format_data_response",
-                            "channel_id=%u ok=%u data_len=%u",
+                            "channel_id=%u ok=%u format_id=%u data_len=%u",
                             session->clipboard_channel_id,
                             data_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1u : 0u,
+                            event.data.clipboard_data.format_id,
                             (unsigned)data_response.data_len);
+        }
     }
     else if (packet.type == RDP_CLIPBOARD_CB_FILECONTENTS_REQUEST)
     {
@@ -5060,6 +5175,7 @@ void librdp_session_free(librdp_session* session)
     (void)librdp_session_disconnect(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
+    rdp_session_clipboard_local_clear(session);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -6355,6 +6471,72 @@ librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32
                         y,
                         width,
                         height);
+    return status;
+}
+
+librdp_status librdp_session_clipboard_set_data(librdp_session* session,
+                                                uint32_t format_id,
+                                                const void* data,
+                                                size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || format_id == 0 || (!data && data_len > 0) || data_len > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_free(&session->clipboard_local_data);
+    if (data_len > 0)
+    {
+        rdp_buffer_init(&session->clipboard_local_data);
+        status = rdp_buffer_append(&session->clipboard_local_data, data, data_len);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_session_clipboard_local_clear(session);
+            return status;
+        }
+    }
+    session->clipboard_local_format_id = format_id;
+    session->clipboard_local_available = 1;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.clipboard.local_data",
+                    "format_id=%u data_len=%u",
+                    format_id,
+                    (unsigned)data_len);
+    return rdp_session_send_clipboard_format_list(session);
+}
+
+librdp_status librdp_session_clipboard_clear(librdp_session* session)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_session_clipboard_local_clear(session);
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.clipboard.local_clear", "formats=0");
+    return rdp_session_send_clipboard_format_list(session);
+}
+
+librdp_status librdp_session_clipboard_request_data(librdp_session* session, uint32_t format_id)
+{
+    rdp_buffer request;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || format_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->clipboard_ready || session->clipboard_channel_id == 0)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_buffer_init(&request);
+    status = rdp_clipboard_write_format_data_request(&request, format_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_clipboard_packet(session, &request, "client.clipboard.format_data_request");
+    rdp_buffer_free(&request);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        session->clipboard_pending_request_format_id = format_id;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.clipboard.request_data",
+                        "format_id=%u",
+                        format_id);
+    }
     return status;
 }
 

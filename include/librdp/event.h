@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <librdp/clipboard.h>
 #include <librdp/error.h>
 #include <librdp/input.h>
 
@@ -20,7 +21,10 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_MOUSE_SENT = 4,
     LIBRDP_EVENT_ERROR = 5,
     LIBRDP_EVENT_DISCONNECTED = 6,
-    LIBRDP_EVENT_POINTER = 7
+    LIBRDP_EVENT_POINTER = 7,
+    LIBRDP_EVENT_CLIPBOARD_FORMATS = 8,
+    LIBRDP_EVENT_CLIPBOARD_DATA = 9,
+    LIBRDP_EVENT_CLIPBOARD_REQUEST = 10
 } librdp_event_type;
 
 typedef enum librdp_pointer_update_type
@@ -55,6 +59,26 @@ typedef struct librdp_pointer_event
     int visible;
 } librdp_pointer_event;
 
+typedef struct librdp_clipboard_formats_event
+{
+    const librdp_clipboard_format* formats;
+    uint32_t count;
+    uint32_t total_count;
+} librdp_clipboard_formats_event;
+
+typedef struct librdp_clipboard_data_event
+{
+    uint32_t format_id;
+    const uint8_t* data;
+    size_t data_len;
+    int ok;
+} librdp_clipboard_data_event;
+
+typedef struct librdp_clipboard_request_event
+{
+    uint32_t format_id;
+} librdp_clipboard_request_event;
+
 typedef struct librdp_event
 {
     librdp_event_type type;
@@ -73,6 +97,9 @@ typedef struct librdp_event
             librdp_status status;
         } error;
         librdp_pointer_event pointer;
+        librdp_clipboard_formats_event clipboard_formats;
+        librdp_clipboard_data_event clipboard_data;
+        librdp_clipboard_request_event clipboard_request;
     } data;
 } librdp_event;
 

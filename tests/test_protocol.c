@@ -3844,6 +3844,17 @@ static int test_path_security_license_channels(void)
            test_read_u16_le(dyn_response.data) == RDP_CLIPBOARD_CB_FORMAT_LIST_RESPONSE &&
            test_read_u16_le(dyn_response.data + 2) == RDP_CLIPBOARD_CB_RESPONSE_OK &&
            test_read_u32_le(dyn_response.data + 4) == 0);
+    dyn_response.length = 0;
+    cb_entry.format_id = RDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    cb_entry.name = NULL;
+    cb_entry.name_len = 0;
+    PCHECK(rdp_clipboard_write_format_list(&dyn_response, &cb_entry, 1, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_clipboard_parse_packet(dyn_response.data, dyn_response.length, &cb) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_clipboard_parse_format_list(&cb, &cb_list) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_clipboard_format_list_entry_count(&cb_list, 1, &error_info) == LIBRDP_STATUS_OK);
+    PCHECK(error_info == 1);
+    PCHECK(rdp_clipboard_format_list_get_entry(&cb_list, 1, 0, &cb_entry) == LIBRDP_STATUS_OK);
+    PCHECK(cb_entry.format_id == RDP_CLIPBOARD_FORMAT_UNICODETEXT && cb_entry.name_len == 0);
     PCHECK(rdp_clipboard_parse_packet(clip_data_request, sizeof(clip_data_request), &cb) == LIBRDP_STATUS_OK);
     PCHECK(rdp_clipboard_parse_format_data_request(&cb, &cb_data_request) == LIBRDP_STATUS_OK);
     PCHECK(cb_data_request.format_id == RDP_CLIPBOARD_FORMAT_UNICODETEXT);
