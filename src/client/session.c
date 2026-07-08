@@ -9,6 +9,7 @@
 #include "common/trace.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/fastpath.h"
@@ -662,6 +663,326 @@ static librdp_status rdp_session_graphics_surface_write_wire(librdp_session* ses
                                                    wire->pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888);
 }
 
+static librdp_status rdp_session_graphics_progressive_quant(const rdp_graphics_progressive_region* region,
+                                                            uint8_t quant_idx,
+                                                            uint8_t progressive_idx,
+                                                            uint8_t component_idx,
+                                                            rdp_rfx_component_quant* quant)
+{
+    rdp_rfx_component_quant base;
+    rdp_rfx_progressive_quant progressive;
+    const rdp_rfx_component_quant* delta = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!region || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (quant_idx >= region->quant_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    status = rdp_rfx_parse_component_quant(region->quant_values + ((size_t)quant_idx * 5u), 5u, &base);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (progressive_idx == 0xffu)
+    {
+        *quant = base;
+        return LIBRDP_STATUS_OK;
+    }
+    if (progressive_idx >= region->progressive_quant_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_rfx_parse_progressive_quant(region->progressive_quant_values + ((size_t)progressive_idx * 16u),
+                                             16u,
+                                             &progressive);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (component_idx == 0)
+        delta = &progressive.y;
+    else if (component_idx == 1)
+        delta = &progressive.cb;
+    else if (component_idx == 2)
+        delta = &progressive.cr;
+    else
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_rfx_add_component_quant(&base, delta, quant);
+}
+
+static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session* session,
+                                                                  uint32_t channel_id,
+                                                                  rdp_session_graphics_surface* surface,
+                                                                  const rdp_graphics_progressive_region* region,
+                                                                  uint16_t block_type,
+                                                                  uint8_t quant_idx_y,
+                                                                  uint8_t quant_idx_cb,
+                                                                  uint8_t quant_idx_cr,
+                                                                  uint16_t x_idx,
+                                                                  uint16_t y_idx,
+                                                                  uint8_t progressive_idx,
+                                                                  const uint8_t* y_data,
+                                                                  size_t y_len,
+                                                                  const uint8_t* cb_data,
+                                                                  size_t cb_len,
+                                                                  const uint8_t* cr_data,
+                                                                  size_t cr_len,
+                                                                  uint32_t* rendered_tiles,
+                                                                  uint32_t* failed_tiles)
+{
+    rdp_rfx_component_quant y_quant;
+    rdp_rfx_component_quant cb_quant;
+    rdp_rfx_component_quant cr_quant;
+    rdp_rfx_tile_pixels pixels;
+    uint32_t x = (uint32_t)x_idx * RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
+    uint32_t y = (uint32_t)y_idx * RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
+    uint32_t width = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
+    uint32_t height = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
+    int extrapolate = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !surface || !region || !rendered_tiles || !failed_tiles)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!y_data || !cb_data || !cr_data)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (x >= surface->width || y >= surface->height)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.progressive.tile.clipped",
+                        "dvc_channel_id=%u surface_id=%u x=%u y=%u block_type=%u",
+                        channel_id,
+                        surface->surface_id,
+                        x,
+                        y,
+                        block_type);
+        return LIBRDP_STATUS_OK;
+    }
+    if (width > (uint32_t)surface->width - x)
+        width = (uint32_t)surface->width - x;
+    if (height > (uint32_t)surface->height - y)
+        height = (uint32_t)surface->height - y;
+
+    status = rdp_session_graphics_progressive_quant(region, quant_idx_y, progressive_idx, 0, &y_quant);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_graphics_progressive_quant(region, quant_idx_cb, progressive_idx, 1, &cb_quant);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_graphics_progressive_quant(region, quant_idx_cr, progressive_idx, 2, &cr_quant);
+    extrapolate = (region->flags & 0x01u) != 0;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_decode_progressive_tile(y_data,
+                                                 y_len,
+                                                 cb_data,
+                                                 cb_len,
+                                                 cr_data,
+                                                 cr_len,
+                                                 &y_quant,
+                                                 &cb_quant,
+                                                 &cr_quant,
+                                                 extrapolate,
+                                                 &pixels);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_graphics_surface_write_bgra(session,
+                                                         surface,
+                                                         (uint16_t)x,
+                                                         (uint16_t)y,
+                                                         (uint16_t)width,
+                                                         (uint16_t)height,
+                                                         pixels.bgra,
+                                                         pixels.stride,
+                                                         0);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        (*failed_tiles)++;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.progressive.tile.failed",
+                        "dvc_channel_id=%u surface_id=%u x=%u y=%u block_type=%u status=%d y_len=%u cb_len=%u cr_len=%u extrapolate=%u",
+                        channel_id,
+                        surface->surface_id,
+                        x,
+                        y,
+                        block_type,
+                        (int)status,
+                        (unsigned)y_len,
+                        (unsigned)cb_len,
+                        (unsigned)cr_len,
+                        (unsigned)extrapolate);
+        return LIBRDP_STATUS_OK;
+    }
+
+    (*rendered_tiles)++;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.graphics.progressive.tile",
+                    "dvc_channel_id=%u surface_id=%u x=%u y=%u width=%u height=%u block_type=%u progressive_idx=%u extrapolate=%u",
+                    channel_id,
+                    surface->surface_id,
+                    x,
+                    y,
+                    width,
+                    height,
+                    block_type,
+                    progressive_idx,
+                    (unsigned)extrapolate);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_graphics_progressive_render_region(librdp_session* session,
+                                                                    uint32_t channel_id,
+                                                                    rdp_session_graphics_surface* surface,
+                                                                    const rdp_graphics_progressive_region* region,
+                                                                    uint32_t* rendered_tiles,
+                                                                    uint32_t* failed_tiles,
+                                                                    uint32_t* unsupported_tiles)
+{
+    size_t offset = 0;
+
+    if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    while (offset < region->tiles_len)
+    {
+        rdp_graphics_progressive_block block;
+        librdp_status status = rdp_graphics_progressive_parse_block(region->tiles + offset,
+                                                                    region->tiles_len - offset,
+                                                                    &block);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_SIMPLE)
+        {
+            rdp_graphics_progressive_tile_simple tile;
+
+            status = rdp_graphics_progressive_parse_tile_simple(region->tiles + offset,
+                                                                region->tiles_len - offset,
+                                                                &tile);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_session_graphics_progressive_render_tile(session,
+                                                                  channel_id,
+                                                                  surface,
+                                                                  region,
+                                                                  block.type,
+                                                                  tile.quant_idx_y,
+                                                                  tile.quant_idx_cb,
+                                                                  tile.quant_idx_cr,
+                                                                  tile.x_idx,
+                                                                  tile.y_idx,
+                                                                  0xffu,
+                                                                  tile.y_data,
+                                                                  tile.y_len,
+                                                                  tile.cb_data,
+                                                                  tile.cb_len,
+                                                                  tile.cr_data,
+                                                                  tile.cr_len,
+                                                                  rendered_tiles,
+                                                                  failed_tiles);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST)
+        {
+            rdp_graphics_progressive_tile_first tile;
+
+            status = rdp_graphics_progressive_parse_tile_first(region->tiles + offset,
+                                                               region->tiles_len - offset,
+                                                               &tile);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_session_graphics_progressive_render_tile(session,
+                                                                  channel_id,
+                                                                  surface,
+                                                                  region,
+                                                                  block.type,
+                                                                  tile.quant_idx_y,
+                                                                  tile.quant_idx_cb,
+                                                                  tile.quant_idx_cr,
+                                                                  tile.x_idx,
+                                                                  tile.y_idx,
+                                                                  tile.progressive_quality,
+                                                                  tile.y_data,
+                                                                  tile.y_len,
+                                                                  tile.cb_data,
+                                                                  tile.cb_len,
+                                                                  tile.cr_data,
+                                                                  tile.cr_len,
+                                                                  rendered_tiles,
+                                                                  failed_tiles);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE)
+        {
+            rdp_graphics_progressive_tile_upgrade tile;
+
+            status = rdp_graphics_progressive_parse_tile_upgrade(region->tiles + offset,
+                                                                 region->tiles_len - offset,
+                                                                 &tile);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            (*unsupported_tiles)++;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.graphics.progressive.tile.unsupported",
+                            "dvc_channel_id=%u surface_id=%u x=%u y=%u block_type=%u progressive_idx=%u",
+                            channel_id,
+                            surface->surface_id,
+                            (uint32_t)tile.x_idx * RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE,
+                            (uint32_t)tile.y_idx * RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE,
+                            block.type,
+                            tile.progressive_quality);
+        }
+        else
+        {
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        offset += block.length;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_graphics_progressive_render_stream(librdp_session* session,
+                                                                    uint32_t channel_id,
+                                                                    rdp_session_graphics_surface* surface,
+                                                                    const rdp_graphics_wire_to_surface_2* wire,
+                                                                    uint32_t* rendered_tiles,
+                                                                    uint32_t* failed_tiles,
+                                                                    uint32_t* unsupported_tiles)
+{
+    size_t offset = 0;
+
+    if (!session || !surface || !wire || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    *rendered_tiles = 0;
+    *failed_tiles = 0;
+    *unsupported_tiles = 0;
+    while (offset < wire->bitmap_data_length)
+    {
+        rdp_graphics_progressive_block block;
+        librdp_status status = rdp_graphics_progressive_parse_block(wire->bitmap_data + offset,
+                                                                    wire->bitmap_data_length - offset,
+                                                                    &block);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_REGION)
+        {
+            rdp_graphics_progressive_region region;
+
+            status = rdp_graphics_progressive_parse_region(wire->bitmap_data + offset,
+                                                           wire->bitmap_data_length - offset,
+                                                           &region);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_session_graphics_progressive_render_region(session,
+                                                                    channel_id,
+                                                                    surface,
+                                                                    &region,
+                                                                    rendered_tiles,
+                                                                    failed_tiles,
+                                                                    unsupported_tiles);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        offset += block.length;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static void rdp_session_graphics_cache_evict(librdp_session* session, uint16_t cache_slot)
 {
     rdp_session_graphics_cache_entry* entry = NULL;
@@ -1119,16 +1440,34 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                 break;
             if (wire.codec_id == RDP_GRAPHICS_CODECID_CAPROGRESSIVE)
             {
+                rdp_session_graphics_surface* surface = rdp_session_graphics_surface_find(session, wire.surface_id);
                 rdp_graphics_progressive_stream progressive;
+                uint32_t rendered_tiles = 0;
+                uint32_t failed_tiles = 0;
+                uint32_t unsupported_tiles = 0;
 
+                if (!surface)
+                {
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    break;
+                }
                 status = rdp_graphics_progressive_parse_stream(wire.bitmap_data,
                                                                wire.bitmap_data_length,
                                                                &progressive);
                 if (status == LIBRDP_STATUS_OK)
                 {
+                    status = rdp_session_graphics_progressive_render_stream(session,
+                                                                           channel_id,
+                                                                           surface,
+                                                                           &wire,
+                                                                           &rendered_tiles,
+                                                                           &failed_tiles,
+                                                                           &unsupported_tiles);
+                    if (status != LIBRDP_STATUS_OK)
+                        break;
                     rdp_trace_event(RDP_TRACE_CLIENT,
                                     "client.graphics.progressive",
-                                    "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u",
+                                    "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u rendered_tiles=%u failed_tiles=%u unsupported_tiles=%u",
                                     channel_id,
                                     wire.surface_id,
                                     wire.codec_context_id,
@@ -1137,7 +1476,10 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                     progressive.tile_count,
                                     progressive.simple_tile_count,
                                     progressive.first_tile_count,
-                                    progressive.upgrade_tile_count);
+                                    progressive.upgrade_tile_count,
+                                    rendered_tiles,
+                                    failed_tiles,
+                                    unsupported_tiles);
                 }
                 else
                 {
