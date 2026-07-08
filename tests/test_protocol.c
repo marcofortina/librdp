@@ -9,6 +9,7 @@
 #include "common/stream.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
@@ -392,6 +393,23 @@ static int test_path_security_license_channels(void)
         0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t planar_no_alpha[] = {
+        RDP_PLANAR_FORMAT_NO_ALPHA,
+        0x10, 0x20,
+        0x30, 0x40,
+        0x50, 0x60
+    };
+    const uint8_t planar_alpha_padded[] = {
+        0x00,
+        0x7f, 0x80,
+        0x11, 0x22,
+        0x33, 0x44,
+        0x55, 0x66,
+        0x00
+    };
+    const uint8_t planar_reserved[] = {0x80, 0, 0, 0};
+    const uint8_t planar_subsample_without_loss[] = {RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING, 0, 0, 0};
+    const uint8_t planar_rle[] = {RDP_PLANAR_FORMAT_RLE, 0, 0, 0};
     const uint8_t fast_bitmap_update[] = {
         0x00, 0x2b, 0x01, 0x26, 0x00,
         0x01, 0x00,
@@ -1136,6 +1154,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer client_refresh_rect;
     rdp_buffer client_suppress_output;
     rdp_buffer graphics_decoded;
+    rdp_buffer planar_pixels;
     rdp_buffer graphics_reset_pdu;
     rdp_buffer decoded_bitmap;
     rdp_buffer decoded_pointer;
@@ -1233,6 +1252,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_decompressor_init(&graphics_decompressor);
     rdp_clearcodec_context_init(&clear_context);
     rdp_buffer_init(&graphics_decoded);
+    rdp_buffer_init(&planar_pixels);
     rdp_buffer_init(&graphics_reset_pdu);
     rdp_buffer_init(&decoded_bitmap);
     rdp_buffer_init(&decoded_pointer);
@@ -1677,6 +1697,55 @@ static int test_path_security_license_channels(void)
                                                    1,
                                                    &rfx_progressive_state,
                                                    &rfx_upgrade_pixels) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_planar_decode_argb(planar_no_alpha,
+                                  sizeof(planar_no_alpha),
+                                  2,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 &&
+           planar_pixels.length == 8 &&
+           planar_pixels.data[0] == 0x50 &&
+           planar_pixels.data[1] == 0x30 &&
+           planar_pixels.data[2] == 0x10 &&
+           planar_pixels.data[3] == 0xff &&
+           planar_pixels.data[4] == 0x60 &&
+           planar_pixels.data[5] == 0x40 &&
+           planar_pixels.data[6] == 0x20 &&
+           planar_pixels.data[7] == 0xff);
+    planar_pixels.length = 0;
+    PCHECK(rdp_planar_decode_argb(planar_alpha_padded,
+                                  sizeof(planar_alpha_padded),
+                                  2,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(planar_pixels.data[0] == 0x55 &&
+           planar_pixels.data[1] == 0x33 &&
+           planar_pixels.data[2] == 0x11 &&
+           planar_pixels.data[3] == 0x7f &&
+           planar_pixels.data[4] == 0x66 &&
+           planar_pixels.data[5] == 0x44 &&
+           planar_pixels.data[6] == 0x22 &&
+           planar_pixels.data[7] == 0x80);
+    PCHECK(rdp_planar_decode_argb(planar_reserved,
+                                  sizeof(planar_reserved),
+                                  1,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_planar_decode_argb(planar_subsample_without_loss,
+                                  sizeof(planar_subsample_without_loss),
+                                  1,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_planar_decode_argb(planar_rle,
+                                  sizeof(planar_rle),
+                                  1,
+                                  1,
+                                  &planar_pixels,
+                                  &decoded_stride) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
@@ -3047,6 +3116,7 @@ static int test_path_security_license_channels(void)
     rdp_clearcodec_context_free(&clear_context);
     rdp_graphics_decompressor_free(&graphics_decompressor);
     rdp_buffer_free(&graphics_reset_pdu);
+    rdp_buffer_free(&planar_pixels);
     rdp_buffer_free(&graphics_decoded);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_free(&client_suppress_output);

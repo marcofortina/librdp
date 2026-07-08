@@ -11,6 +11,7 @@
 #include "common/trace.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
@@ -2850,7 +2851,8 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             if (status != LIBRDP_STATUS_OK)
                 break;
             if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED ||
-                wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC)
+                wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ||
+                wire.codec_id == RDP_GRAPHICS_CODECID_PLANAR)
             {
                 rdp_session_graphics_surface* surface = rdp_session_graphics_surface_find(session, wire.surface_id);
                 int rendered = 0;
@@ -2875,32 +2877,45 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                     uint16_t height = (uint16_t)(wire.dest_rect.bottom - wire.dest_rect.top);
 
                     rdp_buffer_init(&decoded_bitmap);
-                    status = rdp_clearcodec_decode_bitmap(&session->clearcodec,
-                                                          wire.bitmap_data,
-                                                          wire.bitmap_data_length,
-                                                          width,
-                                                          height,
-                                                          &decoded_bitmap,
-                                                          &decoded_stride);
+                    if (wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC)
+                    {
+                        status = rdp_clearcodec_decode_bitmap(&session->clearcodec,
+                                                              wire.bitmap_data,
+                                                              wire.bitmap_data_length,
+                                                              width,
+                                                              height,
+                                                              &decoded_bitmap,
+                                                              &decoded_stride);
+                    }
+                    else
+                    {
+                        status = rdp_planar_decode_argb(wire.bitmap_data,
+                                                        wire.bitmap_data_length,
+                                                        width,
+                                                        height,
+                                                        &decoded_bitmap,
+                                                        &decoded_stride);
+                    }
                     if (status == LIBRDP_STATUS_OK)
                         status = rdp_session_graphics_surface_write_bgra(session,
-	                                                                         surface,
-	                                                                         wire.dest_rect.left,
-	                                                                         wire.dest_rect.top,
-	                                                                         width,
-	                                                                         height,
-	                                                                         decoded_bitmap.data,
-	                                                                         decoded_stride,
-	                                                                         0,
-	                                                                         "clearcodec");
+                                                                         surface,
+                                                                         wire.dest_rect.left,
+                                                                         wire.dest_rect.top,
+                                                                         width,
+                                                                         height,
+                                                                         decoded_bitmap.data,
+                                                                         decoded_stride,
+                                                                         wire.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+                                                                         wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ? "clearcodec" : "planar");
                     rdp_buffer_free(&decoded_bitmap);
                     if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
-                                        "client.graphics.clearcodec.unsupported",
-                                        "dvc_channel_id=%u surface_id=%u payload_len=%u decoder_status=%d",
+                                        "client.graphics.codec.unsupported",
+                                        "dvc_channel_id=%u surface_id=%u codec_id=%u payload_len=%u decoder_status=%d",
                                         channel_id,
                                         wire.surface_id,
+                                        wire.codec_id,
                                         wire.bitmap_data_length,
                                         (int)status);
                         status = LIBRDP_STATUS_OK;
