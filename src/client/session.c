@@ -14,6 +14,7 @@
 #include "channels/printer_redirection.h"
 #include "channels/smartcard_redirection.h"
 #include "channels/virtual_channel.h"
+#include "channels/webauthn_channel.h"
 #include "client/settings_internal.h"
 #include "clipboard/clipboard.h"
 #include "common/stream.h"
@@ -74,7 +75,11 @@
 #define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
 #define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
+#define RDP_SESSION_WEBAUTHN_CHANNEL_NAME "WebAuthN_Channel"
 #define RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT 16u
+#define RDP_SESSION_HRESULT_OK 0x00000000u
+#define RDP_SESSION_HRESULT_FAIL 0x80004005u
+#define RDP_SESSION_HRESULT_NOTIMPL 0x80004001u
 #define RDP_SESSION_DEVICE_NO_SUCH_DEVICE 0xc000000eu
 #define RDP_SESSION_DEVICE_NOT_SUPPORTED 0xc00000bbu
 #define RDP_SESSION_DEVICE_INVALID_PARAMETER 0xc000000du
@@ -5626,6 +5631,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_INPUT_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0 ||
            strcmp(name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0 ||
+           strcmp(name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_AUDIO_INPUT_CHANNEL_NAME) == 0;
 }
 
@@ -8884,6 +8890,96 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
     return status;
 }
 
+static int rdp_session_webauthn_mock_enabled(const librdp_session* session)
+{
+    const char* provider = NULL;
+
+    if (!session || !session->settings ||
+        !librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_WEBAUTHN))
+        return 0;
+    provider = librdp_settings_webauthn_provider(session->settings);
+    return !provider || strcmp(provider, "mock") == 0 || strncmp(provider, "mock=", 5u) == 0;
+}
+
+static librdp_status rdp_session_handle_webauthn_message(librdp_session* session,
+                                                         uint32_t channel_id,
+                                                         uint8_t channel_id_bytes,
+                                                         const uint8_t* data,
+                                                         size_t data_len)
+{
+    rdp_webauthn_request request;
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t hresult = RDP_SESSION_HRESULT_OK;
+    int mock_enabled = 0;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&request, 0, sizeof(request));
+    rdp_buffer_init(&response);
+    mock_enabled = rdp_session_webauthn_mock_enabled(session);
+    status = rdp_webauthn_parse_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_FAIL, NULL, 0);
+        hresult = RDP_SESSION_HRESULT_FAIL;
+    }
+    else if (!librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_WEBAUTHN))
+    {
+        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_NOTIMPL, NULL, 0);
+        hresult = RDP_SESSION_HRESULT_NOTIMPL;
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_API_VERSION)
+    {
+        status = rdp_webauthn_write_u32_response(&response, RDP_SESSION_HRESULT_OK, 4u);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_IUVPAA)
+    {
+        status = rdp_webauthn_write_u32_response(&response,
+                                                 RDP_SESSION_HRESULT_OK,
+                                                 mock_enabled ? 1u : 0u);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_CANCEL ||
+             request.command == RDP_WEBAUTHN_COMMAND_GET_CREDENTIALS ||
+             request.command == RDP_WEBAUTHN_COMMAND_GET_AUTHENTICATOR_LIST)
+    {
+        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_OK, NULL, 0);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN && mock_enabled)
+    {
+        status = rdp_webauthn_write_authenticator_response(&response,
+                                                           RDP_SESSION_HRESULT_FAIL,
+                                                           0x01u,
+                                                           NULL,
+                                                           0);
+        hresult = RDP_SESSION_HRESULT_FAIL;
+    }
+    else
+    {
+        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_NOTIMPL, NULL, 0);
+        hresult = RDP_SESSION_HRESULT_NOTIMPL;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       channel_id,
+                                                       channel_id_bytes,
+                                                       response.data,
+                                                       response.length,
+                                                       "client.webauthn.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.webauthn.pdu",
+                    "dvc_channel_id=%u command=%u request_len=%u response_len=%u hresult=%u mock=%u status=%s",
+                    channel_id,
+                    status == LIBRDP_STATUS_OK ? request.command : 0u,
+                    (unsigned)data_len,
+                    (unsigned)response.length,
+                    hresult,
+                    mock_enabled ? 1u : 0u,
+                    librdp_status_string(status));
+    rdp_buffer_free(&response);
+    return status;
+}
+
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,
                                                                 uint32_t channel_id,
@@ -9037,6 +9133,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         status = rdp_session_handle_audio_input_message(session, channel_id, data, data_len);
     }
+    else if (strcmp(entry->name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0)
+    {
+        status = rdp_session_handle_webauthn_message(session, channel_id, channel_id_bytes, data, data_len);
+    }
     else
     {
         rdp_session_emit_channel_data(session, entry, data, data_len);
@@ -9173,6 +9273,15 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "client.audin.channel",
                             "dvc_channel_id=%u",
                             request.channel_id);
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_WEBAUTHN_CHANNEL_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME, request.name_len) == 0)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.webauthn.channel",
+                            "dvc_channel_id=%u enabled=%u",
+                            request.channel_id,
+                            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_WEBAUTHN) ? 1u : 0u);
         }
         else if (request.name_len == sizeof(RDP_SESSION_MOUSE_CURSOR_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_MOUSE_CURSOR_NAME, request.name_len) == 0)

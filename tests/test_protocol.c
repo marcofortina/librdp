@@ -483,6 +483,20 @@ static int test_webauthn_channel(void)
     PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
     PCHECK(rdp_webauthn_parse_u32_response(&response, &value) == LIBRDP_STATUS_OK);
     PCHECK(value == 0x11223344u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_authenticator_response(&buffer,
+                                                     0x80004005u,
+                                                     0x01u,
+                                                     response_payload,
+                                                     sizeof(response_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.hresult == 0x80004005u && response.payload_len > sizeof(response_payload) &&
+           response.payload[0] == 0xa3u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_webauthn_write_request(&buffer,
                                       RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
                                       0x00000001u,
