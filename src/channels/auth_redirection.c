@@ -4,6 +4,46 @@
 
 #include <string.h>
 
+static librdp_status rdp_auth_redirection_parse_u32_call(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    uint32_t* value)
+{
+    rdp_auth_redirection_call call;
+    rdp_stream stream;
+
+    if (!data || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_auth_redirection_parse_call(data, length, &call) != LIBRDP_STATUS_OK ||
+        call.call_id != expected_call_id ||
+        call.payload_len != 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, call.payload, call.payload_len);
+    if (rdp_stream_read_u32_le(&stream, value) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_auth_redirection_parse_fixed_response(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    size_t expected_len,
+    rdp_auth_redirection_fixed_response* fixed)
+{
+    if (!data || !fixed)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(fixed, 0, sizeof(*fixed));
+    if (rdp_auth_redirection_parse_response(data, length, &fixed->response) != LIBRDP_STATUS_OK ||
+        fixed->response.call_id != expected_call_id ||
+        fixed->response.payload_len != expected_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    fixed->data = fixed->response.payload;
+    fixed->data_len = fixed->response.payload_len;
+    return LIBRDP_STATUS_OK;
+}
+
 int rdp_auth_redirection_call_id_valid(uint32_t call_id)
 {
     if (call_id <= RDP_AUTH_REDIRECTION_CALL_GENERIC_MAXIMUM)
@@ -17,10 +57,29 @@ int rdp_auth_redirection_call_id_valid(uint32_t call_id)
     return call_id == RDP_AUTH_REDIRECTION_CALL_INVALID;
 }
 
+int rdp_auth_redirection_kerb_call_id_valid(uint32_t call_id)
+{
+    return call_id >= RDP_AUTH_REDIRECTION_CALL_KERB_MINIMUM &&
+           call_id <= RDP_AUTH_REDIRECTION_CALL_KERB_MAXIMUM;
+}
+
+int rdp_auth_redirection_ntlm_call_id_valid(uint32_t call_id)
+{
+    return call_id >= RDP_AUTH_REDIRECTION_CALL_NTLM_MINIMUM &&
+           call_id <= RDP_AUTH_REDIRECTION_CALL_NTLM_MAXIMUM;
+}
+
 int rdp_auth_redirection_negotiate_call_id_valid(uint32_t call_id)
 {
     return call_id == RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION ||
            call_id == RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION;
+}
+
+int rdp_auth_redirection_ecdh_key_bits_valid(uint32_t key_bits)
+{
+    return key_bits == RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P256 ||
+           key_bits == RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P384 ||
+           key_bits == RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P521;
 }
 
 librdp_status rdp_auth_redirection_parse_outer_packet(
@@ -301,4 +360,203 @@ librdp_status rdp_auth_redirection_write_negotiate_version_response(
     if (result != LIBRDP_STATUS_OK)
         return result;
     return rdp_buffer_append_u32_le(buffer, RDP_AUTH_REDIRECTION_VERSION);
+}
+
+librdp_status rdp_auth_redirection_parse_ecdh_key_agreement_call(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_ecdh_key_agreement_call* call)
+{
+    if (!data || !call)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(call, 0, sizeof(*call));
+    if (rdp_auth_redirection_parse_u32_call(data,
+                                            length,
+                                            RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_ECDH_KEY_AGREEMENT,
+                                            &call->key_bits) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_auth_redirection_ecdh_key_bits_valid(call->key_bits))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_ecdh_key_agreement_call(
+    rdp_buffer* buffer,
+    uint32_t key_bits)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_auth_redirection_ecdh_key_bits_valid(key_bits))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, key_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_call(buffer,
+                                                 RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_ECDH_KEY_AGREEMENT,
+                                                 payload.data,
+                                                 payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_auth_redirection_parse_dh_key_agreement_call(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_dh_key_agreement_call* call)
+{
+    rdp_auth_redirection_call parsed;
+    rdp_stream stream;
+
+    if (!data || !call)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(call, 0, sizeof(*call));
+    if (rdp_auth_redirection_parse_call(data, length, &parsed) != LIBRDP_STATUS_OK ||
+        parsed.call_id != RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_DH_KEY_AGREEMENT ||
+        parsed.payload_len != 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, parsed.payload, parsed.payload_len);
+    if (rdp_stream_read_u8(&stream, &call->ignored) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_dh_key_agreement_call(
+    rdp_buffer* buffer,
+    uint8_t ignored)
+{
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_auth_redirection_write_call(buffer,
+                                           RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_DH_KEY_AGREEMENT,
+                                           &ignored,
+                                           1u);
+}
+
+librdp_status rdp_auth_redirection_parse_key_agreement_handle_call(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    rdp_auth_redirection_key_agreement_handle_call* call)
+{
+    rdp_auth_redirection_call parsed;
+    rdp_stream stream;
+    uint32_t low = 0;
+    uint32_t high = 0;
+
+    if (!data || !call)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (expected_call_id != RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT &&
+        expected_call_id != RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(call, 0, sizeof(*call));
+    if (rdp_auth_redirection_parse_call(data, length, &parsed) != LIBRDP_STATUS_OK ||
+        parsed.call_id != expected_call_id ||
+        parsed.payload_len != 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, parsed.payload, parsed.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &low) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &high) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    call->handle = (int64_t)(((uint64_t)high << 32) | low);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_key_agreement_handle_call(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    int64_t handle)
+{
+    rdp_buffer payload;
+    uint64_t value = (uint64_t)handle;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer ||
+        (call_id != RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT &&
+         call_id != RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, (uint32_t)(value & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, (uint32_t)(value >> 32));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_call(buffer, call_id, payload.data, payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_auth_redirection_parse_nt_response_response(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_fixed_response* fixed)
+{
+    return rdp_auth_redirection_parse_fixed_response(data,
+                                                     length,
+                                                     RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_NT_RESPONSE,
+                                                     RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH,
+                                                     fixed);
+}
+
+librdp_status rdp_auth_redirection_parse_user_session_key_response(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_fixed_response* fixed)
+{
+    return rdp_auth_redirection_parse_fixed_response(
+        data,
+        length,
+        RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT,
+        RDP_AUTH_REDIRECTION_USER_SESSION_KEY_LENGTH,
+        fixed);
+}
+
+librdp_status rdp_auth_redirection_parse_compare_credentials_response(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_response* response,
+    rdp_auth_redirection_compare_credentials_result* result)
+{
+    rdp_stream stream;
+
+    if (!data || !response || !result)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(result, 0, sizeof(*result));
+    if (rdp_auth_redirection_parse_response(data, length, response) != LIBRDP_STATUS_OK ||
+        response->call_id != RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS ||
+        response->payload_len != 12u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, response->payload, response->payload_len);
+    if (rdp_stream_read_u32_le(&stream, &result->nt_equal) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &result->lm_equal) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &result->sha_equal) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (result->nt_equal > 1u || result->lm_equal > 1u || result->sha_equal > 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_compare_credentials_response(
+    rdp_buffer* buffer,
+    uint32_t status,
+    const rdp_auth_redirection_compare_credentials_result* result)
+{
+    rdp_buffer payload;
+    librdp_status write_status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !result || result->nt_equal > 1u || result->lm_equal > 1u || result->sha_equal > 1u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    write_status = rdp_buffer_append_u32_le(&payload, result->nt_equal);
+    if (write_status == LIBRDP_STATUS_OK)
+        write_status = rdp_buffer_append_u32_le(&payload, result->lm_equal);
+    if (write_status == LIBRDP_STATUS_OK)
+        write_status = rdp_buffer_append_u32_le(&payload, result->sha_equal);
+    if (write_status == LIBRDP_STATUS_OK)
+        write_status = rdp_auth_redirection_write_response(buffer,
+                                                           RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS,
+                                                           status,
+                                                           payload.data,
+                                                           payload.length);
+    rdp_buffer_free(&payload);
+    return write_status;
 }

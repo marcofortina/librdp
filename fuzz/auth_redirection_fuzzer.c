@@ -10,6 +10,11 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_auth_redirection_call call;
     rdp_auth_redirection_response response;
     rdp_auth_redirection_negotiate_version version;
+    rdp_auth_redirection_ecdh_key_agreement_call ecdh;
+    rdp_auth_redirection_dh_key_agreement_call dh;
+    rdp_auth_redirection_key_agreement_handle_call handle;
+    rdp_auth_redirection_fixed_response fixed;
+    rdp_auth_redirection_compare_credentials_result compare;
     rdp_buffer buffer;
 
     (void)rdp_auth_redirection_parse_outer_packet(data, size, &outer);
@@ -18,6 +23,21 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_auth_redirection_parse_response(data, size, &response);
     (void)rdp_auth_redirection_parse_negotiate_version_call(data, size, &version);
     (void)rdp_auth_redirection_parse_negotiate_version_response(data, size, &response, &version);
+    (void)rdp_auth_redirection_parse_ecdh_key_agreement_call(data, size, &ecdh);
+    (void)rdp_auth_redirection_parse_dh_key_agreement_call(data, size, &dh);
+    (void)rdp_auth_redirection_parse_key_agreement_handle_call(
+        data,
+        size,
+        RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT,
+        &handle);
+    (void)rdp_auth_redirection_parse_key_agreement_handle_call(
+        data,
+        size,
+        RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE,
+        &handle);
+    (void)rdp_auth_redirection_parse_nt_response_response(data, size, &fixed);
+    (void)rdp_auth_redirection_parse_user_session_key_response(data, size, &fixed);
+    (void)rdp_auth_redirection_parse_compare_credentials_response(data, size, &response, &compare);
 
     rdp_buffer_init(&buffer);
     (void)rdp_auth_redirection_write_outer_packet(&buffer, data, size);
@@ -43,6 +63,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         &buffer,
         RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION,
         0);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_ecdh_key_agreement_call(
+        &buffer,
+        size > 0 && (data[0] & 1u) ? RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P384 :
+                                     RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P256);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_dh_key_agreement_call(&buffer, size > 0 ? data[0] : 0);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_key_agreement_handle_call(
+        &buffer,
+        RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT,
+        (int64_t)size);
+    buffer.length = 0;
+    compare.nt_equal = size > 0 ? (uint32_t)(data[0] & 1u) : 0;
+    compare.lm_equal = size > 1 ? (uint32_t)(data[1] & 1u) : 0;
+    compare.sha_equal = size > 2 ? (uint32_t)(data[2] & 1u) : 0;
+    (void)rdp_auth_redirection_write_compare_credentials_response(&buffer, 0, &compare);
     rdp_buffer_free(&buffer);
     return 0;
 }
