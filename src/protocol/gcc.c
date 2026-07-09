@@ -319,6 +319,8 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
         channel_count++;
     if (config->enable_device_redirection)
         channel_count++;
+    if (config->enable_pnp_redirection)
+        channel_count++;
     if (config->enable_remote_programs)
         channel_count++;
 
@@ -351,6 +353,14 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
     if (status == LIBRDP_STATUS_OK && config->enable_device_redirection)
     {
         static const uint8_t name[8] = {'r', 'd', 'p', 'd', 'r', 0, 0, 0};
+
+        status = rdp_buffer_append(&payload, name, sizeof(name));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, 0xc0800000u);
+    }
+    if (status == LIBRDP_STATUS_OK && config->enable_pnp_redirection)
+    {
+        static const uint8_t name[8] = {'P', 'N', 'P', 'D', 'R', 0, 0, 0};
 
         status = rdp_buffer_append(&payload, name, sizeof(name));
         if (status == LIBRDP_STATUS_OK)

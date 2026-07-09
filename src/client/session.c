@@ -11,6 +11,7 @@
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
+#include "channels/pnp_redirection.h"
 #include "channels/port_redirection.h"
 #include "channels/printer_redirection.h"
 #include "channels/remote_programs.h"
@@ -295,6 +296,12 @@ struct librdp_session
     uint32_t device_redirection_client_id;
     uint32_t device_redirection_fragment_expected;
     rdp_buffer device_redirection_fragment;
+    uint16_t pnp_redirection_channel_id;
+    uint8_t pnp_redirection_ready;
+    uint8_t pnp_redirection_fragmenting;
+    uint16_t pnp_redirection_io_version;
+    uint32_t pnp_redirection_fragment_expected;
+    rdp_buffer pnp_redirection_fragment;
     uint16_t remote_programs_channel_id;
     uint8_t remote_programs_ready;
     uint8_t remote_programs_fragmenting;
@@ -1096,6 +1103,15 @@ static librdp_status rdp_session_send_device_redirection_packet(librdp_session* 
     return rdp_session_write_channel_pdu(session, session->device_redirection_channel_id, payload, event);
 }
 
+static librdp_status rdp_session_send_pnp_redirection_packet(librdp_session* session,
+                                                             const rdp_buffer* payload,
+                                                             const char* event)
+{
+    if (!session || !payload || !event || session->pnp_redirection_channel_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_session_write_channel_pdu(session, session->pnp_redirection_channel_id, payload, event);
+}
+
 static librdp_status rdp_session_send_remote_programs_packet(librdp_session* session,
                                                              const rdp_buffer* payload,
                                                              const char* event)
@@ -1128,6 +1144,271 @@ static uint32_t rdp_session_errno_to_device_status(int error)
         default:
             return RDP_SESSION_DEVICE_NOT_SUPPORTED;
     }
+}
+
+static librdp_status rdp_session_pnp_send_version(librdp_session* session)
+{
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    status = rdp_pnp_redirection_write_version(&packet,
+                                               1,
+                                               0,
+                                               RDP_PNP_REDIRECTION_CAP_DYNAMIC_DEVICES);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_pnp_redirection_packet(session, &packet, "client.pnp.version");
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.pnp.version",
+                        "channel_id=%u capabilities=%u",
+                        session->pnp_redirection_channel_id,
+                        RDP_PNP_REDIRECTION_CAP_DYNAMIC_DEVICES);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_session_pnp_send_authenticated(librdp_session* session)
+{
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    status = rdp_pnp_redirection_write_authenticated(&packet);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_pnp_redirection_packet(session, &packet, "client.pnp.authenticated");
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.pnp.authenticated",
+                        "channel_id=%u",
+                        session->pnp_redirection_channel_id);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_session_pnp_send_status(librdp_session* session,
+                                                 uint32_t request_id,
+                                                 uint32_t io_status,
+                                                 const char* event)
+{
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    status = rdp_pnp_redirection_write_status_reply(&packet, request_id, io_status);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_pnp_redirection_packet(session, &packet, event);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* session,
+                                                                const uint8_t* data,
+                                                                size_t data_len)
+{
+    rdp_pnp_redirection_info_header info;
+    rdp_pnp_redirection_server_io_header server_header;
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(&info, 0, sizeof(info));
+    if (rdp_pnp_redirection_parse_info_header(data, data_len, &info) == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.pnp.info",
+                              "packet_id=%u payload_len=%u",
+                              info.packet_id,
+                              (unsigned)info.payload_len);
+        switch (info.packet_id)
+        {
+            case RDP_PNP_REDIRECTION_INFO_VERSION:
+            {
+                rdp_pnp_redirection_version version;
+                status = rdp_pnp_redirection_parse_version(data, data_len, &version);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.pnp.server_version",
+                                    "major=%u minor=%u capabilities=%u",
+                                    version.major_version,
+                                    version.minor_version,
+                                    version.capabilities);
+                }
+                break;
+            }
+            case RDP_PNP_REDIRECTION_INFO_SERVER_LOGON:
+                status = rdp_pnp_redirection_parse_authenticated(data, data_len, &info);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    session->pnp_redirection_ready = 1;
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.pnp.server_logon",
+                                    "channel_id=%u",
+                                    session->pnp_redirection_channel_id);
+                }
+                break;
+            case RDP_PNP_REDIRECTION_INFO_REDIRECT_DEVICES:
+            {
+                rdp_pnp_redirection_device_addition addition;
+                status = rdp_pnp_redirection_parse_device_addition(data, data_len, &addition);
+                if (status == LIBRDP_STATUS_OK)
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.pnp.device_addition",
+                                    "device_count=%u",
+                                    addition.device_count);
+                break;
+            }
+            case RDP_PNP_REDIRECTION_INFO_UNREDIRECT_DEVICE:
+            {
+                rdp_pnp_redirection_device_removal removal;
+                status = rdp_pnp_redirection_parse_device_removal(data, data_len, &removal);
+                if (status == LIBRDP_STATUS_OK)
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.pnp.device_removal",
+                                    "device_id=%u",
+                                    removal.client_device_id);
+                break;
+            }
+            default:
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+        }
+        return status;
+    }
+
+    memset(&server_header, 0, sizeof(server_header));
+    status = rdp_pnp_redirection_parse_server_io_header(data, data_len, &server_header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.pnp.io_request",
+                    "request_id=%u function=%u payload_len=%u",
+                    server_header.request_id,
+                    server_header.function_id,
+                    (unsigned)server_header.payload_len);
+    rdp_buffer_init(&response);
+    switch (server_header.function_id)
+    {
+        case RDP_PNP_REDIRECTION_IO_CAPABILITIES_REQUEST:
+        {
+            rdp_pnp_redirection_io_version request;
+            uint16_t version = RDP_PNP_REDIRECTION_IO_VERSION_6;
+
+            status = rdp_pnp_redirection_parse_capabilities_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                version = request.version == RDP_PNP_REDIRECTION_IO_VERSION_4 ?
+                              RDP_PNP_REDIRECTION_IO_VERSION_4 :
+                              RDP_PNP_REDIRECTION_IO_VERSION_6;
+                session->pnp_redirection_io_version = version;
+                status = rdp_pnp_redirection_write_capabilities_reply(&response,
+                                                                      request.header.request_id,
+                                                                      version);
+            }
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_send_pnp_redirection_packet(session,
+                                                                 &response,
+                                                                 "client.pnp.capabilities_reply");
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.pnp.capabilities_reply",
+                                "request_id=%u version=%u",
+                                server_header.request_id,
+                                version);
+            break;
+        }
+        case RDP_PNP_REDIRECTION_IO_CREATE_FILE_REQUEST:
+        {
+            rdp_pnp_redirection_create_request request;
+            status = rdp_pnp_redirection_parse_create_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_pnp_send_status(session,
+                                                     request.header.request_id,
+                                                     RDP_SESSION_DEVICE_NO_SUCH_DEVICE,
+                                                     "client.pnp.create_reply");
+            break;
+        }
+        case RDP_PNP_REDIRECTION_IO_READ_REQUEST:
+        {
+            rdp_pnp_redirection_read_request request;
+            status = rdp_pnp_redirection_parse_read_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_pnp_redirection_write_read_reply(&response,
+                                                              request.header.request_id,
+                                                              RDP_SESSION_DEVICE_NO_SUCH_DEVICE,
+                                                              NULL,
+                                                              0);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_send_pnp_redirection_packet(session,
+                                                                     &response,
+                                                                     "client.pnp.read_reply");
+            }
+            break;
+        }
+        case RDP_PNP_REDIRECTION_IO_WRITE_REQUEST:
+        {
+            rdp_pnp_redirection_write_request request;
+            status = rdp_pnp_redirection_parse_write_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_pnp_redirection_write_write_reply(&response,
+                                                               request.header.request_id,
+                                                               RDP_SESSION_DEVICE_NO_SUCH_DEVICE,
+                                                               0);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_send_pnp_redirection_packet(session,
+                                                                     &response,
+                                                                     "client.pnp.write_reply");
+            }
+            break;
+        }
+        case RDP_PNP_REDIRECTION_IO_CONTROL_REQUEST:
+        {
+            rdp_pnp_redirection_control_request request;
+            status = rdp_pnp_redirection_parse_control_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_pnp_redirection_write_control_reply(&response,
+                                                                 request.header.request_id,
+                                                                 RDP_SESSION_DEVICE_NOT_SUPPORTED,
+                                                                 NULL,
+                                                                 0);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_send_pnp_redirection_packet(session,
+                                                                     &response,
+                                                                     "client.pnp.control_reply");
+            }
+            break;
+        }
+        case RDP_PNP_REDIRECTION_IO_SPECIFIC_CANCEL_REQUEST:
+        {
+            rdp_pnp_redirection_cancel_request request;
+            status = rdp_pnp_redirection_parse_cancel_request(data, data_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_pnp_send_status(session,
+                                                     request.header.request_id,
+                                                     RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                                                     "client.pnp.cancel_reply");
+            break;
+        }
+        default:
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+    }
+    rdp_buffer_free(&response);
+    return status;
 }
 
 static void rdp_session_redirected_file_reset(rdp_session_redirected_file* file)
@@ -12701,6 +12982,7 @@ void librdp_session_free(librdp_session* session)
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
     rdp_buffer_free(&session->device_redirection_fragment);
+    rdp_buffer_free(&session->pnp_redirection_fragment);
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_free(&session->fastpath_fragment);
     rdp_session_graphics_surfaces_clear(session);
@@ -12809,6 +13091,13 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->device_redirection_fragment_expected = 0;
     rdp_buffer_free(&session->device_redirection_fragment);
     rdp_buffer_init(&session->device_redirection_fragment);
+    session->pnp_redirection_channel_id = 0;
+    session->pnp_redirection_ready = 0;
+    session->pnp_redirection_fragmenting = 0;
+    session->pnp_redirection_io_version = 0;
+    session->pnp_redirection_fragment_expected = 0;
+    rdp_buffer_free(&session->pnp_redirection_fragment);
+    rdp_buffer_init(&session->pnp_redirection_fragment);
     session->remote_programs_channel_id = 0;
     session->remote_programs_ready = 0;
     session->remote_programs_fragmenting = 0;
@@ -13201,22 +13490,24 @@ librdp_status librdp_session_connect(librdp_session* session)
             (librdp_settings_drive_count(session->settings) > 0 ||
              librdp_settings_printer_count(session->settings) > 0 ||
              librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ||
-             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ||
-             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP)) ?
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB)) ?
                 1u :
                 0u;
+        config.enable_pnp_redirection =
+            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP) ? 1u : 0u;
         config.enable_remote_programs =
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
 
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "mcs.connect.initial",
-                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u audio_output=%u device_redirection=%u remote_programs=%u early_capability_flags=%u",
+                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u audio_output=%u device_redirection=%u pnp=%u remote_programs=%u early_capability_flags=%u",
                         (unsigned)config.desktop_width,
                         (unsigned)config.desktop_height,
                         config.requested_protocols,
                         (unsigned)config.enable_dynamic_channels,
                         (unsigned)config.enable_audio_output,
                         (unsigned)config.enable_device_redirection,
+                        (unsigned)config.enable_pnp_redirection,
                         (unsigned)config.enable_remote_programs,
                         (unsigned)config.early_capability_flags);
         status = rdp_gcc_write_client_data_blocks(&gcc_blocks, &config);
@@ -13311,10 +13602,11 @@ librdp_status librdp_session_connect(librdp_session* session)
                 (librdp_settings_drive_count(session->settings) > 0 ||
                  librdp_settings_printer_count(session->settings) > 0 ||
                  librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ||
-                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ||
-                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP)) ?
+                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB)) ?
                     1u :
                     0u;
+            uint8_t pnp_redirection_enabled =
+                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP) ? 1u : 0u;
             uint8_t remote_programs_enabled =
                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
 
@@ -13355,6 +13647,14 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 "client.rdpdr.channel",
                                 "channel_id=%u",
                                 session->device_redirection_channel_id);
+            }
+            if (pnp_redirection_enabled && server_data.channel_count > channel_index)
+            {
+                session->pnp_redirection_channel_id = server_data.channel_ids[channel_index++];
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.pnp.channel",
+                                "channel_id=%u",
+                                session->pnp_redirection_channel_id);
             }
             if (remote_programs_enabled && server_data.channel_count > channel_index)
             {
@@ -13441,6 +13741,18 @@ librdp_status librdp_session_connect(librdp_session* session)
         status = rdp_session_join_mcs_channel(session,
                                               session->device_redirection_channel_id,
                                               "rdpdr",
+                                              &mcs,
+                                              &reply);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+    }
+    if (session->pnp_redirection_channel_id != 0 &&
+        session->pnp_redirection_channel_id != session->mcs_user_id &&
+        session->pnp_redirection_channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
+    {
+        status = rdp_session_join_mcs_channel(session,
+                                              session->pnp_redirection_channel_id,
+                                              "PNPDR",
                                               &mcs,
                                               &reply);
         if (status != LIBRDP_STATUS_OK)
@@ -13560,6 +13872,15 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status != LIBRDP_STATUS_OK)
             goto fail;
     }
+    if (session->pnp_redirection_channel_id != 0)
+    {
+        status = rdp_session_pnp_send_version(session);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        status = rdp_session_pnp_send_authenticated(session);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+    }
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
@@ -13622,6 +13943,13 @@ fail:
     session->device_redirection_fragment_expected = 0;
     rdp_buffer_free(&session->device_redirection_fragment);
     rdp_buffer_init(&session->device_redirection_fragment);
+    session->pnp_redirection_channel_id = 0;
+    session->pnp_redirection_ready = 0;
+    session->pnp_redirection_fragmenting = 0;
+    session->pnp_redirection_io_version = 0;
+    session->pnp_redirection_fragment_expected = 0;
+    rdp_buffer_free(&session->pnp_redirection_fragment);
+    rdp_buffer_init(&session->pnp_redirection_fragment);
     session->remote_programs_channel_id = 0;
     session->remote_programs_ready = 0;
     session->remote_programs_fragmenting = 0;
@@ -14067,6 +14395,98 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             rdp_buffer_free(&security_payload);
             goto done;
         }
+        if (session->pnp_redirection_channel_id != 0 &&
+            indication.channel_id == session->pnp_redirection_channel_id)
+        {
+            rdp_virtual_channel_packet channel_packet;
+            uint32_t fragment_flags = 0;
+
+            status = rdp_virtual_channel_parse_packet(indication_payload, indication_payload_len, &channel_packet);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            fragment_flags = channel_packet.flags & (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST);
+            if (fragment_flags == (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST))
+            {
+                status = rdp_session_handle_pnp_redirection_message(session,
+                                                                    channel_packet.payload,
+                                                                    channel_packet.payload_len);
+            }
+            else if (fragment_flags == RDP_VIRTUAL_CHANNEL_FLAG_FIRST)
+            {
+                rdp_buffer_free(&session->pnp_redirection_fragment);
+                rdp_buffer_init(&session->pnp_redirection_fragment);
+                if (channel_packet.length == 0 || channel_packet.length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else
+                    status = rdp_buffer_reserve(&session->pnp_redirection_fragment, channel_packet.length);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(&session->pnp_redirection_fragment,
+                                               channel_packet.payload,
+                                               channel_packet.payload_len);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    session->pnp_redirection_fragmenting = 1;
+                    session->pnp_redirection_fragment_expected = channel_packet.length;
+                    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "client.pnp.fragment.start",
+                                          "channel_id=%u total_len=%u payload_len=%u",
+                                          indication.channel_id,
+                                          channel_packet.length,
+                                          (unsigned)channel_packet.payload_len);
+                }
+            }
+            else if (session->pnp_redirection_fragmenting)
+            {
+                if (session->pnp_redirection_fragment.length > session->pnp_redirection_fragment_expected ||
+                    channel_packet.payload_len >
+                    (size_t)session->pnp_redirection_fragment_expected -
+                    session->pnp_redirection_fragment.length)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(&session->pnp_redirection_fragment,
+                                               channel_packet.payload,
+                                               channel_packet.payload_len);
+                rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                      RDP_TRACE_LEVEL_DEBUG,
+                                      "client.pnp.fragment.data",
+                                      "channel_id=%u total_len=%u received=%u payload_len=%u flags=%u",
+                                      indication.channel_id,
+                                      session->pnp_redirection_fragment_expected,
+                                      (unsigned)session->pnp_redirection_fragment.length,
+                                      (unsigned)channel_packet.payload_len,
+                                      channel_packet.flags);
+                if (status == LIBRDP_STATUS_OK && (channel_packet.flags & RDP_VIRTUAL_CHANNEL_FLAG_LAST) != 0)
+                {
+                    if (session->pnp_redirection_fragment.length != session->pnp_redirection_fragment_expected)
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    if (status == LIBRDP_STATUS_OK)
+                        status = rdp_session_handle_pnp_redirection_message(
+                            session,
+                            session->pnp_redirection_fragment.data,
+                            session->pnp_redirection_fragment.length);
+                    rdp_buffer_free(&session->pnp_redirection_fragment);
+                    session->pnp_redirection_fragmenting = 0;
+                    session->pnp_redirection_fragment_expected = 0;
+                }
+            }
+            else
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&security_payload);
+                rdp_buffer_free(&packet);
+                return rdp_session_fail(session, status);
+            }
+            rdp_buffer_free(&security_payload);
+            goto done;
+        }
         if (session->remote_programs_channel_id != 0 &&
             indication.channel_id == session->remote_programs_channel_id)
         {
@@ -14393,6 +14813,13 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->device_redirection_fragment_expected = 0;
     rdp_buffer_free(&session->device_redirection_fragment);
     rdp_buffer_init(&session->device_redirection_fragment);
+    session->pnp_redirection_channel_id = 0;
+    session->pnp_redirection_ready = 0;
+    session->pnp_redirection_fragmenting = 0;
+    session->pnp_redirection_io_version = 0;
+    session->pnp_redirection_fragment_expected = 0;
+    rdp_buffer_free(&session->pnp_redirection_fragment);
+    rdp_buffer_init(&session->pnp_redirection_fragment);
     session->remote_programs_channel_id = 0;
     session->remote_programs_ready = 0;
     session->remote_programs_fragmenting = 0;
