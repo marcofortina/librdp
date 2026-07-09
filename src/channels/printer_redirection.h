@@ -68,10 +68,41 @@ librdp_status rdp_printer_redirection_parse_cache_event(
     const void* data,
     size_t length,
     rdp_printer_redirection_cache_event* event);
+librdp_status rdp_printer_redirection_write_cache_add(
+    rdp_buffer* buffer,
+    const char port_name[8],
+    const void* pnp_name,
+    uint32_t pnp_name_len,
+    const void* driver_name,
+    uint32_t driver_name_len,
+    const void* printer_name,
+    uint32_t printer_name_len,
+    const void* cached_fields,
+    uint32_t cached_fields_len);
+librdp_status rdp_printer_redirection_write_cache_update(
+    rdp_buffer* buffer,
+    const void* printer_name,
+    uint32_t printer_name_len,
+    const void* cached_fields,
+    uint32_t cached_fields_len);
+librdp_status rdp_printer_redirection_write_cache_delete(
+    rdp_buffer* buffer,
+    const void* printer_name,
+    uint32_t printer_name_len);
+librdp_status rdp_printer_redirection_write_cache_rename(
+    rdp_buffer* buffer,
+    const void* old_printer_name,
+    uint32_t old_printer_name_len,
+    const void* new_printer_name,
+    uint32_t new_printer_name_len);
 librdp_status rdp_printer_redirection_parse_xps_mode(
     const void* data,
     size_t length,
     rdp_printer_redirection_xps_mode* mode);
+librdp_status rdp_printer_redirection_write_xps_mode(
+    rdp_buffer* buffer,
+    uint32_t printer_id,
+    uint32_t flags);
 librdp_status rdp_printer_redirection_write_create_response(rdp_buffer* buffer,
                                                             uint32_t device_id,
                                                             uint32_t completion_id,

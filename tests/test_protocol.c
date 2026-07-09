@@ -5575,6 +5575,7 @@ static int test_printer_redirection_channel(void)
     const uint8_t printer[] = {'P', 0, 'r', 0, 'n', 0, 0, 0};
     const uint8_t pnp[] = {'P', 0, 'n', 0, 'P', 0, 0, 0};
     const uint8_t cache[] = {1, 2, 3, 4};
+    const char port_name[8] = {'P', 'R', 'N', '1', 0, 0, 0, 0};
     rdp_printer_redirection_announce announce;
     rdp_printer_redirection_announce parsed_announce;
     rdp_printer_redirection_cache_event event;
@@ -5614,21 +5615,16 @@ static int test_printer_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_device_redirection_write_header(&packet,
-                                               RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER,
-                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, RDP_PRINTER_REDIRECTION_CACHE_ADD) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, "PRN1", 5) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_zeroes(&packet, 3) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(pnp)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(driver)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(cache)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, pnp, sizeof(pnp)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, driver, sizeof(driver)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, printer, sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, cache, sizeof(cache)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_write_cache_add(&packet,
+                                                   port_name,
+                                                   pnp,
+                                                   sizeof(pnp),
+                                                   driver,
+                                                   sizeof(driver),
+                                                   printer,
+                                                   sizeof(printer),
+                                                   cache,
+                                                   sizeof(cache)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_cache_event(packet.data, packet.length, &event) ==
            LIBRDP_STATUS_OK);
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_ADD);
@@ -5641,30 +5637,32 @@ static int test_printer_redirection_channel(void)
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
-    PCHECK(rdp_device_redirection_write_header(&packet,
-                                               RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER,
-                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, RDP_PRINTER_REDIRECTION_CACHE_UPDATE) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(cache)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, printer, sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, cache, sizeof(cache)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_write_cache_update(&packet,
+                                                      printer,
+                                                      sizeof(printer),
+                                                      cache,
+                                                      sizeof(cache)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_cache_event(packet.data, packet.length, &event) ==
            LIBRDP_STATUS_OK);
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_UPDATE);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
-    PCHECK(rdp_device_redirection_write_header(&packet,
-                                               RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER,
-                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA) ==
+    PCHECK(rdp_printer_redirection_write_cache_delete(&packet,
+                                                      printer,
+                                                      sizeof(printer)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_parse_cache_event(packet.data, packet.length, &event) ==
            LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, RDP_PRINTER_REDIRECTION_CACHE_RENAME) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, (uint32_t)sizeof(driver)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, printer, sizeof(printer)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&packet, driver, sizeof(driver)) == LIBRDP_STATUS_OK);
+    PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_DELETE);
+    PCHECK(event.printer_name_len == sizeof(printer));
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+
+    PCHECK(rdp_printer_redirection_write_cache_rename(&packet,
+                                                      printer,
+                                                      sizeof(printer),
+                                                      driver,
+                                                      sizeof(driver)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_cache_event(packet.data, packet.length, &event) ==
            LIBRDP_STATUS_OK);
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_RENAME);
@@ -5673,12 +5671,7 @@ static int test_printer_redirection_channel(void)
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
-    PCHECK(rdp_device_redirection_write_header(&packet,
-                                               RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER,
-                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_USING_XPS) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, 0x10203040u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&packet, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_write_xps_mode(&packet, 0x10203040u, 1u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_xps_mode(packet.data, packet.length, &mode) ==
            LIBRDP_STATUS_OK);
     PCHECK(mode.printer_id == 0x10203040u && mode.flags == 1u);
