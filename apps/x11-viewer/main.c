@@ -1360,12 +1360,167 @@ static int add_printer_arg(librdp_settings* settings, const char* text)
     return librdp_settings_add_printer(settings, name, driver, second + 1) == LIBRDP_STATUS_OK;
 }
 
+static const char* value_after_prefix(const char* text, const char* prefix)
+{
+    const size_t prefix_len = prefix ? strlen(prefix) : 0;
+
+    if (!text || !prefix)
+        return NULL;
+    if (strncmp(text, prefix, prefix_len) != 0)
+        return NULL;
+    if (text[prefix_len] == '\0')
+        return NULL;
+    return text + prefix_len;
+}
+
+static int add_camera_arg(librdp_settings* settings, const char* text)
+{
+    const char* value = NULL;
+
+    if (!settings || !text)
+        return 0;
+    value = value_after_prefix(text, "device=");
+    if (!value)
+        value = value_after_prefix(text, "file=");
+    if (!value)
+        value = text;
+    return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_add_camera(settings, value) == LIBRDP_STATUS_OK;
+}
+
+static int add_smartcard_arg(librdp_settings* settings, const char* text)
+{
+    const char* value = text && text[0] != '\0' ? text : "pcsc";
+
+    return settings &&
+           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_SMARTCARD, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_add_smartcard(settings, value) == LIBRDP_STATUS_OK;
+}
+
+static int add_usb_arg(librdp_settings* settings, const char* text)
+{
+    return settings && text && text[0] != '\0' &&
+           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_USB, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_add_usb_device(settings, text) == LIBRDP_STATUS_OK;
+}
+
+static int add_webauthn_arg(librdp_settings* settings, const char* text)
+{
+    const char* value = text && text[0] != '\0' ? text : "mock";
+
+    return settings &&
+           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_set_webauthn_provider(settings, value) == LIBRDP_STATUS_OK;
+}
+
+static int add_rail_arg(librdp_settings* settings, const char* text)
+{
+    const char* value = NULL;
+
+    if (!settings || !text)
+        return 0;
+    value = value_after_prefix(text, "app=");
+    if (!value)
+        value = text;
+    return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_RAIL, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_add_rail_app(settings, value) == LIBRDP_STATUS_OK;
+}
+
+static int set_echo_arg(librdp_settings* settings, const char* text)
+{
+    const char* value = text && text[0] != '\0' ? text : "probe";
+
+    return settings &&
+           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_set_echo_payload(settings, value) == LIBRDP_STATUS_OK;
+}
+
 static int require_value(int argc, int* index)
 {
     if (*index + 1 >= argc)
         return 0;
     (*index)++;
     return 1;
+}
+
+static const char* optional_value(int argc, int* index, char** argv)
+{
+    if (!index || !argv || *index + 1 >= argc)
+        return NULL;
+    if (strncmp(argv[*index + 1], "--", 2) == 0)
+        return NULL;
+    (*index)++;
+    return argv[*index];
+}
+
+static void trace_viewer_settings(const librdp_settings* settings)
+{
+    uint32_t i = 0;
+
+    if (!settings)
+        return;
+
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.viewer.features",
+                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u drives=%u printers=%u",
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_SMARTCARD) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_USB) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_PNP) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CR2) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
+                    librdp_settings_drive_count(settings),
+                    librdp_settings_printer_count(settings));
+    if (librdp_settings_audio_output_device(settings))
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.audio.output.config",
+                        "backend=pipewire device=\"%s\"",
+                        librdp_settings_audio_output_device(settings));
+    if (librdp_settings_audio_input_device(settings))
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.audio.input.config",
+                        "backend=pipewire device=\"%s\"",
+                        librdp_settings_audio_input_device(settings));
+    if (librdp_settings_video_output_path(settings))
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.video.config",
+                        "path=\"%s\"",
+                        librdp_settings_video_output_path(settings));
+    for (i = 0; i < librdp_settings_camera_count(settings); i++)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.camera.config",
+                        "index=%u source=\"%s\"",
+                        i,
+                        librdp_settings_camera_source(settings, i));
+    for (i = 0; i < librdp_settings_smartcard_count(settings); i++)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.smartcard.config",
+                        "index=%u source=\"%s\"",
+                        i,
+                        librdp_settings_smartcard_source(settings, i));
+    for (i = 0; i < librdp_settings_usb_device_count(settings); i++)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.usb.config",
+                        "index=%u selector=\"%s\"",
+                        i,
+                        librdp_settings_usb_device_selector(settings, i));
+    if (librdp_settings_webauthn_provider(settings))
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.webauthn.config",
+                        "provider=\"%s\"",
+                        librdp_settings_webauthn_provider(settings));
+    for (i = 0; i < librdp_settings_rail_app_count(settings); i++)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.rail.config",
+                        "index=%u app=\"%s\"",
+                        i,
+                        librdp_settings_rail_app(settings, i));
 }
 
 static void app_event(librdp_session* session, const librdp_event* event, void* user_data)
@@ -1779,6 +1934,91 @@ static int configure_settings(librdp_settings* settings, int argc, char** argv)
             if (!require_value(argc, &i) || !add_printer_arg(settings, argv[i]))
                 return 0;
         }
+        else if (strcmp(argv[i], "--audio-output") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+            const char* device = value_after_prefix(value, "device=");
+
+            if (!device)
+                device = value ? value : "pipewire";
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 1) != LIBRDP_STATUS_OK ||
+                librdp_settings_set_audio_output_device(settings, device) != LIBRDP_STATUS_OK)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--audio-input") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+            const char* device = value_after_prefix(value, "device=");
+
+            if (!device)
+                device = value ? value : "pipewire";
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_INPUT, 1) != LIBRDP_STATUS_OK ||
+                librdp_settings_set_audio_input_device(settings, device) != LIBRDP_STATUS_OK)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--video") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+            const char* path = value_after_prefix(value, "file=");
+
+            if (!path)
+                path = value;
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_VIDEO, 1) != LIBRDP_STATUS_OK)
+                return 0;
+            if (path && librdp_settings_set_video_output_path(settings, path) != LIBRDP_STATUS_OK)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--camera") == 0)
+        {
+            if (!require_value(argc, &i) || !add_camera_arg(settings, argv[i]))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--smartcard") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+
+            if (!add_smartcard_arg(settings, value))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--usb") == 0)
+        {
+            if (!require_value(argc, &i) || !add_usb_arg(settings, argv[i]))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--pnp") == 0)
+        {
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_PNP, 1) != LIBRDP_STATUS_OK)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--webauthn") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+
+            if (!add_webauthn_arg(settings, value))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--rail") == 0)
+        {
+            if (!require_value(argc, &i) || !add_rail_arg(settings, argv[i]))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--cr2") == 0)
+        {
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CR2, 1) != LIBRDP_STATUS_OK)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--echo") == 0)
+        {
+            const char* value = optional_value(argc, &i, argv);
+
+            if (!set_echo_arg(settings, value))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--telemetry") == 0)
+        {
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1) != LIBRDP_STATUS_OK)
+                return 0;
+        }
         else
         {
             return 0;
@@ -1810,7 +2050,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--printer name=driver=path]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path|fido2]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;
@@ -1864,6 +2104,7 @@ int main(int argc, char** argv)
                      PointerMotionMask | StructureNotifyMask | FocusChangeMask | EnterWindowMask | LeaveWindowMask);
     XMapWindow(app.display, app.window);
 
+    trace_viewer_settings(settings);
     app.session = librdp_session_new(settings);
     librdp_settings_free(settings);
     if (!app.session)

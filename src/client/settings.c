@@ -24,15 +24,31 @@ struct librdp_settings
     char* username;
     char* password;
     char* domain;
+    char* audio_output_device;
+    char* audio_input_device;
+    char* video_output_path;
+    char* webauthn_provider;
+    char* echo_payload;
     uint16_t port;
     uint32_t width;
     uint32_t height;
+    uint32_t features;
     librdp_security_mode security_mode;
     uint32_t drive_count;
     rdp_settings_drive drives[LIBRDP_SETTINGS_MAX_DRIVES];
     uint32_t printer_count;
     rdp_settings_printer printers[LIBRDP_SETTINGS_MAX_PRINTERS];
+    uint32_t camera_count;
+    char* cameras[LIBRDP_SETTINGS_MAX_CAMERAS];
+    uint32_t smartcard_count;
+    char* smartcards[LIBRDP_SETTINGS_MAX_SMARTCARDS];
+    uint32_t usb_device_count;
+    char* usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
+    uint32_t rail_app_count;
+    char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
 };
+
+#define RDP_SETTINGS_TEXT_MAX 4096u
 
 static char* rdp_strdup(const char* value)
 {
@@ -100,6 +116,33 @@ static int rdp_settings_valid_printer_text(const char* value)
     return length <= 127u;
 }
 
+static int rdp_settings_valid_text(const char* value)
+{
+    size_t length = 0;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    length = strlen(value);
+    return length <= RDP_SETTINGS_TEXT_MAX;
+}
+
+static librdp_status rdp_settings_add_text(char** values,
+                                           uint32_t* count,
+                                           uint32_t limit,
+                                           const char* value)
+{
+    char* copy = NULL;
+
+    if (!values || !count || !rdp_settings_valid_text(value) || *count >= limit)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    copy = rdp_strdup(value);
+    if (!copy)
+        return LIBRDP_STATUS_NO_MEMORY;
+    values[*count] = copy;
+    *count += 1u;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_settings* librdp_settings_new(void)
 {
     librdp_settings* settings = (librdp_settings*)calloc(1, sizeof(*settings));
@@ -128,12 +171,23 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->port = settings->port;
     copy->width = settings->width;
     copy->height = settings->height;
+    copy->features = settings->features;
     copy->security_mode = settings->security_mode;
 
     if ((settings->target && librdp_settings_set_target(copy, settings->target) != LIBRDP_STATUS_OK) ||
         (settings->username && librdp_settings_set_username(copy, settings->username) != LIBRDP_STATUS_OK) ||
         (settings->password && librdp_settings_set_password(copy, settings->password) != LIBRDP_STATUS_OK) ||
-        (settings->domain && librdp_settings_set_domain(copy, settings->domain) != LIBRDP_STATUS_OK))
+        (settings->domain && librdp_settings_set_domain(copy, settings->domain) != LIBRDP_STATUS_OK) ||
+        (settings->audio_output_device &&
+         librdp_settings_set_audio_output_device(copy, settings->audio_output_device) != LIBRDP_STATUS_OK) ||
+        (settings->audio_input_device &&
+         librdp_settings_set_audio_input_device(copy, settings->audio_input_device) != LIBRDP_STATUS_OK) ||
+        (settings->video_output_path &&
+         librdp_settings_set_video_output_path(copy, settings->video_output_path) != LIBRDP_STATUS_OK) ||
+        (settings->webauthn_provider &&
+         librdp_settings_set_webauthn_provider(copy, settings->webauthn_provider) != LIBRDP_STATUS_OK) ||
+        (settings->echo_payload &&
+         librdp_settings_set_echo_payload(copy, settings->echo_payload) != LIBRDP_STATUS_OK))
     {
         librdp_settings_free(copy);
         return NULL;
@@ -158,6 +212,38 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
             return NULL;
         }
     }
+    for (uint32_t i = 0; i < settings->camera_count; i++)
+    {
+        if (librdp_settings_add_camera(copy, settings->cameras[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < settings->smartcard_count; i++)
+    {
+        if (librdp_settings_add_smartcard(copy, settings->smartcards[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < settings->usb_device_count; i++)
+    {
+        if (librdp_settings_add_usb_device(copy, settings->usb_devices[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < settings->rail_app_count; i++)
+    {
+        if (librdp_settings_add_rail_app(copy, settings->rail_apps[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
 
     return copy;
 }
@@ -171,6 +257,11 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->username);
     free(settings->password);
     free(settings->domain);
+    free(settings->audio_output_device);
+    free(settings->audio_input_device);
+    free(settings->video_output_path);
+    free(settings->webauthn_provider);
+    free(settings->echo_payload);
     for (uint32_t i = 0; i < settings->drive_count; i++)
         free(settings->drives[i].path);
     for (uint32_t i = 0; i < settings->printer_count; i++)
@@ -179,6 +270,14 @@ void librdp_settings_free(librdp_settings* settings)
         free(settings->printers[i].driver);
         free(settings->printers[i].output_path);
     }
+    for (uint32_t i = 0; i < settings->camera_count; i++)
+        free(settings->cameras[i]);
+    for (uint32_t i = 0; i < settings->smartcard_count; i++)
+        free(settings->smartcards[i]);
+    for (uint32_t i = 0; i < settings->usb_device_count; i++)
+        free(settings->usb_devices[i]);
+    for (uint32_t i = 0; i < settings->rail_app_count; i++)
+        free(settings->rail_apps[i]);
     free(settings);
 }
 
@@ -286,6 +385,111 @@ librdp_status librdp_settings_add_printer(librdp_settings* settings,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_settings_enable_feature(librdp_settings* settings,
+                                             librdp_feature feature,
+                                             int enabled)
+{
+    if (!settings || feature == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (enabled)
+        settings->features |= (uint32_t)feature;
+    else
+        settings->features &= ~((uint32_t)feature);
+    return LIBRDP_STATUS_OK;
+}
+
+int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feature feature)
+{
+    if (!settings || feature == 0)
+        return 0;
+    return (settings->features & (uint32_t)feature) != 0;
+}
+
+librdp_status librdp_settings_set_audio_output_device(librdp_settings* settings, const char* device)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (device && !rdp_settings_valid_text(device))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_set_string(&settings->audio_output_device, device);
+}
+
+librdp_status librdp_settings_set_audio_input_device(librdp_settings* settings, const char* device)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (device && !rdp_settings_valid_text(device))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_set_string(&settings->audio_input_device, device);
+}
+
+librdp_status librdp_settings_set_video_output_path(librdp_settings* settings, const char* path)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (path && !rdp_settings_valid_text(path))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_set_string(&settings->video_output_path, path);
+}
+
+librdp_status librdp_settings_add_camera(librdp_settings* settings, const char* source)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_text(settings->cameras,
+                                 &settings->camera_count,
+                                 LIBRDP_SETTINGS_MAX_CAMERAS,
+                                 source);
+}
+
+librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const char* source)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_text(settings->smartcards,
+                                 &settings->smartcard_count,
+                                 LIBRDP_SETTINGS_MAX_SMARTCARDS,
+                                 source);
+}
+
+librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_text(settings->usb_devices,
+                                 &settings->usb_device_count,
+                                 LIBRDP_SETTINGS_MAX_USB_DEVICES,
+                                 selector);
+}
+
+librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (provider && !rdp_settings_valid_text(provider))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_set_string(&settings->webauthn_provider, provider);
+}
+
+librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_text(settings->rail_apps,
+                                 &settings->rail_app_count,
+                                 LIBRDP_SETTINGS_MAX_RAIL_APPS,
+                                 app);
+}
+
+librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const char* payload)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (payload && !rdp_settings_valid_text(payload))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_set_string(&settings->echo_payload, payload);
+}
+
 uint32_t librdp_settings_drive_count(const librdp_settings* settings)
 {
     return settings ? settings->drive_count : 0;
@@ -329,6 +533,79 @@ const char* librdp_settings_printer_output_path(const librdp_settings* settings,
     if (!settings || index >= settings->printer_count)
         return NULL;
     return settings->printers[index].output_path;
+}
+
+const char* librdp_settings_audio_output_device(const librdp_settings* settings)
+{
+    return settings ? settings->audio_output_device : NULL;
+}
+
+const char* librdp_settings_audio_input_device(const librdp_settings* settings)
+{
+    return settings ? settings->audio_input_device : NULL;
+}
+
+const char* librdp_settings_video_output_path(const librdp_settings* settings)
+{
+    return settings ? settings->video_output_path : NULL;
+}
+
+uint32_t librdp_settings_camera_count(const librdp_settings* settings)
+{
+    return settings ? settings->camera_count : 0;
+}
+
+const char* librdp_settings_camera_source(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->camera_count)
+        return NULL;
+    return settings->cameras[index];
+}
+
+uint32_t librdp_settings_smartcard_count(const librdp_settings* settings)
+{
+    return settings ? settings->smartcard_count : 0;
+}
+
+const char* librdp_settings_smartcard_source(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->smartcard_count)
+        return NULL;
+    return settings->smartcards[index];
+}
+
+uint32_t librdp_settings_usb_device_count(const librdp_settings* settings)
+{
+    return settings ? settings->usb_device_count : 0;
+}
+
+const char* librdp_settings_usb_device_selector(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->usb_device_count)
+        return NULL;
+    return settings->usb_devices[index];
+}
+
+const char* librdp_settings_webauthn_provider(const librdp_settings* settings)
+{
+    return settings ? settings->webauthn_provider : NULL;
+}
+
+uint32_t librdp_settings_rail_app_count(const librdp_settings* settings)
+{
+    return settings ? settings->rail_app_count : 0;
+}
+
+const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->rail_app_count)
+        return NULL;
+    return settings->rail_apps[index];
+}
+
+const char* librdp_settings_echo_payload(const librdp_settings* settings)
+{
+    return settings ? settings->echo_payload : NULL;
 }
 
 const char* librdp_settings_target(const librdp_settings* settings)

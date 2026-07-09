@@ -9317,8 +9317,16 @@ librdp_status librdp_session_connect(librdp_session* session)
         config.client_name = "librdp";
         config.enable_dynamic_channels = 1;
         config.enable_clipboard = 1;
-        config.enable_audio_output = 1;
-        config.enable_device_redirection = 1;
+        config.enable_audio_output =
+            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u;
+        config.enable_device_redirection =
+            (librdp_settings_drive_count(session->settings) > 0 ||
+             librdp_settings_printer_count(session->settings) > 0 ||
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ||
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ||
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP)) ?
+                1u :
+                0u;
 
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "mcs.connect.initial",
