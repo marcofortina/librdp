@@ -87,6 +87,7 @@
 #define RDP_SESSION_HRESULT_OK 0x00000000u
 #define RDP_SESSION_HRESULT_FAIL 0x80004005u
 #define RDP_SESSION_HRESULT_NOTIMPL 0x80004001u
+#define RDP_SESSION_CTAP2_ERR_OPERATION_DENIED 0x27u
 #define RDP_SESSION_DEVICE_NO_SUCH_DEVICE 0xc000000eu
 #define RDP_SESSION_DEVICE_NOT_SUPPORTED 0xc00000bbu
 #define RDP_SESSION_DEVICE_INVALID_PARAMETER 0xc000000du
@@ -9343,6 +9344,57 @@ static int rdp_session_webauthn_mock_enabled(const librdp_session* session)
     return !provider || strcmp(provider, "mock") == 0 || strncmp(provider, "mock=", 5u) == 0;
 }
 
+static const char* rdp_session_webauthn_mock_path(const librdp_session* session)
+{
+    const char* provider = NULL;
+
+    if (!session || !session->settings)
+        return NULL;
+    provider = librdp_settings_webauthn_provider(session->settings);
+    if (!provider || strncmp(provider, "mock=", 5u) != 0)
+        return NULL;
+    return provider + 5u;
+}
+
+static librdp_status rdp_session_webauthn_load_mock_response(const char* path, rdp_buffer* response)
+{
+    FILE* file = NULL;
+    uint8_t chunk[4096];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!path || !path[0] || !response)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    file = fopen(path, "rb");
+    if (!file)
+        return LIBRDP_STATUS_STATE;
+    while (!feof(file))
+    {
+        size_t count = fread(chunk, 1u, sizeof(chunk), file);
+
+        if (count > 0)
+        {
+            if (response->length > RDP_WEBAUTHN_MAX_MESSAGE - count)
+            {
+                status = LIBRDP_STATUS_INVALID_ARGUMENT;
+                break;
+            }
+            status = rdp_buffer_append(response, chunk, count);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+        }
+        if (ferror(file))
+        {
+            status = LIBRDP_STATUS_STATE;
+            break;
+        }
+    }
+    if (fclose(file) != 0 && status == LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_STATE;
+    if (status == LIBRDP_STATUS_OK && response->length == 0)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    return status;
+}
+
 static librdp_status rdp_session_handle_webauthn_message(librdp_session* session,
                                                          uint32_t channel_id,
                                                          uint8_t channel_id_bytes,
@@ -9389,12 +9441,34 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     }
     else if (request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN && mock_enabled)
     {
-        status = rdp_webauthn_write_authenticator_response(&response,
-                                                           RDP_SESSION_HRESULT_FAIL,
-                                                           0x01u,
-                                                           NULL,
-                                                           0);
-        hresult = RDP_SESSION_HRESULT_FAIL;
+        const char* mock_path = rdp_session_webauthn_mock_path(session);
+        rdp_buffer mock_response;
+
+        rdp_buffer_init(&mock_response);
+        if (mock_path)
+            status = rdp_session_webauthn_load_mock_response(mock_path, &mock_response);
+        if (status == LIBRDP_STATUS_OK && mock_response.length > 0)
+            status = rdp_webauthn_write_authenticator_response(&response,
+                                                               RDP_SESSION_HRESULT_OK,
+                                                               mock_response.data[0],
+                                                               mock_response.data + 1u,
+                                                               mock_response.length - 1u);
+        else if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_authenticator_response(&response,
+                                                               RDP_SESSION_HRESULT_OK,
+                                                               RDP_SESSION_CTAP2_ERR_OPERATION_DENIED,
+                                                               NULL,
+                                                               0);
+        else
+        {
+            status = rdp_webauthn_write_authenticator_response(&response,
+                                                               RDP_SESSION_HRESULT_OK,
+                                                               RDP_SESSION_CTAP2_ERR_OPERATION_DENIED,
+                                                               NULL,
+                                                               0);
+        }
+        hresult = RDP_SESSION_HRESULT_OK;
+        rdp_buffer_free(&mock_response);
     }
     else
     {
