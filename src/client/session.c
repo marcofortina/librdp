@@ -2820,7 +2820,6 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     uint64_t change_time = 0;
     uint64_t size = 0;
     uint64_t allocation_size = 0;
-    uint32_t record_len = 0;
 
     if (!buffer || !st || !name)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -2843,25 +2842,16 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     switch (information_class)
     {
         case RDP_SESSION_FILE_DIRECTORY_INFORMATION:
-            record_len = (uint32_t)(64u + utf16.length);
-            break;
         case RDP_SESSION_FILE_FULL_DIRECTORY_INFORMATION:
-            record_len = (uint32_t)(68u + utf16.length);
-            break;
         case RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION:
-            record_len = (uint32_t)(93u + utf16.length);
-            break;
         case RDP_SESSION_FILE_NAMES_INFORMATION:
-            record_len = (uint32_t)(12u + utf16.length);
             break;
         default:
             rdp_buffer_free(&utf16);
             return LIBRDP_STATUS_UNSUPPORTED;
     }
 
-    status = rdp_buffer_append_u32_le(buffer, record_len);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, 0);
+    status = rdp_buffer_append_u32_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, 0);
     if (information_class == RDP_SESSION_FILE_NAMES_INFORMATION)
@@ -2897,6 +2887,8 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     }
     if (information_class == RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION)
     {
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, 0);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u8(buffer, 0);
         if (status == LIBRDP_STATUS_OK)
