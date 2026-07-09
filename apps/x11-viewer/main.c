@@ -28,6 +28,8 @@ typedef struct x11_pressed_key
     librdp_key_event event;
 } x11_pressed_key;
 
+#define X11_AUDIO_OUTPUT_FORMATS_MAX 32u
+
 typedef struct x11_app
 {
     Display* display;
@@ -80,6 +82,9 @@ typedef struct x11_app
     int telemetry_requested;
     int video_requested;
     int audio_input_active;
+    uint32_t audio_output_format_count;
+    uint32_t audio_output_current_format;
+    librdp_audio_format audio_output_formats[X11_AUDIO_OUTPUT_FORMATS_MAX];
     int camera_requested;
     size_t audio_input_chunk;
     uint8_t audio_input_buffer[16384];
@@ -1732,6 +1737,57 @@ static size_t x11_audio_input_chunk_size(const librdp_audio_input_open_event* op
     return chunk;
 }
 
+static void x11_audio_output_store_formats(x11_app* app, const librdp_audio_output_formats_event* formats)
+{
+    uint32_t count = 0;
+
+    if (!app || !formats)
+        return;
+    app->audio_output_format_count = 0;
+    app->audio_output_current_format = UINT32_MAX;
+    memset(app->audio_output_formats, 0, sizeof(app->audio_output_formats));
+    if (!formats->formats || formats->count == 0)
+        return;
+    count = formats->count > X11_AUDIO_OUTPUT_FORMATS_MAX ? X11_AUDIO_OUTPUT_FORMATS_MAX : formats->count;
+    memcpy(app->audio_output_formats, formats->formats, sizeof(app->audio_output_formats[0]) * count);
+    app->audio_output_format_count = count;
+}
+
+static int x11_audio_output_select_format(x11_app* app, uint32_t format_no)
+{
+    int ok = 0;
+
+    if (!app || !app->audio_output_requested || !app->audio)
+        return 0;
+    if (format_no >= app->audio_output_format_count)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.audio.output.format.failed",
+                        "reason=index format=%u count=%u",
+                        format_no,
+                        app->audio_output_format_count);
+        return 0;
+    }
+    if (app->audio_output_current_format == format_no)
+        return 1;
+    ok = x11_pipewire_audio_start_output(app->audio,
+                                         &app->audio_output_formats[format_no],
+                                         app->audio_output_device);
+    if (ok)
+    {
+        app->audio_output_current_format = format_no;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.audio.output.format",
+                        "format=%u tag=%u channels=%u rate=%u bits=%u",
+                        format_no,
+                        app->audio_output_formats[format_no].format_tag,
+                        app->audio_output_formats[format_no].channels,
+                        app->audio_output_formats[format_no].samples_per_sec,
+                        app->audio_output_formats[format_no].bits_per_sample);
+    }
+    return ok;
+}
+
 static void x11_audio_input_pump(x11_app* app)
 {
     size_t bytes = 0;
@@ -1952,23 +2008,21 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
         }
         case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
         {
-            if (app->audio_output_requested && app->audio && event->data.audio_output_formats.count > 0)
-            {
-                const librdp_audio_format* format = &event->data.audio_output_formats.formats[0];
-
-                (void)x11_pipewire_audio_start_output(app->audio, format, app->audio_output_device);
-            }
+            x11_audio_output_store_formats(app, &event->data.audio_output_formats);
+            if (app->audio_output_format_count > 0)
+                (void)x11_audio_output_select_format(app, 0);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "x11.audio.output.formats",
-                            "count=%u version=%u requested=%u",
+                            "count=%u stored=%u version=%u requested=%u",
                             event->data.audio_output_formats.count,
+                            app->audio_output_format_count,
                             event->data.audio_output_formats.version,
                             app->audio_output_requested ? 1u : 0u);
             break;
         }
         case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
         {
-            if (app->audio_output_requested && app->audio)
+            if (x11_audio_output_select_format(app, event->data.audio_output_data.format_no))
                 (void)x11_pipewire_audio_write_output(app->audio,
                                                       event->data.audio_output_data.data,
                                                       event->data.audio_output_data.data_len);
@@ -1985,6 +2039,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
         case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
             if (app->audio)
                 x11_pipewire_audio_stop_output(app->audio);
+            app->audio_output_current_format = UINT32_MAX;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "x11.audio.output.close",
                             "requested=%u",
