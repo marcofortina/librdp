@@ -1788,6 +1788,9 @@ static int test_path_security_license_channels(void)
     rdp_license_hardware_id parsed_hardware_id;
     rdp_license_platform_challenge_response_data challenge_response_data;
     rdp_license_platform_challenge_response_data parsed_challenge_response_data;
+    rdp_license_client_new_license_request client_license_request;
+    rdp_license_client_info client_license_info;
+    rdp_license_platform_challenge_response client_challenge_response;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
     rdp_dynamic_channel_capabilities dyn_parsed_caps;
@@ -3654,6 +3657,21 @@ static int test_path_security_license_channels(void)
                                       license_packet.length,
                                       &license_preamble) == LIBRDP_STATUS_OK);
     PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST);
+    PCHECK(rdp_license_parse_client_new_license_request(license_packet.data,
+                                                        license_packet.length,
+                                                        &client_license_request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(client_license_request.preferred_key_exchange_alg == RDP_LICENSE_KEY_EXCHANGE_RSA &&
+           client_license_request.platform_id == 0x03000000u &&
+           client_license_request.encrypted_pre_master.length == 2 &&
+           client_license_request.user_name.length == 5 &&
+           client_license_request.machine_name.type == RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME);
+    license_packet.data[44] = 0xff;
+    PCHECK(rdp_license_parse_client_new_license_request(license_packet.data,
+                                                        license_packet.length,
+                                                        &client_license_request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    license_packet.data[44] = RDP_LICENSE_BLOB_RANDOM;
     license_request.scope_list.scopes[0].type = RDP_LICENSE_BLOB_DATA;
     license_request.scope_list.scopes[0].length = (uint16_t)sizeof(license_cal);
     license_request.scope_list.scopes[0].data = license_cal;
@@ -3674,6 +3692,18 @@ static int test_path_security_license_channels(void)
                                       license_packet.length,
                                       &license_preamble) == LIBRDP_STATUS_OK);
     PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_INFO);
+    PCHECK(rdp_license_parse_client_info(license_packet.data,
+                                         license_packet.length,
+                                         &client_license_info) == LIBRDP_STATUS_OK);
+    PCHECK(client_license_info.preferred_key_exchange_alg == RDP_LICENSE_KEY_EXCHANGE_RSA &&
+           client_license_info.license_info.length == sizeof(license_cal) &&
+           client_license_info.encrypted_hardware_id.length == 20 &&
+           client_license_info.mac[15] == 0x5a);
+    license_packet.data[48 + license_blob.length] = 0xff;
+    PCHECK(rdp_license_parse_client_info(license_packet.data,
+                                         license_packet.length,
+                                         &client_license_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    license_packet.data[48 + license_blob.length] = RDP_LICENSE_BLOB_DATA;
     license_packet.length = 0;
     PCHECK(rdp_license_write_platform_challenge_response(&license_packet,
                                                          RDP_LICENSE_VERSION_3,
@@ -3684,6 +3714,18 @@ static int test_path_security_license_channels(void)
                                       license_packet.length,
                                       &license_preamble) == LIBRDP_STATUS_OK);
     PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE);
+    PCHECK(rdp_license_parse_platform_challenge_response(license_packet.data,
+                                                         license_packet.length,
+                                                         &client_challenge_response) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(client_challenge_response.encrypted_response.length == 20 &&
+           client_challenge_response.encrypted_hardware_id.length == 20 &&
+           client_challenge_response.mac[0] == 0x5a);
+    license_packet.data[4] = 0;
+    PCHECK(rdp_license_parse_platform_challenge_response(license_packet.data,
+                                                         license_packet.length,
+                                                         &client_challenge_response) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_virtual_channel_parse_packet(channel, sizeof(channel), &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == 3 && vc.flags == 0x10 && vc.payload[2] == 3);

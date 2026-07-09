@@ -17,6 +17,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_license_hardware_id hardware_id;
     rdp_license_platform_challenge_response_data challenge_data;
     rdp_license_error_alert alert;
+    rdp_license_client_new_license_request client_request;
+    rdp_license_client_info client_info;
+    rdp_license_platform_challenge_response challenge_response;
     rdp_buffer buffer;
     rdp_license_binary_blob encrypted;
     uint8_t random[32] = {0};
@@ -33,6 +36,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_license_parse_hardware_id(data, size, &hardware_id);
     (void)rdp_license_parse_platform_challenge_response_data(data, size, &challenge_data);
     (void)rdp_license_parse_error_alert(data, size, &alert);
+    (void)rdp_license_parse_client_new_license_request(data, size, &client_request);
+    (void)rdp_license_parse_client_info(data, size, &client_info);
+    (void)rdp_license_parse_platform_challenge_response(data, size, &challenge_response);
 
     rdp_buffer_init(&buffer);
     (void)rdp_license_write_error_alert(&buffer,

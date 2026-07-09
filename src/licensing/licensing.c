@@ -713,6 +713,38 @@ librdp_status rdp_license_write_error_alert(rdp_buffer* buffer,
     return rdp_license_write_binary_blob(buffer, blob_type, blob, blob_len);
 }
 
+librdp_status rdp_license_parse_client_new_license_request(
+    const void* data,
+    size_t length,
+    rdp_license_client_new_license_request* request)
+{
+    rdp_stream stream;
+    const uint8_t* random = NULL;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(request, 0, sizeof(*request));
+    if (rdp_license_parse_preamble(data, length, &request->preamble) != LIBRDP_STATUS_OK ||
+        request->preamble.message_type != RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, request->preamble.payload, request->preamble.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &request->preferred_key_exchange_alg) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &request->platform_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &random, sizeof(request->client_random)) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &request->encrypted_pre_master) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &request->user_name) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &request->machine_name) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (request->preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
+        request->encrypted_pre_master.type != RDP_LICENSE_BLOB_RANDOM ||
+        request->user_name.type != RDP_LICENSE_BLOB_CLIENT_USER_NAME ||
+        request->machine_name.type != RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memcpy(request->client_random, random, sizeof(request->client_random));
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
                                                            uint8_t version,
                                                            uint32_t preferred_key_exchange_alg,
@@ -761,6 +793,40 @@ librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
     return rdp_license_write_blob_checked(buffer,
                                           machine_name,
                                           RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME);
+}
+
+librdp_status rdp_license_parse_client_info(const void* data,
+                                            size_t length,
+                                            rdp_license_client_info* info)
+{
+    rdp_stream stream;
+    const uint8_t* random = NULL;
+    const uint8_t* mac = NULL;
+
+    if (!data || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(info, 0, sizeof(*info));
+    if (rdp_license_parse_preamble(data, length, &info->preamble) != LIBRDP_STATUS_OK ||
+        info->preamble.message_type != RDP_LICENSE_MESSAGE_INFO)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, info->preamble.payload, info->preamble.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &info->preferred_key_exchange_alg) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &info->platform_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &random, sizeof(info->client_random)) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &info->encrypted_pre_master) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &info->license_info) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &info->encrypted_hardware_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &mac, sizeof(info->mac)) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (info->preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
+        info->encrypted_pre_master.type != RDP_LICENSE_BLOB_RANDOM ||
+        info->license_info.type != RDP_LICENSE_BLOB_DATA ||
+        info->encrypted_hardware_id.type != RDP_LICENSE_BLOB_ENCRYPTED_DATA)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memcpy(info->client_random, random, sizeof(info->client_random));
+    memcpy(info->mac, mac, sizeof(info->mac));
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
@@ -813,6 +879,33 @@ librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append(buffer, mac, 16u);
+}
+
+librdp_status rdp_license_parse_platform_challenge_response(
+    const void* data,
+    size_t length,
+    rdp_license_platform_challenge_response* response)
+{
+    rdp_stream stream;
+    const uint8_t* mac = NULL;
+
+    if (!data || !response)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(response, 0, sizeof(*response));
+    if (rdp_license_parse_preamble(data, length, &response->preamble) != LIBRDP_STATUS_OK ||
+        response->preamble.message_type != RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, response->preamble.payload, response->preamble.payload_len);
+    if (rdp_license_read_blob(&stream, &response->encrypted_response) != LIBRDP_STATUS_OK ||
+        rdp_license_read_blob(&stream, &response->encrypted_hardware_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &mac, sizeof(response->mac)) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (response->encrypted_response.type != RDP_LICENSE_BLOB_ENCRYPTED_DATA ||
+        response->encrypted_hardware_id.type != RDP_LICENSE_BLOB_ENCRYPTED_DATA)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memcpy(response->mac, mac, sizeof(response->mac));
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_license_write_platform_challenge_response(
