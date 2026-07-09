@@ -27,6 +27,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_device_redirection_parse_server_announce(data, size, &announce);
     (void)rdp_device_redirection_parse_client_id_confirm(data, size, &announce);
     (void)rdp_device_redirection_parse_client_name(data, size, &name);
+    (void)rdp_device_redirection_parse_user_loggedon(data, size);
     if (rdp_device_redirection_parse_capability_list(data,
                                                      size,
                                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
@@ -53,6 +54,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_device_redirection_write_client_announce(&buffer,
                                                        RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
                                                        size > 0 ? data[0] : 0);
+    buffer.length = 0;
+    (void)rdp_device_redirection_write_user_loggedon(&buffer);
     buffer.length = 0;
     (void)rdp_device_redirection_make_default_capability_config(&config);
     config.include_drive = (uint8_t)(size & 1u);

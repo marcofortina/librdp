@@ -214,6 +214,8 @@ librdp_status rdp_device_redirection_parse_client_name(const void* data,
 librdp_status rdp_device_redirection_write_client_name_utf16le(rdp_buffer* buffer,
                                                                const void* name,
                                                                uint32_t name_len);
+librdp_status rdp_device_redirection_parse_user_loggedon(const void* data, size_t length);
+librdp_status rdp_device_redirection_write_user_loggedon(rdp_buffer* buffer);
 librdp_status rdp_device_redirection_parse_capability_list(const void* data,
                                                            size_t length,
                                                            uint16_t expected_packet_id,

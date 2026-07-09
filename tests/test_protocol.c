@@ -5190,6 +5190,16 @@ static int test_device_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_device_redirection_write_user_loggedon(&buffer) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_header(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
+    PCHECK(header.component == RDP_DEVICE_REDIRECTION_COMPONENT_CORE &&
+           header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON);
+    PCHECK(rdp_device_redirection_parse_user_loggedon(buffer.data, buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_user_loggedon(buffer.data, buffer.length - 1u) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_device_redirection_make_default_capability_config(&cap_config) == LIBRDP_STATUS_OK);
     cap_config.include_drive = 1;
     cap_config.include_smartcard = 1;

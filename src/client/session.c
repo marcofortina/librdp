@@ -3815,9 +3815,8 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
     }
     else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON)
     {
-        if (data_len != 4u)
-            status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        else
+        status = rdp_device_redirection_parse_user_loggedon(data, data_len);
+        if (status == LIBRDP_STATUS_OK)
             status = rdp_session_send_device_redirection_device_list(session);
         if (status == LIBRDP_STATUS_OK)
             rdp_trace_event(RDP_TRACE_CLIENT,

@@ -340,6 +340,30 @@ librdp_status rdp_device_redirection_write_client_name_utf16le(rdp_buffer* buffe
     return rdp_buffer_append(buffer, bytes, name_len);
 }
 
+librdp_status rdp_device_redirection_parse_user_loggedon(const void* data, size_t length)
+{
+    rdp_stream stream;
+
+    if (!data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_device_redirection_expect_header(data,
+                                                length,
+                                                RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON,
+                                                &stream);
+}
+
+librdp_status rdp_device_redirection_write_user_loggedon(rdp_buffer* buffer)
+{
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_device_redirection_write_header(buffer,
+                                               RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                               RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON);
+}
+
 librdp_status rdp_device_redirection_parse_capability_list(const void* data,
                                                            size_t length,
                                                            uint16_t expected_packet_id,
