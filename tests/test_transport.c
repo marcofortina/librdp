@@ -366,7 +366,7 @@ static int test_multitransport_protocol(void)
                                          payload,
                                          sizeof(payload)) == LIBRDP_STATUS_OK);
     TCHECK(rdp_multitransport_parse_data(buffer.data, buffer.length, &tunnel_data) == LIBRDP_STATUS_OK);
-    TCHECK(tunnel_data.header.header_length == RDP_MULTITRANSPORT_HEADER_LENGTH + sizeof(subheader));
+    TCHECK(tunnel_data.header.header_length == RDP_MULTITRANSPORT_HEADER_LENGTH + subheader.length);
     TCHECK(tunnel_data.data_len == sizeof(payload));
     TCHECK(memcmp(tunnel_data.data, payload, sizeof(payload)) == 0);
     buffer.data[0] = 0xf2u;
