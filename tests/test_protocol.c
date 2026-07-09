@@ -7584,6 +7584,8 @@ static int test_auth_smartcard_redirection_channels(void)
     rdp_smartcard_redirection_atr_mask atr_mask;
     rdp_smartcard_redirection_reader_state_common reader_state;
     rdp_smartcard_redirection_connect_common connect_common;
+    rdp_smartcard_redirection_list_reader_groups_call list_groups_call;
+    rdp_smartcard_redirection_list_readers_call list_readers_call;
     rdp_smartcard_redirection_reconnect_call reconnect_call;
     rdp_smartcard_redirection_handle_disposition_call disposition_call;
     rdp_smartcard_redirection_state_call state_call;
@@ -8283,6 +8285,71 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(rdp_smartcard_redirection_parse_connect_common(buffer.data,
                                                           buffer.length,
                                                           &connect_common) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_smartcard_redirection_write_list_reader_groups_call(&buffer,
+                                                                   context_bytes,
+                                                                   sizeof(context_bytes),
+                                                                   0,
+                                                                   64u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_list_reader_groups_call(buffer.data,
+                                                                   buffer.length,
+                                                                   &list_groups_call) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(list_groups_call.context.length == sizeof(context_bytes) &&
+           list_groups_call.groups_len == 64u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_LISTREADERGROUPSW,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READER_GROUPS &&
+           scard_message.body.list_reader_groups.groups_len == 64u);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_list_readers_call(&buffer,
+                                                            context_bytes,
+                                                            sizeof(context_bytes),
+                                                            0,
+                                                            "SCard$DefaultReaders\0\0",
+                                                            22u,
+                                                            0,
+                                                            128u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_list_readers_call(buffer.data,
+                                                            buffer.length,
+                                                            &list_readers_call) == LIBRDP_STATUS_OK);
+    PCHECK(list_readers_call.context.length == sizeof(context_bytes) &&
+           list_readers_call.groups_len == 22u &&
+           list_readers_call.readers_len == 128u &&
+           list_readers_call.groups[0] == 'S');
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_LISTREADERSA,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READERS &&
+           scard_message.body.list_readers.readers_len == 128u);
+    packet.length = 0;
+    buffer.data[4 + sizeof(context_bytes) + 4] = 0xff;
+    buffer.data[5 + sizeof(context_bytes) + 4] = 0xff;
+    buffer.data[6 + sizeof(context_bytes) + 4] = 0xff;
+    buffer.data[7 + sizeof(context_bytes) + 4] = 0xff;
+    PCHECK(rdp_smartcard_redirection_parse_list_readers_call(buffer.data,
+                                                            buffer.length,
+                                                            &list_readers_call) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);

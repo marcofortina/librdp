@@ -73,6 +73,8 @@
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_ATTRIB 10u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_SET_ATTRIB 11u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT 12u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READER_GROUPS 13u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READERS 14u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -157,6 +159,23 @@ typedef struct rdp_smartcard_redirection_connect_common
 } rdp_smartcard_redirection_connect_common;
 
 typedef rdp_smartcard_redirection_connect_common rdp_smartcard_redirection_connect_call;
+
+typedef struct rdp_smartcard_redirection_list_reader_groups_call
+{
+    rdp_smartcard_redirection_context context;
+    uint32_t groups_is_null;
+    uint32_t groups_len;
+} rdp_smartcard_redirection_list_reader_groups_call;
+
+typedef struct rdp_smartcard_redirection_list_readers_call
+{
+    rdp_smartcard_redirection_context context;
+    uint32_t groups_is_null;
+    uint32_t groups_len;
+    const uint8_t* groups;
+    uint32_t readers_is_null;
+    uint32_t readers_len;
+} rdp_smartcard_redirection_list_readers_call;
 
 typedef struct rdp_smartcard_redirection_reconnect_call
 {
@@ -295,6 +314,8 @@ typedef struct rdp_smartcard_redirection_request_message
         rdp_smartcard_redirection_control_call control;
         rdp_smartcard_redirection_attrib_call attrib;
         rdp_smartcard_redirection_set_attrib_call set_attrib;
+        rdp_smartcard_redirection_list_reader_groups_call list_reader_groups;
+        rdp_smartcard_redirection_list_readers_call list_readers;
     } body;
 } rdp_smartcard_redirection_request_message;
 
@@ -389,6 +410,29 @@ librdp_status rdp_smartcard_redirection_write_connect_common(
     uint32_t context_len,
     uint32_t share_mode,
     uint32_t preferred_protocols);
+librdp_status rdp_smartcard_redirection_parse_list_reader_groups_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_list_reader_groups_call* call);
+librdp_status rdp_smartcard_redirection_write_list_reader_groups_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t groups_is_null,
+    uint32_t groups_len);
+librdp_status rdp_smartcard_redirection_parse_list_readers_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_list_readers_call* call);
+librdp_status rdp_smartcard_redirection_write_list_readers_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t groups_is_null,
+    const void* groups,
+    uint32_t groups_len,
+    uint32_t readers_is_null,
+    uint32_t readers_len);
 librdp_status rdp_smartcard_redirection_parse_reconnect_call(
     const void* data,
     size_t length,

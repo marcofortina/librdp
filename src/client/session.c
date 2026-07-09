@@ -4971,6 +4971,210 @@ static uint32_t rdp_session_smartcard_u32_from_dword(DWORD value)
     return value > UINT32_MAX ? UINT32_MAX : (uint32_t)value;
 }
 
+static int rdp_session_smartcard_utf8_decode(const uint8_t* data, size_t length, size_t* offset, uint32_t* cp)
+{
+    uint8_t b0 = 0;
+
+    if (!data || !offset || !cp || *offset >= length)
+        return 0;
+    b0 = data[*offset];
+    if (b0 < 0x80u)
+    {
+        *cp = b0;
+        *offset += 1u;
+        return 1;
+    }
+    if ((b0 & 0xe0u) == 0xc0u && *offset + 1u < length)
+    {
+        uint8_t b1 = data[*offset + 1u];
+
+        if ((b1 & 0xc0u) == 0x80u)
+        {
+            uint32_t value = ((uint32_t)(b0 & 0x1fu) << 6) | (uint32_t)(b1 & 0x3fu);
+
+            if (value >= 0x80u)
+            {
+                *cp = value;
+                *offset += 2u;
+                return 1;
+            }
+        }
+    }
+    if ((b0 & 0xf0u) == 0xe0u && *offset + 2u < length)
+    {
+        uint8_t b1 = data[*offset + 1u];
+        uint8_t b2 = data[*offset + 2u];
+
+        if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u)
+        {
+            uint32_t value = ((uint32_t)(b0 & 0x0fu) << 12) |
+                             ((uint32_t)(b1 & 0x3fu) << 6) |
+                             (uint32_t)(b2 & 0x3fu);
+
+            if (value >= 0x800u && (value < 0xd800u || value > 0xdfffu))
+            {
+                *cp = value;
+                *offset += 3u;
+                return 1;
+            }
+        }
+    }
+    if ((b0 & 0xf8u) == 0xf0u && *offset + 3u < length)
+    {
+        uint8_t b1 = data[*offset + 1u];
+        uint8_t b2 = data[*offset + 2u];
+        uint8_t b3 = data[*offset + 3u];
+
+        if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u && (b3 & 0xc0u) == 0x80u)
+        {
+            uint32_t value = ((uint32_t)(b0 & 0x07u) << 18) |
+                             ((uint32_t)(b1 & 0x3fu) << 12) |
+                             ((uint32_t)(b2 & 0x3fu) << 6) |
+                             (uint32_t)(b3 & 0x3fu);
+
+            if (value >= 0x10000u && value <= 0x10ffffu)
+            {
+                *cp = value;
+                *offset += 4u;
+                return 1;
+            }
+        }
+    }
+    *cp = '?';
+    *offset += 1u;
+    return 1;
+}
+
+static void rdp_session_smartcard_append_u16le(uint8_t* data, size_t* offset, uint16_t value)
+{
+    data[*offset] = (uint8_t)(value & 0xffu);
+    data[*offset + 1u] = (uint8_t)((value >> 8) & 0xffu);
+    *offset += 2u;
+}
+
+static uint8_t* rdp_session_smartcard_utf8_multisz_to_utf16le(const char* text,
+                                                              uint32_t text_len,
+                                                              uint32_t* out_len)
+{
+    const uint8_t* input = (const uint8_t*)text;
+    size_t input_offset = 0;
+    size_t output_offset = 0;
+    size_t capacity = 0;
+    uint8_t* output = NULL;
+
+    if (!text || !out_len || text_len > (UINT32_MAX / 2u) - 2u)
+        return NULL;
+    capacity = ((size_t)text_len * 2u) + 2u;
+    output = (uint8_t*)calloc(1u, capacity);
+    if (!output)
+        return NULL;
+    while (input_offset < text_len)
+    {
+        uint32_t cp = 0;
+
+        if (!rdp_session_smartcard_utf8_decode(input, text_len, &input_offset, &cp))
+            break;
+        if (cp <= 0xffffu)
+        {
+            rdp_session_smartcard_append_u16le(output, &output_offset, (uint16_t)cp);
+        }
+        else
+        {
+            uint32_t value = cp - 0x10000u;
+
+            rdp_session_smartcard_append_u16le(output,
+                                               &output_offset,
+                                               (uint16_t)(0xd800u + (value >> 10)));
+            rdp_session_smartcard_append_u16le(output,
+                                               &output_offset,
+                                               (uint16_t)(0xdc00u + (value & 0x3ffu)));
+        }
+    }
+    *out_len = output_offset > UINT32_MAX ? UINT32_MAX : (uint32_t)output_offset;
+    return output;
+}
+
+static int rdp_session_smartcard_utf8_append(uint8_t* data, size_t capacity, size_t* offset, uint32_t cp)
+{
+    if (!data || !offset || *offset >= capacity)
+        return 0;
+    if (cp < 0x80u)
+    {
+        data[(*offset)++] = (uint8_t)cp;
+        return 1;
+    }
+    if (cp < 0x800u)
+    {
+        if (capacity - *offset < 2u)
+            return 0;
+        data[(*offset)++] = (uint8_t)(0xc0u | (cp >> 6));
+        data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
+        return 1;
+    }
+    if (cp < 0x10000u)
+    {
+        if (capacity - *offset < 3u)
+            return 0;
+        data[(*offset)++] = (uint8_t)(0xe0u | (cp >> 12));
+        data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 6) & 0x3fu));
+        data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
+        return 1;
+    }
+    if (capacity - *offset < 4u)
+        return 0;
+    data[(*offset)++] = (uint8_t)(0xf0u | (cp >> 18));
+    data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 12) & 0x3fu));
+    data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 6) & 0x3fu));
+    data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
+    return 1;
+}
+
+static char* rdp_session_smartcard_utf16le_to_utf8_multisz(const uint8_t* text, uint32_t text_len)
+{
+    size_t input_offset = 0;
+    size_t output_offset = 0;
+    size_t capacity = 0;
+    uint8_t* output = NULL;
+
+    if (!text || text_len > (UINT32_MAX / 2u) || (text_len % 2u) != 0)
+        return NULL;
+    capacity = ((size_t)text_len * 2u) + 1u;
+    output = (uint8_t*)calloc(1u, capacity);
+    if (!output)
+        return NULL;
+    while (input_offset + 1u < text_len)
+    {
+        uint32_t cp = (uint32_t)text[input_offset] | ((uint32_t)text[input_offset + 1u] << 8);
+
+        input_offset += 2u;
+        if (cp >= 0xd800u && cp <= 0xdbffu && input_offset + 1u < text_len)
+        {
+            uint32_t low = (uint32_t)text[input_offset] | ((uint32_t)text[input_offset + 1u] << 8);
+
+            if (low >= 0xdc00u && low <= 0xdfffu)
+            {
+                input_offset += 2u;
+                cp = 0x10000u + ((cp - 0xd800u) << 10) + (low - 0xdc00u);
+            }
+            else
+            {
+                cp = '?';
+            }
+        }
+        else if (cp >= 0xdc00u && cp <= 0xdfffu)
+        {
+            cp = '?';
+        }
+        if (!rdp_session_smartcard_utf8_append(output, capacity, &output_offset, cp))
+        {
+            free(output);
+            return NULL;
+        }
+    }
+    output[output_offset] = '\0';
+    return (char*)output;
+}
+
 static const SCARD_IO_REQUEST* rdp_session_smartcard_pci_from_protocol(uint32_t protocol)
 {
     uint32_t base = protocol & ~RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT;
@@ -5114,6 +5318,198 @@ static librdp_status rdp_session_smartcard_handle_context(librdp_session* sessio
                                                   request,
                                                   (uint32_t)pcsc_status,
                                                   "client.rdpdr.smartcard.context.response");
+}
+
+static librdp_status rdp_session_smartcard_send_buffer_result(librdp_session* session,
+                                                              const rdp_device_redirection_io_request* request,
+                                                              uint32_t return_code,
+                                                              const void* data,
+                                                              uint32_t data_len,
+                                                              const char* event)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !request || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_smartcard_redirection_write_buffer_return(&payload, return_code, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_smartcard_io_completion(session, request, &payload, event);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status rdp_session_smartcard_handle_list_reader_groups(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_session_smartcard_context* context = NULL;
+    char* groups = NULL;
+    uint8_t* wide_groups = NULL;
+    uint32_t output_len = 0;
+    DWORD groups_len = 0;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+    int wide = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_LISTREADERGROUPSW;
+    context = rdp_session_smartcard_context_find(session,
+                                                 message->body.list_reader_groups.context.data,
+                                                 message->body.list_reader_groups.context.length);
+    if (context)
+    {
+        pcsc_status = SCardListReaderGroups(context->context, NULL, &groups_len);
+        if (pcsc_status == SCARD_S_SUCCESS && groups_len > 0)
+        {
+            groups = (char*)calloc(groups_len, 1u);
+            if (!groups)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+            else
+                pcsc_status = SCardListReaderGroups(context->context, groups, &groups_len);
+        }
+    }
+    if (pcsc_status == SCARD_S_SUCCESS && groups_len > 0 && groups)
+    {
+        if (wide)
+        {
+            wide_groups = rdp_session_smartcard_utf8_multisz_to_utf16le(
+                groups,
+                rdp_session_smartcard_u32_from_dword(groups_len),
+                &output_len);
+            if (!wide_groups)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+        }
+        else
+        {
+            output_len = rdp_session_smartcard_u32_from_dword(groups_len);
+        }
+    }
+    if (pcsc_status == SCARD_S_SUCCESS &&
+        !message->body.list_reader_groups.groups_is_null &&
+        message->body.list_reader_groups.groups_len > 0 &&
+        output_len > message->body.list_reader_groups.groups_len)
+    {
+        pcsc_status = SCARD_E_INSUFFICIENT_BUFFER;
+        output_len = 0;
+    }
+    status = rdp_session_smartcard_send_buffer_result(session,
+                                                      request,
+                                                      (uint32_t)pcsc_status,
+                                                      pcsc_status == SCARD_S_SUCCESS ?
+                                                          (wide ? (const void*)wide_groups : (const void*)groups) :
+                                                          NULL,
+                                                      pcsc_status == SCARD_S_SUCCESS ? output_len : 0,
+                                                      "client.rdpdr.smartcard.list_reader_groups.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.list_reader_groups",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld output_len=%u wide=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    output_len,
+                    wide ? 1u : 0u);
+    free(wide_groups);
+    free(groups);
+    return status;
+}
+
+static librdp_status rdp_session_smartcard_handle_list_readers(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_session_smartcard_context* context = NULL;
+    char* groups = NULL;
+    char* readers = NULL;
+    uint8_t* wide_readers = NULL;
+    uint32_t output_len = 0;
+    DWORD readers_len = 0;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+    int wide = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_LISTREADERSW;
+    context = rdp_session_smartcard_context_find(session,
+                                                 message->body.list_readers.context.data,
+                                                 message->body.list_readers.context.length);
+    if (context)
+    {
+        if (!message->body.list_readers.groups_is_null && message->body.list_readers.groups_len > 0)
+        {
+            if (wide)
+                groups = rdp_session_smartcard_utf16le_to_utf8_multisz(message->body.list_readers.groups,
+                                                                       message->body.list_readers.groups_len);
+            else
+            {
+                groups = (char*)calloc((size_t)message->body.list_readers.groups_len + 1u, 1u);
+                if (groups)
+                    memcpy(groups, message->body.list_readers.groups, message->body.list_readers.groups_len);
+            }
+            if (!groups)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+        }
+        if (pcsc_status != (LONG)RDP_SESSION_SCARD_E_NO_MEMORY)
+        {
+            pcsc_status = SCardListReaders(context->context, groups, NULL, &readers_len);
+            if (pcsc_status == SCARD_S_SUCCESS && readers_len > 0)
+            {
+                readers = (char*)calloc(readers_len, 1u);
+                if (!readers)
+                    pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+                else
+                    pcsc_status = SCardListReaders(context->context, groups, readers, &readers_len);
+            }
+        }
+    }
+    if (pcsc_status == SCARD_S_SUCCESS && readers_len > 0 && readers)
+    {
+        if (wide)
+        {
+            wide_readers = rdp_session_smartcard_utf8_multisz_to_utf16le(
+                readers,
+                rdp_session_smartcard_u32_from_dword(readers_len),
+                &output_len);
+            if (!wide_readers)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+        }
+        else
+        {
+            output_len = rdp_session_smartcard_u32_from_dword(readers_len);
+        }
+    }
+    if (pcsc_status == SCARD_S_SUCCESS &&
+        !message->body.list_readers.readers_is_null &&
+        message->body.list_readers.readers_len > 0 &&
+        output_len > message->body.list_readers.readers_len)
+    {
+        pcsc_status = SCARD_E_INSUFFICIENT_BUFFER;
+        output_len = 0;
+    }
+    status = rdp_session_smartcard_send_buffer_result(session,
+                                                      request,
+                                                      (uint32_t)pcsc_status,
+                                                      pcsc_status == SCARD_S_SUCCESS ?
+                                                          (wide ? (const void*)wide_readers : (const void*)readers) :
+                                                          NULL,
+                                                      pcsc_status == SCARD_S_SUCCESS ? output_len : 0,
+                                                      "client.rdpdr.smartcard.list_readers.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.list_readers",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld groups_len=%u output_len=%u wide=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    message->body.list_readers.groups_len,
+                    output_len,
+                    wide ? 1u : 0u);
+    free(wide_readers);
+    free(readers);
+    free(groups);
+    return status;
 }
 
 static librdp_status rdp_session_smartcard_handle_handle_only(
@@ -5666,6 +6062,10 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
             return rdp_session_smartcard_handle_establish(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT:
             return rdp_session_smartcard_handle_context(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READER_GROUPS:
+            return rdp_session_smartcard_handle_list_reader_groups(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READERS:
+            return rdp_session_smartcard_handle_list_readers(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE:
             return rdp_session_smartcard_handle_handle_only(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT:
