@@ -184,6 +184,9 @@ librdp_status rdp_usb_redirection_parse_capability_request(
     const void* data,
     size_t length,
     rdp_usb_redirection_capability_exchange* exchange);
+librdp_status rdp_usb_redirection_write_capability_request(rdp_buffer* buffer,
+                                                           uint32_t message_id,
+                                                           uint32_t capability_value);
 librdp_status rdp_usb_redirection_write_capability_response(rdp_buffer* buffer,
                                                             uint32_t message_id,
                                                             uint32_t capability_value,
@@ -221,28 +224,76 @@ librdp_status rdp_usb_redirection_parse_register_callback(
     const void* data,
     size_t length,
     rdp_usb_redirection_register_callback* callback);
+librdp_status rdp_usb_redirection_write_register_callback(
+    rdp_buffer* buffer,
+    uint32_t interface_id,
+    uint32_t message_id,
+    uint32_t request_completion_interface_id,
+    int has_request_completion);
 librdp_status rdp_usb_redirection_parse_cancel_request(const void* data,
                                                        size_t length,
                                                        rdp_usb_redirection_cancel_request* cancel);
+librdp_status rdp_usb_redirection_write_cancel_request(rdp_buffer* buffer,
+                                                       uint32_t interface_id,
+                                                       uint32_t message_id,
+                                                       uint32_t request_id);
 librdp_status rdp_usb_redirection_parse_io_control(const void* data,
                                                    size_t length,
                                                    uint32_t expected_function_id,
                                                    rdp_usb_redirection_io_control* control);
+librdp_status rdp_usb_redirection_write_io_control(rdp_buffer* buffer,
+                                                   uint32_t interface_id,
+                                                   uint32_t message_id,
+                                                   uint32_t function_id,
+                                                   uint32_t io_control_code,
+                                                   const void* input_buffer,
+                                                   uint32_t input_buffer_len,
+                                                   uint32_t output_buffer_size,
+                                                   uint32_t request_id);
 librdp_status rdp_usb_redirection_parse_query_device_text(
     const void* data,
     size_t length,
     rdp_usb_redirection_query_device_text* query);
+librdp_status rdp_usb_redirection_write_query_device_text(rdp_buffer* buffer,
+                                                          uint32_t interface_id,
+                                                          uint32_t message_id,
+                                                          uint32_t text_type,
+                                                          uint32_t locale_id);
 librdp_status rdp_usb_redirection_parse_urb_header(const void* data,
                                                    size_t length,
                                                    rdp_usb_redirection_urb_header* header);
+librdp_status rdp_usb_redirection_write_urb_header(rdp_buffer* buffer,
+                                                   uint16_t size,
+                                                   uint16_t function,
+                                                   uint32_t request_id,
+                                                   uint8_t no_ack);
 librdp_status rdp_usb_redirection_parse_transfer(const void* data,
                                                  size_t length,
                                                  uint32_t expected_function_id,
                                                  rdp_usb_redirection_transfer* transfer);
+librdp_status rdp_usb_redirection_write_transfer_in_request(rdp_buffer* buffer,
+                                                            uint32_t interface_id,
+                                                            uint32_t message_id,
+                                                            uint16_t urb_function,
+                                                            uint32_t request_id,
+                                                            uint8_t no_ack,
+                                                            uint32_t output_buffer_size);
+librdp_status rdp_usb_redirection_write_transfer_out_request(rdp_buffer* buffer,
+                                                             uint32_t interface_id,
+                                                             uint32_t message_id,
+                                                             uint16_t urb_function,
+                                                             uint32_t request_id,
+                                                             uint8_t no_ack,
+                                                             const void* output_buffer,
+                                                             uint32_t output_buffer_len);
 librdp_status rdp_usb_redirection_parse_retract_device(
     const void* data,
     size_t length,
     rdp_usb_redirection_retract_device* retract);
+librdp_status rdp_usb_redirection_write_retract_device(rdp_buffer* buffer,
+                                                       uint32_t interface_id,
+                                                       uint32_t message_id,
+                                                       uint32_t reason);
 librdp_status rdp_usb_redirection_write_query_device_text_response(rdp_buffer* buffer,
                                                                    uint32_t interface_id,
                                                                    uint32_t message_id,

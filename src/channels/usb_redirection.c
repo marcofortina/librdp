@@ -212,6 +212,25 @@ librdp_status rdp_usb_redirection_parse_capability_request(
         LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+librdp_status rdp_usb_redirection_write_capability_request(rdp_buffer* buffer,
+                                                           uint32_t message_id,
+                                                           uint32_t capability_value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || capability_value != RDP_USB_REDIRECTION_CAPABILITY_VERSION_01)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_write_header(buffer,
+                                              RDP_USB_REDIRECTION_INTERFACE_CAPABILITIES,
+                                              RDP_USB_REDIRECTION_MASK_NONE,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_EXCHANGE_CAPABILITY);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, capability_value);
+}
+
 librdp_status rdp_usb_redirection_write_capability_response(rdp_buffer* buffer,
                                                             uint32_t message_id,
                                                             uint32_t capability_value,
@@ -488,6 +507,33 @@ librdp_status rdp_usb_redirection_parse_register_callback(
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+librdp_status rdp_usb_redirection_write_register_callback(
+    rdp_buffer* buffer,
+    uint32_t interface_id,
+    uint32_t message_id,
+    uint32_t request_completion_interface_id,
+    int has_request_completion)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || interface_id > RDP_USB_REDIRECTION_INTERFACE_ID_MASK ||
+        (has_request_completion &&
+         request_completion_interface_id > RDP_USB_REDIRECTION_INTERFACE_ID_MASK))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_REGISTER_REQUEST_CALLBACK);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, has_request_completion ? 1u : 0u);
+    if (status != LIBRDP_STATUS_OK || !has_request_completion)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, request_completion_interface_id);
+}
+
 librdp_status rdp_usb_redirection_parse_cancel_request(const void* data,
                                                        size_t length,
                                                        rdp_usb_redirection_cancel_request* cancel)
@@ -507,6 +553,24 @@ librdp_status rdp_usb_redirection_parse_cancel_request(const void* data,
     if (rdp_stream_read_u32_le(&stream, &cancel->request_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_usb_redirection_write_cancel_request(rdp_buffer* buffer,
+                                                       uint32_t interface_id,
+                                                       uint32_t message_id,
+                                                       uint32_t request_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_CANCEL_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, request_id);
 }
 
 librdp_status rdp_usb_redirection_parse_io_control(const void* data,
@@ -539,6 +603,45 @@ librdp_status rdp_usb_redirection_parse_io_control(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_usb_redirection_write_io_control(rdp_buffer* buffer,
+                                                   uint32_t interface_id,
+                                                   uint32_t message_id,
+                                                   uint32_t function_id,
+                                                   uint32_t io_control_code,
+                                                   const void* input_buffer,
+                                                   uint32_t input_buffer_len,
+                                                   uint32_t output_buffer_size,
+                                                   uint32_t request_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!input_buffer && input_buffer_len > 0) ||
+        (function_id != RDP_USB_REDIRECTION_FN_IO_CONTROL &&
+         function_id != RDP_USB_REDIRECTION_FN_INTERNAL_IO_CONTROL))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              function_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, io_control_code);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, input_buffer_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, input_buffer, input_buffer_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, output_buffer_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, request_id);
+}
+
 librdp_status rdp_usb_redirection_parse_query_device_text(
     const void* data,
     size_t length,
@@ -560,6 +663,28 @@ librdp_status rdp_usb_redirection_parse_query_device_text(
         rdp_stream_read_u32_le(&stream, &query->locale_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_usb_redirection_write_query_device_text(rdp_buffer* buffer,
+                                                          uint32_t interface_id,
+                                                          uint32_t message_id,
+                                                          uint32_t text_type,
+                                                          uint32_t locale_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_QUERY_DEVICE_TEXT);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, text_type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, locale_id);
 }
 
 librdp_status rdp_usb_redirection_parse_urb_header(const void* data,
@@ -585,6 +710,29 @@ librdp_status rdp_usb_redirection_parse_urb_header(const void* data,
     header->request_id = request & 0x7fffffffu;
     header->no_ack = (uint8_t)((request >> 31) & 1u);
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_usb_redirection_write_urb_header(rdp_buffer* buffer,
+                                                   uint16_t size,
+                                                   uint16_t function,
+                                                   uint32_t request_id,
+                                                   uint8_t no_ack)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t packed_request_id = request_id;
+
+    if (!buffer || size != RDP_USB_REDIRECTION_URB_HEADER_LENGTH ||
+        request_id > 0x7fffffffu || no_ack > 1u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (no_ack)
+        packed_request_id |= 0x80000000u;
+    status = rdp_buffer_append_u16_le(buffer, size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, function);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, packed_request_id);
 }
 
 librdp_status rdp_usb_redirection_parse_transfer(const void* data,
@@ -630,6 +778,74 @@ librdp_status rdp_usb_redirection_parse_transfer(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_usb_redirection_write_transfer_in_request(rdp_buffer* buffer,
+                                                            uint32_t interface_id,
+                                                            uint32_t message_id,
+                                                            uint16_t urb_function,
+                                                            uint32_t request_id,
+                                                            uint8_t no_ack,
+                                                            uint32_t output_buffer_size)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, RDP_USB_REDIRECTION_URB_HEADER_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_usb_redirection_write_urb_header(buffer,
+                                                  RDP_USB_REDIRECTION_URB_HEADER_LENGTH,
+                                                  urb_function,
+                                                  request_id,
+                                                  no_ack);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, output_buffer_size);
+}
+
+librdp_status rdp_usb_redirection_write_transfer_out_request(rdp_buffer* buffer,
+                                                             uint32_t interface_id,
+                                                             uint32_t message_id,
+                                                             uint16_t urb_function,
+                                                             uint32_t request_id,
+                                                             uint8_t no_ack,
+                                                             const void* output_buffer,
+                                                             uint32_t output_buffer_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!output_buffer && output_buffer_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, RDP_USB_REDIRECTION_URB_HEADER_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_usb_redirection_write_urb_header(buffer,
+                                                  RDP_USB_REDIRECTION_URB_HEADER_LENGTH,
+                                                  urb_function,
+                                                  request_id,
+                                                  no_ack);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, output_buffer_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, output_buffer, output_buffer_len);
+}
+
 librdp_status rdp_usb_redirection_parse_retract_device(
     const void* data,
     size_t length,
@@ -652,6 +868,26 @@ librdp_status rdp_usb_redirection_parse_retract_device(
     return retract->reason == RDP_USB_REDIRECTION_RETRACT_BLOCKED_BY_POLICY ?
         LIBRDP_STATUS_OK :
         LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_usb_redirection_write_retract_device(rdp_buffer* buffer,
+                                                       uint32_t interface_id,
+                                                       uint32_t message_id,
+                                                       uint32_t reason)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || reason != RDP_USB_REDIRECTION_RETRACT_BLOCKED_BY_POLICY)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_write_header(buffer,
+                                              interface_id,
+                                              RDP_USB_REDIRECTION_MASK_PROXY,
+                                              message_id,
+                                              1,
+                                              RDP_USB_REDIRECTION_FN_RETRACT_DEVICE);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, reason);
 }
 
 librdp_status rdp_usb_redirection_write_query_device_text_response(rdp_buffer* buffer,
