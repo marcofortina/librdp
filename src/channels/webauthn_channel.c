@@ -60,6 +60,17 @@ static librdp_status rdp_webauthn_cbor_read_item(const uint8_t* data,
         item->header_len = 5;
         return LIBRDP_STATUS_OK;
     }
+    if (ai == 27u)
+    {
+        if (length < 9u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        item->value = ((uint64_t)data[1] << 56) | ((uint64_t)data[2] << 48) |
+                      ((uint64_t)data[3] << 40) | ((uint64_t)data[4] << 32) |
+                      ((uint64_t)data[5] << 24) | ((uint64_t)data[6] << 16) |
+                      ((uint64_t)data[7] << 8) | (uint64_t)data[8];
+        item->header_len = 9;
+        return LIBRDP_STATUS_OK;
+    }
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 

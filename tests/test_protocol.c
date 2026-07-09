@@ -420,6 +420,13 @@ static int test_webauthn_channel(void)
 {
     const uint8_t command_payload[] = {RDP_WEBAUTHN_CMD_MAKE_CREDENTIAL, 0xa0};
     const uint8_t response_payload[] = {0x01, 0x00, 0x00, 0x00};
+    const uint8_t request_with_u64_cbor[] = {
+        0xa2,
+        0x67, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
+        0x1b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, RDP_WEBAUTHN_COMMAND_API_VERSION,
+        0x67, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
+        0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
     uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
         0x10, 0x11, 0x12, 0x13,
         0x14, 0x15, 0x16, 0x17,
@@ -469,6 +476,11 @@ static int test_webauthn_channel(void)
            request.request_len == RDP_WEBAUTHN_GUID_LENGTH);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_parse_request(request_with_u64_cbor,
+                                      sizeof(request_with_u64_cbor),
+                                      &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
 
     PCHECK(rdp_webauthn_write_response(&buffer, 0, response_payload, sizeof(response_payload)) ==
            LIBRDP_STATUS_OK);
