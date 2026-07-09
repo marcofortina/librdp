@@ -58,6 +58,43 @@ static librdp_status rdp_printer_redirection_write_packet_header(rdp_buffer* buf
     return rdp_device_redirection_write_header(buffer, RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER, packet_id);
 }
 
+static librdp_status rdp_printer_redirection_parse_response_stream(
+    const void* data,
+    size_t length,
+    size_t payload_len,
+    rdp_device_redirection_io_completion* response,
+    rdp_stream* stream)
+{
+    if (!data || !response || !stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u + payload_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(response, 0, sizeof(*response));
+    if (rdp_device_redirection_parse_io_completion(data, length, response) != LIBRDP_STATUS_OK ||
+        response->payload_len != payload_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(stream, response->payload, response->payload_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_printer_redirection_parse_padding_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response)
+{
+    rdp_stream stream;
+    const uint8_t* padding = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_printer_redirection_parse_response_stream(data, length, 4u, response, &stream);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_stream_read_bytes(&stream, &padding, 4u) != LIBRDP_STATUS_OK ||
+        padding[0] != 0 || padding[1] != 0 || padding[2] != 0 || padding[3] != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_printer_redirection_write_announce_data(
     rdp_buffer* buffer,
     const rdp_printer_redirection_announce* announce)
@@ -435,6 +472,25 @@ librdp_status rdp_printer_redirection_write_create_response(rdp_buffer* buffer,
     return rdp_buffer_append_u32_le(buffer, file_id);
 }
 
+librdp_status rdp_printer_redirection_parse_create_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response,
+    uint32_t* file_id)
+{
+    rdp_stream stream;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!file_id)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_printer_redirection_parse_response_stream(data, length, 4u, response, &stream);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_stream_read_u32_le(&stream, file_id) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_printer_redirection_write_close_response(rdp_buffer* buffer,
                                                            uint32_t device_id,
                                                            uint32_t completion_id,
@@ -451,6 +507,14 @@ librdp_status rdp_printer_redirection_write_close_response(rdp_buffer* buffer,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append_u32_le(buffer, 0);
+}
+
+librdp_status rdp_printer_redirection_parse_close_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response)
+{
+    return rdp_printer_redirection_parse_padding_response(data, length, response);
 }
 
 librdp_status rdp_printer_redirection_write_write_response(rdp_buffer* buffer,
@@ -475,6 +539,28 @@ librdp_status rdp_printer_redirection_write_write_response(rdp_buffer* buffer,
     return rdp_buffer_append_u8(buffer, 0);
 }
 
+librdp_status rdp_printer_redirection_parse_write_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response,
+    uint32_t* written)
+{
+    rdp_stream stream;
+    uint8_t padding = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!written)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_printer_redirection_parse_response_stream(data, length, 5u, response, &stream);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_stream_read_u32_le(&stream, written) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &padding) != LIBRDP_STATUS_OK ||
+        padding != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_printer_redirection_write_device_control_response(rdp_buffer* buffer,
                                                                     uint32_t device_id,
                                                                     uint32_t completion_id,
@@ -491,4 +577,12 @@ librdp_status rdp_printer_redirection_write_device_control_response(rdp_buffer* 
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append_u32_le(buffer, 0);
+}
+
+librdp_status rdp_printer_redirection_parse_device_control_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response)
+{
+    return rdp_printer_redirection_parse_padding_response(data, length, response);
 }

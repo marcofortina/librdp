@@ -10,14 +10,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_printer_redirection_announce announce;
     rdp_printer_redirection_cache_event event;
     rdp_printer_redirection_xps_mode mode;
+    rdp_device_redirection_io_completion completion;
     rdp_buffer buffer;
     const char port_name[8] = {'P', 'R', 'N', 0, 0, 0, 0, 0};
     const uint8_t name_utf16[] = {'P', 0, 0, 0};
     uint32_t bounded_data = size < 64u ? (uint32_t)size : 64u;
+    uint32_t response_value = 0;
+
+    if (!data && size > 0)
+        return 0;
 
     (void)rdp_printer_redirection_parse_announce_data(data, size, &announce);
     (void)rdp_printer_redirection_parse_cache_event(data, size, &event);
     (void)rdp_printer_redirection_parse_xps_mode(data, size, &mode);
+    (void)rdp_printer_redirection_parse_create_response(data, size, &completion, &response_value);
+    (void)rdp_printer_redirection_parse_close_response(data, size, &completion);
+    (void)rdp_printer_redirection_parse_write_response(data, size, &completion, &response_value);
+    (void)rdp_printer_redirection_parse_device_control_response(data, size, &completion);
 
     rdp_buffer_init(&buffer);
     announce.flags = RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_DEFAULT;
