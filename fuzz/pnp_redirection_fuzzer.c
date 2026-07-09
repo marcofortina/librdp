@@ -42,6 +42,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer_init(&buffer);
     (void)rdp_pnp_redirection_write_version(&buffer, 1, 0, RDP_PNP_REDIRECTION_CAP_DYNAMIC_DEVICES);
     buffer.length = 0;
+    (void)rdp_pnp_redirection_write_authenticated(&buffer);
+    buffer.length = 0;
     description.client_device_id = 1;
     description.interface_guids = NULL;
     description.interface_guids_len = 0;

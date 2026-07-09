@@ -265,6 +265,13 @@ librdp_status rdp_pnp_redirection_parse_authenticated(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_pnp_redirection_write_authenticated(rdp_buffer* buffer)
+{
+    return rdp_pnp_redirection_write_info_header(buffer,
+                                                RDP_PNP_REDIRECTION_INFO_SERVER_LOGON,
+                                                RDP_PNP_REDIRECTION_INFO_HEADER_LENGTH);
+}
+
 librdp_status rdp_pnp_redirection_parse_device_description(
     const void* data,
     size_t length,

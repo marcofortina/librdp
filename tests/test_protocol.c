@@ -7714,9 +7714,9 @@ static int test_pnp_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 8) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_PNP_REDIRECTION_INFO_SERVER_LOGON) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_pnp_redirection_write_authenticated(&buffer) == LIBRDP_STATUS_OK);
     PCHECK(rdp_pnp_redirection_parse_authenticated(buffer.data, buffer.length, &info) == LIBRDP_STATUS_OK);
+    PCHECK(info.packet_id == RDP_PNP_REDIRECTION_INFO_SERVER_LOGON && info.payload_len == 0);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

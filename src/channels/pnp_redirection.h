@@ -176,6 +176,7 @@ librdp_status rdp_pnp_redirection_parse_version(const void* data,
 librdp_status rdp_pnp_redirection_parse_authenticated(const void* data,
                                                       size_t length,
                                                       rdp_pnp_redirection_info_header* header);
+librdp_status rdp_pnp_redirection_write_authenticated(rdp_buffer* buffer);
 librdp_status rdp_pnp_redirection_parse_device_description(
     const void* data,
     size_t length,
