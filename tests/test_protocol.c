@@ -2235,6 +2235,32 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_OK);
     PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 9 &&
            decoded_bitmap.data[1] == 10 && decoded_bitmap.data[2] == 11 && decoded_bitmap.data[3] == 12);
+    bitmap_rect = bitmap_update.rects[0];
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
+    PCHECK(rdp_bitmap_write_update(&decoded_bitmap, &bitmap_rect, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_bitmap_parse_update(decoded_bitmap.data, decoded_bitmap.length, &bitmap_update) == LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1 &&
+           bitmap_update.rects[0].width == 2 &&
+           bitmap_update.rects[0].height == 2 &&
+           bitmap_update.rects[0].data_len == 16);
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
+    PCHECK(rdp_bitmap_write_fastpath_update(&decoded_bitmap, &bitmap_rect, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_bitmap_parse_fastpath_update(decoded_bitmap.data,
+                                            decoded_bitmap.length,
+                                            &bitmap_update) == LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1 &&
+           bitmap_update.rects[0].bits_per_pixel == 32 &&
+           bitmap_update.rects[0].data_len == 16);
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
+    PCHECK(rdp_bitmap_write_rect(&decoded_bitmap, &bitmap_rect) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_bitmap.length == 36);
+    bitmap_rect.width = 0;
+    PCHECK(rdp_bitmap_write_rect(&decoded_bitmap, &bitmap_rect) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
     memset(&bitmap_rect, 0, sizeof(bitmap_rect));
     bitmap_rect.width = 2;
     bitmap_rect.height = 2;

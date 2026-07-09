@@ -40,6 +40,9 @@ typedef struct rdp_bitmap_update_header
 librdp_status rdp_bitmap_parse_update_header(const void* data, size_t length, rdp_bitmap_update_header* header);
 librdp_status rdp_bitmap_parse_update(const void* data, size_t length, rdp_bitmap_update* update);
 librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, rdp_bitmap_update* update);
+librdp_status rdp_bitmap_write_rect(rdp_buffer* buffer, const rdp_bitmap_rect* rect);
+librdp_status rdp_bitmap_write_update(rdp_buffer* buffer, const rdp_bitmap_rect* rects, uint16_t count);
+librdp_status rdp_bitmap_write_fastpath_update(rdp_buffer* buffer, const rdp_bitmap_rect* rects, uint16_t count);
 librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buffer* output, size_t* stride);
 
 #endif
