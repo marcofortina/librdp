@@ -71,6 +71,7 @@
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
+#define RDP_SESSION_MAX_FASTPATH_FRAGMENT (16u * 1024u * 1024u)
 #define RDP_SESSION_MAX_GRAPHICS_SURFACES 64u
 #define RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION 8192u
 #define RDP_SESSION_GRAPHICS_CACHE_SLOTS 4096u
@@ -299,6 +300,9 @@ struct librdp_session
     uint8_t remote_programs_exec_sent;
     uint32_t remote_programs_fragment_expected;
     rdp_buffer remote_programs_fragment;
+    uint8_t fastpath_fragmenting;
+    uint8_t fastpath_fragment_update_code;
+    rdp_buffer fastpath_fragment;
     uint32_t core_input_channel_id;
     uint8_t core_input_channel_id_bytes;
     uint8_t core_input_ready;
@@ -12273,6 +12277,85 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_session_fastpath_fragment_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->fastpath_fragmenting = 0;
+    session->fastpath_fragment_update_code = 0;
+    rdp_buffer_free(&session->fastpath_fragment);
+    rdp_buffer_init(&session->fastpath_fragment);
+}
+
+static librdp_status rdp_session_fastpath_payload(librdp_session* session,
+                                                  const rdp_fastpath_update* update,
+                                                  const uint8_t** data,
+                                                  size_t* data_len,
+                                                  int* complete,
+                                                  int* from_fragment)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !update || !data || !data_len || !complete || !from_fragment)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *data = NULL;
+    *data_len = 0;
+    *complete = 0;
+    *from_fragment = 0;
+    if (update->compression != 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (update->fragmentation == RDP_FASTPATH_FRAGMENT_SINGLE)
+    {
+        if (session->fastpath_fragmenting)
+            rdp_session_fastpath_fragment_reset(session);
+        *data = update->data;
+        *data_len = update->data_len;
+        *complete = 1;
+        return LIBRDP_STATUS_OK;
+    }
+    if (update->data_len > RDP_SESSION_MAX_FASTPATH_FRAGMENT ||
+        session->fastpath_fragment.length > RDP_SESSION_MAX_FASTPATH_FRAGMENT - update->data_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (update->fragmentation == RDP_FASTPATH_FRAGMENT_FIRST)
+    {
+        rdp_session_fastpath_fragment_reset(session);
+        status = rdp_buffer_append(&session->fastpath_fragment, update->data, update->data_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        session->fastpath_fragmenting = 1;
+        session->fastpath_fragment_update_code = update->update_code;
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "rdp.fastpath.fragment.start",
+                              "code=%u received=%u",
+                              update->update_code,
+                              (unsigned)session->fastpath_fragment.length);
+        return LIBRDP_STATUS_OK;
+    }
+    if (update->fragmentation != RDP_FASTPATH_FRAGMENT_NEXT &&
+        update->fragmentation != RDP_FASTPATH_FRAGMENT_LAST)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!session->fastpath_fragmenting || session->fastpath_fragment_update_code != update->update_code)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_append(&session->fastpath_fragment, update->data, update->data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "rdp.fastpath.fragment.data",
+                          "code=%u fragmentation=%u received=%u",
+                          update->update_code,
+                          update->fragmentation,
+                          (unsigned)session->fastpath_fragment.length);
+    if (update->fragmentation == RDP_FASTPATH_FRAGMENT_NEXT)
+        return LIBRDP_STATUS_OK;
+    *data = session->fastpath_fragment.data;
+    *data_len = session->fastpath_fragment.length;
+    *complete = 1;
+    *from_fragment = 1;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet)
 {
     rdp_buffer decoded;
@@ -12312,8 +12395,13 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
         if (update->update_code == RDP_FASTPATH_UPDATE_BITMAP)
         {
             rdp_bitmap_update bitmap;
+            const uint8_t* update_data = NULL;
+            size_t update_len = 0;
+            int complete = 0;
+            int from_fragment = 0;
 
-            if (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || update->compression != 0)
+            status = rdp_session_fastpath_payload(session, update, &update_data, &update_len, &complete, &from_fragment);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
                                 "rdp.fastpath.update.unsupported",
@@ -12323,11 +12411,17 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                                 update->compression,
                                 (unsigned)update->data_len);
             }
-            else
+            else if (status != LIBRDP_STATUS_OK)
             {
-                status = rdp_bitmap_parse_fastpath_update(update->data, update->data_len, &bitmap);
+                goto out;
+            }
+            else if (complete)
+            {
+                status = rdp_bitmap_parse_fastpath_update(update_data, update_len, &bitmap);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_session_apply_bitmap_update(session, &bitmap);
+                if (from_fragment)
+                    rdp_session_fastpath_fragment_reset(session);
                 if (status != LIBRDP_STATUS_OK)
                     goto out;
                 rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
@@ -12342,8 +12436,13 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                  update->update_code == RDP_FASTPATH_UPDATE_POINTER_LARGE)
         {
             rdp_pointer_update pointer;
+            const uint8_t* update_data = NULL;
+            size_t update_len = 0;
+            int complete = 0;
+            int from_fragment = 0;
 
-            if (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || update->compression != 0)
+            status = rdp_session_fastpath_payload(session, update, &update_data, &update_len, &complete, &from_fragment);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
                                 "rdp.fastpath.pointer.unsupported",
@@ -12353,11 +12452,17 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                                 update->compression,
                                 (unsigned)update->data_len);
             }
-            else
+            else if (status != LIBRDP_STATUS_OK)
             {
-                status = rdp_pointer_parse_fastpath(update->update_code, update->data, update->data_len, &pointer);
+                goto out;
+            }
+            else if (complete)
+            {
+                status = rdp_pointer_parse_fastpath(update->update_code, update_data, update_len, &pointer);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_session_pointer_apply_update(session, &pointer);
+                if (from_fragment)
+                    rdp_session_fastpath_fragment_reset(session);
                 if (status != LIBRDP_STATUS_OK)
                     goto out;
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
@@ -12413,6 +12518,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->audio_output_pending_data);
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    rdp_buffer_init(&session->fastpath_fragment);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
     rdp_session_redirected_files_clear(session);
@@ -12448,6 +12554,7 @@ void librdp_session_free(librdp_session* session)
     rdp_buffer_free(&session->audio_output_pending_data);
     rdp_buffer_free(&session->device_redirection_fragment);
     rdp_buffer_free(&session->remote_programs_fragment);
+    rdp_buffer_free(&session->fastpath_fragment);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -12561,6 +12668,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->remote_programs_fragment_expected = 0;
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    session->fastpath_fragmenting = 0;
+    session->fastpath_fragment_update_code = 0;
+    rdp_buffer_free(&session->fastpath_fragment);
+    rdp_buffer_init(&session->fastpath_fragment);
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;
