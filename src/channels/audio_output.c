@@ -193,6 +193,28 @@ librdp_status rdp_audio_output_parse_training(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_audio_output_write_training(rdp_buffer* buffer,
+                                              uint16_t timestamp,
+                                              const void* data,
+                                              uint16_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0) || data_len > 0xfffbu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_audio_output_write_header(buffer,
+                                           RDP_AUDIO_OUTPUT_TRAINING,
+                                           0,
+                                           (uint16_t)(4u + data_len));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
+}
+
 librdp_status rdp_audio_output_write_training_confirm(rdp_buffer* buffer,
                                                      uint16_t timestamp,
                                                      uint16_t packet_size)
@@ -235,6 +257,36 @@ librdp_status rdp_audio_output_parse_wave_info(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_audio_output_write_wave_info(rdp_buffer* buffer,
+                                              uint16_t timestamp,
+                                              uint16_t format_no,
+                                              uint8_t block_no,
+                                              const uint8_t first_data[4],
+                                              uint16_t expected_data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !first_data || expected_data_len > 0xfff3u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_audio_output_write_header(buffer,
+                                           RDP_AUDIO_OUTPUT_WAVE,
+                                           0,
+                                           (uint16_t)(12u + expected_data_len));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, format_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, block_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, first_data, 4u);
+    return status;
+}
+
 librdp_status rdp_audio_output_parse_wave_data(const void* data,
                                               size_t length,
                                               rdp_audio_output_wave_data* wave)
@@ -252,6 +304,20 @@ librdp_status rdp_audio_output_parse_wave_data(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     wave->data_len = length - 4u;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_output_write_wave_data(rdp_buffer* buffer,
+                                              const void* data,
+                                              size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
 }
 
 librdp_status rdp_audio_output_parse_wave2(const void* data, size_t length, rdp_audio_output_wave2* wave)
@@ -276,6 +342,39 @@ librdp_status rdp_audio_output_parse_wave2(const void* data, size_t length, rdp_
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     wave->data_len = header.body_len - 12u;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_output_write_wave2(rdp_buffer* buffer,
+                                          uint16_t timestamp,
+                                          uint16_t format_no,
+                                          uint8_t block_no,
+                                          uint32_t audio_timestamp,
+                                          const void* data,
+                                          uint16_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0) || data_len > 0xfff3u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_audio_output_write_header(buffer,
+                                           RDP_AUDIO_OUTPUT_WAVE2,
+                                           0,
+                                           (uint16_t)(12u + data_len));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, format_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, block_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, audio_timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
 }
 
 librdp_status rdp_audio_output_write_wave_confirm(rdp_buffer* buffer,
@@ -342,6 +441,22 @@ librdp_status rdp_audio_output_parse_crypt_key(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_audio_output_write_crypt_key(rdp_buffer* buffer,
+                                              uint32_t reserved,
+                                              const uint8_t seed[32])
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !seed)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_audio_output_write_header(buffer, RDP_AUDIO_OUTPUT_CRYPTKEY, 0, 36u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, reserved);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, seed, 32u);
+    return status;
+}
+
 librdp_status rdp_audio_output_parse_wave_encrypt(const void* data,
                                                  size_t length,
                                                  int has_signature,
@@ -377,6 +492,38 @@ librdp_status rdp_audio_output_parse_wave_encrypt(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     wave->data_len = header.body_len - minimum;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_output_write_wave_encrypt(rdp_buffer* buffer,
+                                                 uint16_t timestamp,
+                                                 uint16_t format_no,
+                                                 uint8_t block_no,
+                                                 const uint8_t* signature,
+                                                 const void* data,
+                                                 uint16_t data_len)
+{
+    uint16_t body_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0) || data_len > 0xffefu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    body_len = (uint16_t)(8u + data_len + (signature ? 8u : 0u));
+    status = rdp_audio_output_write_header(buffer, RDP_AUDIO_OUTPUT_WAVEENCRYPT, 0, body_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, format_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, block_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK && signature)
+        status = rdp_buffer_append(buffer, signature, 8u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
 }
 
 librdp_status rdp_audio_output_parse_udp_wave(const void* data,
@@ -420,6 +567,35 @@ librdp_status rdp_audio_output_parse_udp_wave(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_audio_output_write_udp_wave(rdp_buffer* buffer,
+                                             uint8_t block_no,
+                                             uint16_t fragment_no,
+                                             const void* data,
+                                             size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0) || fragment_no > 0x7fffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, RDP_AUDIO_OUTPUT_UDPWAVE);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, block_no);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (fragment_no > 0x7fu)
+        {
+            status = rdp_buffer_append_u8(buffer, (uint8_t)(((fragment_no >> 8) & 0x7fu) | 0x80u));
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u8(buffer, (uint8_t)(fragment_no & 0xffu));
+        }
+        else
+            status = rdp_buffer_append_u8(buffer, (uint8_t)fragment_no);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
+}
+
 librdp_status rdp_audio_output_parse_udp_wave_last(const void* data,
                                                   size_t length,
                                                   rdp_audio_output_udp_wave_last* wave)
@@ -447,6 +623,36 @@ librdp_status rdp_audio_output_parse_udp_wave_last(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_audio_output_write_udp_wave_last(rdp_buffer* buffer,
+                                                  uint16_t total_size,
+                                                  uint16_t timestamp,
+                                                  uint16_t format_no,
+                                                  uint8_t block_no,
+                                                  const void* data,
+                                                  size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, RDP_AUDIO_OUTPUT_UDPWAVELAST);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, total_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, format_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, block_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
+}
+
 librdp_status rdp_audio_output_parse_frag_data(const void* data,
                                               size_t length,
                                               rdp_audio_output_frag_data* frag)
@@ -465,6 +671,21 @@ librdp_status rdp_audio_output_parse_frag_data(const void* data,
     frag->signature_len = 8u;
     frag->data_len = length - 8u;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_output_write_frag_data(rdp_buffer* buffer,
+                                              const uint8_t signature[8],
+                                              const void* data,
+                                              size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !signature || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append(buffer, signature, 8u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
 }
 
 librdp_status rdp_audio_output_parse_setting(const void* data,
@@ -498,6 +719,11 @@ librdp_status rdp_audio_output_write_setting(rdp_buffer* buffer, uint8_t msg_typ
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, value);
     return status;
+}
+
+librdp_status rdp_audio_output_write_close(rdp_buffer* buffer)
+{
+    return rdp_audio_output_write_header(buffer, RDP_AUDIO_OUTPUT_CLOSE, 0, 0);
 }
 
 librdp_status rdp_audio_output_parse_close(const void* data, size_t length)

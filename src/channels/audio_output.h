@@ -159,16 +159,36 @@ librdp_status rdp_audio_output_parse_quality_mode(const void* data, size_t lengt
 librdp_status rdp_audio_output_parse_training(const void* data,
                                              size_t length,
                                              rdp_audio_output_training* training);
+librdp_status rdp_audio_output_write_training(rdp_buffer* buffer,
+                                              uint16_t timestamp,
+                                              const void* data,
+                                              uint16_t data_len);
 librdp_status rdp_audio_output_write_training_confirm(rdp_buffer* buffer,
                                                      uint16_t timestamp,
                                                      uint16_t packet_size);
 librdp_status rdp_audio_output_parse_wave_info(const void* data,
                                               size_t length,
                                               rdp_audio_output_wave_info* wave);
+librdp_status rdp_audio_output_write_wave_info(rdp_buffer* buffer,
+                                              uint16_t timestamp,
+                                              uint16_t format_no,
+                                              uint8_t block_no,
+                                              const uint8_t first_data[4],
+                                              uint16_t expected_data_len);
 librdp_status rdp_audio_output_parse_wave_data(const void* data,
                                               size_t length,
                                               rdp_audio_output_wave_data* wave);
+librdp_status rdp_audio_output_write_wave_data(rdp_buffer* buffer,
+                                              const void* data,
+                                              size_t data_len);
 librdp_status rdp_audio_output_parse_wave2(const void* data, size_t length, rdp_audio_output_wave2* wave);
+librdp_status rdp_audio_output_write_wave2(rdp_buffer* buffer,
+                                          uint16_t timestamp,
+                                          uint16_t format_no,
+                                          uint8_t block_no,
+                                          uint32_t audio_timestamp,
+                                          const void* data,
+                                          uint16_t data_len);
 librdp_status rdp_audio_output_write_wave_confirm(rdp_buffer* buffer,
                                                  uint16_t timestamp,
                                                  uint8_t block_no);
@@ -179,24 +199,51 @@ librdp_status rdp_audio_output_parse_wave_confirm(const void* data,
 librdp_status rdp_audio_output_parse_crypt_key(const void* data,
                                               size_t length,
                                               rdp_audio_output_crypt_key* crypt_key);
+librdp_status rdp_audio_output_write_crypt_key(rdp_buffer* buffer,
+                                              uint32_t reserved,
+                                              const uint8_t seed[32]);
 librdp_status rdp_audio_output_parse_wave_encrypt(const void* data,
                                                  size_t length,
                                                  int has_signature,
                                                  rdp_audio_output_wave_encrypt* wave);
+librdp_status rdp_audio_output_write_wave_encrypt(rdp_buffer* buffer,
+                                                 uint16_t timestamp,
+                                                 uint16_t format_no,
+                                                 uint8_t block_no,
+                                                 const uint8_t* signature,
+                                                 const void* data,
+                                                 uint16_t data_len);
 librdp_status rdp_audio_output_parse_udp_wave(const void* data,
                                              size_t length,
                                              rdp_audio_output_udp_wave* wave);
+librdp_status rdp_audio_output_write_udp_wave(rdp_buffer* buffer,
+                                             uint8_t block_no,
+                                             uint16_t fragment_no,
+                                             const void* data,
+                                             size_t data_len);
 librdp_status rdp_audio_output_parse_udp_wave_last(const void* data,
                                                   size_t length,
                                                   rdp_audio_output_udp_wave_last* wave);
+librdp_status rdp_audio_output_write_udp_wave_last(rdp_buffer* buffer,
+                                                  uint16_t total_size,
+                                                  uint16_t timestamp,
+                                                  uint16_t format_no,
+                                                  uint8_t block_no,
+                                                  const void* data,
+                                                  size_t data_len);
 librdp_status rdp_audio_output_parse_frag_data(const void* data,
                                               size_t length,
                                               rdp_audio_output_frag_data* frag);
+librdp_status rdp_audio_output_write_frag_data(rdp_buffer* buffer,
+                                              const uint8_t signature[8],
+                                              const void* data,
+                                              size_t data_len);
 librdp_status rdp_audio_output_parse_setting(const void* data,
                                             size_t length,
                                             uint8_t expected_type,
                                             rdp_audio_output_setting* setting);
 librdp_status rdp_audio_output_write_setting(rdp_buffer* buffer, uint8_t msg_type, uint32_t value);
+librdp_status rdp_audio_output_write_close(rdp_buffer* buffer);
 librdp_status rdp_audio_output_parse_close(const void* data, size_t length);
 
 #endif
