@@ -23,8 +23,17 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_video_redirection_volume volume;
     rdp_buffer buffer;
     const uint8_t guid[16] = {0};
+    rdp_video_redirection_capability capability;
     rdp_video_redirection_geometry_info writable_geometry;
+    uint8_t capability_value[4] = {0};
     uint32_t bounded_data = size > 4096u ? 4096u : (uint32_t)size;
+
+    if (!data && size > 0)
+        return 0;
+    capability.type = RDP_VIDEO_REDIRECTION_CAPABILITY_PROTOCOL_VERSION;
+    capability.length = 4u;
+    capability.data = capability_value;
+    capability.data_len = 4u;
 
     (void)rdp_video_redirection_parse_header(data, size, 0, &header);
     (void)rdp_video_redirection_parse_header(data, size, 1, &header);
@@ -60,6 +69,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer_init(&buffer);
     (void)rdp_video_redirection_write_playback_ack(&buffer, 1, 2, 3, 4);
     buffer.length = 0;
+    (void)rdp_video_redirection_write_exchange_capabilities_request(&buffer, 1, &capability, 1);
+    buffer.length = 0;
     (void)rdp_video_redirection_write_client_event(&buffer,
                                                    1,
                                                    0,
@@ -67,11 +78,35 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                                    data,
                                                    size > UINT32_MAX ? UINT32_MAX : (uint32_t)size);
     buffer.length = 0;
+    (void)rdp_video_redirection_write_rim_capability_request(
+        &buffer,
+        1,
+        RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01);
+    buffer.length = 0;
     (void)rdp_video_redirection_write_rim_capability_response(
         &buffer,
         1,
         RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01,
         0);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_media_type(&buffer,
+                                                 guid,
+                                                 guid,
+                                                 0,
+                                                 0,
+                                                 bounded_data,
+                                                 guid,
+                                                 data,
+                                                 bounded_data);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_data_sample(&buffer,
+                                                  0,
+                                                  1,
+                                                  2,
+                                                  0,
+                                                  0,
+                                                  data,
+                                                  bounded_data);
     buffer.length = 0;
     (void)rdp_video_redirection_write_set_channel_params(&buffer, 1, guid, 2);
     buffer.length = 0;

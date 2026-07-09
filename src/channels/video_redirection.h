@@ -252,6 +252,10 @@ librdp_status rdp_video_redirection_parse_rim_capability_request(
     const void* data,
     size_t length,
     rdp_video_redirection_rim_capability* request);
+librdp_status rdp_video_redirection_write_rim_capability_request(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    uint32_t capability);
 librdp_status rdp_video_redirection_write_rim_capability_response(
     rdp_buffer* buffer,
     uint32_t message_id,
@@ -265,6 +269,11 @@ librdp_status rdp_video_redirection_parse_exchange_capabilities_request(
     const void* data,
     size_t length,
     rdp_video_redirection_capability_message* request);
+librdp_status rdp_video_redirection_write_exchange_capabilities_request(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    const rdp_video_redirection_capability* capabilities,
+    uint32_t count);
 librdp_status rdp_video_redirection_write_exchange_capabilities_response(
     rdp_buffer* buffer,
     uint32_t message_id,
@@ -283,10 +292,29 @@ librdp_status rdp_video_redirection_parse_media_type(
     const void* data,
     size_t length,
     rdp_video_redirection_media_type* media_type);
+librdp_status rdp_video_redirection_write_media_type(
+    rdp_buffer* buffer,
+    const uint8_t major_type[16],
+    const uint8_t sub_type[16],
+    uint32_t fixed_size_samples,
+    uint32_t temporal_compression,
+    uint32_t sample_size,
+    const uint8_t format_type[16],
+    const void* format,
+    uint32_t format_len);
 librdp_status rdp_video_redirection_parse_data_sample(
     const void* data,
     size_t length,
     rdp_video_redirection_data_sample* sample);
+librdp_status rdp_video_redirection_write_data_sample(
+    rdp_buffer* buffer,
+    uint64_t sample_start_time,
+    uint64_t sample_end_time,
+    uint64_t throttle_duration,
+    uint32_t sample_flags,
+    uint32_t sample_extensions,
+    const void* data,
+    uint32_t data_len);
 librdp_status rdp_video_redirection_write_playback_ack(
     rdp_buffer* buffer,
     uint32_t message_id,

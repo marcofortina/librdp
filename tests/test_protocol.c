@@ -6624,6 +6624,18 @@ static int test_video_redirection_channel(void)
     PCHECK(caps.capabilities.count == 2 &&
            caps.capabilities.capabilities[0].type == RDP_VIDEO_REDIRECTION_CAPABILITY_PROTOCOL_VERSION &&
            test_read_u32_le(caps.capabilities.capabilities[1].data) == RDP_VIDEO_REDIRECTION_PLATFORM_MF);
+    PCHECK(rdp_video_redirection_write_exchange_capabilities_request(&payload,
+                                                                     2,
+                                                                     caps.capabilities.capabilities,
+                                                                     caps.capabilities.count) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_parse_exchange_capabilities_request(payload.data,
+                                                                     payload.length,
+                                                                     &caps) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(caps.header.message_id == 2 && caps.capabilities.count == 2);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
     PCHECK(rdp_video_redirection_write_exchange_capabilities_response(&payload,
                                                                       0,
                                                                       caps.capabilities.capabilities,
@@ -6644,14 +6656,10 @@ static int test_video_redirection_channel(void)
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&payload);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_RIM_CAPABILITIES,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_NONE,
-                                              3,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_RIM_EXCHANGE_CAPABILITY_REQUEST) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01) ==
+    PCHECK(rdp_video_redirection_write_rim_capability_request(
+               &buffer,
+               3,
+               RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_rim_capability_request(buffer.data, buffer.length, &rim) ==
            LIBRDP_STATUS_OK);
@@ -6725,6 +6733,20 @@ static int test_video_redirection_channel(void)
     PCHECK(rdp_video_redirection_parse_media_type(nested.data, nested.length, &media_type) ==
            LIBRDP_STATUS_OK);
     PCHECK(media_type.format_len == sizeof(format) && media_type.format[0] == 0xde);
+    PCHECK(rdp_video_redirection_write_media_type(&payload,
+                                                  media_type.major_type,
+                                                  media_type.sub_type,
+                                                  media_type.fixed_size_samples,
+                                                  media_type.temporal_compression,
+                                                  media_type.sample_size,
+                                                  media_type.format_type,
+                                                  media_type.format,
+                                                  media_type.format_len) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_parse_media_type(payload.data, payload.length, &media_type) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(media_type.format_len == sizeof(format) && media_type.format[3] == 0xef);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
     PCHECK(rdp_video_redirection_write_add_stream(&buffer,
                                                   8,
                                                   guid,
@@ -6755,6 +6777,21 @@ static int test_video_redirection_channel(void)
     PCHECK(data_sample.sample_end_time == 0x38u &&
            data_sample.data_len == sizeof(sample_data) &&
            data_sample.data[4] == 5);
+    PCHECK(rdp_video_redirection_write_data_sample(&payload,
+                                                   data_sample.sample_start_time,
+                                                   data_sample.sample_end_time,
+                                                   data_sample.throttle_duration,
+                                                   data_sample.sample_flags,
+                                                   data_sample.sample_extensions,
+                                                   data_sample.data,
+                                                   data_sample.data_len) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_parse_data_sample(payload.data, payload.length, &data_sample) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(data_sample.sample_start_time == 0x37u &&
+           data_sample.data_len == sizeof(sample_data) &&
+           data_sample.data[0] == 1);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
     PCHECK(rdp_video_redirection_write_sample_message(&buffer,
                                                       9,
                                                       guid,

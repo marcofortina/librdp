@@ -97,6 +97,40 @@ static librdp_status rdp_video_redirection_parse_capability_list_from_stream(
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_video_redirection_write_capability_list(
+    rdp_buffer* buffer,
+    const rdp_video_redirection_capability* capabilities,
+    uint32_t count)
+{
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (count > 0 && !capabilities) ||
+        count > RDP_VIDEO_REDIRECTION_MAX_CAPABILITIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < count; i++)
+    {
+        if (!capabilities[i].data ||
+            capabilities[i].length != capabilities[i].data_len ||
+            !rdp_video_redirection_valid_capability_type(capabilities[i].type) ||
+            capabilities[i].length != 4u)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        status = rdp_buffer_append_u32_le(buffer, capabilities[i].type);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append_u32_le(buffer, capabilities[i].length);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append(buffer, capabilities[i].data, capabilities[i].data_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_video_redirection_parse_capability_request_payload(
     const rdp_video_redirection_header* header,
     rdp_video_redirection_capability_message* request)
@@ -605,6 +639,26 @@ librdp_status rdp_video_redirection_parse_rim_capability_request(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_video_redirection_write_rim_capability_request(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    uint32_t capability)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || capability != RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_redirection_write_header(buffer,
+                                                RDP_VIDEO_REDIRECTION_INTERFACE_RIM_CAPABILITIES,
+                                                RDP_VIDEO_REDIRECTION_STREAM_ID_NONE,
+                                                message_id,
+                                                1,
+                                                RDP_VIDEO_REDIRECTION_FUNC_RIM_EXCHANGE_CAPABILITY_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, capability);
+}
+
 librdp_status rdp_video_redirection_write_rim_capability_response(
     rdp_buffer* buffer,
     uint32_t message_id,
@@ -670,6 +724,27 @@ librdp_status rdp_video_redirection_parse_exchange_capabilities_request(
     return rdp_video_redirection_parse_capability_request_payload(&request->header, request);
 }
 
+librdp_status rdp_video_redirection_write_exchange_capabilities_request(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    const rdp_video_redirection_capability* capabilities,
+    uint32_t count)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_redirection_write_header(buffer,
+                                                RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
+                                                RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
+                                                message_id,
+                                                1,
+                                                RDP_VIDEO_REDIRECTION_FUNC_EXCHANGE_CAPABILITIES_REQ);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_video_redirection_write_capability_list(buffer, capabilities, count);
+}
+
 librdp_status rdp_video_redirection_write_exchange_capabilities_response(
     rdp_buffer* buffer,
     uint32_t message_id,
@@ -677,11 +752,9 @@ librdp_status rdp_video_redirection_write_exchange_capabilities_response(
     uint32_t count,
     uint32_t result)
 {
-    uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || (count > 0 && !capabilities) ||
-        count > RDP_VIDEO_REDIRECTION_MAX_CAPABILITIES)
+    if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_video_redirection_write_header(buffer,
                                                 RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
@@ -691,26 +764,9 @@ librdp_status rdp_video_redirection_write_exchange_capabilities_response(
                                                 0);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    status = rdp_buffer_append_u32_le(buffer, count);
+    status = rdp_video_redirection_write_capability_list(buffer, capabilities, count);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    for (i = 0; i < count; i++)
-    {
-        if (!capabilities[i].data ||
-            capabilities[i].length != capabilities[i].data_len ||
-            !rdp_video_redirection_valid_capability_type(capabilities[i].type) ||
-            capabilities[i].length != 4u)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        status = rdp_buffer_append_u32_le(buffer, capabilities[i].type);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-        status = rdp_buffer_append_u32_le(buffer, capabilities[i].length);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-        status = rdp_buffer_append(buffer, capabilities[i].data, capabilities[i].data_len);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
     return rdp_buffer_append_u32_le(buffer, result);
 }
 
@@ -780,6 +836,45 @@ librdp_status rdp_video_redirection_parse_media_type(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_video_redirection_write_media_type(
+    rdp_buffer* buffer,
+    const uint8_t major_type[16],
+    const uint8_t sub_type[16],
+    uint32_t fixed_size_samples,
+    uint32_t temporal_compression,
+    uint32_t sample_size,
+    const uint8_t format_type[16],
+    const void* format,
+    uint32_t format_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !major_type || !sub_type || !format_type || (!format && format_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append(buffer, major_type, 16u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, sub_type, 16u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, fixed_size_samples);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, temporal_compression);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, sample_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, format_type, 16u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, format_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, format, format_len);
+}
+
 librdp_status rdp_video_redirection_parse_data_sample(
     const void* data,
     size_t length,
@@ -803,6 +898,41 @@ librdp_status rdp_video_redirection_parse_data_sample(
         rdp_stream_read_bytes(&stream, &sample->data, sample->data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_redirection_write_data_sample(
+    rdp_buffer* buffer,
+    uint64_t sample_start_time,
+    uint64_t sample_end_time,
+    uint64_t throttle_duration,
+    uint32_t sample_flags,
+    uint32_t sample_extensions,
+    const void* data,
+    uint32_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_redirection_append_u64_le(buffer, sample_start_time);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_redirection_append_u64_le(buffer, sample_end_time);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_redirection_append_u64_le(buffer, throttle_duration);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, sample_flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, sample_extensions);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, data, data_len);
 }
 
 librdp_status rdp_video_redirection_write_playback_ack(
