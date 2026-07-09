@@ -7974,6 +7974,20 @@ static int test_auth_smartcard_redirection_channels(void)
                                                           &connect_common) == LIBRDP_STATUS_OK);
     PCHECK(connect_common.share_mode == RDP_SMARTCARD_REDIRECTION_SHARE_SHARED &&
            connect_common.preferred_protocols == RDP_SMARTCARD_REDIRECTION_PROTOCOL_TX);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTW,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT &&
+           scard_message.body.connect.share_mode == RDP_SMARTCARD_REDIRECTION_SHARE_SHARED &&
+           scard_message.body.connect.preferred_protocols == RDP_SMARTCARD_REDIRECTION_PROTOCOL_TX);
+    packet.length = 0;
     buffer.data[8 + sizeof(context_bytes)] = 0x10;
     PCHECK(rdp_smartcard_redirection_parse_connect_common(buffer.data,
                                                           buffer.length,

@@ -345,6 +345,14 @@ librdp_status rdp_smartcard_redirection_parse_device_control_request_message(
             if (status == LIBRDP_STATUS_OK)
                 message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT;
             return status;
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTA:
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTW:
+            status = rdp_smartcard_redirection_parse_connect_common(message->request.input,
+                                                                    message->request.input_len,
+                                                                    &message->body.connect);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT;
+            return status;
         case RDP_SMARTCARD_REDIRECTION_IOCTL_BEGINTRANSACTION:
             status = rdp_smartcard_redirection_parse_handle(message->request.input,
                                                             message->request.input_len,

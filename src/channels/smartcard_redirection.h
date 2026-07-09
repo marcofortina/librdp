@@ -72,6 +72,7 @@
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTROL 9u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_ATTRIB 10u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_SET_ATTRIB 11u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT 12u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -154,6 +155,8 @@ typedef struct rdp_smartcard_redirection_connect_common
     uint32_t share_mode;
     uint32_t preferred_protocols;
 } rdp_smartcard_redirection_connect_common;
+
+typedef rdp_smartcard_redirection_connect_common rdp_smartcard_redirection_connect_call;
 
 typedef struct rdp_smartcard_redirection_reconnect_call
 {
@@ -282,6 +285,7 @@ typedef struct rdp_smartcard_redirection_request_message
     {
         rdp_smartcard_redirection_context context;
         rdp_smartcard_redirection_establish_context_call establish_context;
+        rdp_smartcard_redirection_connect_call connect;
         rdp_smartcard_redirection_handle handle;
         rdp_smartcard_redirection_handle_disposition_call handle_disposition;
         rdp_smartcard_redirection_reconnect_call reconnect;

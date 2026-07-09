@@ -14,6 +14,7 @@ find_package(OpenSSL 3.0 REQUIRED)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_FFMPEG_AVC QUIET IMPORTED_TARGET libavcodec libavutil libswscale)
+    pkg_check_modules(LIBRDP_PCSC QUIET IMPORTED_TARGET libpcsclite)
 endif()
 
 add_library(librdp
@@ -94,6 +95,10 @@ target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 if(LIBRDP_FFMPEG_AVC_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_FFMPEG_AVC=1)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+endif()
+if(LIBRDP_PCSC_FOUND)
+    target_compile_definitions(librdp PRIVATE RDP_HAVE_PCSC=1)
+    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_PCSC)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
