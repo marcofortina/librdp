@@ -313,9 +313,10 @@ static int test_udp_transport_protocols(void)
 static int test_multitransport_protocol(void)
 {
     uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
-    uint8_t subheader[] = {4, RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST, 0xaa, 0xbb};
+    const uint8_t autodetect[] = {0xaa, 0xbb};
     const uint8_t payload[] = {1, 2, 3, 4, 5};
     rdp_buffer buffer;
+    rdp_buffer subheader;
     rdp_multitransport_header header;
     rdp_multitransport_subheader parsed_subheader;
     rdp_multitransport_create_request request;
@@ -324,6 +325,7 @@ static int test_multitransport_protocol(void)
     size_t i = 0;
 
     rdp_buffer_init(&buffer);
+    rdp_buffer_init(&subheader);
     for (i = 0; i < sizeof(cookie); i++)
         cookie[i] = (uint8_t)i;
 
@@ -346,14 +348,21 @@ static int test_multitransport_protocol(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_multitransport_parse_subheader(subheader, sizeof(subheader), &parsed_subheader) ==
+    TCHECK(rdp_multitransport_write_subheader(&subheader,
+                                              RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST,
+                                              autodetect,
+                                              sizeof(autodetect)) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_multitransport_parse_subheader(subheader.data, subheader.length, &parsed_subheader) ==
            LIBRDP_STATUS_OK);
-    TCHECK(parsed_subheader.length == sizeof(subheader));
+    TCHECK(parsed_subheader.length == subheader.length);
     TCHECK(parsed_subheader.data_len == 2);
+    TCHECK(memcmp(parsed_subheader.data, autodetect, sizeof(autodetect)) == 0);
+    TCHECK(rdp_multitransport_write_subheader(&buffer, 0xffu, autodetect, sizeof(autodetect)) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     TCHECK(rdp_multitransport_write_data(&buffer,
-                                         subheader,
-                                         sizeof(subheader),
+                                         subheader.data,
+                                         subheader.length,
                                          payload,
                                          sizeof(payload)) == LIBRDP_STATUS_OK);
     TCHECK(rdp_multitransport_parse_data(buffer.data, buffer.length, &tunnel_data) == LIBRDP_STATUS_OK);
@@ -365,6 +374,7 @@ static int test_multitransport_protocol(void)
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&buffer);
+    rdp_buffer_free(&subheader);
     return 0;
 }
 

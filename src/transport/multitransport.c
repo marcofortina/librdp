@@ -12,6 +12,12 @@ static int rdp_multitransport_valid_action(uint8_t action)
            action == RDP_MULTITRANSPORT_ACTION_DATA;
 }
 
+static int rdp_multitransport_valid_subheader_type(uint8_t type)
+{
+    return type == RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST ||
+           type == RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_RESPONSE;
+}
+
 librdp_status rdp_multitransport_parse_header(const void* data,
                                               size_t length,
                                               rdp_multitransport_header* header)
@@ -93,12 +99,30 @@ librdp_status rdp_multitransport_parse_subheader(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (subheader->length < 2u ||
         subheader->length > length ||
-        (subheader->type != RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST &&
-         subheader->type != RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_RESPONSE))
+        !rdp_multitransport_valid_subheader_type(subheader->type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     subheader->data = (const uint8_t*)data + 2u;
     subheader->data_len = (size_t)subheader->length - 2u;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_multitransport_write_subheader(rdp_buffer* buffer,
+                                                 uint8_t type,
+                                                 const void* data,
+                                                 size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_multitransport_valid_subheader_type(type) ||
+        (!data && data_len > 0) || data_len > UINT8_MAX - 2u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)(data_len + 2u));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, data, data_len);
 }
 
 librdp_status rdp_multitransport_write_create_request(rdp_buffer* buffer,

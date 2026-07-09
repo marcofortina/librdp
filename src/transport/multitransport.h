@@ -69,6 +69,10 @@ librdp_status rdp_multitransport_write_header(rdp_buffer* buffer,
 librdp_status rdp_multitransport_parse_subheader(const void* data,
                                                  size_t length,
                                                  rdp_multitransport_subheader* subheader);
+librdp_status rdp_multitransport_write_subheader(rdp_buffer* buffer,
+                                                 uint8_t type,
+                                                 const void* data,
+                                                 size_t data_len);
 librdp_status rdp_multitransport_write_create_request(rdp_buffer* buffer,
                                                       uint32_t request_id,
                                                       const uint8_t security_cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH]);
