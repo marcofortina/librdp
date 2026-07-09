@@ -5839,14 +5839,11 @@ static int test_xps_print_channel(void)
 
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_xps_print_write_header(&buffer,
-                                      0,
-                                      7,
-                                      1,
-                                      RDP_XPS_PRINT_FUNC_QUERY_INTERFACE) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_write_interface_query(&buffer, 0, 7, guid) == LIBRDP_STATUS_OK);
     PCHECK(rdp_xps_print_parse_interface_query(buffer.data, buffer.length, &query) == LIBRDP_STATUS_OK);
     PCHECK(query.header.message_id == 7 && query.guid[15] == 15);
+    PCHECK(rdp_xps_print_write_interface_query(&buffer, 0, 7, NULL) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_xps_print_parse_interface_query(buffer.data,
                                                buffer.length - 1u,
                                                &query) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -5861,8 +5858,7 @@ static int test_xps_print_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_xps_print_write_header(&buffer, 0, 8, 1, RDP_XPS_PRINT_FUNC_RELEASE) ==
-           LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_write_release(&buffer, 0, 8) == LIBRDP_STATUS_OK);
     PCHECK(rdp_xps_print_parse_release(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
     PCHECK(header.message_id == 8);
     rdp_buffer_free(&buffer);
@@ -5912,12 +5908,10 @@ static int test_xps_print_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_xps_print_write_header(&buffer,
-                                      RDP_XPS_PRINT_INTERFACE_DEFAULT,
-                                      9,
-                                      1,
-                                      RDP_XPS_PRINT_DRIVER_INIT_PRINTER) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_write_u32_request(&buffer,
+                                           9,
+                                           RDP_XPS_PRINT_DRIVER_INIT_PRINTER,
+                                           0x11223344u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_xps_print_parse_u32_request(buffer.data,
                                            buffer.length,
                                            RDP_XPS_PRINT_DRIVER_INIT_PRINTER,

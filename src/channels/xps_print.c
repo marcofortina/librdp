@@ -89,6 +89,25 @@ librdp_status rdp_xps_print_parse_interface_query(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_xps_print_write_interface_query(rdp_buffer* buffer,
+                                                  uint32_t interface_id,
+                                                  uint32_t message_id,
+                                                  const uint8_t guid[16])
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !guid)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_xps_print_write_header(buffer,
+                                        interface_id,
+                                        message_id,
+                                        1,
+                                        RDP_XPS_PRINT_FUNC_QUERY_INTERFACE);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, guid, 16u);
+}
+
 librdp_status rdp_xps_print_write_interface_query_response(rdp_buffer* buffer,
                                                            uint32_t interface_id,
                                                            uint32_t message_id,
@@ -134,6 +153,17 @@ librdp_status rdp_xps_print_parse_release(const void* data, size_t length, rdp_x
         header->payload_len != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_xps_print_write_release(rdp_buffer* buffer,
+                                          uint32_t interface_id,
+                                          uint32_t message_id)
+{
+    return rdp_xps_print_write_header(buffer,
+                                      interface_id,
+                                      message_id,
+                                      1,
+                                      RDP_XPS_PRINT_FUNC_RELEASE);
 }
 
 librdp_status rdp_xps_print_parse_xml_document(const void* data,
@@ -290,6 +320,23 @@ librdp_status rdp_xps_print_parse_u32_request(const void* data,
     if (rdp_stream_read_u32_le(&stream, &request->value) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_xps_print_write_u32_request(rdp_buffer* buffer,
+                                              uint32_t message_id,
+                                              uint32_t function_id,
+                                              uint32_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_xps_print_write_header(buffer,
+                                        RDP_XPS_PRINT_INTERFACE_DEFAULT,
+                                        message_id,
+                                        1,
+                                        function_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, value);
 }
 
 librdp_status rdp_xps_print_write_result(rdp_buffer* buffer,

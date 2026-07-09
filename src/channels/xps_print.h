@@ -135,6 +135,10 @@ librdp_status rdp_xps_print_write_header(rdp_buffer* buffer,
 librdp_status rdp_xps_print_parse_interface_query(const void* data,
                                                   size_t length,
                                                   rdp_xps_print_interface_query* query);
+librdp_status rdp_xps_print_write_interface_query(rdp_buffer* buffer,
+                                                  uint32_t interface_id,
+                                                  uint32_t message_id,
+                                                  const uint8_t guid[16]);
 librdp_status rdp_xps_print_write_interface_query_response(rdp_buffer* buffer,
                                                            uint32_t interface_id,
                                                            uint32_t message_id,
@@ -144,6 +148,9 @@ librdp_status rdp_xps_print_parse_interface_query_response(
     size_t length,
     rdp_xps_print_interface_query_response* response);
 librdp_status rdp_xps_print_parse_release(const void* data, size_t length, rdp_xps_print_header* header);
+librdp_status rdp_xps_print_write_release(rdp_buffer* buffer,
+                                          uint32_t interface_id,
+                                          uint32_t message_id);
 librdp_status rdp_xps_print_parse_xml_document(const void* data,
                                                size_t length,
                                                rdp_xps_print_xml_document* document);
@@ -169,6 +176,10 @@ librdp_status rdp_xps_print_parse_u32_request(const void* data,
                                               size_t length,
                                               uint32_t function_id,
                                               rdp_xps_print_u32_request* request);
+librdp_status rdp_xps_print_write_u32_request(rdp_buffer* buffer,
+                                              uint32_t message_id,
+                                              uint32_t function_id,
+                                              uint32_t value);
 librdp_status rdp_xps_print_write_result(rdp_buffer* buffer,
                                          uint32_t interface_id,
                                          uint32_t message_id,

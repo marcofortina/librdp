@@ -18,6 +18,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_xps_print_result result;
     rdp_buffer buffer;
     uint32_t version = 1;
+    uint8_t guid[16] = {0};
 
     (void)rdp_xps_print_parse_header(data, size, 0, &header);
     (void)rdp_xps_print_parse_header(data, size, 1, &header);
@@ -34,6 +35,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_xps_print_parse_optional_blob_result(data, size, &optional_result);
 
     rdp_buffer_init(&buffer);
+    (void)rdp_xps_print_write_interface_query(&buffer, 0, 1, guid);
+    buffer.length = 0;
+    (void)rdp_xps_print_write_release(&buffer, 0, 1);
+    buffer.length = 0;
+    (void)rdp_xps_print_write_u32_request(&buffer, 1, RDP_XPS_PRINT_DRIVER_INIT_PRINTER, 0);
+    buffer.length = 0;
     (void)rdp_xps_print_write_xml_document(&buffer, data, size > UINT32_MAX ? UINT32_MAX : (uint32_t)size);
     buffer.length = 0;
     (void)rdp_xps_print_write_versions_response(&buffer, 0, 1, &version, 1, 0);
