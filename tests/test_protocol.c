@@ -1507,6 +1507,19 @@ static int test_path_security_license_channels(void)
         0xe0, 0x07,
         0x00, 0x00
     };
+    const uint8_t pointer_shape_15[] = {
+        0x0f, 0x00,
+        0x09, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x01, 0x00,
+        0x02, 0x00,
+        0x04, 0x00,
+        0x00, 0x7c,
+        0xe0, 0x03,
+        0x00, 0x00
+    };
     const uint8_t pointer_shape_1bpp_invert[] = {
         0x01, 0x00,
         0x06, 0x00,
@@ -2731,6 +2744,22 @@ static int test_path_security_license_channels(void)
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
            pointer_update.xor_bpp == 16 &&
            pointer_update.cache_index == 8);
+    PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_stride == 8 &&
+           decoded_pointer.length == 8 &&
+           decoded_pointer.data[0] == 0x00 &&
+           decoded_pointer.data[1] == 0x00 &&
+           decoded_pointer.data[2] == 0xff &&
+           decoded_pointer.data[4] == 0x00 &&
+           decoded_pointer.data[5] == 0xff &&
+           decoded_pointer.data[6] == 0x00);
+    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                      pointer_shape_15,
+                                      sizeof(pointer_shape_15),
+                                      &pointer_update) == LIBRDP_STATUS_OK);
+    PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+           pointer_update.xor_bpp == 15 &&
+           pointer_update.cache_index == 9);
     PCHECK(rdp_pointer_decode_bgra32(&pointer_update, &decoded_pointer, &pointer_stride) == LIBRDP_STATUS_OK);
     PCHECK(pointer_stride == 8 &&
            decoded_pointer.length == 8 &&
