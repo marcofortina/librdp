@@ -38,6 +38,7 @@ add_library(librdp
     src/channels/smartcard_redirection.c
     src/channels/telemetry.c
     src/channels/usb_redirection.c
+    src/channels/video_redirection.c
     src/channels/virtual_channel.c
     src/channels/xps_print.c
     src/clipboard/clipboard.c
@@ -152,6 +153,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_xps_print fuzz/xps_print_fuzzer.c)
     add_librdp_fuzzer(fuzz_auth_redirection fuzz/auth_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_smartcard_redirection fuzz/smartcard_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_video_redirection fuzz/video_redirection_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
