@@ -55,6 +55,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         data,
         size > UINT32_MAX ? UINT32_MAX : (uint32_t)size);
     buffer.length = 0;
+    (void)rdp_smartcard_redirection_write_establish_context_call(
+        &buffer,
+        RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM);
+    buffer.length = 0;
     (void)rdp_smartcard_redirection_write_context(
         &buffer,
         data,
@@ -94,6 +98,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         data,
         0,
         RDP_SMARTCARD_REDIRECTION_LEAVE_CARD);
+    buffer.length = 0;
+    (void)rdp_smartcard_redirection_write_long_return(&buffer, 0);
     buffer.length = 0;
     (void)rdp_smartcard_redirection_write_count_return(&buffer, 0, (uint32_t)size);
     buffer.length = 0;
