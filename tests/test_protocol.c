@@ -10210,6 +10210,15 @@ static int test_usb_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(rdp_usb_redirection_parse_header(buffer.data, buffer.length, 1, &header) == LIBRDP_STATUS_OK);
     PCHECK(header.function_id == RDP_USB_REDIRECTION_FN_IOCONTROL_COMPLETION);
+    memset(&io_completion, 0, sizeof(io_completion));
+    PCHECK(rdp_usb_redirection_parse_io_control_completion(buffer.data,
+                                                           buffer.length,
+                                                           &io_completion) == LIBRDP_STATUS_OK);
+    PCHECK(io_completion.request_id == 1 &&
+           io_completion.hresult == 0 &&
+           io_completion.information == sizeof(payload) &&
+           io_completion.output_buffer_len == sizeof(payload) &&
+           memcmp(io_completion.output_buffer, payload, sizeof(payload)) == 0);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -10221,6 +10230,17 @@ static int test_usb_redirection_channel(void)
     urb_completion.output_buffer_len = sizeof(payload);
     PCHECK(rdp_usb_redirection_write_urb_completion(&buffer, 9, 17, &urb_completion) ==
            LIBRDP_STATUS_OK);
+    memset(&urb_completion, 0, sizeof(urb_completion));
+    PCHECK(rdp_usb_redirection_parse_urb_completion(buffer.data,
+                                                    buffer.length,
+                                                    RDP_USB_REDIRECTION_FN_URB_COMPLETION,
+                                                    &urb_completion) == LIBRDP_STATUS_OK);
+    PCHECK(urb_completion.request_id == 2 &&
+           urb_completion.cb_ts_urb_result == sizeof(payload) &&
+           urb_completion.hresult == 0 &&
+           urb_completion.output_buffer_len == sizeof(payload) &&
+           memcmp(urb_completion.ts_urb_result, payload, sizeof(payload)) == 0 &&
+           memcmp(urb_completion.output_buffer, payload, sizeof(payload)) == 0);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     urb_completion.output_buffer_len = 0;
@@ -10233,6 +10253,19 @@ static int test_usb_redirection_channel(void)
     PCHECK(header.payload_len == 24u);
     PCHECK(header.payload[4] == sizeof(urb_result));
     PCHECK(memcmp(header.payload + 8u, urb_result, sizeof(urb_result)) == 0);
+    memset(&urb_completion, 0, sizeof(urb_completion));
+    PCHECK(rdp_usb_redirection_parse_urb_completion(buffer.data,
+                                                    buffer.length,
+                                                    RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA,
+                                                    &urb_completion) == LIBRDP_STATUS_OK);
+    PCHECK(urb_completion.request_id == 2 &&
+           urb_completion.cb_ts_urb_result == sizeof(urb_result) &&
+           urb_completion.output_buffer_len == 0 &&
+           memcmp(urb_completion.ts_urb_result, urb_result, sizeof(urb_result)) == 0);
+    PCHECK(rdp_usb_redirection_parse_urb_completion(buffer.data,
+                                                    buffer.length,
+                                                    RDP_USB_REDIRECTION_FN_URB_COMPLETION,
+                                                    &urb_completion) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&buffer);

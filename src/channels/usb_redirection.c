@@ -956,6 +956,34 @@ librdp_status rdp_usb_redirection_write_io_control_completion(
     return rdp_buffer_append(buffer, completion->output_buffer, completion->output_buffer_len);
 }
 
+librdp_status rdp_usb_redirection_parse_io_control_completion(
+    const void* data,
+    size_t length,
+    rdp_usb_redirection_io_completion* completion)
+{
+    rdp_stream stream;
+    rdp_usb_redirection_header header;
+
+    if (!data || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(completion, 0, sizeof(*completion));
+    if (rdp_usb_redirection_parse_header(data, length, 1, &header) != LIBRDP_STATUS_OK ||
+        header.mask != RDP_USB_REDIRECTION_MASK_PROXY ||
+        header.function_id != RDP_USB_REDIRECTION_FN_IOCONTROL_COMPLETION ||
+        header.payload_len < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, header.payload, header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &completion->request_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->hresult) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->information) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->output_buffer_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (completion->output_buffer_len != rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &completion->output_buffer, completion->output_buffer_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_usb_redirection_write_urb_completion_common(
     rdp_buffer* buffer,
     uint32_t request_completion_interface_id,
@@ -1021,4 +1049,46 @@ librdp_status rdp_usb_redirection_write_urb_completion_no_data(
                                                            message_id,
                                                            RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA,
                                                            completion);
+}
+
+librdp_status rdp_usb_redirection_parse_urb_completion(
+    const void* data,
+    size_t length,
+    uint32_t expected_function_id,
+    rdp_usb_redirection_urb_completion* completion)
+{
+    rdp_stream stream;
+    rdp_usb_redirection_header header;
+
+    if (!data || !completion ||
+        (expected_function_id != RDP_USB_REDIRECTION_FN_URB_COMPLETION &&
+         expected_function_id != RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(completion, 0, sizeof(*completion));
+    if (rdp_usb_redirection_parse_header(data, length, 1, &header) != LIBRDP_STATUS_OK ||
+        header.mask != RDP_USB_REDIRECTION_MASK_PROXY ||
+        header.function_id != expected_function_id ||
+        header.payload_len < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, header.payload, header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &completion->request_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->cb_ts_urb_result) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (completion->cb_ts_urb_result > rdp_stream_remaining(&stream) ||
+        rdp_stream_remaining(&stream) - completion->cb_ts_urb_result < 8u ||
+        rdp_stream_read_bytes(&stream,
+                              &completion->ts_urb_result,
+                              completion->cb_ts_urb_result) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->hresult) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &completion->output_buffer_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (expected_function_id == RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA &&
+        completion->output_buffer_len != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (completion->output_buffer_len != rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream,
+                              &completion->output_buffer,
+                              completion->output_buffer_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
 }

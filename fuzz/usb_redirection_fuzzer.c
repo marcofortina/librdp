@@ -48,6 +48,15 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_usb_redirection_parse_transfer(data, size, RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST, &transfer);
     (void)rdp_usb_redirection_parse_transfer(data, size, RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST, &transfer);
     (void)rdp_usb_redirection_parse_retract_device(data, size, &retract);
+    (void)rdp_usb_redirection_parse_io_control_completion(data, size, &io_completion);
+    (void)rdp_usb_redirection_parse_urb_completion(data,
+                                                   size,
+                                                   RDP_USB_REDIRECTION_FN_URB_COMPLETION,
+                                                   &urb_completion);
+    (void)rdp_usb_redirection_parse_urb_completion(data,
+                                                   size,
+                                                   RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA,
+                                                   &urb_completion);
 
     rdp_buffer_init(&buffer);
     (void)rdp_usb_redirection_write_capability_request(&buffer,
@@ -146,6 +155,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     io_completion.output_buffer = data;
     io_completion.output_buffer_len = io_completion.information;
     (void)rdp_usb_redirection_write_io_control_completion(&buffer, 9, 10, &io_completion);
+    (void)rdp_usb_redirection_parse_io_control_completion(buffer.data, buffer.length, &io_completion);
     buffer.length = 0;
     urb_completion.request_id = 11;
     urb_completion.ts_urb_result = data;
@@ -154,9 +164,17 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     urb_completion.output_buffer = data;
     urb_completion.output_buffer_len = size < 16u ? (uint32_t)size : 16u;
     (void)rdp_usb_redirection_write_urb_completion(&buffer, 9, 12, &urb_completion);
+    (void)rdp_usb_redirection_parse_urb_completion(buffer.data,
+                                                   buffer.length,
+                                                   RDP_USB_REDIRECTION_FN_URB_COMPLETION,
+                                                   &urb_completion);
     buffer.length = 0;
     urb_completion.output_buffer_len = 0;
     (void)rdp_usb_redirection_write_urb_completion_no_data(&buffer, 9, 13, &urb_completion);
+    (void)rdp_usb_redirection_parse_urb_completion(buffer.data,
+                                                   buffer.length,
+                                                   RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA,
+                                                   &urb_completion);
     rdp_buffer_free(&buffer);
     return 0;
 }

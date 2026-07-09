@@ -327,6 +327,10 @@ librdp_status rdp_usb_redirection_write_io_control_completion(
     uint32_t request_completion_interface_id,
     uint32_t message_id,
     const rdp_usb_redirection_io_completion* completion);
+librdp_status rdp_usb_redirection_parse_io_control_completion(
+    const void* data,
+    size_t length,
+    rdp_usb_redirection_io_completion* completion);
 librdp_status rdp_usb_redirection_write_urb_completion(
     rdp_buffer* buffer,
     uint32_t request_completion_interface_id,
@@ -337,5 +341,10 @@ librdp_status rdp_usb_redirection_write_urb_completion_no_data(
     uint32_t request_completion_interface_id,
     uint32_t message_id,
     const rdp_usb_redirection_urb_completion* completion);
+librdp_status rdp_usb_redirection_parse_urb_completion(
+    const void* data,
+    size_t length,
+    uint32_t expected_function_id,
+    rdp_usb_redirection_urb_completion* completion);
 
 #endif
