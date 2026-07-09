@@ -1,5 +1,6 @@
 #include <librdp/librdp.h>
 
+#include "audio_pipewire.h"
 #include "common/trace.h"
 
 #include <X11/Xlib.h>
@@ -62,6 +63,14 @@ typedef struct x11_app
     size_t clipboard_remote_utf8_len;
     int clipboard_owns_selection;
     int clipboard_request_pending;
+    x11_pipewire_audio* audio;
+    char* audio_output_device;
+    char* audio_input_device;
+    int audio_output_requested;
+    int audio_input_requested;
+    int audio_input_active;
+    size_t audio_input_chunk;
+    uint8_t audio_input_buffer[16384];
     unsigned int pressed_count;
     x11_pressed_key pressed[256];
 } x11_app;
@@ -72,6 +81,22 @@ typedef struct x11_app
 #define X11_MAX_EVENTS_PER_TICK 128u
 #define X11_MAX_NETWORK_PUMP 64u
 #define X11_CLIPBOARD_MAX_BYTES (16u * 1024u * 1024u)
+#define X11_AUDIO_INPUT_BUFFER_BYTES 16384u
+
+static char* x11_strdup_text(const char* text)
+{
+    size_t length = 0;
+    char* copy = NULL;
+
+    if (!text)
+        return NULL;
+    length = strlen(text) + 1u;
+    copy = (char*)malloc(length);
+    if (!copy)
+        return NULL;
+    memcpy(copy, text, length);
+    return copy;
+}
 
 static uint64_t x11_trace_hash_seed(uint64_t hash, uint64_t value)
 {
@@ -1523,10 +1548,111 @@ static void trace_viewer_settings(const librdp_settings* settings)
                         librdp_settings_rail_app(settings, i));
 }
 
+static int x11_audio_configure(x11_app* app, const librdp_settings* settings)
+{
+    const char* output_device = NULL;
+    const char* input_device = NULL;
+
+    if (!app || !settings)
+        return 0;
+    app->audio_output_requested =
+        librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1 : 0;
+    app->audio_input_requested =
+        librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1 : 0;
+    if (!app->audio_output_requested && !app->audio_input_requested)
+        return 1;
+
+    output_device = librdp_settings_audio_output_device(settings);
+    input_device = librdp_settings_audio_input_device(settings);
+    if (app->audio_output_requested)
+    {
+        app->audio_output_device = x11_strdup_text(output_device ? output_device : "pipewire");
+        if (!app->audio_output_device)
+            return 0;
+    }
+    if (app->audio_input_requested)
+    {
+        app->audio_input_device = x11_strdup_text(input_device ? input_device : "pipewire");
+        if (!app->audio_input_device)
+            return 0;
+    }
+    app->audio = x11_pipewire_audio_new();
+    if (!app->audio)
+        return 0;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.audio.configured",
+                    "output=%u input=%u backend=pipewire",
+                    app->audio_output_requested ? 1u : 0u,
+                    app->audio_input_requested ? 1u : 0u);
+    return 1;
+}
+
+static void x11_audio_free(x11_app* app)
+{
+    if (!app)
+        return;
+    x11_pipewire_audio_free(app->audio);
+    app->audio = NULL;
+    free(app->audio_output_device);
+    app->audio_output_device = NULL;
+    free(app->audio_input_device);
+    app->audio_input_device = NULL;
+    app->audio_input_active = 0;
+}
+
+static size_t x11_audio_input_chunk_size(const librdp_audio_input_open_event* open)
+{
+    size_t chunk = 0;
+
+    if (!open || open->format.block_align == 0)
+        return 0;
+    chunk = (size_t)open->frames_per_packet * open->format.block_align;
+    if (chunk == 0)
+        chunk = open->format.block_align;
+    if (chunk > X11_AUDIO_INPUT_BUFFER_BYTES)
+    {
+        chunk = X11_AUDIO_INPUT_BUFFER_BYTES - (X11_AUDIO_INPUT_BUFFER_BYTES % open->format.block_align);
+        if (chunk == 0)
+            chunk = open->format.block_align;
+    }
+    return chunk;
+}
+
+static void x11_audio_input_pump(x11_app* app)
+{
+    size_t bytes = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!app || !app->audio_input_active || !app->audio || !app->session || app->audio_input_chunk == 0)
+        return;
+    bytes = x11_pipewire_audio_read_input(app->audio,
+                                          app->audio_input_buffer,
+                                          app->audio_input_chunk);
+    if (bytes == 0)
+        return;
+    status = librdp_session_audio_input_send_data(app->session, app->audio_input_buffer, bytes);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.audio.input.send.failed",
+                        "status=%s bytes=%u",
+                        librdp_status_string(status),
+                        (unsigned)bytes);
+        app->audio_input_active = 0;
+    }
+    else
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "x11.audio.input.send",
+                              "bytes=%u",
+                              (unsigned)bytes);
+    }
+}
+
 static void app_event(librdp_session* session, const librdp_event* event, void* user_data)
 {
     x11_app* app = (x11_app*)user_data;
-    (void)session;
 
     if (!app || !event)
         return;
@@ -1592,6 +1718,78 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                     x11_clipboard_set_remote_data(app, utf8, utf8_len);
                 free(utf8);
             }
+            break;
+        }
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+        {
+            if (app->audio_output_requested && app->audio && event->data.audio_output_formats.count > 0)
+            {
+                const librdp_audio_format* format = &event->data.audio_output_formats.formats[0];
+
+                (void)x11_pipewire_audio_start_output(app->audio, format, app->audio_output_device);
+            }
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.audio.output.formats",
+                            "count=%u version=%u requested=%u",
+                            event->data.audio_output_formats.count,
+                            event->data.audio_output_formats.version,
+                            app->audio_output_requested ? 1u : 0u);
+            break;
+        }
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+        {
+            if (app->audio_output_requested && app->audio)
+                (void)x11_pipewire_audio_write_output(app->audio,
+                                                      event->data.audio_output_data.data,
+                                                      event->data.audio_output_data.data_len);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_TRACE,
+                                  "x11.audio.output.data",
+                                  "bytes=%u format=%u block=%u requested=%u",
+                                  (unsigned)event->data.audio_output_data.data_len,
+                                  event->data.audio_output_data.format_no,
+                                  event->data.audio_output_data.block_no,
+                                  app->audio_output_requested ? 1u : 0u);
+            break;
+        }
+        case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
+            if (app->audio)
+                x11_pipewire_audio_stop_output(app->audio);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.audio.output.close",
+                            "requested=%u",
+                            app->audio_output_requested ? 1u : 0u);
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.audio.input.formats",
+                            "count=%u version=%u requested=%u",
+                            event->data.audio_input_formats.count,
+                            event->data.audio_input_formats.version,
+                            app->audio_input_requested ? 1u : 0u);
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+        {
+            int ok = 0;
+
+            app->audio_input_active = 0;
+            app->audio_input_chunk = x11_audio_input_chunk_size(&event->data.audio_input_open);
+            if (app->audio_input_requested && app->audio && app->audio_input_chunk > 0)
+                ok = x11_pipewire_audio_start_input(app->audio,
+                                                    &event->data.audio_input_open.format,
+                                                    app->audio_input_device);
+            (void)librdp_session_audio_input_open_reply(session,
+                                                        ok ? LIBRDP_AUDIO_INPUT_RESULT_OK :
+                                                             LIBRDP_AUDIO_INPUT_RESULT_FAIL);
+            app->audio_input_active = ok ? 1 : 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.audio.input.open",
+                            "ok=%u requested=%u frames=%u chunk=%u initial_format=%u",
+                            ok ? 1u : 0u,
+                            app->audio_input_requested ? 1u : 0u,
+                            event->data.audio_input_open.frames_per_packet,
+                            (unsigned)app->audio_input_chunk,
+                            event->data.audio_input_open.initial_format);
             break;
         }
         case LIBRDP_EVENT_ERROR:
@@ -2105,10 +2303,29 @@ int main(int argc, char** argv)
     XMapWindow(app.display, app.window);
 
     trace_viewer_settings(settings);
+    if (!x11_audio_configure(&app, settings))
+    {
+        fprintf(stderr, "error=pipewire_audio_config\n");
+        librdp_settings_free(settings);
+        x11_audio_free(&app);
+        if (app.xkb)
+            XkbFreeKeyboard(app.xkb, 0, True);
+        if (app.ic)
+            XDestroyIC(app.ic);
+        if (app.im)
+            XCloseIM(app.im);
+        x11_clipboard_free(&app);
+        clear_viewer_cursor(&app);
+        XFreeGC(app.display, app.gc);
+        XDestroyWindow(app.display, app.window);
+        XCloseDisplay(app.display);
+        return 1;
+    }
     app.session = librdp_session_new(settings);
     librdp_settings_free(settings);
     if (!app.session)
     {
+        x11_audio_free(&app);
         if (app.xkb)
             XkbFreeKeyboard(app.xkb, 0, True);
         if (app.ic)
@@ -2129,6 +2346,7 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "error=%s\n", librdp_status_string(status));
         librdp_session_free(app.session);
+        x11_audio_free(&app);
         if (app.xkb)
             XkbFreeKeyboard(app.xkb, 0, True);
         if (app.ic)
@@ -2281,6 +2499,7 @@ int main(int argc, char** argv)
         if (!app.running)
             break;
         run_session_pump(&app);
+        x11_audio_input_pump(&app);
         if (app.running && app.dirty)
             draw_surface(&app);
     }
@@ -2289,6 +2508,7 @@ int main(int argc, char** argv)
     ungrab_keyboard(&app, CurrentTime, 1);
     (void)librdp_session_disconnect(app.session);
     librdp_session_free(app.session);
+    x11_audio_free(&app);
     if (app.xkb)
         XkbFreeKeyboard(app.xkb, 0, True);
     if (app.ic)

@@ -179,9 +179,15 @@ endif()
 if(LIBRDP_BUILD_X11_VIEWER)
     find_package(X11 REQUIRED COMPONENTS Xcursor Xfixes)
     find_package(PkgConfig REQUIRED)
+    find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
-    add_executable(librdp-x11-viewer apps/x11-viewer/main.c)
+    pkg_check_modules(LIBRDP_PIPEWIRE QUIET IMPORTED_TARGET libpipewire-0.3)
+    add_executable(librdp-x11-viewer
+        apps/x11-viewer/audio_pipewire.c
+        apps/x11-viewer/main.c
+    )
     target_include_directories(librdp-x11-viewer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
@@ -192,5 +198,10 @@ if(LIBRDP_BUILD_X11_VIEWER)
         X11::Xcursor
         X11::Xfixes
         ${XKBCOMMON_LIBRARIES}
+        Threads::Threads
     )
+    if(LIBRDP_PIPEWIRE_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
+        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)
+    endif()
 endif()
