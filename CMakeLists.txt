@@ -201,6 +201,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
     pkg_check_modules(LIBRDP_VIEWER_PCSC QUIET IMPORTED_TARGET libpcsclite)
     add_executable(librdp-x11-viewer
         apps/x11-viewer/audio_pipewire.c
+        apps/x11-viewer/camera_v4l2.c
         apps/x11-viewer/device_backends.c
         apps/x11-viewer/main.c
     )

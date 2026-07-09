@@ -1,6 +1,7 @@
 #include <librdp/librdp.h>
 
 #include "audio_pipewire.h"
+#include "camera_v4l2.h"
 #include "common/trace.h"
 #include "device_backends.h"
 
@@ -67,8 +68,10 @@ typedef struct x11_app
     int clipboard_owns_selection;
     int clipboard_request_pending;
     x11_pipewire_audio* audio;
+    x11_camera_capture* camera;
     char* audio_output_device;
     char* audio_input_device;
+    char* camera_source;
     char* echo_payload;
     FILE* video_output_file;
     int audio_output_requested;
@@ -77,6 +80,7 @@ typedef struct x11_app
     int telemetry_requested;
     int video_requested;
     int audio_input_active;
+    int camera_requested;
     size_t audio_input_chunk;
     uint8_t audio_input_buffer[16384];
     unsigned int pressed_count;
@@ -1633,12 +1637,17 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
 {
     const char* echo_payload = NULL;
     const char* video_path = NULL;
+    const char* camera_source = NULL;
 
     if (!app || !settings)
         return 0;
     app->echo_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1 : 0;
     app->telemetry_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1 : 0;
     app->video_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1 : 0;
+    app->camera_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA) &&
+                                    librdp_settings_camera_count(settings) > 0 ?
+                                1 :
+                                0;
     if (app->echo_requested)
     {
         echo_payload = librdp_settings_echo_payload(settings);
@@ -1667,13 +1676,24 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
                             video_path);
         }
     }
+    if (app->camera_requested)
+    {
+        camera_source = librdp_settings_camera_source(settings, 0);
+        app->camera_source = x11_strdup_text(camera_source);
+        if (!app->camera_source)
+            return 0;
+        app->camera = x11_camera_capture_new();
+        if (!app->camera)
+            return 0;
+    }
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.runtime.features",
-                    "echo=%u telemetry=%u video=%u video_file=%u",
+                    "echo=%u telemetry=%u video=%u video_file=%u camera=%u",
                     app->echo_requested ? 1u : 0u,
                     app->telemetry_requested ? 1u : 0u,
                     app->video_requested ? 1u : 0u,
-                    app->video_output_file ? 1u : 0u);
+                    app->video_output_file ? 1u : 0u,
+                    app->camera_requested ? 1u : 0u);
     return 1;
 }
 
@@ -1686,6 +1706,11 @@ static void x11_runtime_features_free(x11_app* app)
     if (app->video_output_file)
         fclose(app->video_output_file);
     app->video_output_file = NULL;
+    x11_camera_capture_free(app->camera);
+    app->camera = NULL;
+    free(app->camera_source);
+    app->camera_source = NULL;
+    app->camera_requested = 0;
 }
 
 static size_t x11_audio_input_chunk_size(const librdp_audio_input_open_event* open)
@@ -1996,6 +2021,65 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                             event->data.audio_input_open.initial_format);
             break;
         }
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+        {
+            int ok = 0;
+
+            if (app->camera_requested && app->camera && app->camera_source)
+                ok = x11_camera_capture_start(app->camera,
+                                              app->camera_source,
+                                              &event->data.video_capture_open.media);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.camera.open",
+                            "ok=%u requested=%u stream=%u format=%u width=%u height=%u",
+                            ok ? 1u : 0u,
+                            app->camera_requested ? 1u : 0u,
+                            event->data.video_capture_open.stream_index,
+                            event->data.video_capture_open.media.format,
+                            event->data.video_capture_open.media.width,
+                            event->data.video_capture_open.media.height);
+            break;
+        }
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+        {
+            uint8_t* sample = NULL;
+            size_t sample_len = 0;
+            int sample_result = 0;
+            librdp_status status = LIBRDP_STATUS_OK;
+
+            if (app->camera_requested && app->camera)
+                sample_result = x11_camera_capture_read_sample(app->camera, &sample, &sample_len);
+            if (sample_result == 1)
+                status = librdp_session_video_capture_send_sample(
+                    session,
+                    event->data.video_capture_sample_request.stream_index,
+                    sample,
+                    sample_len);
+            else
+                status = librdp_session_video_capture_send_error(
+                    session,
+                    event->data.video_capture_sample_request.stream_index,
+                    sample_result == 0 ? LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
+                                         LIBRDP_VIDEO_CAPTURE_ERROR_UNEXPECTED);
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "x11.camera.sample.reply",
+                                  "status=%s result=%d stream=%u bytes=%u",
+                                  librdp_status_string(status),
+                                  sample_result,
+                                  event->data.video_capture_sample_request.stream_index,
+                                  (unsigned)sample_len);
+            free(sample);
+            break;
+        }
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            if (app->camera)
+                x11_camera_capture_stop(app->camera);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.camera.close",
+                            "stream=%u",
+                            event->data.video_capture_close.stream_index);
+            break;
         case LIBRDP_EVENT_CHANNEL_OPEN:
             x11_handle_channel_open(app, session, &event->data.channel_open);
             break;

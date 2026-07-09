@@ -12543,6 +12543,11 @@ static void rdp_session_video_capture_media_from_source(const char* source,
     media->pixel_aspect_ratio_numerator = 1;
     media->pixel_aspect_ratio_denominator = 1;
     media->flags = 0;
+    if (source && strncmp(source, "/dev/video", 10u) == 0)
+    {
+        media->format = RDP_VIDEO_CAPTURE_MEDIA_MJPG;
+        media->flags = RDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED;
+    }
     if (!source || !ext)
         return;
     if (strcasecmp(ext, ".h264") == 0 || strcasecmp(ext, ".avc") == 0)
