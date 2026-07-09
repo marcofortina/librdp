@@ -514,6 +514,21 @@ static librdp_status rdp_graphics_stream_read_u64_le(rdp_stream* stream, uint64_
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_graphics_write_u64_le(rdp_buffer* buffer, uint64_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_buffer_append_u32_le(buffer, (uint32_t)(value & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)((value >> 32) & 0xffffffffu));
+    return status;
+}
+
+static int rdp_graphics_rect16_valid(const rdp_graphics_rect16* rect)
+{
+    return rect && rect->right >= rect->left && rect->bottom >= rect->top;
+}
+
 librdp_status rdp_graphics_parse_create_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_create_surface* create_surface)
@@ -757,6 +772,18 @@ librdp_status rdp_graphics_parse_point16(const void* data, size_t length, rdp_gr
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_write_point16(rdp_buffer* buffer, const rdp_graphics_point16* point)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !point)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, point->x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, point->y);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_graphics_rect16* rect)
 {
     rdp_stream stream;
@@ -776,6 +803,22 @@ librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_gra
     if (rect->right < rect->left || rect->bottom < rect->top)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_rect16(rdp_buffer* buffer, const rdp_graphics_rect16* rect)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_graphics_rect16_valid(rect))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, rect->left);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, rect->top);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, rect->right);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, rect->bottom);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_solid_fill(const void* data,
@@ -807,6 +850,31 @@ librdp_status rdp_graphics_parse_solid_fill(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     solid_fill->rects_len = (size_t)solid_fill->rect_count * 8u;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_solid_fill(rdp_buffer* buffer,
+                                            uint16_t surface_id,
+                                            uint32_t fill_pixel,
+                                            const rdp_graphics_rect16* rects,
+                                            uint16_t rect_count)
+{
+    uint16_t i = 0;
+    uint32_t pdu_length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!rects && rect_count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pdu_length = 16u + (uint32_t)rect_count * 8u;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_SOLIDFILL, pdu_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, fill_pixel);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, rect_count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < rect_count; i++)
+        status = rdp_graphics_write_rect16(buffer, &rects[i]);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_wire_to_surface_1(const void* data,
@@ -844,6 +912,39 @@ librdp_status rdp_graphics_parse_wire_to_surface_1(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_write_wire_to_surface_1(rdp_buffer* buffer,
+                                                   uint16_t surface_id,
+                                                   uint16_t codec_id,
+                                                   uint8_t pixel_format,
+                                                   const rdp_graphics_rect16* dest_rect,
+                                                   const void* bitmap_data,
+                                                   uint32_t bitmap_data_length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_graphics_pixel_format_supported(pixel_format) ||
+        !rdp_graphics_rect16_valid(dest_rect) || (!bitmap_data && bitmap_data_length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (bitmap_data_length > UINT32_MAX - 25u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer,
+                                       RDP_GRAPHICS_CMDID_WIRE_TO_SURFACE_1,
+                                       25u + bitmap_data_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, codec_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, pixel_format);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_rect16(buffer, dest_rect);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, bitmap_data_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, bitmap_data, bitmap_data_length);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_wire_to_surface_2(const void* data,
                                                    size_t length,
                                                    rdp_graphics_wire_to_surface_2* wire)
@@ -875,6 +976,39 @@ librdp_status rdp_graphics_parse_wire_to_surface_2(const void* data,
     if (rdp_stream_read_bytes(&stream, &wire->bitmap_data, wire->bitmap_data_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_wire_to_surface_2(rdp_buffer* buffer,
+                                                   uint16_t surface_id,
+                                                   uint16_t codec_id,
+                                                   uint32_t codec_context_id,
+                                                   uint8_t pixel_format,
+                                                   const void* bitmap_data,
+                                                   uint32_t bitmap_data_length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_graphics_pixel_format_supported(pixel_format) ||
+        (!bitmap_data && bitmap_data_length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (bitmap_data_length > UINT32_MAX - 21u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer,
+                                       RDP_GRAPHICS_CMDID_WIRE_TO_SURFACE_2,
+                                       21u + bitmap_data_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, codec_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, codec_context_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, pixel_format);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, bitmap_data_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, bitmap_data, bitmap_data_length);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_surface_to_surface(const void* data,
@@ -913,6 +1047,34 @@ librdp_status rdp_graphics_parse_surface_to_surface(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_write_surface_to_surface(rdp_buffer* buffer,
+                                                    uint16_t surface_id_src,
+                                                    uint16_t surface_id_dest,
+                                                    const rdp_graphics_rect16* rect_src,
+                                                    const rdp_graphics_point16* dest_points,
+                                                    uint16_t dest_points_count)
+{
+    uint16_t i = 0;
+    uint32_t pdu_length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_graphics_rect16_valid(rect_src) || (!dest_points && dest_points_count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pdu_length = 22u + (uint32_t)dest_points_count * 4u;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_SURFACE_TO_SURFACE, pdu_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id_src);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id_dest);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_rect16(buffer, rect_src);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, dest_points_count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < dest_points_count; i++)
+        status = rdp_graphics_write_point16(buffer, &dest_points[i]);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_surface_to_cache(const void* data,
                                                   size_t length,
                                                   rdp_graphics_surface_to_cache* surface_to_cache)
@@ -936,6 +1098,28 @@ librdp_status rdp_graphics_parse_surface_to_cache(const void* data,
         rdp_graphics_parse_rect16(rect, 8, &surface_to_cache->rect_src) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_surface_to_cache(rdp_buffer* buffer,
+                                                  uint16_t surface_id,
+                                                  uint64_t cache_key,
+                                                  uint16_t cache_slot,
+                                                  const rdp_graphics_rect16* rect_src)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_graphics_rect16_valid(rect_src))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_SURFACE_TO_CACHE, 28);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_u64_le(buffer, cache_key);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, cache_slot);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_rect16(buffer, rect_src);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_cache_to_surface(const void* data,
@@ -971,6 +1155,31 @@ librdp_status rdp_graphics_parse_cache_to_surface(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_write_cache_to_surface(rdp_buffer* buffer,
+                                                  uint16_t cache_slot,
+                                                  uint16_t surface_id,
+                                                  const rdp_graphics_point16* dest_points,
+                                                  uint16_t dest_points_count)
+{
+    uint16_t i = 0;
+    uint32_t pdu_length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!dest_points && dest_points_count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pdu_length = 14u + (uint32_t)dest_points_count * 4u;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_CACHE_TO_SURFACE, pdu_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, cache_slot);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, dest_points_count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < dest_points_count; i++)
+        status = rdp_graphics_write_point16(buffer, &dest_points[i]);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_evict_cache_entry(const void* data,
                                                    size_t length,
                                                    rdp_graphics_evict_cache_entry* evict)
@@ -989,6 +1198,18 @@ librdp_status rdp_graphics_parse_evict_cache_entry(const void* data,
         rdp_stream_read_u16_le(&stream, &evict->cache_slot) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_evict_cache_entry(rdp_buffer* buffer, uint16_t cache_slot)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_EVICT_CACHE_ENTRY, 10);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, cache_slot);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_delete_encoding_context(const void* data,
@@ -1010,6 +1231,22 @@ librdp_status rdp_graphics_parse_delete_encoding_context(const void* data,
         rdp_stream_read_u32_le(&stream, &context->codec_context_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_delete_encoding_context(rdp_buffer* buffer,
+                                                         uint16_t surface_id,
+                                                         uint32_t codec_context_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_DELETE_ENCODING_CONTEXT, 14);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, surface_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, codec_context_id);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_start_frame(const void* data,

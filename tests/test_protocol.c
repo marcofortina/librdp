@@ -1841,6 +1841,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_start_frame graphics_start;
     rdp_graphics_end_frame graphics_end;
     rdp_graphics_frame_ack graphics_ack;
+    rdp_graphics_point16 graphics_points[2];
     rdp_graphics_decompressor graphics_decompressor;
     rdp_graphics_progressive_block graphics_progressive_block;
     rdp_graphics_progressive_context graphics_progressive_context;
@@ -4362,6 +4363,23 @@ static int test_path_security_license_channels(void)
            graphics_rect.top == 2 &&
            graphics_rect.right == 5 &&
            graphics_rect.bottom == 6);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_rect16(&dyn_response, &graphics_rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_rect16(dyn_response.data, dyn_response.length, &graphics_rect) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_rect.right == 5 && graphics_rect.bottom == 6);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_solid_fill(&dyn_response,
+                                         graphics_solid.surface_id,
+                                         graphics_solid.fill_pixel,
+                                         &graphics_rect,
+                                         1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_solid_fill(dyn_response.data,
+                                         dyn_response.length,
+                                         &graphics_solid) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_solid.rect_count == 1 && graphics_solid.fill_pixel == 0xff332211u);
     PCHECK(rdp_graphics_parse_solid_fill(graphics_solid_fill,
                                          sizeof(graphics_solid_fill) - 1u,
                                          &graphics_solid) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -4378,6 +4396,19 @@ static int test_path_security_license_channels(void)
            graphics_wire1.dest_rect.bottom == 4 &&
            graphics_wire1.bitmap_data_length == 16 &&
            graphics_wire1.bitmap_data[15] == 16);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_wire_to_surface_1(&dyn_response,
+                                                graphics_wire1.surface_id,
+                                                graphics_wire1.codec_id,
+                                                graphics_wire1.pixel_format,
+                                                &graphics_wire1.dest_rect,
+                                                graphics_wire1.bitmap_data,
+                                                graphics_wire1.bitmap_data_length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_wire_to_surface_1(dyn_response.data,
+                                                dyn_response.length,
+                                                &graphics_wire1) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_wire1.bitmap_data_length == 16 && graphics_wire1.bitmap_data[0] == 1);
     PCHECK(rdp_graphics_parse_wire_to_surface_1(graphics_wire_to_surface_1,
                                                 sizeof(graphics_wire_to_surface_1) - 1u,
                                                 &graphics_wire1) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -4390,6 +4421,19 @@ static int test_path_security_license_channels(void)
            graphics_wire2.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888 &&
            graphics_wire2.bitmap_data_length == 3 &&
            graphics_wire2.bitmap_data[2] == 0xcc);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_wire_to_surface_2(&dyn_response,
+                                                graphics_wire2.surface_id,
+                                                graphics_wire2.codec_id,
+                                                graphics_wire2.codec_context_id,
+                                                graphics_wire2.pixel_format,
+                                                graphics_wire2.bitmap_data,
+                                                graphics_wire2.bitmap_data_length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_wire_to_surface_2(dyn_response.data,
+                                                dyn_response.length,
+                                                &graphics_wire2) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_wire2.codec_context_id == 0x11223344u && graphics_wire2.bitmap_data[2] == 0xcc);
     PCHECK(rdp_graphics_parse_avc420_metablock(graphics_avc420_stream,
                                                sizeof(graphics_avc420_stream) - 4u,
                                                &graphics_avc_meta) == LIBRDP_STATUS_OK);
@@ -4560,6 +4604,29 @@ static int test_path_security_license_channels(void)
                                       graphics_surface_copy.dest_points_len,
                                       &graphics_point) == LIBRDP_STATUS_OK);
     PCHECK(graphics_point.x == 7 && graphics_point.y == 8);
+    graphics_points[0] = graphics_point;
+    PCHECK(rdp_graphics_parse_point16(graphics_surface_copy.dest_points + 4,
+                                      graphics_surface_copy.dest_points_len - 4u,
+                                      &graphics_points[1]) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_point16(&dyn_response, &graphics_points[0]) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_point16(dyn_response.data, dyn_response.length, &graphics_point) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_point.x == 7 && graphics_point.y == 8);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_surface_to_surface(&dyn_response,
+                                                 graphics_surface_copy.surface_id_src,
+                                                 graphics_surface_copy.surface_id_dest,
+                                                 &graphics_surface_copy.rect_src,
+                                                 graphics_points,
+                                                 2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_surface_to_surface(dyn_response.data,
+                                                 dyn_response.length,
+                                                 &graphics_surface_copy) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_surface_copy.dest_points_count == 2 &&
+           graphics_surface_copy.rect_src.right == 5);
     PCHECK(rdp_graphics_parse_surface_to_cache(graphics_surface_to_cache,
                                                sizeof(graphics_surface_to_cache),
                                                &graphics_surface_cache) == LIBRDP_STATUS_OK);
@@ -4567,6 +4634,17 @@ static int test_path_security_license_channels(void)
            graphics_surface_cache.cache_key == 0x0102030405060708ull &&
            graphics_surface_cache.cache_slot == 0x42 &&
            graphics_surface_cache.rect_src.left == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_surface_to_cache(&dyn_response,
+                                               graphics_surface_cache.surface_id,
+                                               graphics_surface_cache.cache_key,
+                                               graphics_surface_cache.cache_slot,
+                                               &graphics_surface_cache.rect_src) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_surface_to_cache(dyn_response.data,
+                                               dyn_response.length,
+                                               &graphics_surface_cache) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_surface_cache.cache_key == 0x0102030405060708ull);
     PCHECK(rdp_graphics_parse_cache_to_surface(graphics_cache_to_surface,
                                                sizeof(graphics_cache_to_surface),
                                                &graphics_cache_surface) == LIBRDP_STATUS_OK);
@@ -4574,6 +4652,23 @@ static int test_path_security_license_channels(void)
            graphics_cache_surface.surface_id == 0x1234 &&
            graphics_cache_surface.dest_points_count == 2 &&
            graphics_cache_surface.dest_points_len == 8);
+    PCHECK(rdp_graphics_parse_point16(graphics_cache_surface.dest_points,
+                                      graphics_cache_surface.dest_points_len,
+                                      &graphics_points[0]) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_point16(graphics_cache_surface.dest_points + 4,
+                                      graphics_cache_surface.dest_points_len - 4u,
+                                      &graphics_points[1]) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_cache_to_surface(&dyn_response,
+                                               graphics_cache_surface.cache_slot,
+                                               graphics_cache_surface.surface_id,
+                                               graphics_points,
+                                               2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_cache_to_surface(dyn_response.data,
+                                               dyn_response.length,
+                                               &graphics_cache_surface) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_cache_surface.dest_points_count == 2);
     PCHECK(rdp_graphics_parse_cache_to_surface(graphics_cache_to_surface,
                                                sizeof(graphics_cache_to_surface) - 1u,
                                                &graphics_cache_surface) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -4581,11 +4676,29 @@ static int test_path_security_license_channels(void)
                                                 sizeof(graphics_evict_cache),
                                                 &graphics_evict) == LIBRDP_STATUS_OK);
     PCHECK(graphics_evict.cache_slot == 0x42);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_evict_cache_entry(&dyn_response, graphics_evict.cache_slot) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_evict_cache_entry(dyn_response.data,
+                                                dyn_response.length,
+                                                &graphics_evict) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_evict.cache_slot == 0x42);
     PCHECK(rdp_graphics_parse_delete_encoding_context(graphics_delete_context_pdu,
                                                       sizeof(graphics_delete_context_pdu),
                                                       &graphics_delete_context) == LIBRDP_STATUS_OK);
     PCHECK(graphics_delete_context.surface_id == 0x1234 &&
            graphics_delete_context.codec_context_id == 0x11223344u);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_delete_encoding_context(&dyn_response,
+                                                      graphics_delete_context.surface_id,
+                                                      graphics_delete_context.codec_context_id) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_parse_delete_encoding_context(dyn_response.data,
+                                                      dyn_response.length,
+                                                      &graphics_delete_context) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_delete_context.codec_context_id == 0x11223344u);
     PCHECK(rdp_graphics_parse_start_frame(graphics_start_frame,
                                           sizeof(graphics_start_frame),
                                           &graphics_start) == LIBRDP_STATUS_OK);

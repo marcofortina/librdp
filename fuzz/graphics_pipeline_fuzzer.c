@@ -39,6 +39,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_avc420_metablock avc_meta;
     rdp_graphics_avc420_stream avc420;
     rdp_graphics_avc444_stream avc444;
+    rdp_graphics_rect16 valid_rect = {0, 0, 16, 16};
+    rdp_graphics_point16 valid_points[2] = {{0, 0}, {16, 16}};
     rdp_buffer output;
 
     rdp_graphics_decompressor_init(&decompressor);
@@ -90,6 +92,38 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_write_map_surface_to_output(&output, 1, 0, 0);
     output.length = 0;
     (void)rdp_graphics_write_map_surface_to_scaled_output(&output, 1, 0, 0, 64, 64);
+    output.length = 0;
+    (void)rdp_graphics_write_point16(&output, &valid_points[0]);
+    output.length = 0;
+    (void)rdp_graphics_write_rect16(&output, &valid_rect);
+    output.length = 0;
+    (void)rdp_graphics_write_solid_fill(&output, 1, 0xff000000u, &valid_rect, 1);
+    output.length = 0;
+    (void)rdp_graphics_write_wire_to_surface_1(&output,
+                                               1,
+                                               RDP_GRAPHICS_CODECID_UNCOMPRESSED,
+                                               RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+                                               &valid_rect,
+                                               data,
+                                               (uint32_t)(size < 64u ? size : 64u));
+    output.length = 0;
+    (void)rdp_graphics_write_wire_to_surface_2(&output,
+                                               1,
+                                               RDP_GRAPHICS_CODECID_CAPROGRESSIVE,
+                                               0,
+                                               RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888,
+                                               data,
+                                               (uint32_t)(size < 64u ? size : 64u));
+    output.length = 0;
+    (void)rdp_graphics_write_surface_to_surface(&output, 1, 2, &valid_rect, valid_points, 2);
+    output.length = 0;
+    (void)rdp_graphics_write_surface_to_cache(&output, 1, 1, 1, &valid_rect);
+    output.length = 0;
+    (void)rdp_graphics_write_cache_to_surface(&output, 1, 1, valid_points, 2);
+    output.length = 0;
+    (void)rdp_graphics_write_evict_cache_entry(&output, 1);
+    output.length = 0;
+    (void)rdp_graphics_write_delete_encoding_context(&output, 1, 1);
     output.length = 0;
     (void)rdp_graphics_write_start_frame(&output, 1, 1);
     output.length = 0;
