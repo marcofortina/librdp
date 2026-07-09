@@ -157,25 +157,35 @@ librdp_status rdp_udp_write_fec_header(rdp_buffer* buffer, const rdp_udp_fec_hea
 librdp_status rdp_udp_parse_fec_payload_header(const void* data,
                                                size_t length,
                                                rdp_udp_fec_payload_header* header);
+librdp_status rdp_udp_write_fec_payload_header(rdp_buffer* buffer,
+                                               const rdp_udp_fec_payload_header* header);
 librdp_status rdp_udp_parse_payload_prefix(const void* data, size_t length, rdp_udp_payload_prefix* prefix);
+librdp_status rdp_udp_write_payload_prefix(rdp_buffer* buffer, uint16_t payload_size);
 librdp_status rdp_udp_parse_source_payload_header(const void* data,
                                                   size_t length,
                                                   rdp_udp_source_payload_header* header);
+librdp_status rdp_udp_write_source_payload_header(rdp_buffer* buffer,
+                                                  const rdp_udp_source_payload_header* header);
 librdp_status rdp_udp_parse_syn_data(const void* data, size_t length, rdp_udp_syn_data* syn);
 librdp_status rdp_udp_write_syn_data(rdp_buffer* buffer, const rdp_udp_syn_data* syn);
 librdp_status rdp_udp_parse_ack_of_ack_vector(const void* data,
                                               size_t length,
                                               rdp_udp_ack_of_ack_vector* ack);
+librdp_status rdp_udp_write_ack_of_ack_vector(rdp_buffer* buffer,
+                                              const rdp_udp_ack_of_ack_vector* ack);
 librdp_status rdp_udp_parse_ack_vector(const void* data, size_t length, rdp_udp_ack_vector* ack_vector);
+librdp_status rdp_udp_write_ack_vector(rdp_buffer* buffer, const uint8_t* vector, uint16_t vector_size);
 librdp_status rdp_udp_parse_correlation_id(const void* data,
                                            size_t length,
                                            rdp_udp_correlation_id* correlation);
+librdp_status rdp_udp_write_correlation_id(rdp_buffer* buffer, const uint8_t correlation_id[16]);
 librdp_status rdp_udp_parse_syn_data_ex(const void* data, size_t length, rdp_udp_syn_data_ex* syn_ex);
 librdp_status rdp_udp_write_syn_data_ex(rdp_buffer* buffer, const rdp_udp_syn_data_ex* syn_ex);
 
 librdp_status rdp_udp2_parse_header(const void* data, size_t length, rdp_udp2_header* header);
 librdp_status rdp_udp2_write_header(rdp_buffer* buffer, const rdp_udp2_header* header);
 librdp_status rdp_udp2_parse_packet(const void* data, size_t length, rdp_udp2_packet* packet);
+librdp_status rdp_udp2_write_packet(rdp_buffer* buffer, const rdp_udp2_packet* packet);
 librdp_status rdp_udp2_write_data_packet(rdp_buffer* buffer,
                                          uint8_t log_window_size,
                                          uint16_t data_sequence_number,
@@ -189,6 +199,14 @@ librdp_status rdp_udp2_write_ack_packet(rdp_buffer* buffer,
                                         const uint8_t* delayed_ack_time_additions,
                                         uint8_t delayed_ack_count,
                                         uint8_t delayed_ack_time_scale);
+librdp_status rdp_udp2_write_ack_vector_packet(rdp_buffer* buffer,
+                                               uint8_t log_window_size,
+                                               uint16_t base_sequence_number,
+                                               uint8_t timestamp_present,
+                                               uint32_t timestamp,
+                                               uint8_t send_ack_time_gap_ms,
+                                               const uint8_t* coded_ack_vector,
+                                               uint8_t coded_ack_vector_size);
 librdp_status rdp_udp2_parse_prefix(uint8_t value, rdp_udp2_prefix* prefix);
 librdp_status rdp_udp2_wrap_packet(rdp_buffer* output,
                                    const void* packet,

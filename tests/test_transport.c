@@ -120,6 +120,7 @@ static int test_udp_transport_protocols(void)
     rdp_udp2_packet udp2_packet;
     rdp_udp2_prefix udp2_prefix;
     uint8_t cookie_hash[32];
+    uint8_t correlation_id[16];
     uint8_t ack_vec_bytes[16];
     size_t i = 0;
 
@@ -128,6 +129,8 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_init(&unwrapped);
     memset(cookie_hash, 0x5a, sizeof(cookie_hash));
     memset(ack_vec_bytes, 0, sizeof(ack_vec_bytes));
+    for (i = 0; i < sizeof(correlation_id); i++)
+        correlation_id[i] = (uint8_t)(i + 1u);
 
     fec_header.source_ack = 0x11223344u;
     fec_header.receive_window_size = 64;
@@ -141,25 +144,27 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u32_le(&buffer, 1) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u32_le(&buffer, 2) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 4) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u16_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    fec_payload.coded_sequence = 1;
+    fec_payload.source_start = 2;
+    fec_payload.range = 3;
+    fec_payload.fec_index = 4;
+    fec_payload.padding = 0;
+    TCHECK(rdp_udp_write_fec_payload_header(&buffer, &fec_payload) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_fec_payload_header(buffer.data, buffer.length, &fec_payload) ==
            LIBRDP_STATUS_OK);
     TCHECK(fec_payload.coded_sequence == 1 && fec_payload.source_start == 2);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u16_le(&buffer, sizeof(payload)) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_udp_write_payload_prefix(&buffer, sizeof(payload)) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_payload_prefix(buffer.data, buffer.length, &payload_prefix) == LIBRDP_STATUS_OK);
     TCHECK(payload_prefix.payload_size == sizeof(payload));
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u32_le(&buffer, 5) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u32_le(&buffer, 6) == LIBRDP_STATUS_OK);
+    source_header.coded_sequence = 5;
+    source_header.source_start = 6;
+    TCHECK(rdp_udp_write_source_payload_header(&buffer, &source_header) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_source_payload_header(buffer.data, buffer.length, &source_header) ==
            LIBRDP_STATUS_OK);
     TCHECK(source_header.coded_sequence == 5 && source_header.source_start == 6);
@@ -178,18 +183,15 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u32_le(&buffer, 99) == LIBRDP_STATUS_OK);
+    ack_of_ack.reset_sequence_number = 99;
+    TCHECK(rdp_udp_write_ack_of_ack_vector(&buffer, &ack_of_ack) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_ack_of_ack_vector(buffer.data, buffer.length, &ack_of_ack) ==
            LIBRDP_STATUS_OK);
     TCHECK(ack_of_ack.reset_sequence_number == 99);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u16_le(&buffer, 3) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append(&buffer, payload, 3) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_udp_write_ack_vector(&buffer, payload, 3) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_ack_vector(buffer.data, buffer.length, &ack_vector) == LIBRDP_STATUS_OK);
     TCHECK(ack_vector.size == 3 && ack_vector.padding_len == 3);
     buffer.data[0] = 0x01;
@@ -199,9 +201,7 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    for (i = 0; i < 16u; i++)
-        TCHECK(rdp_buffer_append_u8(&buffer, (uint8_t)(i + 1u)) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append(&buffer, ack_vec_bytes, 16u) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_udp_write_correlation_id(&buffer, correlation_id) == LIBRDP_STATUS_OK);
     TCHECK(rdp_udp_parse_correlation_id(buffer.data, buffer.length, &correlation) == LIBRDP_STATUS_OK);
     TCHECK(correlation.correlation_id[0] == 1);
     buffer.data[31] = 1;
@@ -255,15 +255,41 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    TCHECK(rdp_buffer_append_u16_le(&buffer,
-                                    (uint16_t)(RDP_UDP2_FLAG_ACKVEC | (4u << 12))) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u16_le(&buffer, 0x2020u) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 0x82u) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 1) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 2) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append_u8(&buffer, 4) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_buffer_append(&buffer, payload, 2) == LIBRDP_STATUS_OK);
+    memset(&udp2_packet, 0, sizeof(udp2_packet));
+    udp2_packet.header.flags = RDP_UDP2_FLAG_ACK | RDP_UDP2_FLAG_OVERHEADSIZE |
+                               RDP_UDP2_FLAG_DELAYACKINFO | RDP_UDP2_FLAG_AOA |
+                               RDP_UDP2_FLAG_DATA;
+    udp2_packet.header.log_window_size = 3;
+    udp2_packet.has_ack = 1;
+    udp2_packet.ack.sequence_number = 0x1111u;
+    udp2_packet.ack.received_timestamp = 0x00010203u;
+    udp2_packet.ack.send_ack_time_gap_ms = 7;
+    udp2_packet.has_overhead_size = 1;
+    udp2_packet.overhead_size = 9;
+    udp2_packet.has_delay_ack_info = 1;
+    udp2_packet.max_delayed_acks = 4;
+    udp2_packet.delayed_ack_timeout_ms = 50;
+    udp2_packet.has_ack_of_acks = 1;
+    udp2_packet.ack_of_acks_sequence_number = 0x2222u;
+    udp2_packet.has_data = 1;
+    udp2_packet.data_sequence_number = 0x3333u;
+    udp2_packet.data_body = payload;
+    udp2_packet.data_body_len = sizeof(payload);
+    TCHECK(rdp_udp2_write_packet(&buffer, &udp2_packet) == LIBRDP_STATUS_OK);
+    udp2_packet.has_data = 0;
+    TCHECK(rdp_udp2_write_packet(&wire, &udp2_packet) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &udp2_packet) == LIBRDP_STATUS_OK);
+    TCHECK(udp2_packet.has_ack && udp2_packet.has_overhead_size &&
+           udp2_packet.has_delay_ack_info && udp2_packet.has_ack_of_acks && udp2_packet.has_data);
+    TCHECK(udp2_packet.data_body_len == sizeof(payload) &&
+           memcmp(udp2_packet.data_body, payload, sizeof(payload)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_free(&wire);
+    rdp_buffer_init(&buffer);
+    rdp_buffer_init(&wire);
+
+    TCHECK(rdp_udp2_write_ack_vector_packet(&buffer, 4, 0x2020u, 1, 0x00030201u, 4, payload, 2) ==
+           LIBRDP_STATUS_OK);
     TCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &udp2_packet) == LIBRDP_STATUS_OK);
     TCHECK(udp2_packet.has_ack_vector && udp2_packet.ack_vector.timestamp_present);
     TCHECK(udp2_packet.ack_vector.coded_ack_vector_size == 2);
