@@ -22,6 +22,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_video_redirection_rect rect;
     rdp_video_redirection_volume volume;
     rdp_buffer buffer;
+    const uint8_t guid[16] = {0};
+    rdp_video_redirection_geometry_info writable_geometry;
+    uint32_t bounded_data = size > 4096u ? 4096u : (uint32_t)size;
 
     (void)rdp_video_redirection_parse_header(data, size, 0, &header);
     (void)rdp_video_redirection_parse_header(data, size, 1, &header);
@@ -69,6 +72,58 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         1,
         RDP_VIDEO_REDIRECTION_RIM_CAPABILITY_VERSION_01,
         0);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_set_channel_params(&buffer, 1, guid, 2);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_new_presentation(
+        &buffer,
+        1,
+        guid,
+        RDP_VIDEO_REDIRECTION_PLATFORM_COOKIE_MF);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_add_stream(&buffer, 1, guid, 2, data, bounded_data);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_sample_message(&buffer, 1, guid, 2, data, bounded_data);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_presentation_only(
+        &buffer,
+        1,
+        RDP_VIDEO_REDIRECTION_FUNC_SET_TOPOLOGY_REQ,
+        guid);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_stream_only(
+        &buffer,
+        1,
+        RDP_VIDEO_REDIRECTION_FUNC_ON_FLUSH,
+        guid,
+        2);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_playback_started(&buffer, 1, guid, 3, 0);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_playback_rate(&buffer, 1, guid, 0x3f800000u);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_set_video_window(&buffer, 1, guid, 3, 4);
+    buffer.length = 0;
+    writable_geometry.video_window_id = 1;
+    writable_geometry.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
+    writable_geometry.width = 640;
+    writable_geometry.height = 480;
+    writable_geometry.left = 0;
+    writable_geometry.top = 0;
+    writable_geometry.reserved = 0;
+    writable_geometry.client_left = 0;
+    writable_geometry.client_top = 0;
+    writable_geometry.has_padding = 0;
+    writable_geometry.padding = 0;
+    (void)rdp_video_redirection_write_geometry_info(&buffer, &writable_geometry);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_rect(&buffer, 0, 0, 1, 1);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_geometry_update(&buffer, 1, guid, data, bounded_data, NULL, 0);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_stream_volume(&buffer, 1, guid, 0, 0);
+    buffer.length = 0;
+    (void)rdp_video_redirection_write_channel_volume(&buffer, 1, guid, 0, 0);
     rdp_buffer_free(&buffer);
     return 0;
 }

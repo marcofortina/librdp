@@ -6428,30 +6428,17 @@ static int test_video_redirection_channel(void)
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&payload);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              6,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_SET_CHANNEL_PARAMS) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_set_channel_params(&buffer, 6, guid, 0) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_set_channel_params(buffer.data, buffer.length, &stream) ==
            LIBRDP_STATUS_OK);
     PCHECK(stream.stream_id == 0 && stream.presentation_id[15] == 15);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              7,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_NEW_PRESENTATION) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_VIDEO_REDIRECTION_PLATFORM_COOKIE_MF) ==
+    PCHECK(rdp_video_redirection_write_new_presentation(&buffer,
+                                                        7,
+                                                        guid,
+                                                        RDP_VIDEO_REDIRECTION_PLATFORM_COOKIE_MF) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_new_presentation(buffer.data,
                                                         buffer.length,
@@ -6472,23 +6459,22 @@ static int test_video_redirection_channel(void)
     PCHECK(rdp_video_redirection_parse_media_type(nested.data, nested.length, &media_type) ==
            LIBRDP_STATUS_OK);
     PCHECK(media_type.format_len == sizeof(format) && media_type.format[0] == 0xde);
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              8,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ADD_STREAM) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 11) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)nested.length) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, nested.data, nested.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_add_stream(&buffer,
+                                                  8,
+                                                  guid,
+                                                  11,
+                                                  nested.data,
+                                                  (uint32_t)nested.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_add_stream(buffer.data, buffer.length, &stream) ==
            LIBRDP_STATUS_OK);
     PCHECK(stream.stream_id == 11 && stream.data_len == nested.length);
+    PCHECK(rdp_video_redirection_write_add_stream(&payload, 8, guid, 11, NULL, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
+    rdp_buffer_free(&payload);
     rdp_buffer_free(&nested);
     rdp_buffer_init(&buffer);
+    rdp_buffer_init(&payload);
     rdp_buffer_init(&nested);
 
     PCHECK(test_append_u64_le(&nested, 0x37u) == LIBRDP_STATUS_OK);
@@ -6503,17 +6489,12 @@ static int test_video_redirection_channel(void)
     PCHECK(data_sample.sample_end_time == 0x38u &&
            data_sample.data_len == sizeof(sample_data) &&
            data_sample.data[4] == 5);
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              9,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_SAMPLE) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 11) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)nested.length) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, nested.data, nested.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_sample_message(&buffer,
+                                                      9,
+                                                      guid,
+                                                      11,
+                                                      nested.data,
+                                                      (uint32_t)nested.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_sample_message(buffer.data, buffer.length, &stream) ==
            LIBRDP_STATUS_OK);
     PCHECK(stream.stream_id == 11 && stream.data_len == nested.length);
@@ -6522,14 +6503,10 @@ static int test_video_redirection_channel(void)
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&nested);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              10,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_SET_TOPOLOGY_REQ) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_presentation_only(&buffer,
+                                                         10,
+                                                         RDP_VIDEO_REDIRECTION_FUNC_SET_TOPOLOGY_REQ,
+                                                         guid) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_presentation_only(buffer.data,
                                                          buffer.length,
                                                          RDP_VIDEO_REDIRECTION_FUNC_SET_TOPOLOGY_REQ,
@@ -6538,15 +6515,11 @@ static int test_video_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              11,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_FLUSH) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 11) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_stream_only(&buffer,
+                                                   11,
+                                                   RDP_VIDEO_REDIRECTION_FUNC_ON_FLUSH,
+                                                   guid,
+                                                   11) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_stream_only(buffer.data,
                                                    buffer.length,
                                                    RDP_VIDEO_REDIRECTION_FUNC_ON_FLUSH,
@@ -6554,16 +6527,11 @@ static int test_video_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              12,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_PLAYBACK_STARTED) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 0x21e25d8320u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_playback_started(&buffer,
+                                                        12,
+                                                        guid,
+                                                        0x21e25d8320u,
+                                                        1) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_playback_started(buffer.data,
                                                         buffer.length,
                                                         &started) == LIBRDP_STATUS_OK);
@@ -6571,74 +6539,63 @@ static int test_video_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              13,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_PLAYBACK_RATE_CHANGED) ==
+    PCHECK(rdp_video_redirection_write_playback_rate(&buffer, 13, guid, 0x3f800000u) ==
            LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x3f800000u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_playback_rate(buffer.data, buffer.length, &rate) ==
            LIBRDP_STATUS_OK);
     PCHECK(rate.rate_bits == 0x3f800000u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              14,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_SET_VIDEO_WINDOW) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 0x11223344u) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 0x55667788u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_set_video_window(&buffer,
+                                                        14,
+                                                        guid,
+                                                        0x11223344u,
+                                                        0x55667788u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_set_video_window(buffer.data, buffer.length, &window) ==
            LIBRDP_STATUS_OK);
     PCHECK(window.video_window_id == 0x11223344u && window.parent_window_id == 0x55667788u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(test_append_u64_le(&nested, 0x11223344u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, RDP_VIDEO_REDIRECTION_WINDOW_NEW) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 640) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 480) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 10) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 20) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&nested, 0) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 12) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&nested, 22) == LIBRDP_STATUS_OK);
+    memset(&geometry_info, 0, sizeof(geometry_info));
+    geometry_info.video_window_id = 0x11223344u;
+    geometry_info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
+    geometry_info.width = 640;
+    geometry_info.height = 480;
+    geometry_info.left = 10;
+    geometry_info.top = 20;
+    geometry_info.client_left = 12;
+    geometry_info.client_top = 22;
+    PCHECK(rdp_video_redirection_write_geometry_info(&nested, &geometry_info) == LIBRDP_STATUS_OK);
+    memset(&geometry_info, 0, sizeof(geometry_info));
     PCHECK(rdp_video_redirection_parse_geometry_info(nested.data,
                                                      nested.length,
                                                      &geometry_info) == LIBRDP_STATUS_OK);
     PCHECK(geometry_info.width == 640 && geometry_info.client_top == 22);
-    PCHECK(rdp_buffer_append_u32_le(&payload, 1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&payload, 2) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&payload, 3) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&payload, 4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_rect(&payload, 1, 2, 3, 4) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_rect(payload.data, payload.length, &rect) ==
            LIBRDP_STATUS_OK);
     PCHECK(rect.top == 1 && rect.right == 4);
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              15,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_UPDATE_GEOMETRY_INFO) ==
-           LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)nested.length) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, nested.data, nested.length) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)payload.length) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, payload.data, payload.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_redirection_write_geometry_update(&buffer,
+                                                       15,
+                                                       guid,
+                                                       nested.data,
+                                                       (uint32_t)nested.length,
+                                                       payload.data,
+                                                       (uint32_t)payload.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_geometry_update(buffer.data,
                                                        buffer.length,
                                                        &geometry_update) == LIBRDP_STATUS_OK);
     PCHECK(geometry_update.geometry_len == nested.length &&
            geometry_update.visible_rect_len == payload.length);
+    PCHECK(rdp_video_redirection_write_geometry_update(&payload,
+                                                       15,
+                                                       guid,
+                                                       nested.data,
+                                                       (uint32_t)nested.length,
+                                                       NULL,
+                                                       1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&payload);
     rdp_buffer_free(&nested);
@@ -6646,32 +6603,16 @@ static int test_video_redirection_channel(void)
     rdp_buffer_init(&payload);
     rdp_buffer_init(&nested);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              16,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_STREAM_VOLUME) ==
+    PCHECK(rdp_video_redirection_write_stream_volume(&buffer, 16, guid, 0x834u, 1) ==
            LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x834u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 1) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_stream_volume(buffer.data, buffer.length, &volume) ==
            LIBRDP_STATUS_OK);
     PCHECK(volume.value == 0x834u && volume.second_value == 1);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_redirection_write_header(&buffer,
-                                              RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
-                                              RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
-                                              17,
-                                              1,
-                                              RDP_VIDEO_REDIRECTION_FUNC_ON_CHANNEL_VOLUME) ==
+    PCHECK(rdp_video_redirection_write_channel_volume(&buffer, 17, guid, 0x2710u, 2) ==
            LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x2710u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 2) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_channel_volume(buffer.data, buffer.length, &volume) ==
            LIBRDP_STATUS_OK);
     PCHECK(volume.value == 0x2710u && volume.second_value == 2);
