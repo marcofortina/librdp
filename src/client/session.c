@@ -11752,6 +11752,77 @@ static uint32_t rdp_session_usb_reset_interface(librdp_session* session, uint32_
                                   rdp_session_usb_libusb_status(rc);
 }
 
+static int rdp_session_usb_read_ascii_descriptor(libusb_device_handle* handle,
+                                                 uint8_t descriptor_index,
+                                                 char* out,
+                                                 size_t out_len)
+{
+    int rc = 0;
+
+    if (!handle || descriptor_index == 0 || !out || out_len == 0)
+        return 0;
+    rc = libusb_get_string_descriptor_ascii(handle,
+                                            descriptor_index,
+                                            (unsigned char*)out,
+                                            (int)out_len - 1);
+    if (rc <= 0)
+        return 0;
+    out[rc] = '\0';
+    return 1;
+}
+
+static const char* rdp_session_usb_device_text(librdp_session* session,
+                                               uint32_t interface_id,
+                                               uint32_t text_type,
+                                               char* out,
+                                               size_t out_len)
+{
+    rdp_session_usb_device* device = rdp_session_usb_device_by_interface_mut(session, interface_id);
+    char manufacturer[128];
+    char product[128];
+    char serial[128];
+
+    if (!out || out_len == 0)
+        return "";
+    out[0] = '\0';
+    if (!device || !device->handle)
+    {
+        snprintf(out, out_len, "USB redirected device");
+        return out;
+    }
+    memset(manufacturer, 0, sizeof(manufacturer));
+    memset(product, 0, sizeof(product));
+    memset(serial, 0, sizeof(serial));
+    (void)rdp_session_usb_read_ascii_descriptor(device->handle,
+                                                device->descriptor.iManufacturer,
+                                                manufacturer,
+                                                sizeof(manufacturer));
+    (void)rdp_session_usb_read_ascii_descriptor(device->handle,
+                                                device->descriptor.iProduct,
+                                                product,
+                                                sizeof(product));
+    (void)rdp_session_usb_read_ascii_descriptor(device->handle,
+                                                device->descriptor.iSerialNumber,
+                                                serial,
+                                                sizeof(serial));
+    if (text_type == 2u && serial[0] != '\0')
+        snprintf(out, out_len, "%s", serial);
+    else if (manufacturer[0] != '\0' && product[0] != '\0')
+        snprintf(out, out_len, "%s %s", manufacturer, product);
+    else if (product[0] != '\0')
+        snprintf(out, out_len, "%s", product);
+    else if (manufacturer[0] != '\0')
+        snprintf(out, out_len, "%s USB device", manufacturer);
+    else
+        snprintf(out,
+                 out_len,
+                 "USB %04x:%04x",
+                 (unsigned)device->descriptor.idVendor,
+                 (unsigned)device->descriptor.idProduct);
+    out[out_len - 1u] = '\0';
+    return out;
+}
+
 static uint32_t rdp_session_usb_claim_endpoint(rdp_session_usb_device* device,
                                                uint8_t endpoint,
                                                uint8_t* transfer_type)
@@ -12400,14 +12471,26 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
     if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
         header.function_id == RDP_USB_REDIRECTION_FN_QUERY_DEVICE_TEXT)
     {
-        static const char description[] = "librdp USB device";
+        char description[256];
         rdp_usb_redirection_query_device_text query;
         rdp_buffer text;
         rdp_buffer response;
 
+        memset(description, 0, sizeof(description));
         rdp_buffer_init(&text);
         rdp_buffer_init(&response);
         status = rdp_usb_redirection_parse_query_device_text(data, data_len, &query);
+#ifdef RDP_HAVE_LIBUSB
+        if (status == LIBRDP_STATUS_OK)
+            (void)rdp_session_usb_device_text(session,
+                                              query.header.interface_id,
+                                              query.text_type,
+                                              description,
+                                              sizeof(description));
+#else
+        if (status == LIBRDP_STATUS_OK)
+            snprintf(description, sizeof(description), "USB redirected device");
+#endif
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_utf8_to_utf16le(description, &text, 1);
         if (status == LIBRDP_STATUS_OK)
