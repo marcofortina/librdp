@@ -3553,12 +3553,14 @@ static void rdp_session_drive_name_to_utf16le(const char* name, uint8_t* out, si
 
 static librdp_status rdp_session_send_device_redirection_device_list(librdp_session* session)
 {
-    rdp_device_redirection_device_announce devices[LIBRDP_SETTINGS_MAX_DRIVES + LIBRDP_SETTINGS_MAX_PRINTERS];
+    rdp_device_redirection_device_announce
+        devices[LIBRDP_SETTINGS_MAX_DRIVES + LIBRDP_SETTINGS_MAX_PRINTERS + LIBRDP_SETTINGS_MAX_SMARTCARDS];
     uint8_t names[LIBRDP_SETTINGS_MAX_DRIVES][16];
     rdp_buffer printer_data[LIBRDP_SETTINGS_MAX_PRINTERS];
     rdp_buffer packet;
     uint32_t drive_count = 0;
     uint32_t printer_count = 0;
+    uint32_t smartcard_count = 0;
     uint32_t count = 0;
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -3571,7 +3573,9 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
         rdp_buffer_init(&printer_data[i]);
     drive_count = librdp_settings_drive_count(session->settings);
     printer_count = librdp_settings_printer_count(session->settings);
-    if (drive_count > LIBRDP_SETTINGS_MAX_DRIVES || printer_count > LIBRDP_SETTINGS_MAX_PRINTERS)
+    smartcard_count = librdp_settings_smartcard_count(session->settings);
+    if (drive_count > LIBRDP_SETTINGS_MAX_DRIVES || printer_count > LIBRDP_SETTINGS_MAX_PRINTERS ||
+        smartcard_count > LIBRDP_SETTINGS_MAX_SMARTCARDS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     for (i = 0; i < drive_count; i++)
     {
@@ -3632,6 +3636,15 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
         if (status != LIBRDP_STATUS_OK)
             goto out;
     }
+    for (i = 0; i < smartcard_count; i++)
+    {
+        devices[count].device_type = RDP_DEVICE_REDIRECTION_TYPE_SMARTCARD;
+        devices[count].device_id = rdp_settings_smartcard_device_id_internal(session->settings, i);
+        memcpy(devices[count].preferred_dos_name, "SCARD", 6u);
+        devices[count].data = NULL;
+        devices[count].data_len = 0;
+        count++;
+    }
     rdp_buffer_init(&packet);
     status = rdp_device_redirection_write_device_list_announce(&packet, devices, count);
     if (status == LIBRDP_STATUS_OK)
@@ -3644,10 +3657,11 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
         session->device_redirection_ready = 1;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.device_list",
-                        "channel_id=%u drive_count=%u printer_count=%u device_count=%u",
+                        "channel_id=%u drive_count=%u printer_count=%u smartcard_count=%u device_count=%u",
                         session->device_redirection_channel_id,
                         drive_count,
                         printer_count,
+                        smartcard_count,
                         count);
     }
 out:
@@ -3800,6 +3814,12 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
         if (status == LIBRDP_STATUS_OK)
             config.include_printer = librdp_settings_printer_count(session->settings) > 0 ? 1u : 0u;
         if (status == LIBRDP_STATUS_OK)
+            config.include_smartcard =
+                librdp_settings_smartcard_count(session->settings) > 0 ||
+                        librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ?
+                    1u :
+                    0u;
+        if (status == LIBRDP_STATUS_OK)
             status = rdp_device_redirection_write_client_capability_response(&response, &config);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_send_device_redirection_packet(session,
@@ -3808,9 +3828,12 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
         if (status == LIBRDP_STATUS_OK)
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.rdpdr.capability_response",
-                            "channel_id=%u server_caps=%u",
+                            "channel_id=%u server_caps=%u drive=%u printer=%u smartcard=%u",
                             session->device_redirection_channel_id,
-                            server_caps.count);
+                            server_caps.count,
+                            config.include_drive,
+                            config.include_printer,
+                            config.include_smartcard);
         rdp_buffer_free(&response);
     }
     else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON)

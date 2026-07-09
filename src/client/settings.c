@@ -661,3 +661,10 @@ uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings
         return 0;
     return 0x00020000u + index;
 }
+
+uint32_t rdp_settings_smartcard_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->smartcard_count)
+        return 0;
+    return 0x00030000u + index;
+}
