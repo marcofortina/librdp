@@ -3,6 +3,7 @@
 #include "channels/audio_input.h"
 #include "channels/audio_output.h"
 #include "channels/auth_redirection.h"
+#include "channels/composited_remoting.h"
 #include "channels/core_input.h"
 #include "channels/device_redirection.h"
 #include "channels/desktop_composition.h"
@@ -8252,6 +8253,217 @@ static int test_desktop_composition_channel(void)
     return 0;
 }
 
+static int test_composited_remoting_channel(void)
+{
+    const uint8_t color[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x3f};
+    uint8_t surfaces[RDP_COMPOSITED_TEXTURE_SLOT_COUNT * RDP_COMPOSITED_TEXTURE_SLOT_BYTES] = {0};
+    uint32_t versions[1] = {RDP_COMPOSITED_PROTOCOL_VERSION};
+    uint32_t glyphs[3] = {0x21, 0x22, 0x23};
+    rdp_composited_control control;
+    rdp_composited_version_reply reply;
+    rdp_composited_resource_order resource;
+    rdp_composited_duplicate_handle duplicate;
+    rdp_composited_u32_target_order u32_order;
+    rdp_composited_window_node_create window_node;
+    rdp_composited_target_create target;
+    rdp_composited_glyph_run glyph_run;
+    rdp_composited_gdi_sprite_bitmap sprite;
+    rdp_composited_gdi_surface_update surface_update;
+    rdp_composited_meta_target meta;
+    rdp_composited_batch_reader reader;
+    rdp_composited_channel_message message;
+    rdp_buffer buffer;
+    rdp_buffer batch;
+    rdp_buffer wrapped;
+
+    rdp_buffer_init(&buffer);
+    rdp_buffer_init(&batch);
+    rdp_buffer_init(&wrapped);
+
+    PCHECK(rdp_composited_control_code_valid(RDP_COMPOSITED_CONTROL_OPEN_CHANNEL));
+    PCHECK(!rdp_composited_control_code_valid(0x08u));
+    PCHECK(rdp_composited_channel_command_known(RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_SURFACE));
+    PCHECK(rdp_composited_notification_code_valid(RDP_COMPOSITED_MSG_VERSION_REPLY));
+
+    PCHECK(rdp_composited_write_control_fixed(&buffer,
+                                              RDP_COMPOSITED_CONTROL_VERSION_REQUEST,
+                                              0,
+                                              0) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 16u);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_VERSION_REQUEST &&
+           control.message_size == 16u);
+    buffer.data[4] = 0xffu;
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_version_reply(&buffer, versions, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_CONNECTION_NOTIFICATION);
+    PCHECK(rdp_composited_parse_version_reply(control.payload, control.payload_len, &reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(reply.version_count == 1u &&
+           rdp_composited_version_reply_has(&reply, RDP_COMPOSITED_PROTOCOL_VERSION));
+    ((uint8_t*)control.payload)[8] = RDP_COMPOSITED_MAX_VERSION_COUNT + 1u;
+    PCHECK(rdp_composited_parse_version_reply(control.payload, control.payload_len, &reply) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_resource_order(&buffer,
+                                               RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                               0x10u,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_resource_order(buffer.data,
+                                               buffer.length,
+                                               RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                               &resource) == LIBRDP_STATUS_OK);
+    PCHECK(resource.resource == 0x10u && resource.resource_type == RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
+    PCHECK(rdp_composited_write_resource_order(&buffer, 0xffffffffu, 1, 2) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_buffer_append(&batch, buffer.data, buffer.length) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_duplicate_handle(&buffer, 0x10u, 0x20u, 0x30u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_duplicate_handle(buffer.data, buffer.length, &duplicate) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(duplicate.original == 0x10u &&
+           duplicate.target_channel == 0x20u &&
+           duplicate.duplicate == 0x30u);
+    PCHECK(rdp_buffer_append(&batch, buffer.data, buffer.length) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_u32_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE,
+                                                 0x44u,
+                                                 0x55u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_u32_target_order(buffer.data,
+                                                 buffer.length,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE,
+                                                 &u32_order) == LIBRDP_STATUS_OK);
+    PCHECK(u32_order.target_resource == 0x44u && u32_order.value == 0x55u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_create(&buffer,
+                                                   0x11u,
+                                                   0x0102030405060708ull,
+                                                   0x1112131415161718ull,
+                                                   2u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_window_node_create(buffer.data, buffer.length, &window_node) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(window_node.target_resource == 0x11u &&
+           window_node.sprite_id == 0x0102030405060708ull &&
+           window_node.window_id == 0x1112131415161718ull &&
+           window_node.caching_mode == 2u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_create(&buffer, 0x12u, 1280u, 720u, color) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_target_create(buffer.data, buffer.length, &target) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(target.target_resource == 0x12u &&
+           target.width == 1280u &&
+           target.height == 720u &&
+           memcmp(target.clear_color, color, sizeof(color)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_glyph_run(&buffer, 0x13u, 0x14u, 2, glyphs, 3) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_glyph_run(buffer.data, buffer.length, &glyph_run) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(glyph_run.target_resource == 0x13u &&
+           glyph_run.glyph_cache == 0x14u &&
+           glyph_run.glyph_count == 3u &&
+           glyph_run.precontrast_level == 2 &&
+           glyph_run.glyph_indices_len == 12u);
+    PCHECK(rdp_composited_write_glyph_run(&buffer, 0x13u, 0x14u, 7, glyphs, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_gdi_sprite_bitmap(&buffer,
+                                                  0x15u,
+                                                  0x2122232425262728ull,
+                                                  0x3132333435363738ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_gdi_sprite_bitmap(buffer.data, buffer.length, &sprite) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(sprite.target_resource == 0x15u &&
+           sprite.sprite_id == 0x2122232425262728ull &&
+           sprite.logical_surface_id == 0x3132333435363738ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_gdi_surface_update(&buffer, 0x16u, 0x57u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_gdi_surface_update(buffer.data,
+                                                   buffer.length,
+                                                   &surface_update) == LIBRDP_STATUS_OK);
+    PCHECK(surface_update.target_resource == 0x16u && surface_update.dxgi_format == 0x57u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    surfaces[0] = 1u;
+    PCHECK(rdp_composited_write_meta_target(&buffer,
+                                            RDP_COMPOSITED_CMD_META_TARGET_CREATE,
+                                            0x17u,
+                                            1u,
+                                            0x57u,
+                                            1920u,
+                                            1080u,
+                                            surfaces) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 0xe4u);
+    PCHECK(rdp_composited_parse_meta_target(buffer.data,
+                                            buffer.length,
+                                            RDP_COMPOSITED_CMD_META_TARGET_CREATE,
+                                            &meta) == LIBRDP_STATUS_OK);
+    PCHECK(meta.target_resource == 0x17u &&
+           meta.textures.surface_count == 1u &&
+           meta.textures.dxgi_format == 0x57u &&
+           meta.textures.width == 1920u &&
+           meta.textures.height == 1080u &&
+           meta.textures.surfaces[0] == 1u);
+    PCHECK(rdp_composited_write_meta_target(&buffer,
+                                            RDP_COMPOSITED_CMD_META_TARGET_CREATE,
+                                            0x17u,
+                                            9u,
+                                            0x57u,
+                                            1u,
+                                            1u,
+                                            surfaces) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_batch_init(&reader, batch.data, batch.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_batch_next(&reader, &message) == LIBRDP_STATUS_OK);
+    PCHECK(message.control_code == RDP_COMPOSITED_CMD_CREATE_RESOURCE);
+    PCHECK(rdp_composited_batch_next(&reader, &message) == LIBRDP_STATUS_OK);
+    PCHECK(message.control_code == RDP_COMPOSITED_CMD_DUPLICATE_HANDLE);
+    PCHECK(rdp_composited_batch_next(&reader, &message) == LIBRDP_STATUS_AGAIN);
+    PCHECK(rdp_composited_write_data_on_channel(&wrapped, 7u, batch.data, batch.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(wrapped.data, wrapped.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_DATA_ON_CHANNEL &&
+           control.word0 == 7u &&
+           control.payload_len == batch.length);
+    wrapped.data[7] = 1u;
+    PCHECK(rdp_composited_parse_control(wrapped.data, wrapped.length, &control) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&wrapped);
+    rdp_buffer_free(&batch);
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
 static int test_video_redirection_channel(void)
 {
     const uint8_t guid[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -9602,6 +9814,8 @@ int test_protocol(void)
     if (test_remote_programs_channel() != 0)
         return 1;
     if (test_desktop_composition_channel() != 0)
+        return 1;
+    if (test_composited_remoting_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
         return 1;

@@ -24,6 +24,7 @@ add_library(librdp
     src/channels/audio_input.c
     src/channels/audio_output.c
     src/channels/auth_redirection.c
+    src/channels/composited_remoting.c
     src/channels/core_input.c
     src/channels/device_redirection.c
     src/channels/desktop_composition.c
@@ -139,6 +140,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_audio_format fuzz/audio_format_fuzzer.c)
     add_librdp_fuzzer(fuzz_audio_output fuzz/audio_output_fuzzer.c)
     add_librdp_fuzzer(fuzz_audio_input fuzz/audio_input_fuzzer.c)
+    add_librdp_fuzzer(fuzz_composited_remoting fuzz/composited_remoting_fuzzer.c)
     add_librdp_fuzzer(fuzz_display_control fuzz/display_control_fuzzer.c)
     add_librdp_fuzzer(fuzz_device_redirection fuzz/device_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_desktop_composition fuzz/desktop_composition_fuzzer.c)
