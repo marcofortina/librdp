@@ -199,6 +199,9 @@ librdp_status rdp_device_redirection_write_header(rdp_buffer* buffer, uint16_t c
 librdp_status rdp_device_redirection_parse_server_announce(const void* data,
                                                            size_t length,
                                                            rdp_device_redirection_announce* announce);
+librdp_status rdp_device_redirection_write_server_announce(rdp_buffer* buffer,
+                                                            uint16_t version_minor,
+                                                            uint32_t client_id);
 librdp_status rdp_device_redirection_parse_client_id_confirm(const void* data,
                                                              size_t length,
                                                              rdp_device_redirection_announce* confirm);
@@ -215,6 +218,11 @@ librdp_status rdp_device_redirection_parse_capability_list(const void* data,
                                                            size_t length,
                                                            uint16_t expected_packet_id,
                                                            rdp_device_redirection_capability_list* list);
+librdp_status rdp_device_redirection_write_capability_list(
+    rdp_buffer* buffer,
+    uint16_t packet_id,
+    const rdp_device_redirection_capability* capabilities,
+    uint16_t count);
 librdp_status rdp_device_redirection_parse_general_capability(
     const rdp_device_redirection_capability* capability,
     rdp_device_redirection_general_capability* general);

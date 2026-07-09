@@ -11,6 +11,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_device_redirection_capability_list capabilities;
     rdp_device_redirection_general_capability general;
     rdp_device_redirection_capability_config config;
+    rdp_device_redirection_capability generic_capability;
     rdp_device_redirection_device_list devices;
     rdp_device_redirection_device_remove remove;
     rdp_device_redirection_device_reply reply;
@@ -18,6 +19,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_device_redirection_io_completion completion;
     rdp_buffer buffer;
     uint32_t ids[2] = {1, 2};
+
+    if (!data && size > 0)
+        return 0;
 
     (void)rdp_device_redirection_parse_header(data, size, &header);
     (void)rdp_device_redirection_parse_server_announce(data, size, &announce);
@@ -42,6 +46,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_device_redirection_parse_io_completion(data, size, &completion);
 
     rdp_buffer_init(&buffer);
+    (void)rdp_device_redirection_write_server_announce(&buffer,
+                                                       RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
+                                                       size > 0 ? data[0] : 0);
+    buffer.length = 0;
     (void)rdp_device_redirection_write_client_announce(&buffer,
                                                        RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
                                                        size > 0 ? data[0] : 0);
@@ -50,6 +58,17 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     config.include_drive = (uint8_t)(size & 1u);
     config.include_smartcard = (uint8_t)((size >> 1u) & 1u);
     (void)rdp_device_redirection_write_client_capability_response(&buffer, &config);
+    buffer.length = 0;
+    generic_capability.type = RDP_DEVICE_REDIRECTION_CAP_DRIVE;
+    generic_capability.length = 8u;
+    generic_capability.version = RDP_DEVICE_REDIRECTION_CAP_VERSION_2;
+    generic_capability.data = NULL;
+    generic_capability.data_len = 0;
+    (void)rdp_device_redirection_write_capability_list(
+        &buffer,
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
+        &generic_capability,
+        1);
     buffer.length = 0;
     (void)rdp_device_redirection_write_device_list_announce(&buffer, NULL, 0);
     buffer.length = 0;

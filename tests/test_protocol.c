@@ -5073,9 +5073,11 @@ static int test_device_redirection_channel(void)
     rdp_device_redirection_io_completion completion;
     rdp_device_redirection_capability bad_cap;
     rdp_buffer buffer;
+    rdp_buffer packet;
     uint32_t remove_ids[2] = {0x10203040u, 0x50607080u};
 
     rdp_buffer_init(&buffer);
+    rdp_buffer_init(&packet);
 
     PCHECK(rdp_device_redirection_parse_header(server_announce, sizeof(server_announce), &header) ==
            LIBRDP_STATUS_OK);
@@ -5090,6 +5092,14 @@ static int test_device_redirection_channel(void)
     PCHECK(rdp_device_redirection_parse_server_announce(server_announce,
                                                         sizeof(server_announce) - 1u,
                                                         &announce) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_device_redirection_write_server_announce(&buffer,
+                                                        RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
+                                                        announce.client_id) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_server_announce(buffer.data, buffer.length, &announce) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(announce.client_id == 0x11223344u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     PCHECK(rdp_device_redirection_write_client_announce(&buffer,
                                                         RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
@@ -5140,6 +5150,21 @@ static int test_device_redirection_channel(void)
     bad_cap.length = 43;
     PCHECK(rdp_device_redirection_parse_general_capability(&bad_cap, &general) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_device_redirection_write_capability_list(&packet,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
+                                                        caps.capabilities,
+                                                        caps.count) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_capability_list(packet.data,
+                                                        packet.length,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
+                                                        &caps) == LIBRDP_STATUS_OK);
+    PCHECK(caps.count == 3 && caps.capabilities[0].type == RDP_DEVICE_REDIRECTION_CAP_GENERAL);
+    PCHECK(rdp_device_redirection_write_capability_list(&packet,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_REPLY,
+                                                        caps.capabilities,
+                                                        caps.count) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -5236,6 +5261,7 @@ static int test_device_redirection_channel(void)
     PCHECK(completion.payload_len == 2 && completion.payload[0] == 0xaa && completion.payload[1] == 0xbb);
 
     rdp_buffer_free(&buffer);
+    rdp_buffer_free(&packet);
     return 0;
 }
 

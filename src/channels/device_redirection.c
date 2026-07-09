@@ -37,6 +37,15 @@ static int rdp_device_redirection_valid_version_minor(uint16_t version_minor)
            version_minor == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13;
 }
 
+static int rdp_device_redirection_valid_capability_type(uint16_t type)
+{
+    return type == RDP_DEVICE_REDIRECTION_CAP_GENERAL ||
+           type == RDP_DEVICE_REDIRECTION_CAP_PRINTER ||
+           type == RDP_DEVICE_REDIRECTION_CAP_PORT ||
+           type == RDP_DEVICE_REDIRECTION_CAP_DRIVE ||
+           type == RDP_DEVICE_REDIRECTION_CAP_SMARTCARD;
+}
+
 static librdp_status rdp_device_redirection_expect_header(const void* data,
                                                           size_t length,
                                                           uint16_t expected_component,
@@ -83,6 +92,32 @@ static librdp_status rdp_device_redirection_parse_announce_common(const void* da
         !rdp_device_redirection_valid_version_minor(announce->version_minor))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_device_redirection_write_announce_common(rdp_buffer* buffer,
+                                                                  uint16_t packet_id,
+                                                                  uint16_t version_minor,
+                                                                  uint32_t client_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer ||
+        (packet_id != RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_ANNOUNCE &&
+         packet_id != RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM) ||
+        !rdp_device_redirection_valid_version_minor(version_minor))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_write_header(buffer,
+                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                 packet_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, RDP_DEVICE_REDIRECTION_VERSION_MAJOR);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, version_minor);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, client_id);
 }
 
 static librdp_status rdp_device_redirection_write_capability_header(rdp_buffer* buffer,
@@ -218,6 +253,16 @@ librdp_status rdp_device_redirection_parse_server_announce(const void* data,
                                                         announce);
 }
 
+librdp_status rdp_device_redirection_write_server_announce(rdp_buffer* buffer,
+                                                           uint16_t version_minor,
+                                                           uint32_t client_id)
+{
+    return rdp_device_redirection_write_announce_common(buffer,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_ANNOUNCE,
+                                                        version_minor,
+                                                        client_id);
+}
+
 librdp_status rdp_device_redirection_parse_client_id_confirm(const void* data,
                                                              size_t length,
                                                              rdp_device_redirection_announce* confirm)
@@ -232,22 +277,10 @@ librdp_status rdp_device_redirection_write_client_announce(rdp_buffer* buffer,
                                                            uint16_t version_minor,
                                                            uint32_t client_id)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    if (!buffer || !rdp_device_redirection_valid_version_minor(version_minor))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_device_redirection_write_header(buffer,
-                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
-                                                 RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, RDP_DEVICE_REDIRECTION_VERSION_MAJOR);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, version_minor);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, client_id);
+    return rdp_device_redirection_write_announce_common(buffer,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM,
+                                                        version_minor,
+                                                        client_id);
 }
 
 librdp_status rdp_device_redirection_parse_client_name(const void* data,
@@ -352,6 +385,54 @@ librdp_status rdp_device_redirection_parse_capability_list(const void* data,
     }
     if (rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_device_redirection_write_capability_list(
+    rdp_buffer* buffer,
+    uint16_t packet_id,
+    const rdp_device_redirection_capability* capabilities,
+    uint16_t count)
+{
+    uint16_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer ||
+        (packet_id != RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY &&
+         packet_id != RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY) ||
+        (count > 0 && !capabilities) ||
+        count > RDP_DEVICE_REDIRECTION_MAX_CAPABILITIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_write_header(buffer,
+                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                 packet_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < count; i++)
+    {
+        const rdp_device_redirection_capability* capability = &capabilities[i];
+
+        if (!rdp_device_redirection_valid_capability_type(capability->type) ||
+            capability->length < RDP_DEVICE_REDIRECTION_CAPABILITY_HEADER_LENGTH ||
+            capability->data_len != (size_t)capability->length - RDP_DEVICE_REDIRECTION_CAPABILITY_HEADER_LENGTH ||
+            (!capability->data && capability->data_len > 0))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        status = rdp_device_redirection_write_capability_header(buffer,
+                                                                capability->type,
+                                                                capability->length,
+                                                                capability->version);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append(buffer, capability->data, capability->data_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     return LIBRDP_STATUS_OK;
 }
 
