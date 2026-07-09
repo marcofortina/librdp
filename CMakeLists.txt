@@ -31,8 +31,10 @@ add_library(librdp
     src/channels/graphics_pipeline.c
     src/channels/input_channel.c
     src/channels/mouse_cursor.c
+    src/channels/multiparty.c
     src/channels/printer_redirection.c
     src/channels/pnp_redirection.c
+    src/channels/telemetry.c
     src/channels/usb_redirection.c
     src/channels/virtual_channel.c
     src/clipboard/clipboard.c
@@ -132,6 +134,8 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_input_channel fuzz/input_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_graphics_pipeline fuzz/graphics_pipeline_fuzzer.c)
     add_librdp_fuzzer(fuzz_mouse_cursor fuzz/mouse_cursor_fuzzer.c)
+    add_librdp_fuzzer(fuzz_multiparty fuzz/multiparty_fuzzer.c)
+    add_librdp_fuzzer(fuzz_telemetry fuzz/telemetry_fuzzer.c)
     add_librdp_fuzzer(fuzz_clearcodec fuzz/clearcodec_fuzzer.c)
     add_librdp_fuzzer(fuzz_nscodec fuzz/nscodec_fuzzer.c)
     add_librdp_fuzzer(fuzz_planar fuzz/planar_fuzzer.c)
