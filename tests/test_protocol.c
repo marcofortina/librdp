@@ -287,6 +287,9 @@ static int test_video_capture_channel(void)
 
     rdp_buffer_init(&buffer);
 
+    PCHECK(strcmp(RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME, "RDCamera_Device_Enumerator") == 0);
+    PCHECK(strcmp(RDP_VIDEO_CAPTURE_CHANNEL_NAME, "rdpecam") == 0);
+
     PCHECK(rdp_video_capture_write_empty(&buffer,
                                          RDP_VIDEO_CAPTURE_VERSION_2,
                                          RDP_VIDEO_CAPTURE_MESSAGE_SELECT_VERSION_REQUEST) ==

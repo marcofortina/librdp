@@ -62,6 +62,8 @@
 #define RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES 16777216u
 #define RDP_VIDEO_CAPTURE_MAX_OPAQUE_BYTES 1048576u
 #define RDP_VIDEO_CAPTURE_MAX_STREAMS 255u
+#define RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME "RDCamera_Device_Enumerator"
+#define RDP_VIDEO_CAPTURE_CHANNEL_NAME "rdpecam"
 
 typedef struct rdp_video_capture_header
 {
