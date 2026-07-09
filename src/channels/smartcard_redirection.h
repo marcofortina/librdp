@@ -60,6 +60,12 @@
 #define RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA 1024u
 #define RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH 4194304u
 #define RDP_SMARTCARD_REDIRECTION_DEVICE_CONTROL_REQUEST_LENGTH 32u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_RAW 0u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT 1u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_ESTABLISH_CONTEXT 2u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE 3u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE_DISPOSITION 4u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_RECONNECT 5u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -157,6 +163,20 @@ typedef struct rdp_smartcard_redirection_buffer_return
     const uint8_t* data;
 } rdp_smartcard_redirection_buffer_return;
 
+typedef struct rdp_smartcard_redirection_request_message
+{
+    rdp_smartcard_redirection_device_control_request request;
+    uint32_t kind;
+    union
+    {
+        rdp_smartcard_redirection_context context;
+        rdp_smartcard_redirection_establish_context_call establish_context;
+        rdp_smartcard_redirection_handle handle;
+        rdp_smartcard_redirection_handle_disposition_call handle_disposition;
+        rdp_smartcard_redirection_reconnect_call reconnect;
+    } body;
+} rdp_smartcard_redirection_request_message;
+
 int rdp_smartcard_redirection_ioctl_valid(uint32_t io_control_code);
 int rdp_smartcard_redirection_share_mode_valid(uint32_t share_mode);
 int rdp_smartcard_redirection_protocol_mask_valid(uint32_t protocols);
@@ -167,6 +187,10 @@ librdp_status rdp_smartcard_redirection_parse_device_control_request(
     const void* data,
     size_t length,
     rdp_smartcard_redirection_device_control_request* request);
+librdp_status rdp_smartcard_redirection_parse_device_control_request_message(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_request_message* message);
 librdp_status rdp_smartcard_redirection_write_device_control_request(
     rdp_buffer* buffer,
     uint32_t output_buffer_len,

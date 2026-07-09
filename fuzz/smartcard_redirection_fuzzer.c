@@ -7,6 +7,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_smartcard_redirection_device_control_request request;
     rdp_smartcard_redirection_device_control_response response;
+    rdp_smartcard_redirection_request_message message;
     rdp_smartcard_redirection_establish_context_call call;
     rdp_smartcard_redirection_context context;
     rdp_smartcard_redirection_handle handle;
@@ -26,6 +27,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         (uint32_t)size;
 
     (void)rdp_smartcard_redirection_parse_device_control_request(data, size, &request);
+    (void)rdp_smartcard_redirection_parse_device_control_request_message(data, size, &message);
     (void)rdp_smartcard_redirection_parse_device_control_response(data, size, &response);
     (void)rdp_smartcard_redirection_parse_establish_context_call(data, size, &call);
     (void)rdp_smartcard_redirection_parse_context(data, size, &context);

@@ -177,6 +177,69 @@ librdp_status rdp_smartcard_redirection_parse_device_control_request(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_smartcard_redirection_parse_device_control_request_message(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_request_message* message)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(message, 0, sizeof(*message));
+    status = rdp_smartcard_redirection_parse_device_control_request(data,
+                                                                    length,
+                                                                    &message->request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_RAW;
+    switch (message->request.io_control_code)
+    {
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_ESTABLISHCONTEXT:
+            status = rdp_smartcard_redirection_parse_establish_context_call(
+                message->request.input,
+                message->request.input_len,
+                &message->body.establish_context);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_ESTABLISH_CONTEXT;
+            return status;
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_RELEASECONTEXT:
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_ISVALIDCONTEXT:
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_CANCEL:
+            status = rdp_smartcard_redirection_parse_context(message->request.input,
+                                                             message->request.input_len,
+                                                             &message->body.context);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT;
+            return status;
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_BEGINTRANSACTION:
+            status = rdp_smartcard_redirection_parse_handle(message->request.input,
+                                                            message->request.input_len,
+                                                            &message->body.handle);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE;
+            return status;
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_DISCONNECT:
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_ENDTRANSACTION:
+            status = rdp_smartcard_redirection_parse_handle_disposition_call(
+                message->request.input,
+                message->request.input_len,
+                &message->body.handle_disposition);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE_DISPOSITION;
+            return status;
+        case RDP_SMARTCARD_REDIRECTION_IOCTL_RECONNECT:
+            status = rdp_smartcard_redirection_parse_reconnect_call(message->request.input,
+                                                                    message->request.input_len,
+                                                                    &message->body.reconnect);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_SMARTCARD_REDIRECTION_MESSAGE_RECONNECT;
+            return status;
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
 librdp_status rdp_smartcard_redirection_write_device_control_request(
     rdp_buffer* buffer,
     uint32_t output_buffer_len,
