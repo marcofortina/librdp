@@ -15,6 +15,7 @@ find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_FFMPEG_AVC QUIET IMPORTED_TARGET libavcodec libavutil libswscale)
     pkg_check_modules(LIBRDP_PCSC QUIET IMPORTED_TARGET libpcsclite)
+    pkg_check_modules(LIBRDP_LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
 endif()
 
 add_library(librdp
@@ -99,6 +100,10 @@ endif()
 if(LIBRDP_PCSC_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_PCSC=1)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_PCSC)
+endif()
+if(LIBRDP_LIBUSB_FOUND)
+    target_compile_definitions(librdp PRIVATE RDP_HAVE_LIBUSB=1)
+    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_LIBUSB)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

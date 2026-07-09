@@ -60,6 +60,9 @@
 #ifdef RDP_HAVE_PCSC
 #include <winscard.h>
 #endif
+#ifdef RDP_HAVE_LIBUSB
+#include <libusb-1.0/libusb.h>
+#endif
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
@@ -174,6 +177,18 @@ typedef struct rdp_session_dynamic_channel
     rdp_buffer fragment;
     char name[RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX];
 } rdp_session_dynamic_channel;
+
+#ifdef RDP_HAVE_LIBUSB
+typedef struct rdp_session_usb_device
+{
+    uint8_t active;
+    uint32_t interface_id;
+    libusb_device_handle* handle;
+    struct libusb_device_descriptor descriptor;
+    uint8_t bus_number;
+    uint8_t device_address;
+} rdp_session_usb_device;
+#endif
 
 typedef struct rdp_session_graphics_surface
 {
@@ -317,6 +332,10 @@ struct librdp_session
 #ifdef RDP_HAVE_PCSC
     rdp_session_smartcard_context smartcard_contexts[RDP_SESSION_MAX_SMARTCARD_CONTEXTS];
     rdp_session_smartcard_handle smartcard_handles[RDP_SESSION_MAX_SMARTCARD_HANDLES];
+#endif
+#ifdef RDP_HAVE_LIBUSB
+    libusb_context* usb_libusb;
+    rdp_session_usb_device usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
 #endif
     uint32_t next_redirected_file_id;
 #ifdef RDP_HAVE_PCSC
@@ -8993,8 +9012,25 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
 
 static void rdp_session_usb_redirection_reset(librdp_session* session)
 {
+    size_t i = 0;
+
     if (!session)
         return;
+#ifdef RDP_HAVE_LIBUSB
+    for (i = 0; i < LIBRDP_SETTINGS_MAX_USB_DEVICES; i++)
+    {
+        if (session->usb_devices[i].handle)
+            libusb_close(session->usb_devices[i].handle);
+    }
+    memset(session->usb_devices, 0, sizeof(session->usb_devices));
+    if (session->usb_libusb)
+    {
+        libusb_exit(session->usb_libusb);
+        session->usb_libusb = NULL;
+    }
+#else
+    (void)i;
+#endif
     session->usb_redirection_channel_id = 0;
     session->usb_redirection_channel_id_bytes = 0;
     session->usb_redirection_ready = 0;
@@ -9057,6 +9093,146 @@ static librdp_status rdp_session_usb_checked_format(char* out, size_t out_len, c
     return LIBRDP_STATUS_OK;
 }
 
+static int rdp_session_usb_pair_is_bus_mode(const char* selector,
+                                            uint32_t first,
+                                            uint32_t second,
+                                            int decimal_only)
+{
+    return selector && decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
+}
+
+static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second);
+
+#ifdef RDP_HAVE_LIBUSB
+static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
+                                                 const char* selector,
+                                                 uint32_t interface_id,
+                                                 rdp_session_usb_device* out)
+{
+    libusb_device** list = NULL;
+    ssize_t count = 0;
+    ssize_t i = 0;
+    uint32_t first = 0;
+    uint32_t second = 0;
+    int decimal_only = 0;
+    int bus_mode = 0;
+    librdp_status status = LIBRDP_STATUS_IO_ERROR;
+
+    if (!session || !selector || !out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+    if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
+    if (!session->usb_libusb && libusb_init(&session->usb_libusb) != 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    count = libusb_get_device_list(session->usb_libusb, &list);
+    if (count < 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    for (i = 0; i < count; i++)
+    {
+        libusb_device* device = list[i];
+        struct libusb_device_descriptor descriptor;
+        int matched = 0;
+
+        if (libusb_get_device_descriptor(device, &descriptor) != 0)
+            continue;
+        if (bus_mode)
+        {
+            matched = libusb_get_bus_number(device) == first &&
+                      libusb_get_device_address(device) == second;
+        }
+        else
+        {
+            matched = descriptor.idVendor == first && descriptor.idProduct == second;
+        }
+        if (!matched)
+            continue;
+        out->active = 1;
+        out->interface_id = interface_id;
+        out->descriptor = descriptor;
+        out->bus_number = libusb_get_bus_number(device);
+        out->device_address = libusb_get_device_address(device);
+        if (libusb_open(device, &out->handle) != 0)
+            out->handle = NULL;
+        status = LIBRDP_STATUS_OK;
+        break;
+    }
+    libusb_free_device_list(list, 1);
+    return status;
+}
+
+static librdp_status rdp_session_usb_build_descriptor_device_strings(
+    const struct libusb_device_descriptor* descriptor,
+    uint32_t index,
+    rdp_buffer* instance,
+    rdp_buffer* hardware,
+    rdp_buffer* compatibility,
+    rdp_buffer* container)
+{
+    char instance_text[96];
+    char hardware_first[96];
+    char hardware_second[96];
+    char compatibility_first[96];
+    char compatibility_second[96];
+    char container_text[48];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!descriptor || !instance || !hardware || !compatibility || !container)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_usb_checked_format(instance_text,
+                                            sizeof(instance_text),
+                                            "USB\\VID_%04X&PID_%04X\\RDP_%02u",
+                                            descriptor->idVendor,
+                                            descriptor->idProduct,
+                                            (unsigned)index + 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(hardware_first,
+                                                sizeof(hardware_first),
+                                                "USB\\VID_%04X&PID_%04X&REV_%04X",
+                                                descriptor->idVendor,
+                                                descriptor->idProduct,
+                                                descriptor->bcdDevice);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(hardware_second,
+                                                sizeof(hardware_second),
+                                                "USB\\VID_%04X&PID_%04X",
+                                                descriptor->idVendor,
+                                                descriptor->idProduct,
+                                                0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(compatibility_first,
+                                                sizeof(compatibility_first),
+                                                "USB\\Class_%02X&SubClass_%02X&Prot_%02X",
+                                                descriptor->bDeviceClass,
+                                                descriptor->bDeviceSubClass,
+                                                descriptor->bDeviceProtocol);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(compatibility_second,
+                                                sizeof(compatibility_second),
+                                                "USB\\Class_%02X",
+                                                descriptor->bDeviceClass,
+                                                0,
+                                                0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(container_text,
+                                                sizeof(container_text),
+                                                "{00000000-0000-0000-0000-00000000%04X}",
+                                                (unsigned)(index + 1u),
+                                                0,
+                                                0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_utf8_to_utf16le(instance_text, instance, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_multisz2(hardware, hardware_first, hardware_second);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_multisz2(compatibility, compatibility_first, compatibility_second);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_utf8_to_utf16le(container_text, container, 1);
+    return status;
+}
+#endif
+
 static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -9092,7 +9268,7 @@ static librdp_status rdp_session_usb_build_device_strings(const char* selector,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    bus_mode = decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
+    bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
     if (bus_mode)
     {
         status = rdp_session_usb_checked_format(instance_text,
@@ -9195,12 +9371,39 @@ static librdp_status rdp_session_usb_send_device_announcements(librdp_session* s
         rdp_usb_redirection_device_capabilities capabilities;
         uint32_t interface_id = RDP_SESSION_USB_DEVICE_INTERFACE_BASE + i;
         const char* selector = librdp_settings_usb_device_selector(session->settings, i);
+#ifdef RDP_HAVE_LIBUSB
+        rdp_session_usb_device backend_device;
+        int have_backend_device = 0;
+        const char* backend_name = "descriptor";
+#endif
 
         rdp_buffer_init(&packet);
         rdp_buffer_init(&instance);
         rdp_buffer_init(&hardware);
         rdp_buffer_init(&compatibility);
         rdp_buffer_init(&container);
+#ifdef RDP_HAVE_LIBUSB
+        memset(&backend_device, 0, sizeof(backend_device));
+        if (rdp_session_usb_libusb_find(session, selector, interface_id, &backend_device) == LIBRDP_STATUS_OK)
+        {
+            session->usb_devices[i] = backend_device;
+            have_backend_device = 1;
+        }
+        else
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.urbdrc.backend.missing",
+                            "selector=\"%s\" interface_id=%u",
+                            selector ? selector : "",
+                            interface_id);
+            rdp_buffer_free(&container);
+            rdp_buffer_free(&compatibility);
+            rdp_buffer_free(&hardware);
+            rdp_buffer_free(&instance);
+            rdp_buffer_free(&packet);
+            continue;
+        }
+#endif
         memset(&capabilities, 0, sizeof(capabilities));
         capabilities.cb_size = RDP_USB_REDIRECTION_DEVICE_CAPABILITIES_SIZE;
         capabilities.usb_bus_interface_version = 2;
@@ -9208,12 +9411,22 @@ static librdp_status rdp_session_usb_send_device_announcements(librdp_session* s
         capabilities.supported_usb_version = 0x00000200u;
         capabilities.device_is_high_speed = 1;
 
-        status = rdp_session_usb_build_device_strings(selector,
-                                                      i,
-                                                      &instance,
-                                                      &hardware,
-                                                      &compatibility,
-                                                      &container);
+#ifdef RDP_HAVE_LIBUSB
+        if (have_backend_device)
+            status = rdp_session_usb_build_descriptor_device_strings(&backend_device.descriptor,
+                                                                     i,
+                                                                     &instance,
+                                                                     &hardware,
+                                                                     &compatibility,
+                                                                     &container);
+        else
+#endif
+            status = rdp_session_usb_build_device_strings(selector,
+                                                          i,
+                                                          &instance,
+                                                          &hardware,
+                                                          &compatibility,
+                                                          &container);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_usb_redirection_write_add_device(&packet,
                                                           rdp_session_usb_next_message_id(session),
@@ -9234,13 +9447,22 @@ static librdp_status rdp_session_usb_send_device_announcements(librdp_session* s
         if (status == LIBRDP_STATUS_OK)
         {
             session->usb_device_count_sent++;
+#ifdef RDP_HAVE_LIBUSB
+            backend_name = have_backend_device && backend_device.handle ? "libusb" : "descriptor";
+#endif
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.urbdrc.add_device",
-                            "dvc_channel_id=%u selector=\"%s\" interface_id=%u count=%u",
+                            "dvc_channel_id=%u selector=\"%s\" interface_id=%u count=%u backend=%s",
                             session->usb_redirection_channel_id,
                             selector ? selector : "",
                             interface_id,
-                            session->usb_device_count_sent);
+                            session->usb_device_count_sent,
+#ifdef RDP_HAVE_LIBUSB
+                            backend_name
+#else
+                            "synthetic"
+#endif
+            );
         }
         rdp_buffer_free(&container);
         rdp_buffer_free(&compatibility);
