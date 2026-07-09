@@ -206,6 +206,7 @@ typedef struct rdp_session_smartcard_handle
     uint32_t context_generation;
     SCARDHANDLE handle;
     DWORD active_protocol;
+    uint32_t transmit_count;
 } rdp_session_smartcard_handle;
 #endif
 
@@ -5135,7 +5136,10 @@ static librdp_status rdp_session_smartcard_handle_handle_only(
         if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_BEGINTRANSACTION)
             pcsc_status = SCardBeginTransaction(handle->handle);
         else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_GETTRANSMITCOUNT)
-            pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+        {
+            pcsc_status = SCARD_S_SUCCESS;
+            count = handle->transmit_count;
+        }
     }
     if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_GETTRANSMITCOUNT)
         status = rdp_smartcard_redirection_write_count_return(&payload,
@@ -5461,6 +5465,8 @@ static librdp_status rdp_session_smartcard_handle_transmit(
                                         message->body.transmit.recv_pci_present ? &recv_pci : NULL,
                                         recv_buffer,
                                         &recv_len);
+            if (pcsc_status == SCARD_S_SUCCESS && handle->transmit_count < UINT32_MAX)
+                handle->transmit_count++;
         }
         else
         {
