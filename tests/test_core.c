@@ -1087,7 +1087,11 @@ static int test_settings_surface_input_session(void)
                                          "bad",
                                          0x80000000u) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_webauthn_provider(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
-    CHECK(librdp_settings_set_webauthn_provider(settings, "fido2") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "fido2") == LIBRDP_STATUS_OK);
+    CHECK(strcmp(librdp_settings_webauthn_provider(settings), "fido2") == 0);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "fido2=/dev/hidraw0") == LIBRDP_STATUS_OK);
+    CHECK(strcmp(librdp_settings_webauthn_provider(settings), "fido2=/dev/hidraw0") == 0);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "mock=/tmp/auth.json") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_rail_app(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_echo_payload(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
 

@@ -27,6 +27,10 @@
 #include <winscard.h>
 #endif
 
+#ifdef LIBRDP_HAVE_FIDO2
+#include <fido.h>
+#endif
+
 static int x11_text_starts_with(const char* text, const char* prefix)
 {
     const size_t prefix_len = prefix ? strlen(prefix) : 0;
@@ -377,6 +381,7 @@ static int x11_probe_usb(const char* selector)
 static int x11_probe_webauthn(const char* provider)
 {
     const char* mock_path = x11_text_after(provider, "mock=");
+    const char* fido2_path = x11_text_after(provider, "fido2=");
 
     if (!provider || strcmp(provider, "mock") == 0)
     {
@@ -385,6 +390,51 @@ static int x11_probe_webauthn(const char* provider)
     }
     if (mock_path)
         return x11_probe_file_readable(mock_path, "x11.webauthn.mock.probe");
+    if (strcmp(provider, "fido2") == 0 || fido2_path)
+    {
+#ifdef LIBRDP_HAVE_FIDO2
+        fido_dev_info_t* info = NULL;
+        size_t found = 0;
+        size_t i = 0;
+        int ok = 0;
+
+        fido_init(0);
+        info = fido_dev_info_new(64);
+        if (info && fido_dev_info_manifest(info, 64, &found) == FIDO_OK)
+        {
+            if (!fido2_path)
+                ok = found > 0 ? 1 : 0;
+            else
+            {
+                for (i = 0; i < found; i++)
+                {
+                    const fido_dev_info_t* entry = fido_dev_info_ptr(info, i);
+                    const char* path = entry ? fido_dev_info_path(entry) : NULL;
+
+                    if (path && strcmp(path, fido2_path) == 0)
+                    {
+                        ok = 1;
+                        break;
+                    }
+                }
+            }
+        }
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.webauthn.fido2.probe",
+                        "ok=%u provider=\"%s\" devices=%u",
+                        ok ? 1u : 0u,
+                        provider,
+                        (unsigned)found);
+        fido_dev_info_free(&info, 64);
+        return ok;
+#else
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.webauthn.fido2.probe",
+                        "ok=0 provider=\"%s\" reason=fido2_unavailable",
+                        provider);
+        return 0;
+#endif
+    }
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.webauthn.probe",
                     "ok=0 provider=\"%s\" reason=unsupported_provider",

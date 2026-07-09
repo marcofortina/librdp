@@ -157,7 +157,10 @@ static int rdp_settings_valid_webauthn_provider(const char* value)
         return 1;
     if (strcmp(value, "mock") == 0)
         return 1;
-    return strncmp(value, "mock=", 5u) == 0 && value[5] != '\0' &&
+    if (strcmp(value, "fido2") == 0)
+        return 1;
+    return ((strncmp(value, "mock=", 5u) == 0 && value[5] != '\0') ||
+            (strncmp(value, "fido2=", 6u) == 0 && value[6] != '\0')) &&
            strlen(value) <= RDP_SETTINGS_TEXT_MAX;
 }
 
