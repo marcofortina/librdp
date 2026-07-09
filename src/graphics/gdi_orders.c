@@ -2,6 +2,7 @@
 
 #include "common/stream.h"
 
+#include <limits.h>
 #include <string.h>
 
 static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
@@ -104,6 +105,20 @@ static librdp_status rdp_gdi_read_capability_header(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_write_capability_header(rdp_buffer* buffer,
+                                                     uint16_t type,
+                                                     uint16_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u16_le(buffer, length);
+}
+
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update)
@@ -130,6 +145,30 @@ librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_gdi_write_slow_orders_update_payload(rdp_buffer* buffer,
+                                                       uint16_t number_orders,
+                                                       const void* order_data,
+                                                       size_t order_data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!order_data && order_data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, RDP_GDI_UPDATE_TYPE_ORDERS);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, number_orders);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, order_data, order_data_len);
+}
+
 librdp_status rdp_gdi_parse_fast_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update)
@@ -149,6 +188,21 @@ librdp_status rdp_gdi_parse_fast_orders_update_payload(const void* data,
     if (rdp_stream_read_bytes(&stream, &update->order_data, update->order_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_gdi_write_fast_orders_update_payload(rdp_buffer* buffer,
+                                                       uint16_t number_orders,
+                                                       const void* order_data,
+                                                       size_t order_data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!order_data && order_data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, number_orders);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, order_data, order_data_len);
 }
 
 librdp_status rdp_gdi_parse_primary_order(const void* data,
@@ -235,6 +289,33 @@ librdp_status rdp_gdi_parse_secondary_order(const void* data,
     if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
+                                            uint16_t extra_flags,
+                                            uint8_t order_type,
+                                            const void* payload,
+                                            size_t payload_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_gdi_secondary_order_type_valid(order_type) ||
+        (!payload && payload_len > 0) || payload_len < 7u ||
+        payload_len - 7u > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len - 7u));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, extra_flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, order_type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, payload, payload_len);
 }
 
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
@@ -460,6 +541,25 @@ librdp_status rdp_gdi_parse_color_cache_capability(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_gdi_write_color_cache_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_color_cache_capability* capability)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !capability)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_gdi_write_capability_header(buffer,
+                                             RDP_GDI_CAPSTYPE_COLOR_CACHE,
+                                             RDP_GDI_COLOR_CACHE_CAPABILITY_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, capability->color_table_cache_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u16_le(buffer, 0);
+}
+
 librdp_status rdp_gdi_parse_ninegrid_capability(const void* data,
                                                 size_t length,
                                                 rdp_gdi_ninegrid_capability* capability)
@@ -484,6 +584,31 @@ librdp_status rdp_gdi_parse_ninegrid_capability(const void* data,
         capability->cache_entries > 256u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_gdi_write_ninegrid_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_ninegrid_capability* capability)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !capability ||
+        capability->support_level > RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 ||
+        capability->cache_size > 2560u ||
+        capability->cache_entries > 256u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_gdi_write_capability_header(buffer,
+                                             RDP_GDI_CAPSTYPE_DRAW_NINEGRID_CACHE,
+                                             RDP_GDI_DRAW_NINEGRID_CAPABILITY_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, capability->support_level);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, capability->cache_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u16_le(buffer, capability->cache_entries);
 }
 
 librdp_status rdp_gdi_parse_gdiplus_capability(const void* data,
@@ -531,4 +656,68 @@ librdp_status rdp_gdi_parse_gdiplus_capability(const void* data,
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_gdi_write_gdiplus_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_gdiplus_capability* capability)
+{
+    static const uint16_t max_entries[5] = {10u, 5u, 5u, 10u, 2u};
+    static const uint16_t max_chunks[4] = {512u, 2048u, 1024u, 64u};
+    static const uint16_t max_properties[3] = {4096u, 256u, 128u};
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    if (!buffer || !capability ||
+        capability->support_level > RDP_GDI_GDIPLUS_SUPPORT_SUPPORTED ||
+        capability->cache_level > RDP_GDI_GDIPLUS_CACHE_LEVEL_ONE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < 5u; i++)
+    {
+        if (capability->cache_entries[i] > max_entries[i])
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    for (i = 0; i < 4u; i++)
+    {
+        if (capability->cache_chunk_size[i] > max_chunks[i])
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    for (i = 0; i < 3u; i++)
+    {
+        if (capability->image_cache_properties[i] > max_properties[i])
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    status = rdp_gdi_write_capability_header(buffer,
+                                             RDP_GDI_CAPSTYPE_DRAW_GDIPLUS,
+                                             RDP_GDI_DRAW_GDIPLUS_CAPABILITY_LENGTH);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, capability->support_level);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, capability->version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, capability->cache_level);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < 5u; i++)
+    {
+        status = rdp_buffer_append_u16_le(buffer, capability->cache_entries[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    for (i = 0; i < 4u; i++)
+    {
+        status = rdp_buffer_append_u16_le(buffer, capability->cache_chunk_size[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    for (i = 0; i < 3u; i++)
+    {
+        status = rdp_buffer_append_u16_le(buffer, capability->image_cache_properties[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
 }

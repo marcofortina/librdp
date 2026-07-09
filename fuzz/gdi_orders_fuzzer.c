@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
@@ -16,6 +17,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_gdi_gdiplus_capability gdiplus;
     rdp_buffer buffer;
     uint32_t flags = 0;
+    const uint8_t payload[] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     (void)rdp_gdi_parse_slow_orders_update_payload(data, size, &update);
     (void)rdp_gdi_parse_fast_orders_update_payload(data, size, &update);
@@ -33,6 +35,22 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_gdi_parse_gdiplus_capability(data, size, &gdiplus);
 
     rdp_buffer_init(&buffer);
+    (void)rdp_gdi_write_secondary_order(&buffer,
+                                        0,
+                                        RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED,
+                                        payload,
+                                        sizeof(payload));
+    buffer.length = 0;
+    (void)rdp_gdi_write_slow_orders_update_payload(&buffer,
+                                                   1,
+                                                   payload,
+                                                   sizeof(payload));
+    buffer.length = 0;
+    (void)rdp_gdi_write_fast_orders_update_payload(&buffer,
+                                                   1,
+                                                   payload,
+                                                   sizeof(payload));
+    buffer.length = 0;
     bitmap_error.count = 1;
     bitmap_error.infos[0].cache_id = 1;
     bitmap_error.infos[0].flags = RDP_GDI_BITMAP_CACHE_ERROR_FLUSH_CACHE;
@@ -40,6 +58,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_gdi_write_bitmap_cache_error_payload(&buffer, &bitmap_error);
     buffer.length = 0;
     (void)rdp_gdi_write_cache_error_flags(&buffer, RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE);
+    buffer.length = 0;
+    color.color_table_cache_size = 6;
+    (void)rdp_gdi_write_color_cache_capability(&buffer, &color);
+    buffer.length = 0;
+    ninegrid.support_level = RDP_GDI_NINEGRID_SUPPORT_SUPPORTED;
+    ninegrid.cache_size = 128;
+    ninegrid.cache_entries = 32;
+    (void)rdp_gdi_write_ninegrid_capability(&buffer, &ninegrid);
+    buffer.length = 0;
+    memset(&gdiplus, 0, sizeof(gdiplus));
+    gdiplus.support_level = RDP_GDI_GDIPLUS_SUPPORT_SUPPORTED;
+    gdiplus.version = 1;
+    gdiplus.cache_level = RDP_GDI_GDIPLUS_CACHE_LEVEL_ONE;
+    gdiplus.cache_entries[0] = 1;
+    gdiplus.cache_chunk_size[0] = 64;
+    gdiplus.image_cache_properties[0] = 128;
+    (void)rdp_gdi_write_gdiplus_capability(&buffer, &gdiplus);
     rdp_buffer_free(&buffer);
     return 0;
 }

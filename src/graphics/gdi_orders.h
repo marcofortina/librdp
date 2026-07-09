@@ -190,9 +190,17 @@ typedef struct rdp_gdi_gdiplus_capability
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update);
+librdp_status rdp_gdi_write_slow_orders_update_payload(rdp_buffer* buffer,
+                                                       uint16_t number_orders,
+                                                       const void* order_data,
+                                                       size_t order_data_len);
 librdp_status rdp_gdi_parse_fast_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update);
+librdp_status rdp_gdi_write_fast_orders_update_payload(rdp_buffer* buffer,
+                                                       uint16_t number_orders,
+                                                       const void* order_data,
+                                                       size_t order_data_len);
 librdp_status rdp_gdi_parse_order_list(const void* data,
                                        size_t length,
                                        uint16_t number_orders,
@@ -205,6 +213,11 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
 librdp_status rdp_gdi_parse_secondary_order(const void* data,
                                             size_t length,
                                             rdp_gdi_secondary_order_header* header);
+librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
+                                            uint16_t extra_flags,
+                                            uint8_t order_type,
+                                            const void* payload,
+                                            size_t payload_len);
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header);
@@ -221,11 +234,20 @@ librdp_status rdp_gdi_write_cache_error_flags(rdp_buffer* buffer, uint32_t flags
 librdp_status rdp_gdi_parse_color_cache_capability(const void* data,
                                                    size_t length,
                                                    rdp_gdi_color_cache_capability* capability);
+librdp_status rdp_gdi_write_color_cache_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_color_cache_capability* capability);
 librdp_status rdp_gdi_parse_ninegrid_capability(const void* data,
                                                 size_t length,
                                                 rdp_gdi_ninegrid_capability* capability);
+librdp_status rdp_gdi_write_ninegrid_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_ninegrid_capability* capability);
 librdp_status rdp_gdi_parse_gdiplus_capability(const void* data,
                                                size_t length,
                                                rdp_gdi_gdiplus_capability* capability);
+librdp_status rdp_gdi_write_gdiplus_capability(
+    rdp_buffer* buffer,
+    const rdp_gdi_gdiplus_capability* capability);
 
 #endif
