@@ -1044,7 +1044,10 @@ static int test_audio_channels(void)
     };
     static const uint8_t input_extra[] = {0xde, 0xad, 0xfa, 0xce};
     rdp_audio_format pcm;
+    rdp_audio_format alaw;
+    rdp_audio_format mulaw;
     rdp_audio_format parsed_pcm;
+    rdp_audio_format parsed_codec;
     rdp_audio_output_formats output_formats;
     rdp_audio_output_training training;
     rdp_audio_output_wave_info wave_info;
@@ -1080,6 +1083,46 @@ static int test_audio_channels(void)
     PCHECK(out.length == sizeof(pcm_format) && memcmp(out.data, pcm_format, sizeof(pcm_format)) == 0);
     PCHECK(rdp_audio_format_parse(bad_extensible, sizeof(bad_extensible), &parsed_pcm, &consumed) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    memset(&alaw, 0, sizeof(alaw));
+    alaw.format_tag = RDP_AUDIO_FORMAT_ALAW;
+    alaw.channels = 1;
+    alaw.samples_per_sec = 8000;
+    alaw.avg_bytes_per_sec = 8000;
+    alaw.block_align = 1;
+    alaw.bits_per_sample = 8;
+    memset(&mulaw, 0, sizeof(mulaw));
+    mulaw.format_tag = RDP_AUDIO_FORMAT_MULAW;
+    mulaw.channels = 2;
+    mulaw.samples_per_sec = 16000;
+    mulaw.avg_bytes_per_sec = 32000;
+    mulaw.block_align = 2;
+    mulaw.bits_per_sample = 8;
+    rdp_buffer_free(&out);
+    rdp_buffer_init(&out);
+    PCHECK(rdp_audio_output_write_client_formats(&out,
+                                                 RDP_AUDIO_OUTPUT_CAP_ALIVE,
+                                                 0xffffffffu,
+                                                 0x00010000u,
+                                                 0,
+                                                 0,
+                                                 6,
+                                                 (rdp_audio_format[]){pcm, alaw, mulaw},
+                                                 3) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_output_parse_formats(out.data, out.length, &output_formats) == LIBRDP_STATUS_OK);
+    PCHECK(output_formats.format_count == 3);
+    PCHECK(rdp_audio_format_get_from_list(output_formats.formats,
+                                          output_formats.formats_len,
+                                          output_formats.format_count,
+                                          1,
+                                          &parsed_codec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_format_wire_equal(&alaw, &parsed_codec));
+    PCHECK(rdp_audio_format_get_from_list(output_formats.formats,
+                                          output_formats.formats_len,
+                                          output_formats.format_count,
+                                          2,
+                                          &parsed_codec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_audio_format_wire_equal(&mulaw, &parsed_codec));
 
     PCHECK(rdp_audio_output_parse_formats(server_formats, sizeof(server_formats), &output_formats) ==
            LIBRDP_STATUS_OK);

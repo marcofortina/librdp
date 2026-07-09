@@ -7004,20 +7004,25 @@ static librdp_status rdp_session_send_clipboard_handshake(librdp_session* sessio
     return status;
 }
 
-static int rdp_session_audio_format_is_supported_pcm(const rdp_audio_format* format)
+static int rdp_session_audio_format_is_supported(const rdp_audio_format* format)
 {
+    uint32_t bytes_per_sample = 0;
+
     if (!format)
         return 0;
-    if (format->format_tag != RDP_AUDIO_FORMAT_PCM)
-        return 0;
     if (format->channels == 0 || format->channels > 2)
+        return 0;
+    if (format->samples_per_sec == 0 || format->block_align == 0 || format->avg_bytes_per_sec == 0)
+        return 0;
+    if (format->format_tag == RDP_AUDIO_FORMAT_ALAW || format->format_tag == RDP_AUDIO_FORMAT_MULAW)
+        return format->bits_per_sample == 8u && format->block_align == format->channels;
+    if (format->format_tag != RDP_AUDIO_FORMAT_PCM)
         return 0;
     if (format->bits_per_sample != 8u && format->bits_per_sample != 16u && format->bits_per_sample != 24u &&
         format->bits_per_sample != 32u)
         return 0;
-    if (format->samples_per_sec == 0 || format->block_align == 0 || format->avg_bytes_per_sec == 0)
-        return 0;
-    return 1;
+    bytes_per_sample = format->bits_per_sample / 8u;
+    return bytes_per_sample > 0 && format->block_align == format->channels * bytes_per_sample;
 }
 
 static void rdp_session_audio_format_to_public(const rdp_audio_format* in, librdp_audio_format* out)
@@ -7173,7 +7178,7 @@ static librdp_status rdp_session_send_audio_input_formats(librdp_session* sessio
                                                 &format);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        if (rdp_session_audio_format_is_supported_pcm(&format))
+        if (rdp_session_audio_format_is_supported(&format))
         {
             selected[selected_count] = format;
             rdp_session_audio_format_to_public(&format,
@@ -7350,7 +7355,7 @@ static librdp_status rdp_session_handle_audio_output_formats(librdp_session* ses
                                                     &format);
             if (status != LIBRDP_STATUS_OK)
                 break;
-            if (rdp_session_audio_format_is_supported_pcm(&format))
+            if (rdp_session_audio_format_is_supported(&format))
             {
                 selected[selected_count] = format;
                 rdp_session_audio_format_to_public(&format,
