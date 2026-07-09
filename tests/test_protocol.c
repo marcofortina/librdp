@@ -4551,11 +4551,29 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_progressive_context.context_id == 0 &&
            graphics_progressive_context.tile_size == RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE &&
            graphics_progressive_context.flags == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_context(&dyn_response,
+                                                  &graphics_progressive_context) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_context(dyn_response.data,
+                                                  dyn_response.length,
+                                                  &graphics_progressive_context) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_context.flags == 1);
     PCHECK(rdp_graphics_progressive_parse_frame_begin(graphics_progressive_stream + 10,
                                                       sizeof(graphics_progressive_stream) - 10u,
                                                       &graphics_progressive_frame_begin) == LIBRDP_STATUS_OK);
     PCHECK(graphics_progressive_frame_begin.frame_index == 1 &&
            graphics_progressive_frame_begin.region_count == 1);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_frame_begin(&dyn_response,
+                                                      &graphics_progressive_frame_begin) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_frame_begin(dyn_response.data,
+                                                      dyn_response.length,
+                                                      &graphics_progressive_frame_begin) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_frame_begin.frame_index == 1);
     PCHECK(rdp_graphics_progressive_parse_region(graphics_progressive_stream + 22,
                                                  sizeof(graphics_progressive_stream) - 22u,
                                                  &graphics_progressive_region) == LIBRDP_STATUS_OK);
@@ -4566,12 +4584,29 @@ static int test_path_security_license_channels(void)
            graphics_progressive_region.tile_count == 1 &&
            graphics_progressive_region.tile_data_size == 25 &&
            graphics_progressive_region.tiles_len == 25);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_region(&dyn_response,
+                                                 &graphics_progressive_region) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_region(dyn_response.data,
+                                                 dyn_response.length,
+                                                 &graphics_progressive_region) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_region.tiles_len == 25);
     PCHECK(rdp_graphics_progressive_parse_region(graphics_progressive_empty_region,
                                                  sizeof(graphics_progressive_empty_region),
                                                  &graphics_progressive_region) == LIBRDP_STATUS_OK);
     PCHECK(graphics_progressive_region.tile_count == 0 &&
            graphics_progressive_region.tile_data_size == 0 &&
            graphics_progressive_region.tiles_len == 0);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_region(&dyn_response,
+                                                 &graphics_progressive_region) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data,
+                  graphics_progressive_empty_region,
+                  sizeof(graphics_progressive_empty_region)) == 0);
     PCHECK(rdp_graphics_progressive_parse_region_rect(graphics_progressive_region_rect,
                                                       sizeof(graphics_progressive_region_rect),
                                                       &graphics_progressive_rect) == LIBRDP_STATUS_OK);
@@ -4579,6 +4614,14 @@ static int test_path_security_license_channels(void)
            graphics_progressive_rect.top == 288 &&
            graphics_progressive_rect.right == 704 &&
            graphics_progressive_rect.bottom == 320);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_region_rect(&dyn_response,
+                                                      &graphics_progressive_rect) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data,
+                  graphics_progressive_region_rect,
+                  sizeof(graphics_progressive_region_rect)) == 0);
     PCHECK(rdp_graphics_progressive_parse_region_rect(graphics_progressive_region_rect_overflow,
                                                       sizeof(graphics_progressive_region_rect_overflow),
                                                       &graphics_progressive_rect) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -4595,9 +4638,23 @@ static int test_path_security_license_channels(void)
            graphics_progressive_simple.y_data[0] == 0xaa &&
            graphics_progressive_simple.cb_data[0] == 0xbb &&
            graphics_progressive_simple.cr_data[0] == 0xcc);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_tile_simple(&dyn_response,
+                                                      &graphics_progressive_simple) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_tile_simple(dyn_response.data,
+                                                      dyn_response.length,
+                                                      &graphics_progressive_simple) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_simple.y_data[0] == 0xaa);
     PCHECK(rdp_graphics_progressive_parse_frame_end(graphics_progressive_stream + 94,
                                                     sizeof(graphics_progressive_stream) - 94u) ==
            LIBRDP_STATUS_OK);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_frame_end(&dyn_response) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_frame_end(dyn_response.data,
+                                                    dyn_response.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_graphics_progressive_parse_tile_first(graphics_progressive_tile_first,
                                                      sizeof(graphics_progressive_tile_first),
                                                      &graphics_progressive_first) == LIBRDP_STATUS_OK);
@@ -4608,6 +4665,14 @@ static int test_path_security_license_channels(void)
            graphics_progressive_first.y_data[0] == 0x11 &&
            graphics_progressive_first.cb_data[0] == 0x22 &&
            graphics_progressive_first.cr_data[0] == 0x33);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_tile_first(&dyn_response,
+                                                     &graphics_progressive_first) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data,
+                  graphics_progressive_tile_first,
+                  sizeof(graphics_progressive_tile_first)) == 0);
     PCHECK(rdp_graphics_progressive_parse_tile_upgrade(graphics_progressive_tile_upgrade,
                                                        sizeof(graphics_progressive_tile_upgrade),
                                                        &graphics_progressive_upgrade) == LIBRDP_STATUS_OK);
@@ -4616,6 +4681,31 @@ static int test_path_security_license_channels(void)
            graphics_progressive_upgrade.y_idx == 4 &&
            graphics_progressive_upgrade.y_srl_data[0] == 0x11 &&
            graphics_progressive_upgrade.cr_raw_data[0] == 0x66);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_tile_upgrade(&dyn_response,
+                                                       &graphics_progressive_upgrade) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data,
+                  graphics_progressive_tile_upgrade,
+                  sizeof(graphics_progressive_tile_upgrade)) == 0);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_context(&dyn_response,
+                                                  &graphics_progressive_context) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_write_frame_begin(&dyn_response,
+                                                      &graphics_progressive_frame_begin) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_region(graphics_progressive_stream + 22,
+                                                 sizeof(graphics_progressive_stream) - 22u,
+                                                 &graphics_progressive_region) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_write_region(&dyn_response,
+                                                 &graphics_progressive_region) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_write_frame_end(&dyn_response) == LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data,
+                  graphics_progressive_stream,
+                  sizeof(graphics_progressive_stream)) == 0);
     PCHECK(rdp_graphics_progressive_parse_stream(graphics_progressive_stream,
                                                  sizeof(graphics_progressive_stream),
                                                  &graphics_progressive) == LIBRDP_STATUS_OK);

@@ -512,31 +512,56 @@ librdp_status rdp_graphics_decode_segmented_data(rdp_graphics_decompressor* deco
 librdp_status rdp_graphics_progressive_parse_block(const void* data,
                                                    size_t length,
                                                    rdp_graphics_progressive_block* block);
+librdp_status rdp_graphics_progressive_write_block(rdp_buffer* buffer,
+                                                   uint16_t type,
+                                                   const void* payload,
+                                                   uint32_t payload_len);
 librdp_status rdp_graphics_progressive_parse_context(const void* data,
                                                      size_t length,
                                                      rdp_graphics_progressive_context* context);
+librdp_status rdp_graphics_progressive_write_context(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_context* context);
 librdp_status rdp_graphics_progressive_parse_frame_begin(
     const void* data,
     size_t length,
     rdp_graphics_progressive_frame_begin* frame_begin);
+librdp_status rdp_graphics_progressive_write_frame_begin(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_frame_begin* frame_begin);
 librdp_status rdp_graphics_progressive_parse_frame_end(const void* data, size_t length);
+librdp_status rdp_graphics_progressive_write_frame_end(rdp_buffer* buffer);
 librdp_status rdp_graphics_progressive_parse_region(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_region* region);
+librdp_status rdp_graphics_progressive_write_region(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_region* region);
 librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
                                                          size_t length,
                                                          rdp_graphics_rect16* rect);
+librdp_status rdp_graphics_progressive_write_region_rect(rdp_buffer* buffer,
+                                                         const rdp_graphics_rect16* rect);
 librdp_status rdp_graphics_progressive_parse_tile_simple(
     const void* data,
     size_t length,
     rdp_graphics_progressive_tile_simple* tile);
+librdp_status rdp_graphics_progressive_write_tile_simple(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_tile_simple* tile);
 librdp_status rdp_graphics_progressive_parse_tile_first(const void* data,
                                                        size_t length,
                                                        rdp_graphics_progressive_tile_first* tile);
+librdp_status rdp_graphics_progressive_write_tile_first(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_tile_first* tile);
 librdp_status rdp_graphics_progressive_parse_tile_upgrade(
     const void* data,
     size_t length,
     rdp_graphics_progressive_tile_upgrade* tile);
+librdp_status rdp_graphics_progressive_write_tile_upgrade(
+    rdp_buffer* buffer,
+    const rdp_graphics_progressive_tile_upgrade* tile);
 librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_stream* stream);

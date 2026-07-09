@@ -41,6 +41,38 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_avc444_stream avc444;
     rdp_graphics_rect16 valid_rect = {0, 0, 16, 16};
     rdp_graphics_point16 valid_points[2] = {{0, 0}, {16, 16}};
+    const uint8_t progressive_rect[] = {0, 0, 0, 0, 64, 0, 64, 0};
+    const uint8_t progressive_quant[] = {0x11, 0x22, 0x33, 0x44, 0x55};
+    const uint8_t progressive_quality[] = {
+        0, 1, 2, 3, 4, 5, 6, 7,
+        8, 9, 10, 11, 12, 13, 14, 15
+    };
+    rdp_graphics_progressive_context valid_progressive_context = {
+        0,
+        RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE,
+        0
+    };
+    rdp_graphics_progressive_frame_begin valid_progressive_frame = {1, 1};
+    rdp_graphics_progressive_region valid_progressive_region = {
+        RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        progressive_rect,
+        sizeof(progressive_rect),
+        progressive_quant,
+        sizeof(progressive_quant),
+        progressive_quality,
+        sizeof(progressive_quality),
+        NULL,
+        0
+    };
+    rdp_graphics_progressive_tile_simple valid_simple_tile;
+    rdp_graphics_progressive_tile_first valid_first_tile;
+    rdp_graphics_progressive_tile_upgrade valid_upgrade_tile;
     rdp_buffer output;
 
     rdp_graphics_decompressor_init(&decompressor);
@@ -130,6 +162,72 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_write_end_frame(&output, 1);
     output.length = 0;
     (void)rdp_graphics_write_frame_ack(&output, RDP_GRAPHICS_QUEUE_DEPTH_UNAVAILABLE, 1, 1);
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_context(&output, &valid_progressive_context);
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_frame_begin(&output, &valid_progressive_frame);
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_frame_end(&output);
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_region_rect(&output, &valid_rect);
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_region(&output, &valid_progressive_region);
+    valid_simple_tile.block_type = RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_SIMPLE;
+    valid_simple_tile.quant_idx_y = 0;
+    valid_simple_tile.quant_idx_cb = 0;
+    valid_simple_tile.quant_idx_cr = 0;
+    valid_simple_tile.x_idx = 0;
+    valid_simple_tile.y_idx = 0;
+    valid_simple_tile.flags = 0;
+    valid_simple_tile.y_len = (uint16_t)(size < 16u ? size : 16u);
+    valid_simple_tile.cb_len = 0;
+    valid_simple_tile.cr_len = 0;
+    valid_simple_tile.tail_len = 0;
+    valid_simple_tile.y_data = data;
+    valid_simple_tile.cb_data = NULL;
+    valid_simple_tile.cr_data = NULL;
+    valid_simple_tile.tail_data = NULL;
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_tile_simple(&output, &valid_simple_tile);
+    valid_first_tile.block_type = RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST;
+    valid_first_tile.quant_idx_y = 0;
+    valid_first_tile.quant_idx_cb = 0;
+    valid_first_tile.quant_idx_cr = 0;
+    valid_first_tile.x_idx = 0;
+    valid_first_tile.y_idx = 0;
+    valid_first_tile.flags = 0;
+    valid_first_tile.progressive_quality = 0;
+    valid_first_tile.y_len = valid_simple_tile.y_len;
+    valid_first_tile.cb_len = 0;
+    valid_first_tile.cr_len = 0;
+    valid_first_tile.tail_len = 0;
+    valid_first_tile.y_data = data;
+    valid_first_tile.cb_data = NULL;
+    valid_first_tile.cr_data = NULL;
+    valid_first_tile.tail_data = NULL;
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_tile_first(&output, &valid_first_tile);
+    valid_upgrade_tile.block_type = RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE;
+    valid_upgrade_tile.quant_idx_y = 0;
+    valid_upgrade_tile.quant_idx_cb = 0;
+    valid_upgrade_tile.quant_idx_cr = 0;
+    valid_upgrade_tile.x_idx = 0;
+    valid_upgrade_tile.y_idx = 0;
+    valid_upgrade_tile.progressive_quality = 0;
+    valid_upgrade_tile.y_srl_len = valid_simple_tile.y_len;
+    valid_upgrade_tile.y_raw_len = 0;
+    valid_upgrade_tile.cb_srl_len = 0;
+    valid_upgrade_tile.cb_raw_len = 0;
+    valid_upgrade_tile.cr_srl_len = 0;
+    valid_upgrade_tile.cr_raw_len = 0;
+    valid_upgrade_tile.y_srl_data = data;
+    valid_upgrade_tile.y_raw_data = NULL;
+    valid_upgrade_tile.cb_srl_data = NULL;
+    valid_upgrade_tile.cb_raw_data = NULL;
+    valid_upgrade_tile.cr_srl_data = NULL;
+    valid_upgrade_tile.cr_raw_data = NULL;
+    output.length = 0;
+    (void)rdp_graphics_progressive_write_tile_upgrade(&output, &valid_upgrade_tile);
     rdp_buffer_free(&output);
     rdp_graphics_decompressor_free(&decompressor);
     return 0;
