@@ -192,6 +192,7 @@ typedef struct rdp_session_dynamic_channel
     uint8_t fragmenting;
     uint32_t fragment_expected;
     rdp_buffer fragment;
+    rdp_graphics_decompressor decompressor;
     char name[RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX];
 } rdp_session_dynamic_channel;
 
@@ -6904,6 +6905,15 @@ static rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_sess
     return NULL;
 }
 
+static void rdp_session_dynamic_channel_clear_entry(rdp_session_dynamic_channel* entry)
+{
+    if (!entry)
+        return;
+    rdp_buffer_free(&entry->fragment);
+    rdp_graphics_decompressor_free(&entry->decompressor);
+    memset(entry, 0, sizeof(*entry));
+}
+
 static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
                                                      const rdp_dynamic_channel_create_request* request)
 {
@@ -6929,8 +6939,8 @@ static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
     if (!entry)
         return LIBRDP_STATUS_UNSUPPORTED;
 
-    rdp_buffer_free(&entry->fragment);
-    memset(entry, 0, sizeof(*entry));
+    rdp_session_dynamic_channel_clear_entry(entry);
+    rdp_graphics_decompressor_init(&entry->decompressor);
     entry->channel_id = request->channel_id;
     entry->channel_id_bytes = request->channel_id_bytes;
     entry->active = 1;
@@ -7015,8 +7025,7 @@ static void rdp_session_dynamic_channels_clear(librdp_session* session)
     if (!session)
         return;
     for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
-        rdp_buffer_free(&session->dynamic_channels[i].fragment);
-    memset(session->dynamic_channels, 0, sizeof(session->dynamic_channels));
+        rdp_session_dynamic_channel_clear_entry(&session->dynamic_channels[i]);
 }
 
 static void rdp_session_clipboard_clear(librdp_session* session)
@@ -11883,14 +11892,156 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
-    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST_COMPRESSED ||
-             header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED)
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST_COMPRESSED)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.drdynvc.compressed_unsupported",
-                        "command=%u",
-                        header.command);
-        return LIBRDP_STATUS_UNSUPPORTED;
+        rdp_dynamic_channel_compressed_data_first_pdu first_pdu;
+        rdp_session_dynamic_channel* entry = NULL;
+        rdp_buffer decoded;
+
+        rdp_buffer_init(&decoded);
+        status = rdp_dynamic_channel_parse_compressed_data_first(channel_packet->payload,
+                                                                 channel_packet->payload_len,
+                                                                 &first_pdu);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (first_pdu.total_length == 0 || first_pdu.total_length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        entry = rdp_session_dynamic_channel_find(session, first_pdu.channel_id);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.drdynvc.compressed.fragment.start",
+                              "dvc_channel_id=%u name=%s total_len=%u compressed_len=%u",
+                              first_pdu.channel_id,
+                              entry ? entry->name : "",
+                              first_pdu.total_length,
+                              (unsigned)first_pdu.data_len);
+        if (!entry)
+            return LIBRDP_STATUS_OK;
+        status = rdp_graphics_decode_segmented_data(&entry->decompressor,
+                                                    first_pdu.data,
+                                                    first_pdu.data_len,
+                                                    &decoded);
+        if (status == LIBRDP_STATUS_OK && decoded.length > first_pdu.total_length)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&entry->fragment);
+            rdp_buffer_init(&entry->fragment);
+            status = rdp_buffer_reserve(&entry->fragment, first_pdu.total_length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(&entry->fragment, decoded.data, decoded.length);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.drdynvc.compressed.fragment.data",
+                              "dvc_channel_id=%u name=%s total_len=%u received=%u compressed_len=%u decoded_len=%u",
+                              first_pdu.channel_id,
+                              entry->name,
+                              first_pdu.total_length,
+                              (unsigned)entry->fragment.length,
+                              (unsigned)first_pdu.data_len,
+                              (unsigned)decoded.length);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            entry->fragment_expected = first_pdu.total_length;
+            entry->fragmenting = entry->fragment.length < entry->fragment_expected;
+            if (!entry->fragmenting)
+            {
+                status = rdp_session_handle_dynamic_channel_message(session,
+                                                                    entry,
+                                                                    first_pdu.channel_id,
+                                                                    first_pdu.channel_id_bytes,
+                                                                    entry->fragment.data,
+                                                                    entry->fragment.length);
+                rdp_buffer_free(&entry->fragment);
+                entry->fragment_expected = 0;
+            }
+        }
+        rdp_buffer_free(&decoded);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED)
+    {
+        rdp_dynamic_channel_compressed_data_pdu data_pdu;
+        rdp_session_dynamic_channel* entry = NULL;
+        rdp_buffer decoded;
+
+        rdp_buffer_init(&decoded);
+        status = rdp_dynamic_channel_parse_compressed_data(channel_packet->payload,
+                                                           channel_packet->payload_len,
+                                                           &data_pdu);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        entry = rdp_session_dynamic_channel_find(session, data_pdu.channel_id);
+        if (!entry)
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.compressed.data",
+                                  "dvc_channel_id=%u name= compressed_len=%u",
+                                  data_pdu.channel_id,
+                                  (unsigned)data_pdu.data_len);
+            return LIBRDP_STATUS_OK;
+        }
+        status = rdp_graphics_decode_segmented_data(&entry->decompressor,
+                                                    data_pdu.data,
+                                                    data_pdu.data_len,
+                                                    &decoded);
+        if (status == LIBRDP_STATUS_OK && entry->fragmenting)
+        {
+            if (entry->fragment.length > entry->fragment_expected ||
+                decoded.length > (size_t)entry->fragment_expected - entry->fragment.length)
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            else
+            {
+                status = rdp_buffer_append(&entry->fragment, decoded.data, decoded.length);
+            }
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.compressed.fragment.data",
+                                  "dvc_channel_id=%u name=%s total_len=%u received=%u compressed_len=%u decoded_len=%u",
+                                  data_pdu.channel_id,
+                                  entry->name,
+                                  entry->fragment_expected,
+                                  (unsigned)entry->fragment.length,
+                                  (unsigned)data_pdu.data_len,
+                                  (unsigned)decoded.length);
+            if (status == LIBRDP_STATUS_OK && entry->fragment.length >= entry->fragment_expected)
+            {
+                entry->fragmenting = 0;
+                status = rdp_session_handle_dynamic_channel_message(session,
+                                                                    entry,
+                                                                    data_pdu.channel_id,
+                                                                    data_pdu.channel_id_bytes,
+                                                                    entry->fragment.data,
+                                                                    entry->fragment.length);
+                rdp_buffer_free(&entry->fragment);
+                entry->fragment_expected = 0;
+            }
+        }
+        else if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.drdynvc.compressed.data",
+                                  "dvc_channel_id=%u name=%s compressed_len=%u decoded_len=%u",
+                                  data_pdu.channel_id,
+                                  entry->name,
+                                  (unsigned)data_pdu.data_len,
+                                  (unsigned)decoded.length);
+            status = rdp_session_handle_dynamic_channel_message(session,
+                                                                entry,
+                                                                data_pdu.channel_id,
+                                                                data_pdu.channel_id_bytes,
+                                                                decoded.data,
+                                                                decoded.length);
+        }
+        rdp_buffer_free(&decoded);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
     }
     else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
     {
@@ -11967,10 +12118,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             }
             if (entry->channel_id == session->usb_redirection_channel_id)
                 rdp_session_usb_redirection_reset(session);
-            rdp_buffer_free(&entry->fragment);
-            entry->fragment_expected = 0;
-            entry->fragmenting = 0;
-            entry->active = 0;
+            rdp_session_dynamic_channel_clear_entry(entry);
         }
     }
     else
@@ -14511,10 +14659,7 @@ librdp_status librdp_session_channel_close(librdp_session* session, librdp_chann
                         "dvc_channel_id=%u name=%s",
                         entry->channel_id,
                         entry->name);
-        rdp_buffer_free(&entry->fragment);
-        entry->fragment_expected = 0;
-        entry->fragmenting = 0;
-        entry->active = 0;
+        rdp_session_dynamic_channel_clear_entry(entry);
     }
     return status;
 }
