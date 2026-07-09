@@ -4572,12 +4572,32 @@ static int test_path_security_license_channels(void)
            graphics_avc_quant.r == 1 &&
            graphics_avc_quant.p == 0 &&
            graphics_avc_quant.quality == 100);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc420_quant_quality(&dyn_response,
+                                                   &graphics_avc_quant) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 2 &&
+           memcmp(dyn_response.data, graphics_avc_meta.quant_quality, 2) == 0);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc420_metablock(&dyn_response,
+                                               &graphics_avc_meta) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(graphics_avc420_stream) - 4u &&
+           memcmp(dyn_response.data,
+                  graphics_avc420_stream,
+                  sizeof(graphics_avc420_stream) - 4u) == 0);
     PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_stream,
                                             sizeof(graphics_avc420_stream),
                                             &graphics_avc420) == LIBRDP_STATUS_OK);
     PCHECK(graphics_avc420.meta.rect_count == 1 &&
            graphics_avc420.bitstream_len == 4 &&
            graphics_avc420.bitstream[3] == 0x65);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc420_stream(&dyn_response,
+                                            &graphics_avc420) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(graphics_avc420_stream) &&
+           memcmp(dyn_response.data, graphics_avc420_stream, sizeof(graphics_avc420_stream)) == 0);
     PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_rect,
                                             sizeof(graphics_avc420_bad_rect),
                                             &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -4592,18 +4612,42 @@ static int test_path_security_license_channels(void)
            graphics_avc444.has_stream1 &&
            graphics_avc444.has_stream2 &&
            graphics_avc444.stream2.bitstream[3] == 0x66);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(graphics_avc444_both) &&
+           memcmp(dyn_response.data, graphics_avc444_both, sizeof(graphics_avc444_both)) == 0);
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_luma,
                                             sizeof(graphics_avc444_luma),
                                             &graphics_avc444) == LIBRDP_STATUS_OK);
     PCHECK(graphics_avc444.lc == RDP_GRAPHICS_AVC444_LC_LUMA &&
            graphics_avc444.has_stream1 &&
            !graphics_avc444.has_stream2);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(graphics_avc444_luma) &&
+           memcmp(dyn_response.data, graphics_avc444_luma, sizeof(graphics_avc444_luma)) == 0);
+    graphics_avc444.has_stream2 = 1;
+    PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
+                                            &graphics_avc444) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_chroma,
                                             sizeof(graphics_avc444_chroma),
                                             &graphics_avc444) == LIBRDP_STATUS_OK);
     PCHECK(graphics_avc444.lc == RDP_GRAPHICS_AVC444_LC_CHROMA &&
            graphics_avc444.has_stream1 &&
            !graphics_avc444.has_stream2);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
+                                            &graphics_avc444) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(graphics_avc444_chroma) &&
+           memcmp(dyn_response.data, graphics_avc444_chroma, sizeof(graphics_avc444_chroma)) == 0);
+    graphics_avc444.lc = RDP_GRAPHICS_AVC444_LC_INVALID;
+    PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
+                                            &graphics_avc444) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_invalid_lc,
                                             sizeof(graphics_avc444_invalid_lc),
                                             &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);

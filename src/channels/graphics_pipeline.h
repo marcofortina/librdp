@@ -568,14 +568,24 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
 librdp_status rdp_graphics_parse_avc420_quant_quality(const void* data,
                                                       size_t length,
                                                       rdp_graphics_avc420_quant_quality* quant_quality);
+librdp_status rdp_graphics_write_avc420_quant_quality(
+    rdp_buffer* buffer,
+    const rdp_graphics_avc420_quant_quality* quant_quality);
 librdp_status rdp_graphics_parse_avc420_metablock(const void* data,
                                                   size_t length,
                                                   rdp_graphics_avc420_metablock* metablock);
+librdp_status rdp_graphics_write_avc420_metablock(
+    rdp_buffer* buffer,
+    const rdp_graphics_avc420_metablock* metablock);
 librdp_status rdp_graphics_parse_avc420_stream(const void* data,
                                                size_t length,
                                                rdp_graphics_avc420_stream* stream);
+librdp_status rdp_graphics_write_avc420_stream(rdp_buffer* buffer,
+                                               const rdp_graphics_avc420_stream* stream);
 librdp_status rdp_graphics_parse_avc444_stream(const void* data,
                                                size_t length,
                                                rdp_graphics_avc444_stream* stream);
+librdp_status rdp_graphics_write_avc444_stream(rdp_buffer* buffer,
+                                               const rdp_graphics_avc444_stream* stream);
 
 #endif

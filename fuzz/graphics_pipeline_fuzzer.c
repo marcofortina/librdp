@@ -47,6 +47,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         0, 1, 2, 3, 4, 5, 6, 7,
         8, 9, 10, 11, 12, 13, 14, 15
     };
+    const uint8_t avc_rect[] = {0, 0, 0, 0, 16, 0, 16, 0};
+    const uint8_t avc_quant_bytes[] = {0x45, 0x64};
+    const uint8_t avc_bits1[] = {0x00, 0x00, 0x01, 0x65};
+    const uint8_t avc_bits2[] = {0x00, 0x00, 0x01, 0x66};
     rdp_graphics_progressive_context valid_progressive_context = {
         0,
         RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE,
@@ -69,6 +73,32 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         sizeof(progressive_quality),
         NULL,
         0
+    };
+    rdp_graphics_avc420_quant_quality valid_avc_quant = {0x45, 5, 1, 0, 100};
+    rdp_graphics_avc420_metablock valid_avc_meta = {
+        1,
+        avc_rect,
+        sizeof(avc_rect),
+        avc_quant_bytes,
+        sizeof(avc_quant_bytes)
+    };
+    rdp_graphics_avc420_stream valid_avc420_1 = {
+        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
+        avc_bits1,
+        sizeof(avc_bits1)
+    };
+    rdp_graphics_avc420_stream valid_avc420_2 = {
+        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
+        avc_bits2,
+        sizeof(avc_bits2)
+    };
+    rdp_graphics_avc444_stream valid_avc444 = {
+        0,
+        RDP_GRAPHICS_AVC444_LC_BOTH,
+        1,
+        1,
+        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
+        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)}
     };
     rdp_graphics_progressive_tile_simple valid_simple_tile;
     rdp_graphics_progressive_tile_first valid_first_tile;
@@ -228,6 +258,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     valid_upgrade_tile.cr_raw_data = NULL;
     output.length = 0;
     (void)rdp_graphics_progressive_write_tile_upgrade(&output, &valid_upgrade_tile);
+    output.length = 0;
+    (void)rdp_graphics_write_avc420_quant_quality(&output, &valid_avc_quant);
+    output.length = 0;
+    (void)rdp_graphics_write_avc420_metablock(&output, &valid_avc_meta);
+    output.length = 0;
+    (void)rdp_graphics_write_avc420_stream(&output, &valid_avc420_1);
+    valid_avc444.stream1 = valid_avc420_1;
+    valid_avc444.stream2 = valid_avc420_2;
+    output.length = 0;
+    (void)rdp_graphics_write_avc444_stream(&output, &valid_avc444);
+    valid_avc444.lc = RDP_GRAPHICS_AVC444_LC_LUMA;
+    valid_avc444.has_stream2 = 0;
+    output.length = 0;
+    (void)rdp_graphics_write_avc444_stream(&output, &valid_avc444);
+    valid_avc444.lc = RDP_GRAPHICS_AVC444_LC_CHROMA;
+    output.length = 0;
+    (void)rdp_graphics_write_avc444_stream(&output, &valid_avc444);
     rdp_buffer_free(&output);
     rdp_graphics_decompressor_free(&decompressor);
     return 0;

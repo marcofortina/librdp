@@ -2326,6 +2326,43 @@ librdp_status rdp_graphics_parse_avc420_quant_quality(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_graphics_avc420_quant_value(
+    const rdp_graphics_avc420_quant_quality* quant_quality,
+    uint8_t* value)
+{
+    uint8_t encoded = 0;
+
+    if (!quant_quality || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (quant_quality->qp > 0x3fu || quant_quality->r > 1u || quant_quality->p > 1u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    encoded = (uint8_t)((quant_quality->p << 7) | (quant_quality->r << 6) | quant_quality->qp);
+    if (encoded != quant_quality->qp_val)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *value = encoded;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_avc420_quant_quality(
+    rdp_buffer* buffer,
+    const rdp_graphics_avc420_quant_quality* quant_quality)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t value = 0;
+
+    if (!buffer || !quant_quality)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_avc420_quant_value(quant_quality, &value);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    status = rdp_buffer_append_u8(buffer, value);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, quant_quality->quality);
+    return status;
+}
+
 static librdp_status rdp_graphics_avc420_metadata_length(const void* data,
                                                          size_t length,
                                                          uint32_t* rect_count,
@@ -2349,6 +2386,48 @@ static librdp_status rdp_graphics_avc420_metadata_length(const void* data,
     *metadata_length = 4u + count_size * 10u;
     if (*metadata_length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_graphics_avc420_validate_metablock(
+    const rdp_graphics_avc420_metablock* metablock,
+    size_t* encoded_length)
+{
+    size_t count = 0;
+    size_t expected_rects_len = 0;
+    size_t expected_quant_len = 0;
+    size_t total_len = 0;
+    size_t offset = 0;
+    uint32_t i = 0;
+
+    if (!metablock || !encoded_length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (metablock->rect_count == 0 || metablock->rect_count > RDP_GRAPHICS_AVC420_MAX_REGION_RECTS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    count = (size_t)metablock->rect_count;
+    if (count > (SIZE_MAX - 4u) / 10u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    expected_rects_len = count * 8u;
+    expected_quant_len = count * 2u;
+    total_len = 4u + expected_rects_len + expected_quant_len;
+    if (metablock->rects_len != expected_rects_len ||
+        metablock->quant_quality_len != expected_quant_len ||
+        !metablock->rects ||
+        !metablock->quant_quality)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    for (i = 0; i < metablock->rect_count; i++)
+    {
+        rdp_graphics_rect16 rect;
+
+        if (rdp_graphics_parse_rect16(metablock->rects + offset, 8u, &rect) != LIBRDP_STATUS_OK ||
+            rect.right == rect.left || rect.bottom == rect.top)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        offset += 8u;
+    }
+
+    *encoded_length = total_len;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2386,6 +2465,28 @@ librdp_status rdp_graphics_parse_avc420_metablock(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_graphics_write_avc420_metablock(
+    rdp_buffer* buffer,
+    const rdp_graphics_avc420_metablock* metablock)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t encoded_length = 0;
+
+    if (!buffer || !metablock)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_avc420_validate_metablock(metablock, &encoded_length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    (void)encoded_length;
+
+    status = rdp_buffer_append_u32_le(buffer, metablock->rect_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, metablock->rects, metablock->rects_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, metablock->quant_quality, metablock->quant_quality_len);
+    return status;
+}
+
 librdp_status rdp_graphics_parse_avc420_stream(const void* data,
                                                size_t length,
                                                rdp_graphics_avc420_stream* stream)
@@ -2408,6 +2509,46 @@ librdp_status rdp_graphics_parse_avc420_stream(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)count;
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_graphics_avc420_stream_length(const rdp_graphics_avc420_stream* stream,
+                                                       size_t* encoded_length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t metadata_length = 0;
+
+    if (!stream || !encoded_length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!stream->bitstream || stream->bitstream_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_graphics_avc420_validate_metablock(&stream->meta, &metadata_length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (stream->bitstream_len > SIZE_MAX - metadata_length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    *encoded_length = metadata_length + stream->bitstream_len;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_avc420_stream(rdp_buffer* buffer,
+                                               const rdp_graphics_avc420_stream* stream)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t encoded_length = 0;
+
+    if (!buffer || !stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_avc420_stream_length(stream, &encoded_length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    (void)encoded_length;
+
+    status = rdp_graphics_write_avc420_metablock(buffer, &stream->meta);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, stream->bitstream, stream->bitstream_len);
+    return status;
 }
 
 librdp_status rdp_graphics_parse_avc444_stream(const void* data,
@@ -2460,4 +2601,50 @@ librdp_status rdp_graphics_parse_avc444_stream(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     stream->has_stream1 = 1;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_graphics_write_avc444_stream(rdp_buffer* buffer,
+                                               const rdp_graphics_avc444_stream* stream)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t stream1_size = 0;
+    uint32_t info = 0;
+
+    if (!buffer || !stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!stream->has_stream1 ||
+        stream->lc == RDP_GRAPHICS_AVC444_LC_INVALID ||
+        stream->lc > RDP_GRAPHICS_AVC444_LC_CHROMA)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH)
+    {
+        if (!stream->has_stream2)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    else if (stream->has_stream2)
+    {
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = rdp_graphics_avc420_stream_length(&stream->stream1, &stream1_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (stream1_size == 0 || stream1_size > RDP_GRAPHICS_AVC444_STREAM1_SIZE_MASK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH)
+    {
+        size_t stream2_size = 0;
+
+        status = rdp_graphics_avc420_stream_length(&stream->stream2, &stream2_size);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+
+    info = (uint32_t)stream1_size | ((uint32_t)stream->lc << RDP_GRAPHICS_AVC444_LC_SHIFT);
+    status = rdp_buffer_append_u32_le(buffer, info);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_avc420_stream(buffer, &stream->stream1);
+    if (status == LIBRDP_STATUS_OK && stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH)
+        status = rdp_graphics_write_avc420_stream(buffer, &stream->stream2);
+    return status;
 }
