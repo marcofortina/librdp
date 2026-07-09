@@ -1365,6 +1365,27 @@ static int add_drive_arg(librdp_settings* settings, const char* text)
     return librdp_settings_add_drive(settings, name, separator + 1) == LIBRDP_STATUS_OK;
 }
 
+static int add_port_arg(librdp_settings* settings, const char* text, int serial)
+{
+    const char* separator = NULL;
+    char name[8];
+    size_t name_len = 0;
+
+    if (!settings || !text)
+        return 0;
+    separator = strchr(text, '=');
+    if (!separator || separator == text || separator[1] == '\0')
+        return 0;
+    name_len = (size_t)(separator - text);
+    if (name_len >= sizeof(name))
+        return 0;
+    memcpy(name, text, name_len);
+    name[name_len] = '\0';
+    if (serial)
+        return librdp_settings_add_serial_port(settings, name, separator + 1) == LIBRDP_STATUS_OK;
+    return librdp_settings_add_parallel_port(settings, name, separator + 1) == LIBRDP_STATUS_OK;
+}
+
 static int add_printer_arg(librdp_settings* settings, const char* text)
 {
     const char* first = NULL;
@@ -2319,6 +2340,16 @@ static int configure_settings(librdp_settings* settings, int argc, char** argv)
             if (!require_value(argc, &i) || !add_drive_arg(settings, argv[i]))
                 return 0;
         }
+        else if (strcmp(argv[i], "--serial") == 0)
+        {
+            if (!require_value(argc, &i) || !add_port_arg(settings, argv[i], 1))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--parallel") == 0)
+        {
+            if (!require_value(argc, &i) || !add_port_arg(settings, argv[i], 0))
+                return 0;
+        }
         else if (strcmp(argv[i], "--printer") == 0)
         {
             if (!require_value(argc, &i) || !add_printer_arg(settings, argv[i]))
@@ -2440,7 +2471,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path|fido2]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path|fido2]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;

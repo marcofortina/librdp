@@ -11,6 +11,12 @@ typedef struct rdp_settings_drive
     char* path;
 } rdp_settings_drive;
 
+typedef struct rdp_settings_port
+{
+    char name[8];
+    char* path;
+} rdp_settings_port;
+
 typedef struct rdp_settings_printer
 {
     char* name;
@@ -36,6 +42,10 @@ struct librdp_settings
     librdp_security_mode security_mode;
     uint32_t drive_count;
     rdp_settings_drive drives[LIBRDP_SETTINGS_MAX_DRIVES];
+    uint32_t serial_port_count;
+    rdp_settings_port serial_ports[LIBRDP_SETTINGS_MAX_SERIAL_PORTS];
+    uint32_t parallel_port_count;
+    rdp_settings_port parallel_ports[LIBRDP_SETTINGS_MAX_PARALLEL_PORTS];
     uint32_t printer_count;
     rdp_settings_printer printers[LIBRDP_SETTINGS_MAX_PRINTERS];
     uint32_t camera_count;
@@ -104,6 +114,11 @@ static int rdp_settings_valid_drive_name(const char* name)
             return 0;
     }
     return 1;
+}
+
+static int rdp_settings_valid_port_name(const char* name)
+{
+    return rdp_settings_valid_drive_name(name);
 }
 
 static int rdp_settings_valid_printer_text(const char* value)
@@ -201,6 +216,26 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
             return NULL;
         }
     }
+    for (uint32_t i = 0; i < settings->serial_port_count; i++)
+    {
+        if (librdp_settings_add_serial_port(copy,
+                                            settings->serial_ports[i].name,
+                                            settings->serial_ports[i].path) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < settings->parallel_port_count; i++)
+    {
+        if (librdp_settings_add_parallel_port(copy,
+                                              settings->parallel_ports[i].name,
+                                              settings->parallel_ports[i].path) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
     for (uint32_t i = 0; i < settings->printer_count; i++)
     {
         if (librdp_settings_add_printer(copy,
@@ -264,6 +299,10 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->echo_payload);
     for (uint32_t i = 0; i < settings->drive_count; i++)
         free(settings->drives[i].path);
+    for (uint32_t i = 0; i < settings->serial_port_count; i++)
+        free(settings->serial_ports[i].path);
+    for (uint32_t i = 0; i < settings->parallel_port_count; i++)
+        free(settings->parallel_ports[i].path);
     for (uint32_t i = 0; i < settings->printer_count; i++)
     {
         free(settings->printers[i].name);
@@ -351,6 +390,55 @@ librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* n
     drive->path = path_copy;
     settings->drive_count++;
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_settings_add_port(rdp_settings_port* ports,
+                                           uint32_t* count,
+                                           uint32_t limit,
+                                           const char* name,
+                                           const char* path)
+{
+    char* path_copy = NULL;
+    rdp_settings_port* port = NULL;
+
+    if (!ports || !count || !rdp_settings_valid_port_name(name) || !path || path[0] == '\0' ||
+        *count >= limit)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    path_copy = rdp_strdup(path);
+    if (!path_copy)
+        return LIBRDP_STATUS_NO_MEMORY;
+    port = &ports[*count];
+    memset(port, 0, sizeof(*port));
+    memcpy(port->name, name, strlen(name) + 1u);
+    port->path = path_copy;
+    *count += 1u;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_add_serial_port(librdp_settings* settings,
+                                              const char* name,
+                                              const char* path)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_port(settings->serial_ports,
+                                 &settings->serial_port_count,
+                                 LIBRDP_SETTINGS_MAX_SERIAL_PORTS,
+                                 name,
+                                 path);
+}
+
+librdp_status librdp_settings_add_parallel_port(librdp_settings* settings,
+                                                const char* name,
+                                                const char* path)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_port(settings->parallel_ports,
+                                 &settings->parallel_port_count,
+                                 LIBRDP_SETTINGS_MAX_PARALLEL_PORTS,
+                                 name,
+                                 path);
 }
 
 librdp_status librdp_settings_add_printer(librdp_settings* settings,
@@ -507,6 +595,44 @@ const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t
     if (!settings || index >= settings->drive_count)
         return NULL;
     return settings->drives[index].path;
+}
+
+uint32_t librdp_settings_serial_port_count(const librdp_settings* settings)
+{
+    return settings ? settings->serial_port_count : 0;
+}
+
+const char* librdp_settings_serial_port_name(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->serial_port_count)
+        return NULL;
+    return settings->serial_ports[index].name;
+}
+
+const char* librdp_settings_serial_port_path(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->serial_port_count)
+        return NULL;
+    return settings->serial_ports[index].path;
+}
+
+uint32_t librdp_settings_parallel_port_count(const librdp_settings* settings)
+{
+    return settings ? settings->parallel_port_count : 0;
+}
+
+const char* librdp_settings_parallel_port_name(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->parallel_port_count)
+        return NULL;
+    return settings->parallel_ports[index].name;
+}
+
+const char* librdp_settings_parallel_port_path(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->parallel_port_count)
+        return NULL;
+    return settings->parallel_ports[index].path;
 }
 
 uint32_t librdp_settings_printer_count(const librdp_settings* settings)
@@ -667,4 +793,18 @@ uint32_t rdp_settings_smartcard_device_id_internal(const librdp_settings* settin
     if (!settings || index >= settings->smartcard_count)
         return 0;
     return 0x00030000u + index;
+}
+
+uint32_t rdp_settings_serial_port_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->serial_port_count)
+        return 0;
+    return 0x00040000u + index;
+}
+
+uint32_t rdp_settings_parallel_port_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->parallel_port_count)
+        return 0;
+    return 0x00050000u + index;
 }

@@ -81,6 +81,43 @@ static int x11_probe_file_readable(const char* path, const char* event_name)
     return 1;
 }
 
+static int x11_probe_open_path(const char* path, int flags, const char* event_name)
+{
+    int fd = -1;
+
+    if (!path || path[0] == '\0')
+        return 0;
+    fd = open(path, flags | O_CLOEXEC);
+    if (fd < 0)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        event_name,
+                        "ok=0 path=\"%s\" errno=%d",
+                        path,
+                        errno);
+        return 0;
+    }
+    close(fd);
+    rdp_trace_event(RDP_TRACE_CLIENT, event_name, "ok=1 path=\"%s\"", path);
+    return 1;
+}
+
+static int x11_probe_serial_port(const char* path)
+{
+#ifdef O_NOCTTY
+    return x11_probe_open_path(path, O_RDWR | O_NOCTTY | O_NONBLOCK, "x11.serial.probe");
+#else
+    return x11_probe_open_path(path, O_RDWR | O_NONBLOCK, "x11.serial.probe");
+#endif
+}
+
+static int x11_probe_parallel_port(const char* path)
+{
+    if (x11_probe_open_path(path, O_RDWR | O_NONBLOCK, "x11.parallel.probe"))
+        return 1;
+    return x11_probe_open_path(path, O_WRONLY | O_NONBLOCK, "x11.parallel.probe");
+}
+
 static int x11_probe_camera(const char* source)
 {
 #ifdef __linux__
@@ -421,6 +458,16 @@ int x11_device_backends_probe(const librdp_settings* settings)
             if (!x11_probe_camera(librdp_settings_camera_source(settings, i)))
                 return 0;
         }
+    }
+    for (i = 0; i < librdp_settings_serial_port_count(settings); i++)
+    {
+        if (!x11_probe_serial_port(librdp_settings_serial_port_path(settings, i)))
+            return 0;
+    }
+    for (i = 0; i < librdp_settings_parallel_port_count(settings); i++)
+    {
+        if (!x11_probe_parallel_port(librdp_settings_parallel_port_path(settings, i)))
+            return 0;
     }
     if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_SMARTCARD))
     {

@@ -15,6 +15,8 @@ extern "C" {
 #define LIBRDP_SETTINGS_MAX_SMARTCARDS 8u
 #define LIBRDP_SETTINGS_MAX_USB_DEVICES 16u
 #define LIBRDP_SETTINGS_MAX_RAIL_APPS 16u
+#define LIBRDP_SETTINGS_MAX_SERIAL_PORTS 8u
+#define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u
 
 typedef struct librdp_settings librdp_settings;
 
@@ -53,6 +55,12 @@ librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port)
 librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32_t width, uint32_t height);
 librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
 librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path);
+librdp_status librdp_settings_add_serial_port(librdp_settings* settings,
+                                              const char* name,
+                                              const char* path);
+librdp_status librdp_settings_add_parallel_port(librdp_settings* settings,
+                                                const char* name,
+                                                const char* path);
 librdp_status librdp_settings_add_printer(librdp_settings* settings,
                                           const char* name,
                                           const char* driver,
@@ -73,6 +81,12 @@ librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const 
 uint32_t librdp_settings_drive_count(const librdp_settings* settings);
 const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t index);
 const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t index);
+uint32_t librdp_settings_serial_port_count(const librdp_settings* settings);
+const char* librdp_settings_serial_port_name(const librdp_settings* settings, uint32_t index);
+const char* librdp_settings_serial_port_path(const librdp_settings* settings, uint32_t index);
+uint32_t librdp_settings_parallel_port_count(const librdp_settings* settings);
+const char* librdp_settings_parallel_port_name(const librdp_settings* settings, uint32_t index);
+const char* librdp_settings_parallel_port_path(const librdp_settings* settings, uint32_t index);
 uint32_t librdp_settings_printer_count(const librdp_settings* settings);
 const char* librdp_settings_printer_name(const librdp_settings* settings, uint32_t index);
 const char* librdp_settings_printer_driver(const librdp_settings* settings, uint32_t index);
