@@ -172,13 +172,7 @@ librdp_status rdp_port_redirection_parse_control_request(
     size_t length,
     rdp_filesystem_redirection_control_request* request)
 {
-    librdp_status status = rdp_filesystem_redirection_parse_control_request(data, length, request);
-
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (!rdp_port_redirection_ioctl_known(request->io_control_code))
-        return LIBRDP_STATUS_UNSUPPORTED;
-    return LIBRDP_STATUS_OK;
+    return rdp_filesystem_redirection_parse_control_request(data, length, request);
 }
 
 librdp_status rdp_port_redirection_write_control_request(rdp_buffer* buffer,
@@ -190,8 +184,6 @@ librdp_status rdp_port_redirection_write_control_request(rdp_buffer* buffer,
                                                          const void* input,
                                                          uint32_t input_len)
 {
-    if (!rdp_port_redirection_ioctl_known(io_control_code))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_filesystem_redirection_write_control_request(buffer,
                                                             device_id,
                                                             file_id,

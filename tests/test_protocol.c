@@ -225,6 +225,8 @@ static int test_port_redirection_channel(void)
     PCHECK(control.io.device_id == 0x100u &&
            control.io_control_code == RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BAUD_RATE &&
            control.input_buffer_length == sizeof(input));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
     PCHECK(rdp_port_redirection_write_control_request(&buffer,
                                                       0x100u,
                                                       2u,
@@ -232,7 +234,10 @@ static int test_port_redirection_channel(void)
                                                       4u,
                                                       0xffffffffu,
                                                       input,
-                                                      sizeof(input)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+                                                      sizeof(input)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_port_redirection_parse_control_request(buffer.data, buffer.length, &control) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(control.io_control_code == 0xffffffffu && control.input_buffer_length == sizeof(input));
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
