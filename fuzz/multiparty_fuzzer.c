@@ -16,6 +16,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_multiparty_participant_removed removed;
     rdp_multiparty_control_change change;
     rdp_multiparty_control_change_response response;
+    rdp_multiparty_message message;
     rdp_buffer buffer;
     size_t consumed = 0;
     uint16_t chars = 0;
@@ -34,6 +35,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         share_flags = 0;
 
     (void)rdp_multiparty_parse_header(data, size, &header);
+    (void)rdp_multiparty_parse_message(data, size, &message);
     (void)rdp_multiparty_parse_string(data, size, &string, &consumed);
     (void)rdp_multiparty_parse_filter_state(data, size, &filter);
     (void)rdp_multiparty_parse_app_created(data, size, &app);

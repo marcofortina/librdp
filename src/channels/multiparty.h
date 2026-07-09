@@ -118,8 +118,29 @@ typedef struct rdp_multiparty_control_change_response
     uint32_t reason_code;
 } rdp_multiparty_control_change_response;
 
+typedef struct rdp_multiparty_message
+{
+    uint16_t type;
+    union
+    {
+        rdp_multiparty_header header;
+        rdp_multiparty_filter_state filter_state;
+        rdp_multiparty_app_created app_created;
+        rdp_multiparty_id_message id_message;
+        rdp_multiparty_window_created window_created;
+        rdp_multiparty_region_update region_update;
+        rdp_multiparty_participant_created participant_created;
+        rdp_multiparty_participant_removed participant_removed;
+        rdp_multiparty_control_change control_change;
+        rdp_multiparty_control_change_response control_change_response;
+    } body;
+} rdp_multiparty_message;
+
 librdp_status rdp_multiparty_parse_header(const void* data, size_t length, rdp_multiparty_header* header);
 librdp_status rdp_multiparty_write_header(rdp_buffer* buffer, uint16_t type, uint16_t payload_len);
+librdp_status rdp_multiparty_parse_message(const void* data,
+                                           size_t length,
+                                           rdp_multiparty_message* message);
 librdp_status rdp_multiparty_parse_string(const void* data,
                                           size_t length,
                                           rdp_multiparty_string* string,

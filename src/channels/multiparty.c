@@ -66,6 +66,64 @@ librdp_status rdp_multiparty_write_header(rdp_buffer* buffer, uint16_t type, uin
     return rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len + 4u));
 }
 
+librdp_status rdp_multiparty_parse_message(const void* data,
+                                           size_t length,
+                                           rdp_multiparty_message* message)
+{
+    rdp_multiparty_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(message, 0, sizeof(*message));
+    if (rdp_multiparty_parse_header(data, length, &header) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    message->type = header.type;
+    switch (header.type)
+    {
+        case RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED:
+            return rdp_multiparty_parse_filter_state(data, length, &message->body.filter_state);
+        case RDP_MULTIPARTY_TYPE_APP_CREATED:
+            return rdp_multiparty_parse_app_created(data, length, &message->body.app_created);
+        case RDP_MULTIPARTY_TYPE_APP_REMOVED:
+        case RDP_MULTIPARTY_TYPE_WND_REMOVED:
+        case RDP_MULTIPARTY_TYPE_WND_SHOW:
+            return rdp_multiparty_parse_id_message(data,
+                                                   length,
+                                                   header.type,
+                                                   &message->body.id_message);
+        case RDP_MULTIPARTY_TYPE_WND_CREATED:
+            return rdp_multiparty_parse_window_created(data, length, &message->body.window_created);
+        case RDP_MULTIPARTY_TYPE_WND_REGION_UPDATE:
+            return rdp_multiparty_parse_region_update(data, length, &message->body.region_update);
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED:
+            return rdp_multiparty_parse_participant_created(data,
+                                                            length,
+                                                            &message->body.participant_created);
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED:
+            return rdp_multiparty_parse_participant_removed(data,
+                                                            length,
+                                                            &message->body.participant_removed);
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED:
+            return rdp_multiparty_parse_control_change(data,
+                                                       length,
+                                                       &message->body.control_change);
+        case RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGE_RESPONSE:
+            return rdp_multiparty_parse_control_change_response(
+                data,
+                length,
+                &message->body.control_change_response);
+        case RDP_MULTIPARTY_TYPE_GRAPHICS_STREAM_PAUSED:
+        case RDP_MULTIPARTY_TYPE_GRAPHICS_STREAM_RESUMED:
+            status = rdp_multiparty_parse_empty(data, length, header.type);
+            if (status == LIBRDP_STATUS_OK)
+                message->body.header = header;
+            return status;
+        default:
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+}
+
 librdp_status rdp_multiparty_parse_string(const void* data,
                                           size_t length,
                                           rdp_multiparty_string* string,
