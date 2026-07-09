@@ -6767,6 +6767,9 @@ static int test_auth_smartcard_redirection_channels(void)
         0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
     };
     const uint8_t scard_extra[] = {0x01, 0x02, 0x03};
+    const uint8_t scard_atr_mask[RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH] = {
+        0xff, 0xff, 0xff
+    };
     rdp_buffer buffer;
     rdp_buffer packet;
     rdp_auth_redirection_call auth_call;
@@ -6791,9 +6794,17 @@ static int test_auth_smartcard_redirection_channels(void)
     rdp_smartcard_redirection_context context;
     rdp_smartcard_redirection_handle handle;
     rdp_smartcard_redirection_scard_io_request scard_io;
+    rdp_smartcard_redirection_atr_mask atr_mask;
+    rdp_smartcard_redirection_reader_state_common reader_state;
     rdp_smartcard_redirection_connect_common connect_common;
     rdp_smartcard_redirection_reconnect_call reconnect_call;
     rdp_smartcard_redirection_handle_disposition_call disposition_call;
+    rdp_smartcard_redirection_state_call state_call;
+    rdp_smartcard_redirection_status_call status_call;
+    rdp_smartcard_redirection_transmit_call transmit_call;
+    rdp_smartcard_redirection_control_call control_call;
+    rdp_smartcard_redirection_attrib_call attrib_call;
+    rdp_smartcard_redirection_set_attrib_call set_attrib_call;
     rdp_smartcard_redirection_long_return long_result;
     rdp_smartcard_redirection_count_return count_result;
     rdp_smartcard_redirection_buffer_return buffer_result;
@@ -7212,6 +7223,36 @@ static int test_auth_smartcard_redirection_channels(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_smartcard_redirection_write_atr_mask(&buffer,
+                                                    scard_extra,
+                                                    sizeof(scard_extra),
+                                                    scard_atr_mask) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_atr_mask(buffer.data,
+                                                    buffer.length,
+                                                    &atr_mask) == LIBRDP_STATUS_OK);
+    PCHECK(atr_mask.atr_len == sizeof(scard_extra) && atr_mask.atr[2] == 0x03);
+    buffer.data[0] = RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH + 1u;
+    PCHECK(rdp_smartcard_redirection_parse_atr_mask(buffer.data,
+                                                    buffer.length,
+                                                    &atr_mask) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_smartcard_redirection_write_reader_state_common(&buffer,
+                                                               1u,
+                                                               2u,
+                                                               scard_extra,
+                                                               sizeof(scard_extra)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_reader_state_common(buffer.data,
+                                                               buffer.length,
+                                                               &reader_state) == LIBRDP_STATUS_OK);
+    PCHECK(reader_state.current_state == 1u &&
+           reader_state.event_state == 2u &&
+           reader_state.atr_len == sizeof(scard_extra));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_smartcard_redirection_bool_valid(0));
     PCHECK(rdp_smartcard_redirection_bool_valid(1));
     PCHECK(!rdp_smartcard_redirection_bool_valid(2));
@@ -7243,6 +7284,180 @@ static int test_auth_smartcard_redirection_channels(void)
                scard_extra,
                RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA + 1u) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&buffer);
+    rdp_buffer_init(&packet);
+
+    PCHECK(rdp_smartcard_redirection_write_state_call(&buffer,
+                                                      context_bytes,
+                                                      sizeof(context_bytes),
+                                                      call_payload,
+                                                      sizeof(call_payload),
+                                                      0,
+                                                      RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_state_call(buffer.data,
+                                                      buffer.length,
+                                                      &state_call) == LIBRDP_STATUS_OK);
+    PCHECK(state_call.atr_len == RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_STATE,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_STATE);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_status_call(&buffer,
+                                                       context_bytes,
+                                                       sizeof(context_bytes),
+                                                       call_payload,
+                                                       sizeof(call_payload),
+                                                       0,
+                                                       32u,
+                                                       36u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_status_call(buffer.data,
+                                                       buffer.length,
+                                                       &status_call) == LIBRDP_STATUS_OK);
+    PCHECK(status_call.reader_len == 32u && status_call.atr_len == 36u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_STATUSW,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_STATUS);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_transmit_call(&buffer,
+                                                         context_bytes,
+                                                         sizeof(context_bytes),
+                                                         call_payload,
+                                                         sizeof(call_payload),
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1,
+                                                         scard_extra,
+                                                         sizeof(scard_extra),
+                                                         call_payload,
+                                                         sizeof(call_payload),
+                                                         1,
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0,
+                                                         NULL,
+                                                         0,
+                                                         0,
+                                                         64u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_transmit_call(buffer.data,
+                                                         buffer.length,
+                                                         &transmit_call) == LIBRDP_STATUS_OK);
+    PCHECK(transmit_call.send_pci.protocol == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1 &&
+           transmit_call.send_len == sizeof(call_payload) &&
+           transmit_call.recv_pci_present == 1u &&
+           transmit_call.recv_len == 64u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_TRANSMIT,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_TRANSMIT);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_control_call(&buffer,
+                                                        context_bytes,
+                                                        sizeof(context_bytes),
+                                                        call_payload,
+                                                        sizeof(call_payload),
+                                                        0x42000000u,
+                                                        scard_extra,
+                                                        sizeof(scard_extra),
+                                                        0,
+                                                        128u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_control_call(buffer.data,
+                                                        buffer.length,
+                                                        &control_call) == LIBRDP_STATUS_OK);
+    PCHECK(control_call.control_code == 0x42000000u &&
+           control_call.input_len == sizeof(scard_extra) &&
+           control_call.output_len == 128u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_CONTROL,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTROL);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_attrib_call(&buffer,
+                                                       context_bytes,
+                                                       sizeof(context_bytes),
+                                                       call_payload,
+                                                       sizeof(call_payload),
+                                                       0x00090303u,
+                                                       0,
+                                                       16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_attrib_call(buffer.data,
+                                                       buffer.length,
+                                                       &attrib_call) == LIBRDP_STATUS_OK);
+    PCHECK(attrib_call.attr_id == 0x00090303u && attrib_call.attr_len == 16u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_GETATTRIB,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_ATTRIB);
+    buffer.length = 0;
+    packet.length = 0;
+
+    PCHECK(rdp_smartcard_redirection_write_set_attrib_call(&buffer,
+                                                           context_bytes,
+                                                           sizeof(context_bytes),
+                                                           call_payload,
+                                                           sizeof(call_payload),
+                                                           0x00090303u,
+                                                           scard_extra,
+                                                           sizeof(scard_extra)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_set_attrib_call(buffer.data,
+                                                           buffer.length,
+                                                           &set_attrib_call) == LIBRDP_STATUS_OK);
+    PCHECK(set_attrib_call.attr_id == 0x00090303u &&
+           set_attrib_call.attr_len == sizeof(scard_extra));
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_SETATTRIB,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_SET_ATTRIB);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&buffer);

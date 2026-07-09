@@ -66,6 +66,12 @@
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE 3u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE_DISPOSITION 4u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_RECONNECT 5u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_STATE 6u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_STATUS 7u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_TRANSMIT 8u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTROL 9u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_ATTRIB 10u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_SET_ATTRIB 11u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -82,6 +88,9 @@
 #define RDP_SMARTCARD_REDIRECTION_RESET_CARD 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_UNPOWER_CARD 0x00000002u
 #define RDP_SMARTCARD_REDIRECTION_EJECT_CARD 0x00000003u
+#define RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH 36u
+#define RDP_SMARTCARD_REDIRECTION_TRANSMIT_MAX_LENGTH 66560u
+#define RDP_SMARTCARD_REDIRECTION_ATTRIB_MAX_LENGTH 65536u
 
 typedef struct rdp_smartcard_redirection_device_control_request
 {
@@ -119,6 +128,21 @@ typedef struct rdp_smartcard_redirection_scard_io_request
     const uint8_t* extra_bytes;
 } rdp_smartcard_redirection_scard_io_request;
 
+typedef struct rdp_smartcard_redirection_atr_mask
+{
+    uint32_t atr_len;
+    uint8_t atr[RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH];
+    uint8_t mask[RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH];
+} rdp_smartcard_redirection_atr_mask;
+
+typedef struct rdp_smartcard_redirection_reader_state_common
+{
+    uint32_t current_state;
+    uint32_t event_state;
+    uint32_t atr_len;
+    uint8_t atr[RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH];
+} rdp_smartcard_redirection_reader_state_common;
+
 typedef struct rdp_smartcard_redirection_establish_context_call
 {
     uint32_t scope;
@@ -144,6 +168,59 @@ typedef struct rdp_smartcard_redirection_handle_disposition_call
     rdp_smartcard_redirection_handle handle;
     uint32_t disposition;
 } rdp_smartcard_redirection_handle_disposition_call;
+
+typedef struct rdp_smartcard_redirection_state_call
+{
+    rdp_smartcard_redirection_handle handle;
+    uint32_t atr_is_null;
+    uint32_t atr_len;
+} rdp_smartcard_redirection_state_call;
+
+typedef struct rdp_smartcard_redirection_status_call
+{
+    rdp_smartcard_redirection_handle handle;
+    uint32_t reader_names_is_null;
+    uint32_t reader_len;
+    uint32_t atr_len;
+} rdp_smartcard_redirection_status_call;
+
+typedef struct rdp_smartcard_redirection_transmit_call
+{
+    rdp_smartcard_redirection_handle handle;
+    rdp_smartcard_redirection_scard_io_request send_pci;
+    uint32_t send_len;
+    const uint8_t* send_data;
+    uint32_t recv_pci_present;
+    rdp_smartcard_redirection_scard_io_request recv_pci;
+    uint32_t recv_buffer_is_null;
+    uint32_t recv_len;
+} rdp_smartcard_redirection_transmit_call;
+
+typedef struct rdp_smartcard_redirection_control_call
+{
+    rdp_smartcard_redirection_handle handle;
+    uint32_t control_code;
+    uint32_t input_len;
+    const uint8_t* input;
+    uint32_t output_buffer_is_null;
+    uint32_t output_len;
+} rdp_smartcard_redirection_control_call;
+
+typedef struct rdp_smartcard_redirection_attrib_call
+{
+    rdp_smartcard_redirection_handle handle;
+    uint32_t attr_id;
+    uint32_t attr_is_null;
+    uint32_t attr_len;
+} rdp_smartcard_redirection_attrib_call;
+
+typedef struct rdp_smartcard_redirection_set_attrib_call
+{
+    rdp_smartcard_redirection_handle handle;
+    uint32_t attr_id;
+    uint32_t attr_len;
+    const uint8_t* attr;
+} rdp_smartcard_redirection_set_attrib_call;
 
 typedef struct rdp_smartcard_redirection_long_return
 {
@@ -174,6 +251,12 @@ typedef struct rdp_smartcard_redirection_request_message
         rdp_smartcard_redirection_handle handle;
         rdp_smartcard_redirection_handle_disposition_call handle_disposition;
         rdp_smartcard_redirection_reconnect_call reconnect;
+        rdp_smartcard_redirection_state_call state;
+        rdp_smartcard_redirection_status_call status;
+        rdp_smartcard_redirection_transmit_call transmit;
+        rdp_smartcard_redirection_control_call control;
+        rdp_smartcard_redirection_attrib_call attrib;
+        rdp_smartcard_redirection_set_attrib_call set_attrib;
     } body;
 } rdp_smartcard_redirection_request_message;
 
@@ -183,6 +266,25 @@ int rdp_smartcard_redirection_protocol_mask_valid(uint32_t protocols);
 int rdp_smartcard_redirection_bool_valid(uint32_t value);
 int rdp_smartcard_redirection_disposition_valid(uint32_t disposition);
 int rdp_smartcard_redirection_initialization_valid(uint32_t initialization);
+librdp_status rdp_smartcard_redirection_parse_atr_mask(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_atr_mask* mask);
+librdp_status rdp_smartcard_redirection_write_atr_mask(
+    rdp_buffer* buffer,
+    const uint8_t* atr,
+    uint32_t atr_len,
+    const uint8_t* mask);
+librdp_status rdp_smartcard_redirection_parse_reader_state_common(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_reader_state_common* state);
+librdp_status rdp_smartcard_redirection_write_reader_state_common(
+    rdp_buffer* buffer,
+    uint32_t current_state,
+    uint32_t event_state,
+    const uint8_t* atr,
+    uint32_t atr_len);
 librdp_status rdp_smartcard_redirection_parse_device_control_request(
     const void* data,
     size_t length,
@@ -273,6 +375,93 @@ librdp_status rdp_smartcard_redirection_write_handle_disposition_call(
     const void* handle,
     uint32_t handle_len,
     uint32_t disposition);
+librdp_status rdp_smartcard_redirection_parse_state_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_state_call* call);
+librdp_status rdp_smartcard_redirection_write_state_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t atr_is_null,
+    uint32_t atr_len);
+librdp_status rdp_smartcard_redirection_parse_status_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_status_call* call);
+librdp_status rdp_smartcard_redirection_write_status_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t reader_names_is_null,
+    uint32_t reader_len,
+    uint32_t atr_len);
+librdp_status rdp_smartcard_redirection_parse_transmit_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_transmit_call* call);
+librdp_status rdp_smartcard_redirection_write_transmit_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t send_protocol,
+    const void* send_extra,
+    uint32_t send_extra_len,
+    const void* send_data,
+    uint32_t send_len,
+    uint32_t recv_pci_present,
+    uint32_t recv_protocol,
+    const void* recv_extra,
+    uint32_t recv_extra_len,
+    uint32_t recv_buffer_is_null,
+    uint32_t recv_len);
+librdp_status rdp_smartcard_redirection_parse_control_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_control_call* call);
+librdp_status rdp_smartcard_redirection_write_control_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t control_code,
+    const void* input,
+    uint32_t input_len,
+    uint32_t output_buffer_is_null,
+    uint32_t output_len);
+librdp_status rdp_smartcard_redirection_parse_attrib_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_attrib_call* call);
+librdp_status rdp_smartcard_redirection_write_attrib_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t attr_id,
+    uint32_t attr_is_null,
+    uint32_t attr_len);
+librdp_status rdp_smartcard_redirection_parse_set_attrib_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_set_attrib_call* call);
+librdp_status rdp_smartcard_redirection_write_set_attrib_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const void* handle,
+    uint32_t handle_len,
+    uint32_t attr_id,
+    const void* attr,
+    uint32_t attr_len);
 librdp_status rdp_smartcard_redirection_parse_long_return(
     const void* data,
     size_t length,
