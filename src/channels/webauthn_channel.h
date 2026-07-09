@@ -103,6 +103,11 @@ librdp_status rdp_webauthn_write_authenticator_response_ex(rdp_buffer* buffer,
                                                            uint8_t ctap_status,
                                                            const void* ctap_payload,
                                                            size_t ctap_payload_len);
+librdp_status rdp_webauthn_write_empty_array_response(rdp_buffer* buffer, uint32_t hresult);
+librdp_status rdp_webauthn_write_authenticator_list_response(rdp_buffer* buffer,
+                                                             uint32_t hresult,
+                                                             const rdp_webauthn_device_info* devices,
+                                                             uint32_t device_count);
 librdp_status rdp_webauthn_parse_u32_response(const rdp_webauthn_response* response,
                                               uint32_t* value);
 librdp_status rdp_webauthn_write_u32_response(rdp_buffer* buffer, uint32_t hresult, uint32_t value);

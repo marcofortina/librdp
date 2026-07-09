@@ -256,6 +256,13 @@ static librdp_status rdp_webauthn_write_uint(rdp_buffer* buffer, uint32_t value)
     }
 }
 
+static librdp_status rdp_webauthn_write_bool(rdp_buffer* buffer, uint8_t value)
+{
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_buffer_append_u8(buffer, value ? 0xf5u : 0xf4u);
+}
+
 static librdp_status rdp_webauthn_write_bytes(rdp_buffer* buffer, const void* data, size_t length)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -295,7 +302,7 @@ static librdp_status rdp_webauthn_write_bool_pair(rdp_buffer* buffer, const char
     status = rdp_webauthn_write_text(buffer, key);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    return rdp_buffer_append_u8(buffer, value ? 0xf5u : 0xf4u);
+    return rdp_webauthn_write_bool(buffer, value);
 }
 
 static librdp_status rdp_webauthn_write_bytes_pair(rdp_buffer* buffer,
@@ -681,6 +688,72 @@ librdp_status rdp_webauthn_write_authenticator_response_ex(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_webauthn_write_response(buffer, hresult, payload.data, payload.length);
     rdp_buffer_free(&response);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_webauthn_write_empty_array_response(rdp_buffer* buffer, uint32_t hresult)
+{
+    uint8_t payload = 0x80u;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_webauthn_write_response(buffer, hresult, &payload, sizeof(payload));
+}
+
+librdp_status rdp_webauthn_write_authenticator_list_response(rdp_buffer* buffer,
+                                                             uint32_t hresult,
+                                                             const rdp_webauthn_device_info* devices,
+                                                             uint32_t device_count)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0;
+
+    if (!buffer || (!devices && device_count > 0) || device_count > 64u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_webauthn_write_type_len(&payload, 4, device_count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < device_count; i++)
+    {
+        const rdp_webauthn_device_info* info = &devices[i];
+        const char* name = NULL;
+
+        if (!info->product || !info->aaguid || info->aaguid_len != RDP_WEBAUTHN_GUID_LENGTH)
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        }
+        name = info->product[0] ? info->product : info->provider_name;
+        if (!name)
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        }
+        status = rdp_webauthn_write_type_len(&payload, 5, 5u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 1u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 1u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 2u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_bytes(&payload, info->aaguid, info->aaguid_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 3u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_text(&payload, name);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 4u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_bytes(&payload, NULL, 0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_uint(&payload, 5u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_webauthn_write_bool(&payload, 0);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_webauthn_write_response(buffer, hresult, payload.data, payload.length);
     rdp_buffer_free(&payload);
     return status;
 }

@@ -11850,6 +11850,27 @@ static void rdp_session_webauthn_init_fido2_info(rdp_session_webauthn_fido2_devi
     device->info.status = 0;
 }
 
+static void rdp_session_webauthn_init_mock_info(rdp_webauthn_device_info* info)
+{
+    static const uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
+        0x6c, 0x69, 0x62, 0x72, 0x64, 0x70, 0x2d, 0x77,
+        0x65, 0x62, 0x61, 0x75, 0x74, 0x68, 0x6e, 0x31
+    };
+
+    if (!info)
+        return;
+    memset(info, 0, sizeof(*info));
+    info->provider_type = "mock";
+    info->provider_name = "local mock";
+    info->device_path = "mock://local";
+    info->manufacturer = "librdp";
+    info->product = "librdp mock authenticator";
+    info->aaguid = guid;
+    info->aaguid_len = sizeof(guid);
+    info->max_msg_size = RDP_WEBAUTHN_MAX_MESSAGE;
+    info->transports = 1u;
+}
+
 #if defined(RDP_HAVE_FIDO2) && defined(__linux__)
 static uint32_t rdp_session_ctaphid_read_u32_be(const uint8_t* data)
 {
@@ -12337,11 +12358,45 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
                                                  RDP_SESSION_HRESULT_OK,
                                                  (mock_enabled || fido2_enabled) ? 1u : 0u);
     }
-    else if (request.command == RDP_WEBAUTHN_COMMAND_CANCEL ||
-             request.command == RDP_WEBAUTHN_COMMAND_GET_CREDENTIALS ||
-             request.command == RDP_WEBAUTHN_COMMAND_GET_AUTHENTICATOR_LIST)
+    else if (request.command == RDP_WEBAUTHN_COMMAND_CANCEL)
     {
         status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_OK, NULL, 0);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_GET_CREDENTIALS)
+    {
+        status = rdp_webauthn_write_empty_array_response(&response, RDP_SESSION_HRESULT_OK);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_GET_AUTHENTICATOR_LIST)
+    {
+        rdp_session_webauthn_fido2_device fido2_device;
+        rdp_webauthn_device_info mock_info;
+        const rdp_webauthn_device_info* devices = NULL;
+        uint32_t device_count = 0;
+
+        memset(&fido2_device, 0, sizeof(fido2_device));
+        memset(&mock_info, 0, sizeof(mock_info));
+        if (mock_enabled)
+        {
+            rdp_session_webauthn_init_mock_info(&mock_info);
+            devices = &mock_info;
+            device_count = 1u;
+        }
+        else if (fido2_enabled &&
+                 rdp_session_webauthn_select_fido2_device(session, &fido2_device) == LIBRDP_STATUS_OK)
+        {
+            devices = &fido2_device.info;
+            device_count = 1u;
+        }
+        status = rdp_webauthn_write_authenticator_list_response(&response,
+                                                                RDP_SESSION_HRESULT_OK,
+                                                                devices,
+                                                                device_count);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.webauthn.authenticator_list",
+                        "count=%u mock=%u fido2=%u",
+                        device_count,
+                        mock_enabled ? 1u : 0u,
+                        fido2_enabled ? 1u : 0u);
     }
     else if (request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN && mock_enabled)
     {

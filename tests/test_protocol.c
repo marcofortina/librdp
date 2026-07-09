@@ -553,6 +553,28 @@ static int test_webauthn_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_webauthn_write_empty_array_response(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.hresult == 0 && response.payload_len == 1u && response.payload[0] == 0x80u);
+    PCHECK(rdp_webauthn_validate_cbor(response.payload, response.payload_len) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_authenticator_list_response(&buffer,
+                                                          0,
+                                                          &device_info,
+                                                          1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.hresult == 0 &&
+           response.payload_len > RDP_WEBAUTHN_GUID_LENGTH &&
+           response.payload[0] == 0x81u &&
+           response.payload[1] == 0xa5u &&
+           test_contains_bytes(response.payload, response.payload_len, "/dev/hidraw0", 12) == 0 &&
+           test_contains_bytes(response.payload, response.payload_len, "Token", 5));
+    PCHECK(rdp_webauthn_validate_cbor(response.payload, response.payload_len) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_webauthn_write_request(&buffer,
                                       RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
                                       0x00000001u,
