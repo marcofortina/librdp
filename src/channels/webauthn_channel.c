@@ -2,6 +2,10 @@
 
 #include "common/stream.h"
 
+#ifdef RDP_HAVE_CBOR
+#include <cbor.h>
+#endif
+
 #include <string.h>
 
 typedef struct rdp_webauthn_cbor_item
@@ -322,6 +326,33 @@ int rdp_webauthn_flags_valid(uint32_t flags)
     return (flags & ~RDP_WEBAUTHN_FLAG_KNOWN_MASK) == 0;
 }
 
+librdp_status rdp_webauthn_validate_cbor(const void* data, size_t length)
+{
+    if (!data || length == 0 || length > RDP_WEBAUTHN_MAX_MESSAGE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+#ifdef RDP_HAVE_CBOR
+    {
+        struct cbor_load_result result;
+        cbor_item_t* item = cbor_load((const unsigned char*)data, length, &result);
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (!item || result.error.code != CBOR_ERR_NONE || result.read != length)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (item)
+            cbor_decref(&item);
+        return status;
+    }
+#else
+    {
+        size_t consumed = 0;
+
+        if (rdp_webauthn_cbor_skip((const uint8_t*)data, length, &consumed, 0) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        return consumed == length ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+#endif
+}
+
 librdp_status rdp_webauthn_parse_request(const void* data,
                                          size_t length,
                                          rdp_webauthn_request* request)
@@ -335,6 +366,8 @@ librdp_status rdp_webauthn_parse_request(const void* data,
     if (!data || !request)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length == 0 || length > RDP_WEBAUTHN_MAX_MESSAGE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_webauthn_validate_cbor(data, length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     memset(request, 0, sizeof(*request));
     if (rdp_webauthn_cbor_read_item(input, length, &map) != LIBRDP_STATUS_OK ||

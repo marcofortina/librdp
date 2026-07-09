@@ -74,6 +74,7 @@ typedef struct rdp_webauthn_device_info
 
 int rdp_webauthn_command_valid(uint32_t command);
 int rdp_webauthn_flags_valid(uint32_t flags);
+librdp_status rdp_webauthn_validate_cbor(const void* data, size_t length);
 librdp_status rdp_webauthn_parse_request(const void* data,
                                          size_t length,
                                          rdp_webauthn_request* request);

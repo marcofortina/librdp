@@ -430,6 +430,8 @@ static int test_webauthn_channel(void)
         0x67, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
         0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t truncated_cbor[] = {0xa1, 0x63, 'k', 'e', 'y'};
+    const uint8_t trailing_cbor[] = {0x01, 0x02};
     uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
         0x10, 0x11, 0x12, 0x13,
         0x14, 0x15, 0x16, 0x17,
@@ -501,6 +503,12 @@ static int test_webauthn_channel(void)
                                       sizeof(request_with_u64_cbor),
                                       &request) == LIBRDP_STATUS_OK);
     PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
+    PCHECK(rdp_webauthn_validate_cbor(request_with_u64_cbor, sizeof(request_with_u64_cbor)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_validate_cbor(truncated_cbor, sizeof(truncated_cbor)) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_webauthn_validate_cbor(trailing_cbor, sizeof(trailing_cbor)) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_webauthn_write_response(&buffer, 0, response_payload, sizeof(response_payload)) ==
            LIBRDP_STATUS_OK);
