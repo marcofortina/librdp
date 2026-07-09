@@ -235,6 +235,8 @@ typedef struct rdp_bitmap_rle_reader
 
 static uint8_t rdp_bitmap_rle_bytes_per_pixel(uint16_t bits_per_pixel)
 {
+    if (bits_per_pixel == 15u)
+        return 2;
     if (bits_per_pixel == 16u)
         return 2;
     if (bits_per_pixel == 24u)
@@ -246,6 +248,8 @@ static uint8_t rdp_bitmap_rle_bytes_per_pixel(uint16_t bits_per_pixel)
 
 static uint32_t rdp_bitmap_rle_white(uint16_t bits_per_pixel)
 {
+    if (bits_per_pixel == 15u)
+        return 0x7fffu;
     if (bits_per_pixel == 16u)
         return 0xffffu;
     return 0x00ffffffu;
@@ -269,7 +273,7 @@ static librdp_status rdp_bitmap_rle_read_pixel(rdp_bitmap_rle_reader* reader, ui
     bytes = rdp_bitmap_rle_bytes_per_pixel(reader->bits_per_pixel);
     if (bytes == 0 || (size_t)(reader->end - reader->current) < bytes)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (reader->bits_per_pixel == 16u)
+    if (reader->bits_per_pixel == 15u || reader->bits_per_pixel == 16u)
     {
         *pixel = (uint32_t)reader->current[0] | ((uint32_t)reader->current[1] << 8);
     }
@@ -634,7 +638,13 @@ static librdp_status rdp_bitmap_rle_decode_stream(const uint8_t* data,
 
 static void rdp_bitmap_raw_pixel_to_bgra(uint32_t pixel, uint16_t bits_per_pixel, uint8_t* dst)
 {
-    if (bits_per_pixel == 16u)
+    if (bits_per_pixel == 15u)
+    {
+        dst[0] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
+        dst[1] = rdp_scale_5_to_8((uint16_t)((pixel >> 5) & 0x001fu));
+        dst[2] = rdp_scale_5_to_8((uint16_t)((pixel >> 10) & 0x001fu));
+    }
+    else if (bits_per_pixel == 16u)
     {
         dst[0] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
         dst[1] = rdp_scale_6_to_8((uint16_t)((pixel >> 5) & 0x003fu));
@@ -692,8 +702,9 @@ static librdp_status rdp_bitmap_decode_compressed_bgra32(const rdp_bitmap_rect* 
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((rect->flags & ~(RDP_BITMAP_FLAG_COMPRESSED | RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER)) != 0)
         return LIBRDP_STATUS_UNSUPPORTED;
-    if (rect->width == 0 || rect->height == 0 || (rect->bits_per_pixel != 16 && rect->bits_per_pixel != 24 &&
-                                                  rect->bits_per_pixel != 32))
+    if (rect->width == 0 || rect->height == 0 ||
+        (rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
+         rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((size_t)rect->width > SIZE_MAX / rect->height)
         return LIBRDP_STATUS_NO_MEMORY;
@@ -741,7 +752,9 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((rect->flags & RDP_BITMAP_FLAG_COMPRESSED) != 0)
         return rdp_bitmap_decode_compressed_bgra32(rect, output, stride);
-    if (rect->flags != 0 || (rect->bits_per_pixel != 16 && rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
+    if (rect->flags != 0 ||
+        (rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
+         rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rect->width == 0 || rect->height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -781,7 +794,7 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
                 dst[(size_t)column * 4u + 3u] = 0xffu;
             }
         }
-        else
+        else if (rect->bits_per_pixel == 16)
         {
             for (column = 0; column < rect->width; column++)
             {
@@ -789,6 +802,17 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
                 dst[(size_t)column * 4u + 0u] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
                 dst[(size_t)column * 4u + 1u] = rdp_scale_6_to_8((uint16_t)((pixel >> 5) & 0x003fu));
                 dst[(size_t)column * 4u + 2u] = rdp_scale_5_to_8((uint16_t)((pixel >> 11) & 0x001fu));
+                dst[(size_t)column * 4u + 3u] = 0xffu;
+            }
+        }
+        else
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                uint16_t pixel = (uint16_t)(src[(size_t)column * 2u] | ((uint16_t)src[(size_t)column * 2u + 1u] << 8));
+                dst[(size_t)column * 4u + 0u] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
+                dst[(size_t)column * 4u + 1u] = rdp_scale_5_to_8((uint16_t)((pixel >> 5) & 0x001fu));
+                dst[(size_t)column * 4u + 2u] = rdp_scale_5_to_8((uint16_t)((pixel >> 10) & 0x001fu));
                 dst[(size_t)column * 4u + 3u] = 0xffu;
             }
         }
