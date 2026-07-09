@@ -436,6 +436,23 @@ static int test_webauthn_channel(void)
         0x18, 0x19, 0x1a, 0x1b,
         0x1c, 0x1d, 0x1e, 0x1f
     };
+    const rdp_webauthn_device_info device_info = {
+        "Hid",
+        "Authenticator",
+        "/dev/hidraw0",
+        "Vendor",
+        "Token",
+        guid,
+        sizeof(guid),
+        4096,
+        256,
+        2,
+        3,
+        1,
+        0,
+        1,
+        1
+    };
     rdp_webauthn_request request;
     rdp_webauthn_response response;
     rdp_buffer buffer;
@@ -509,6 +526,22 @@ static int test_webauthn_channel(void)
     PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
     PCHECK(response.hresult == 0x80004005u && response.payload_len > sizeof(response_payload) &&
            response.payload[0] == 0xa3u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_authenticator_response_ex(&buffer,
+                                                        0,
+                                                        &device_info,
+                                                        0,
+                                                        response_payload,
+                                                        sizeof(response_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.hresult == 0 &&
+           response.payload_len > sizeof(response_payload) &&
+           response.payload[0] == 0xa3u &&
+           test_contains_bytes(response.payload, response.payload_len, "Hid", 3) &&
+           test_contains_bytes(response.payload, response.payload_len, "/dev/hidraw0", 12) &&
+           test_contains_bytes(response.payload, response.payload_len, "Token", 5));
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

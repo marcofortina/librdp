@@ -53,6 +53,25 @@ typedef struct rdp_webauthn_response
     size_t payload_len;
 } rdp_webauthn_response;
 
+typedef struct rdp_webauthn_device_info
+{
+    const char* provider_type;
+    const char* provider_name;
+    const char* device_path;
+    const char* manufacturer;
+    const char* product;
+    const uint8_t* aaguid;
+    size_t aaguid_len;
+    uint32_t max_msg_size;
+    uint32_t max_large_blob_size;
+    uint32_t uv_status;
+    uint32_t uv_retries;
+    uint32_t transports;
+    uint32_t status;
+    uint8_t has_resident_key;
+    uint8_t resident_key;
+} rdp_webauthn_device_info;
+
 int rdp_webauthn_command_valid(uint32_t command);
 int rdp_webauthn_flags_valid(uint32_t flags);
 librdp_status rdp_webauthn_parse_request(const void* data,
@@ -77,6 +96,12 @@ librdp_status rdp_webauthn_write_authenticator_response(rdp_buffer* buffer,
                                                         uint8_t ctap_status,
                                                         const void* ctap_payload,
                                                         size_t ctap_payload_len);
+librdp_status rdp_webauthn_write_authenticator_response_ex(rdp_buffer* buffer,
+                                                           uint32_t hresult,
+                                                           const rdp_webauthn_device_info* info,
+                                                           uint8_t ctap_status,
+                                                           const void* ctap_payload,
+                                                           size_t ctap_payload_len);
 librdp_status rdp_webauthn_parse_u32_response(const rdp_webauthn_response* response,
                                               uint32_t* value);
 librdp_status rdp_webauthn_write_u32_response(rdp_buffer* buffer, uint32_t hresult, uint32_t value);
