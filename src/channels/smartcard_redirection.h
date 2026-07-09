@@ -75,6 +75,7 @@
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT 12u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READER_GROUPS 13u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READERS 14u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_GET_STATUS_CHANGE 15u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -94,6 +95,7 @@
 #define RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH 36u
 #define RDP_SMARTCARD_REDIRECTION_TRANSMIT_MAX_LENGTH 66560u
 #define RDP_SMARTCARD_REDIRECTION_ATTRIB_MAX_LENGTH 65536u
+#define RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES 32u
 
 typedef struct rdp_smartcard_redirection_device_control_request
 {
@@ -176,6 +178,29 @@ typedef struct rdp_smartcard_redirection_list_readers_call
     uint32_t readers_is_null;
     uint32_t readers_len;
 } rdp_smartcard_redirection_list_readers_call;
+
+typedef struct rdp_smartcard_redirection_reader_state_call
+{
+    uint32_t reader_name_is_null;
+    uint32_t reader_name_len;
+    const uint8_t* reader_name;
+    rdp_smartcard_redirection_reader_state_common state;
+} rdp_smartcard_redirection_reader_state_call;
+
+typedef struct rdp_smartcard_redirection_get_status_change_call
+{
+    rdp_smartcard_redirection_context context;
+    uint32_t timeout;
+    uint32_t reader_count;
+    rdp_smartcard_redirection_reader_state_call readers[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+} rdp_smartcard_redirection_get_status_change_call;
+
+typedef struct rdp_smartcard_redirection_get_status_change_return
+{
+    uint32_t return_code;
+    uint32_t reader_count;
+    rdp_smartcard_redirection_reader_state_common readers[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+} rdp_smartcard_redirection_get_status_change_return;
 
 typedef struct rdp_smartcard_redirection_reconnect_call
 {
@@ -316,6 +341,7 @@ typedef struct rdp_smartcard_redirection_request_message
         rdp_smartcard_redirection_set_attrib_call set_attrib;
         rdp_smartcard_redirection_list_reader_groups_call list_reader_groups;
         rdp_smartcard_redirection_list_readers_call list_readers;
+        rdp_smartcard_redirection_get_status_change_call get_status_change;
     } body;
 } rdp_smartcard_redirection_request_message;
 
@@ -433,6 +459,17 @@ librdp_status rdp_smartcard_redirection_write_list_readers_call(
     uint32_t groups_len,
     uint32_t readers_is_null,
     uint32_t readers_len);
+librdp_status rdp_smartcard_redirection_parse_get_status_change_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_get_status_change_call* call);
+librdp_status rdp_smartcard_redirection_write_get_status_change_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t timeout,
+    const rdp_smartcard_redirection_reader_state_call* readers,
+    uint32_t reader_count);
 librdp_status rdp_smartcard_redirection_parse_reconnect_call(
     const void* data,
     size_t length,
@@ -619,5 +656,14 @@ librdp_status rdp_smartcard_redirection_parse_transmit_return(
     const void* data,
     size_t length,
     rdp_smartcard_redirection_transmit_return* result);
+librdp_status rdp_smartcard_redirection_write_get_status_change_return(
+    rdp_buffer* buffer,
+    uint32_t return_code,
+    const rdp_smartcard_redirection_reader_state_common* readers,
+    uint32_t reader_count);
+librdp_status rdp_smartcard_redirection_parse_get_status_change_return(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_get_status_change_return* result);
 
 #endif

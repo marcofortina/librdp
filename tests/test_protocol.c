@@ -7586,6 +7586,9 @@ static int test_auth_smartcard_redirection_channels(void)
     rdp_smartcard_redirection_connect_common connect_common;
     rdp_smartcard_redirection_list_reader_groups_call list_groups_call;
     rdp_smartcard_redirection_list_readers_call list_readers_call;
+    rdp_smartcard_redirection_reader_state_call status_readers[1];
+    rdp_smartcard_redirection_get_status_change_call get_status_change_call;
+    rdp_smartcard_redirection_get_status_change_return get_status_change_result;
     rdp_smartcard_redirection_reconnect_call reconnect_call;
     rdp_smartcard_redirection_handle_disposition_call disposition_call;
     rdp_smartcard_redirection_state_call state_call;
@@ -8353,6 +8356,55 @@ static int test_auth_smartcard_redirection_channels(void)
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+
+    memset(status_readers, 0, sizeof(status_readers));
+    status_readers[0].reader_name_is_null = 0;
+    status_readers[0].reader_name = (const uint8_t*)"Reader A";
+    status_readers[0].reader_name_len = 8u;
+    status_readers[0].state.current_state = 0x10u;
+    status_readers[0].state.event_state = 0x20u;
+    status_readers[0].state.atr_len = sizeof(scard_extra);
+    memcpy(status_readers[0].state.atr, scard_extra, sizeof(scard_extra));
+    PCHECK(rdp_smartcard_redirection_write_get_status_change_call(&buffer,
+                                                                  context_bytes,
+                                                                  sizeof(context_bytes),
+                                                                  250u,
+                                                                  status_readers,
+                                                                  1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_get_status_change_call(buffer.data,
+                                                                  buffer.length,
+                                                                  &get_status_change_call) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(get_status_change_call.timeout == 250u &&
+           get_status_change_call.reader_count == 1u &&
+           get_status_change_call.readers[0].state.current_state == 0x10u &&
+           get_status_change_call.readers[0].reader_name_len == 8u);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_GETSTATUSCHANGEA,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_GET_STATUS_CHANGE &&
+           scard_message.body.get_status_change.reader_count == 1u);
+    buffer.length = 0;
+    packet.length = 0;
+    PCHECK(rdp_smartcard_redirection_write_get_status_change_return(&buffer,
+                                                                    0,
+                                                                    &status_readers[0].state,
+                                                                    1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_get_status_change_return(buffer.data,
+                                                                    buffer.length,
+                                                                    &get_status_change_result) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(get_status_change_result.return_code == 0 &&
+           get_status_change_result.reader_count == 1u &&
+           get_status_change_result.readers[0].event_state == 0x20u);
+    buffer.length = 0;
 
     PCHECK(rdp_smartcard_redirection_write_reconnect_call(
                &buffer,
