@@ -892,6 +892,10 @@ static int test_path_security_license_channels(void)
         3, 0, 2, 0,
         9, 8
     };
+    const uint8_t license_company[] = {'C', 0, 0, 0};
+    const uint8_t license_product[] = {'A', 0, '0', 0, '2', 0, 0, 0};
+    const uint8_t license_scope[] = {'s', 'c', 'o', 'p', 'e', 0};
+    const uint8_t license_cal[] = {'c', 'a', 'l'};
     const uint8_t channel[] = {3, 0, 0, 0, 0x10, 0, 0, 0, 1, 2, 3};
     const uint8_t channel_fragment[] = {8, 0, 0, 0, RDP_VIRTUAL_CHANNEL_FLAG_FIRST, 0, 0, 0, 1, 2, 3};
     const uint8_t dyn_caps[] = {
@@ -1597,6 +1601,16 @@ static int test_path_security_license_channels(void)
     rdp_rfx_tile_pixels rfx_upgrade_pixels;
     rdp_rfx_progressive_tile_state rfx_progressive_state;
     rdp_license_error_alert alert;
+    rdp_license_preamble license_preamble;
+    rdp_license_binary_blob license_blob;
+    rdp_license_server_request license_request;
+    rdp_license_platform_challenge license_challenge;
+    rdp_license_new_or_upgrade license_new;
+    rdp_license_new_license_info license_info;
+    rdp_license_hardware_id hardware_id;
+    rdp_license_hardware_id parsed_hardware_id;
+    rdp_license_platform_challenge_response_data challenge_response_data;
+    rdp_license_platform_challenge_response_data parsed_challenge_response_data;
     rdp_virtual_channel_packet vc;
     rdp_dynamic_channel_header dyn_header;
     rdp_dynamic_channel_capabilities dyn_parsed_caps;
@@ -1725,6 +1739,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer auth_info;
     rdp_buffer ts_request;
     rdp_buffer nla_request;
+    rdp_buffer license_packet;
+    rdp_buffer license_payload;
     rdp_buffer channel_packet;
     rdp_buffer dyn_response;
     rdp_client_info info;
@@ -1848,6 +1864,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&auth_info);
     rdp_buffer_init(&ts_request);
     rdp_buffer_init(&nla_request);
+    rdp_buffer_init(&license_packet);
+    rdp_buffer_init(&license_payload);
     rdp_buffer_init(&channel_packet);
     rdp_buffer_init(&dyn_response);
 
@@ -3016,6 +3034,197 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_license_parse_error_alert(license, sizeof(license), &alert) == LIBRDP_STATUS_OK);
     PCHECK(alert.error_code == 1 && alert.state_transition == 2 && alert.blob_length == 2 && alert.blob[1] == 8);
     PCHECK(rdp_license_parse_error_alert(license, 15, &alert) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_license_parse_preamble(license, sizeof(license), &license_preamble) == LIBRDP_STATUS_OK);
+    PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT &&
+           license_preamble.payload_len == 14u);
+    PCHECK(rdp_license_write_error_alert(&license_packet,
+                                         RDP_LICENSE_VERSION_3,
+                                         7,
+                                         8,
+                                         RDP_LICENSE_BLOB_DATA,
+                                         "ok",
+                                         2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_error_alert(license_packet.data, license_packet.length, &alert) == LIBRDP_STATUS_OK);
+    PCHECK(alert.error_code == 7 && alert.state_transition == 8 &&
+           alert.blob_type == RDP_LICENSE_BLOB_DATA && alert.blob_length == 2);
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_binary_blob(&license_packet,
+                                         RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG,
+                                         "\x01\x00\x00\x00",
+                                         4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_binary_blob(license_packet.data,
+                                         license_packet.length,
+                                         &license_blob) == LIBRDP_STATUS_OK);
+    PCHECK(license_blob.type == RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG &&
+           license_blob.length == 4 &&
+           license_blob.data[0] == 1);
+    license_packet.length = 0;
+    PCHECK(test_append_zeroes(&license_payload, 32u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_payload, 0x00060002u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_payload, (uint32_t)sizeof(license_company)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_payload, license_company, sizeof(license_company)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_payload, (uint32_t)sizeof(license_product)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_payload, license_product, sizeof(license_product)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                         RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG,
+                                         "\x01\x00\x00\x00",
+                                         4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                         RDP_LICENSE_BLOB_CERTIFICATE,
+                                         NULL,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_payload, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                         RDP_LICENSE_BLOB_SCOPE,
+                                         license_scope,
+                                         (uint16_t)sizeof(license_scope)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_preamble(&license_packet,
+                                      RDP_LICENSE_MESSAGE_REQUEST,
+                                      RDP_LICENSE_VERSION_3,
+                                      (uint16_t)license_payload.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_payload.data, license_payload.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_server_request(license_packet.data,
+                                            license_packet.length,
+                                            &license_request) == LIBRDP_STATUS_OK);
+    PCHECK(license_request.product_info.version == 0x00060002u &&
+           license_request.key_exchange_list.length == 4 &&
+           license_request.scope_list.count == 1 &&
+           license_request.scope_list.scopes[0].length == sizeof(license_scope));
+    PCHECK(rdp_license_parse_server_request(license_packet.data,
+                                            license_packet.length - 1u,
+                                            &license_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    license_packet.length = 0;
+    license_payload.length = 0;
+    PCHECK(rdp_buffer_append_u32_le(&license_payload, 0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                         RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                         "\xaa\xbb",
+                                         2) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&license_payload, 16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_preamble(&license_packet,
+                                      RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE,
+                                      RDP_LICENSE_VERSION_3,
+                                      (uint16_t)license_payload.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_payload.data, license_payload.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
+                                                license_packet.length,
+                                                &license_challenge) == LIBRDP_STATUS_OK);
+    PCHECK(license_challenge.encrypted_challenge.length == 2 &&
+           license_challenge.encrypted_challenge.data[1] == 0xbb);
+    license_packet.length = 0;
+    license_payload.length = 0;
+    PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                         RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                         "\x11\x22",
+                                         2) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&license_payload, 16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_preamble(&license_packet,
+                                      RDP_LICENSE_MESSAGE_NEW_LICENSE,
+                                      RDP_LICENSE_VERSION_3,
+                                      (uint16_t)license_payload.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_payload.data, license_payload.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_new_or_upgrade(license_packet.data,
+                                            license_packet.length,
+                                            &license_new) == LIBRDP_STATUS_OK);
+    PCHECK(license_new.encrypted_license_info.type == RDP_LICENSE_BLOB_ENCRYPTED_DATA);
+    license_packet.length = 0;
+    PCHECK(rdp_buffer_append_u32_le(&license_packet, 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_packet, (uint32_t)sizeof(license_scope)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_scope, sizeof(license_scope)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_packet, (uint32_t)sizeof(license_company)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_company, sizeof(license_company)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_packet, (uint32_t)sizeof(license_product)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_product, sizeof(license_product)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&license_packet, (uint32_t)sizeof(license_cal)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&license_packet, license_cal, sizeof(license_cal)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_new_license_info(license_packet.data,
+                                              license_packet.length,
+                                              &license_info) == LIBRDP_STATUS_OK);
+    PCHECK(license_info.scope_len == sizeof(license_scope) &&
+           license_info.license_info_len == sizeof(license_cal));
+    hardware_id.platform_id = 0x01020304u;
+    hardware_id.data1 = 1;
+    hardware_id.data2 = 2;
+    hardware_id.data3 = 3;
+    hardware_id.data4 = 4;
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_hardware_id(&license_packet, &hardware_id) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_hardware_id(license_packet.data,
+                                         license_packet.length,
+                                         &parsed_hardware_id) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_hardware_id.platform_id == 0x01020304u && parsed_hardware_id.data4 == 4);
+    challenge_response_data.version = 0x0100u;
+    challenge_response_data.client_type = 0x0100u;
+    challenge_response_data.license_detail_level = 3u;
+    challenge_response_data.challenge_len = 2u;
+    challenge_response_data.challenge = (const uint8_t*)"\x55\x66";
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_platform_challenge_response_data(&license_packet,
+                                                              &challenge_response_data) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_platform_challenge_response_data(license_packet.data,
+                                                              license_packet.length,
+                                                              &parsed_challenge_response_data) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(parsed_challenge_response_data.challenge_len == 2 &&
+           parsed_challenge_response_data.challenge[0] == 0x55);
+    license_blob.type = RDP_LICENSE_BLOB_RANDOM;
+    license_blob.length = 2;
+    license_blob.data = (const uint8_t*)"\x01\x02";
+    license_request.key_exchange_list.type = RDP_LICENSE_BLOB_CLIENT_USER_NAME;
+    license_request.key_exchange_list.length = 5;
+    license_request.key_exchange_list.data = (const uint8_t*)"user";
+    license_request.server_certificate.type = RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME;
+    license_request.server_certificate.length = 5;
+    license_request.server_certificate.data = (const uint8_t*)"host";
+    memset(client_random, 0x5a, sizeof(client_random));
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_client_new_license_request(&license_packet,
+                                                        RDP_LICENSE_VERSION_3,
+                                                        RDP_LICENSE_KEY_EXCHANGE_RSA,
+                                                        0x03000000u,
+                                                        client_random,
+                                                        &license_blob,
+                                                        &license_request.key_exchange_list,
+                                                        &license_request.server_certificate) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_preamble(license_packet.data,
+                                      license_packet.length,
+                                      &license_preamble) == LIBRDP_STATUS_OK);
+    PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST);
+    license_request.scope_list.scopes[0].type = RDP_LICENSE_BLOB_DATA;
+    license_request.scope_list.scopes[0].length = (uint16_t)sizeof(license_cal);
+    license_request.scope_list.scopes[0].data = license_cal;
+    license_challenge.encrypted_challenge.type = RDP_LICENSE_BLOB_ENCRYPTED_DATA;
+    license_challenge.encrypted_challenge.length = 20;
+    license_challenge.encrypted_challenge.data = client_random;
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_client_info(&license_packet,
+                                         RDP_LICENSE_VERSION_3,
+                                         RDP_LICENSE_KEY_EXCHANGE_RSA,
+                                         0x03000000u,
+                                         client_random,
+                                         &license_blob,
+                                         &license_request.scope_list.scopes[0],
+                                         &license_challenge.encrypted_challenge,
+                                         client_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_preamble(license_packet.data,
+                                      license_packet.length,
+                                      &license_preamble) == LIBRDP_STATUS_OK);
+    PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_INFO);
+    license_packet.length = 0;
+    PCHECK(rdp_license_write_platform_challenge_response(&license_packet,
+                                                         RDP_LICENSE_VERSION_3,
+                                                         &license_challenge.encrypted_challenge,
+                                                         &license_challenge.encrypted_challenge,
+                                                         client_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_parse_preamble(license_packet.data,
+                                      license_packet.length,
+                                      &license_preamble) == LIBRDP_STATUS_OK);
+    PCHECK(license_preamble.message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE);
 
     PCHECK(rdp_virtual_channel_parse_packet(channel, sizeof(channel), &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == 3 && vc.flags == 0x10 && vc.payload[2] == 3);
@@ -4497,6 +4706,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_free(&channel_packet);
+    rdp_buffer_free(&license_payload);
+    rdp_buffer_free(&license_packet);
     rdp_buffer_free(&ts_request);
     rdp_buffer_free(&auth_info);
     rdp_buffer_free(&ts_credentials);

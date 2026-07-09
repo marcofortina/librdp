@@ -6,6 +6,120 @@
 
 #include <librdp/error.h>
 
+#include "common/buffer.h"
+
+#define RDP_LICENSE_MESSAGE_REQUEST 0x01u
+#define RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE 0x02u
+#define RDP_LICENSE_MESSAGE_NEW_LICENSE 0x03u
+#define RDP_LICENSE_MESSAGE_UPGRADE_LICENSE 0x04u
+#define RDP_LICENSE_MESSAGE_INFO 0x12u
+#define RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST 0x13u
+#define RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE 0x15u
+#define RDP_LICENSE_MESSAGE_ERROR_ALERT 0xffu
+
+#define RDP_LICENSE_VERSION_2 0x02u
+#define RDP_LICENSE_VERSION_3 0x03u
+#define RDP_LICENSE_VERSION_EXTENDED_ERROR 0x80u
+
+#define RDP_LICENSE_BLOB_DATA 0x0001u
+#define RDP_LICENSE_BLOB_RANDOM 0x0002u
+#define RDP_LICENSE_BLOB_CERTIFICATE 0x0003u
+#define RDP_LICENSE_BLOB_ENCRYPTED_DATA 0x0009u
+#define RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG 0x000du
+#define RDP_LICENSE_BLOB_SCOPE 0x000eu
+#define RDP_LICENSE_BLOB_CLIENT_USER_NAME 0x000fu
+#define RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME 0x0010u
+
+#define RDP_LICENSE_KEY_EXCHANGE_RSA 0x00000001u
+#define RDP_LICENSE_SCOPE_MAX_COUNT 32u
+
+typedef struct rdp_license_preamble
+{
+    uint8_t message_type;
+    uint8_t version;
+    uint16_t length;
+    const uint8_t* payload;
+    size_t payload_len;
+} rdp_license_preamble;
+
+typedef struct rdp_license_binary_blob
+{
+    uint16_t type;
+    uint16_t length;
+    const uint8_t* data;
+} rdp_license_binary_blob;
+
+typedef struct rdp_license_product_info
+{
+    uint32_t version;
+    uint32_t company_name_len;
+    const uint8_t* company_name;
+    uint32_t product_id_len;
+    const uint8_t* product_id;
+} rdp_license_product_info;
+
+typedef struct rdp_license_scope_list
+{
+    uint32_t count;
+    rdp_license_binary_blob scopes[RDP_LICENSE_SCOPE_MAX_COUNT];
+} rdp_license_scope_list;
+
+typedef struct rdp_license_server_request
+{
+    rdp_license_preamble preamble;
+    uint8_t server_random[32];
+    rdp_license_product_info product_info;
+    rdp_license_binary_blob key_exchange_list;
+    rdp_license_binary_blob server_certificate;
+    rdp_license_scope_list scope_list;
+} rdp_license_server_request;
+
+typedef struct rdp_license_platform_challenge
+{
+    rdp_license_preamble preamble;
+    uint32_t connect_flags;
+    rdp_license_binary_blob encrypted_challenge;
+    uint8_t mac[16];
+} rdp_license_platform_challenge;
+
+typedef struct rdp_license_new_or_upgrade
+{
+    rdp_license_preamble preamble;
+    rdp_license_binary_blob encrypted_license_info;
+    uint8_t mac[16];
+} rdp_license_new_or_upgrade;
+
+typedef struct rdp_license_new_license_info
+{
+    uint32_t version;
+    uint32_t scope_len;
+    const uint8_t* scope;
+    uint32_t company_name_len;
+    const uint8_t* company_name;
+    uint32_t product_id_len;
+    const uint8_t* product_id;
+    uint32_t license_info_len;
+    const uint8_t* license_info;
+} rdp_license_new_license_info;
+
+typedef struct rdp_license_hardware_id
+{
+    uint32_t platform_id;
+    uint32_t data1;
+    uint32_t data2;
+    uint32_t data3;
+    uint32_t data4;
+} rdp_license_hardware_id;
+
+typedef struct rdp_license_platform_challenge_response_data
+{
+    uint16_t version;
+    uint16_t client_type;
+    uint16_t license_detail_level;
+    uint16_t challenge_len;
+    const uint8_t* challenge;
+} rdp_license_platform_challenge_response_data;
+
 typedef struct rdp_license_error_alert
 {
     uint8_t message_type;
@@ -18,6 +132,75 @@ typedef struct rdp_license_error_alert
     const uint8_t* blob;
 } rdp_license_error_alert;
 
+librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble);
+librdp_status rdp_license_write_preamble(rdp_buffer* buffer,
+                                         uint8_t message_type,
+                                         uint8_t version,
+                                         uint16_t payload_len);
+librdp_status rdp_license_parse_binary_blob(const void* data,
+                                            size_t length,
+                                            rdp_license_binary_blob* blob);
+librdp_status rdp_license_write_binary_blob(rdp_buffer* buffer,
+                                            uint16_t type,
+                                            const void* data,
+                                            uint16_t length);
+librdp_status rdp_license_parse_product_info(const void* data,
+                                             size_t length,
+                                             rdp_license_product_info* product);
+librdp_status rdp_license_parse_server_request(const void* data,
+                                               size_t length,
+                                               rdp_license_server_request* request);
+librdp_status rdp_license_parse_platform_challenge(const void* data,
+                                                   size_t length,
+                                                   rdp_license_platform_challenge* challenge);
+librdp_status rdp_license_parse_new_or_upgrade(const void* data,
+                                               size_t length,
+                                               rdp_license_new_or_upgrade* license);
+librdp_status rdp_license_parse_new_license_info(const void* data,
+                                                 size_t length,
+                                                 rdp_license_new_license_info* info);
+librdp_status rdp_license_parse_hardware_id(const void* data,
+                                            size_t length,
+                                            rdp_license_hardware_id* hardware_id);
+librdp_status rdp_license_write_hardware_id(rdp_buffer* buffer,
+                                            const rdp_license_hardware_id* hardware_id);
+librdp_status rdp_license_parse_platform_challenge_response_data(
+    const void* data,
+    size_t length,
+    rdp_license_platform_challenge_response_data* response);
+librdp_status rdp_license_write_platform_challenge_response_data(
+    rdp_buffer* buffer,
+    const rdp_license_platform_challenge_response_data* response);
 librdp_status rdp_license_parse_error_alert(const void* data, size_t length, rdp_license_error_alert* alert);
+librdp_status rdp_license_write_error_alert(rdp_buffer* buffer,
+                                            uint8_t version,
+                                            uint32_t error_code,
+                                            uint32_t state_transition,
+                                            uint16_t blob_type,
+                                            const void* blob,
+                                            uint16_t blob_len);
+librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
+                                                           uint8_t version,
+                                                           uint32_t preferred_key_exchange_alg,
+                                                           uint32_t platform_id,
+                                                           const uint8_t client_random[32],
+                                                           const rdp_license_binary_blob* encrypted_pre_master,
+                                                           const rdp_license_binary_blob* user_name,
+                                                           const rdp_license_binary_blob* machine_name);
+librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
+                                            uint8_t version,
+                                            uint32_t preferred_key_exchange_alg,
+                                            uint32_t platform_id,
+                                            const uint8_t client_random[32],
+                                            const rdp_license_binary_blob* encrypted_pre_master,
+                                            const rdp_license_binary_blob* license_info,
+                                            const rdp_license_binary_blob* encrypted_hardware_id,
+                                            const uint8_t mac[16]);
+librdp_status rdp_license_write_platform_challenge_response(
+    rdp_buffer* buffer,
+    uint8_t version,
+    const rdp_license_binary_blob* encrypted_response,
+    const rdp_license_binary_blob* encrypted_hardware_id,
+    const uint8_t mac[16]);
 
 #endif
