@@ -714,6 +714,42 @@ librdp_status rdp_device_redirection_parse_io_request(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_device_redirection_write_io_request(rdp_buffer* buffer,
+                                                      uint32_t device_id,
+                                                      uint32_t file_id,
+                                                      uint32_t completion_id,
+                                                      uint32_t major_function,
+                                                      uint32_t minor_function,
+                                                      const void* payload,
+                                                      size_t payload_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!payload && payload_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_write_header(buffer,
+                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                 RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, device_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, file_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, completion_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, major_function);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, minor_function);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, payload, payload_len);
+}
+
 librdp_status rdp_device_redirection_parse_io_completion(const void* data,
                                                          size_t length,
                                                          rdp_device_redirection_io_completion* completion)

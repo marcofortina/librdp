@@ -144,26 +144,14 @@ static librdp_status test_append_device_io_request(rdp_buffer* buffer,
                                                    uint32_t major,
                                                    uint32_t minor)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    status = rdp_device_redirection_write_header(buffer,
-                                                 RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
-                                                 RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, device_id);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, file_id);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, completion_id);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, major);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, minor);
+    return rdp_device_redirection_write_io_request(buffer,
+                                                   device_id,
+                                                   file_id,
+                                                   completion_id,
+                                                   major,
+                                                   minor,
+                                                   NULL,
+                                                   0);
 }
 
 static librdp_status test_append_pnp_server_io_header(rdp_buffer* buffer,
@@ -5111,13 +5099,34 @@ static int test_device_redirection_channel(void)
     PCHECK(request.payload_len == 2 && request.payload[0] == 0xaa && request.payload[1] == 0xbb);
     PCHECK(rdp_device_redirection_parse_io_request(io_request_data, 23, &request) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_device_redirection_write_io_request(&buffer,
+                                                   request.device_id,
+                                                   request.file_id,
+                                                   request.completion_id,
+                                                   request.major_function,
+                                                   request.minor_function,
+                                                   request.payload,
+                                                   request.payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_request(buffer.data, buffer.length, &request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(request.payload_len == 2 && request.payload[1] == 0xbb);
+    PCHECK(rdp_device_redirection_write_io_request(&buffer,
+                                                   1,
+                                                   2,
+                                                   3,
+                                                   RDP_DEVICE_REDIRECTION_IRP_READ,
+                                                   0,
+                                                   NULL,
+                                                   1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     PCHECK(rdp_device_redirection_write_io_completion(&buffer,
                                                       request.device_id,
                                                       request.completion_id,
                                                       RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
-                                                      request.payload,
-                                                      request.payload_len) == LIBRDP_STATUS_OK);
+                                                      io_request_data + 24u,
+                                                      2u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_device_redirection_parse_io_completion(buffer.data, buffer.length, &completion) ==
            LIBRDP_STATUS_OK);
     PCHECK(completion.device_id == request.device_id);

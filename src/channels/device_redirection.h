@@ -246,6 +246,14 @@ librdp_status rdp_device_redirection_write_device_reply(rdp_buffer* buffer,
 librdp_status rdp_device_redirection_parse_io_request(const void* data,
                                                       size_t length,
                                                       rdp_device_redirection_io_request* request);
+librdp_status rdp_device_redirection_write_io_request(rdp_buffer* buffer,
+                                                      uint32_t device_id,
+                                                      uint32_t file_id,
+                                                      uint32_t completion_id,
+                                                      uint32_t major_function,
+                                                      uint32_t minor_function,
+                                                      const void* payload,
+                                                      size_t payload_len);
 librdp_status rdp_device_redirection_parse_io_completion(const void* data,
                                                          size_t length,
                                                          rdp_device_redirection_io_completion* completion);

@@ -57,6 +57,15 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     buffer.length = 0;
     (void)rdp_device_redirection_write_device_reply(&buffer, 1, RDP_DEVICE_REDIRECTION_STATUS_SUCCESS);
     buffer.length = 0;
+    (void)rdp_device_redirection_write_io_request(&buffer,
+                                                  1,
+                                                  2,
+                                                  3,
+                                                  RDP_DEVICE_REDIRECTION_IRP_READ,
+                                                  0,
+                                                  data,
+                                                  size < 64u ? size : 64u);
+    buffer.length = 0;
     (void)rdp_device_redirection_write_io_completion(&buffer,
                                                      1,
                                                      2,
