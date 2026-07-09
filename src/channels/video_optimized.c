@@ -31,6 +31,16 @@ static librdp_status rdp_video_optimized_read_u64_le(rdp_stream* stream, uint64_
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_video_optimized_append_u64_le(rdp_buffer* buffer, uint64_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_buffer_append_u32_le(buffer, (uint32_t)(value & 0xffffffffu));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, (uint32_t)((value >> 32) & 0xffffffffu));
+}
+
 librdp_status rdp_video_optimized_parse_header(
     const void* data,
     size_t length,
@@ -95,7 +105,7 @@ librdp_status rdp_video_optimized_parse_presentation_request(
          request->command != RDP_VIDEO_OPTIMIZED_COMMAND_STOP))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (request->command == RDP_VIDEO_OPTIMIZED_COMMAND_STOP)
-        return LIBRDP_STATUS_OK;
+        return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u8(&stream, &request->frame_rate) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &request->average_bitrate_kbps) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &request->reserved) != LIBRDP_STATUS_OK ||
@@ -116,6 +126,102 @@ librdp_status rdp_video_optimized_parse_presentation_request(
         memcmp(request->video_subtype_id, rdp_video_optimized_h264_guid, 16u) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_optimized_write_presentation_start_request(
+    rdp_buffer* buffer,
+    uint8_t presentation_id,
+    uint8_t frame_rate,
+    uint16_t average_bitrate_kbps,
+    uint32_t source_width,
+    uint32_t source_height,
+    uint32_t scaled_width,
+    uint32_t scaled_height,
+    uint64_t timestamp_offset,
+    uint64_t geometry_mapping_id,
+    const uint8_t* video_subtype_id,
+    const void* extra,
+    uint32_t extra_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t size = 0;
+
+    if (!buffer || !video_subtype_id || (!extra && extra_len > 0) ||
+        scaled_width > RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH ||
+        scaled_height > RDP_VIDEO_OPTIMIZED_MAX_SCALED_HEIGHT ||
+        memcmp(video_subtype_id, rdp_video_optimized_h264_guid, 16u) != 0 ||
+        extra_len > UINT32_MAX - 68u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    size = 68u + extra_len;
+    status = rdp_video_optimized_write_header(buffer,
+                                             RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST,
+                                             size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, presentation_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, RDP_VIDEO_OPTIMIZED_VERSION_1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, RDP_VIDEO_OPTIMIZED_COMMAND_START);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, frame_rate);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, average_bitrate_kbps);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, source_width);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, source_height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, scaled_width);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, scaled_height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_optimized_append_u64_le(buffer, timestamp_offset);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_optimized_append_u64_le(buffer, geometry_mapping_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, video_subtype_id, 16u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, extra_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, extra, extra_len);
+}
+
+librdp_status rdp_video_optimized_write_presentation_stop_request(
+    rdp_buffer* buffer,
+    uint8_t presentation_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_video_optimized_write_header(buffer,
+                                             RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST,
+                                             11u);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, presentation_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, RDP_VIDEO_OPTIMIZED_VERSION_1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u8(buffer, RDP_VIDEO_OPTIMIZED_COMMAND_STOP);
 }
 
 librdp_status rdp_video_optimized_write_presentation_response(
@@ -318,6 +424,68 @@ librdp_status rdp_video_optimized_parse_video_data(
         video->sample_number == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_optimized_write_video_data(
+    rdp_buffer* buffer,
+    uint8_t presentation_id,
+    uint8_t flags,
+    uint64_t timestamp,
+    uint64_t duration,
+    uint16_t current_packet_index,
+    uint16_t packets_in_sample,
+    uint32_t sample_number,
+    const void* sample,
+    uint32_t sample_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!sample && sample_len > 0) ||
+        sample_len > UINT32_MAX - 40u ||
+        (flags & ~(RDP_VIDEO_OPTIMIZED_DATA_FLAG_HAS_TIMESTAMPS |
+                   RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME |
+                   RDP_VIDEO_OPTIMIZED_DATA_FLAG_NEW_FRAMERATE)) != 0 ||
+        packets_in_sample == 0 ||
+        current_packet_index == 0 ||
+        current_packet_index > packets_in_sample ||
+        sample_number == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_optimized_write_header(buffer,
+                                             RDP_VIDEO_OPTIMIZED_PACKET_VIDEO_DATA,
+                                             40u + sample_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, presentation_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, RDP_VIDEO_OPTIMIZED_VERSION_1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_optimized_append_u64_le(buffer, timestamp);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_optimized_append_u64_le(buffer, duration);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, current_packet_index);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, packets_in_sample);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, sample_number);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, sample_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, sample, sample_len);
 }
 
 const uint8_t* rdp_video_optimized_h264_subtype_guid(void)

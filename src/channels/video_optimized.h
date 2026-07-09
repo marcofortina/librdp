@@ -115,6 +115,23 @@ librdp_status rdp_video_optimized_parse_presentation_request(
     const void* data,
     size_t length,
     rdp_video_optimized_presentation_request* request);
+librdp_status rdp_video_optimized_write_presentation_start_request(
+    rdp_buffer* buffer,
+    uint8_t presentation_id,
+    uint8_t frame_rate,
+    uint16_t average_bitrate_kbps,
+    uint32_t source_width,
+    uint32_t source_height,
+    uint32_t scaled_width,
+    uint32_t scaled_height,
+    uint64_t timestamp_offset,
+    uint64_t geometry_mapping_id,
+    const uint8_t* video_subtype_id,
+    const void* extra,
+    uint32_t extra_len);
+librdp_status rdp_video_optimized_write_presentation_stop_request(
+    rdp_buffer* buffer,
+    uint8_t presentation_id);
 librdp_status rdp_video_optimized_write_presentation_response(
     rdp_buffer* buffer,
     uint8_t presentation_id);
@@ -144,6 +161,17 @@ librdp_status rdp_video_optimized_parse_video_data(
     const void* data,
     size_t length,
     rdp_video_optimized_video_data* video);
+librdp_status rdp_video_optimized_write_video_data(
+    rdp_buffer* buffer,
+    uint8_t presentation_id,
+    uint8_t flags,
+    uint64_t timestamp,
+    uint64_t duration,
+    uint16_t current_packet_index,
+    uint16_t packets_in_sample,
+    uint32_t sample_number,
+    const void* sample,
+    uint32_t sample_len);
 const uint8_t* rdp_video_optimized_h264_subtype_guid(void);
 
 #endif

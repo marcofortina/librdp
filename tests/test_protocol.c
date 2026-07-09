@@ -6704,24 +6704,19 @@ static int test_video_optimized_channel(void)
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&payload);
 
-    PCHECK(rdp_video_optimized_write_header(&buffer,
-                                            RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST,
-                                            68u + (uint32_t)sizeof(extra)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_OPTIMIZED_VERSION_1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_OPTIMIZED_COMMAND_START) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, 29) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u16_le(&buffer, 4800) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u16_le(&buffer, 0) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 480) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 244) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 480) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 244) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 66609445540u) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 0x80007aba00040222u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, h264, 16u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, sizeof(extra)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, extra, sizeof(extra)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_optimized_write_presentation_start_request(&buffer,
+                                                                3,
+                                                                29,
+                                                                4800,
+                                                                480,
+                                                                244,
+                                                                480,
+                                                                244,
+                                                                66609445540u,
+                                                                0x80007aba00040222u,
+                                                                h264,
+                                                                extra,
+                                                                sizeof(extra)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_optimized_parse_header(buffer.data, buffer.length, &header) ==
            LIBRDP_STATUS_OK);
     PCHECK(header.size == buffer.length &&
@@ -6738,19 +6733,35 @@ static int test_video_optimized_channel(void)
     PCHECK(rdp_video_optimized_parse_presentation_request(buffer.data,
                                                           buffer.length,
                                                           &request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_video_optimized_write_presentation_start_request(
+               &payload,
+               3,
+               29,
+               4800,
+               480,
+               244,
+               RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH + 1u,
+               244,
+               0,
+               0,
+               h264,
+               NULL,
+               0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
+    rdp_buffer_free(&payload);
     rdp_buffer_init(&buffer);
+    rdp_buffer_init(&payload);
 
-    PCHECK(rdp_video_optimized_write_header(&buffer,
-                                            RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST,
-                                            11u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_OPTIMIZED_VERSION_1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_OPTIMIZED_COMMAND_STOP) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_optimized_write_presentation_stop_request(&buffer, 3) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_optimized_parse_presentation_request(buffer.data,
                                                           buffer.length,
                                                           &request) == LIBRDP_STATUS_OK);
     PCHECK(request.command == RDP_VIDEO_OPTIMIZED_COMMAND_STOP);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_optimized_parse_presentation_request(buffer.data,
+                                                          buffer.length,
+                                                          &request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -6802,22 +6813,17 @@ static int test_video_optimized_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
-    PCHECK(rdp_video_optimized_write_header(&buffer,
-                                            RDP_VIDEO_OPTIMIZED_PACKET_VIDEO_DATA,
-                                            40u + (uint32_t)sizeof(sample)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_OPTIMIZED_VERSION_1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer,
-                                RDP_VIDEO_OPTIMIZED_DATA_FLAG_HAS_TIMESTAMPS |
-                                    RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 444103u) == LIBRDP_STATUS_OK);
-    PCHECK(test_append_u64_le(&buffer, 0) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u16_le(&buffer, 1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u16_le(&buffer, 1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, 1) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&buffer, sizeof(sample)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append(&buffer, sample, sizeof(sample)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_optimized_write_video_data(
+               &buffer,
+               3,
+               RDP_VIDEO_OPTIMIZED_DATA_FLAG_HAS_TIMESTAMPS | RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME,
+               444103u,
+               0,
+               1,
+               1,
+               1,
+               sample,
+               sizeof(sample)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_optimized_parse_video_data(buffer.data, buffer.length, &video) ==
            LIBRDP_STATUS_OK);
     PCHECK(video.timestamp == 444103u &&
@@ -6826,6 +6832,16 @@ static int test_video_optimized_channel(void)
     buffer.data[28] = 2;
     PCHECK(rdp_video_optimized_parse_video_data(buffer.data, buffer.length, &video) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_video_optimized_write_video_data(&payload,
+                                                3,
+                                                RDP_VIDEO_OPTIMIZED_DATA_FLAG_KEYFRAME,
+                                                0,
+                                                0,
+                                                2,
+                                                1,
+                                                1,
+                                                sample,
+                                                sizeof(sample)) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&payload);
