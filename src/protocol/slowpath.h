@@ -81,6 +81,12 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint16_t width,
                                                 uint16_t height,
                                                 const char* source_descriptor);
+librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
+                                          uint32_t share_id,
+                                          uint16_t channel_id,
+                                          uint8_t pdu_type2,
+                                          const void* payload,
+                                          size_t payload_len);
 librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
                                                     uint32_t share_id,
                                                     uint16_t channel_id);

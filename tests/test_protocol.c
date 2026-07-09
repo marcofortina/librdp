@@ -2246,6 +2246,25 @@ static int test_path_security_license_channels(void)
            bitmap_update.rects[0].width == 2 &&
            bitmap_update.rects[0].height == 2 &&
            bitmap_update.rects[0].data_len == 16);
+    rdp_buffer_free(&client_refresh_rect);
+    rdp_buffer_init(&client_refresh_rect);
+    PCHECK(rdp_slowpath_write_data_pdu(&client_refresh_rect,
+                                       data_pdu.share_id,
+                                       data_pdu.header.channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_UPDATE,
+                                       decoded_bitmap.data,
+                                       decoded_bitmap.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_data_pdu(client_refresh_rect.data,
+                                       client_refresh_rect.length,
+                                       &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE &&
+           data_pdu.payload_len == decoded_bitmap.length);
+    PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &bitmap_update) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1 && bitmap_update.rects[0].data_len == 16);
+    rdp_buffer_free(&client_refresh_rect);
+    rdp_buffer_init(&client_refresh_rect);
+    PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     rdp_buffer_free(&decoded_bitmap);
     rdp_buffer_init(&decoded_bitmap);
     PCHECK(rdp_bitmap_write_fastpath_update(&decoded_bitmap, &bitmap_rect, 1) == LIBRDP_STATUS_OK);

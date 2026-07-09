@@ -432,12 +432,12 @@ static librdp_status rdp_slowpath_write_bitmap_codecs_capability(rdp_buffer* buf
     return status;
 }
 
-static librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
-                                                 uint32_t share_id,
-                                                 uint16_t channel_id,
-                                                 uint8_t pdu_type2,
-                                                 const void* payload,
-                                                 size_t payload_len)
+librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
+                                          uint32_t share_id,
+                                          uint16_t channel_id,
+                                          uint8_t pdu_type2,
+                                          const void* payload,
+                                          size_t payload_len)
 {
     size_t total = 0;
     librdp_status status = LIBRDP_STATUS_OK;
