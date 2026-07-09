@@ -1,0 +1,76 @@
+#ifndef RDP_CHANNELS_PRINTER_REDIRECTION_H
+#define RDP_CHANNELS_PRINTER_REDIRECTION_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <librdp/error.h>
+
+#include "common/buffer.h"
+
+#define RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_ASCII 0x00000001u
+#define RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_DEFAULT 0x00000002u
+#define RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_NETWORK 0x00000004u
+#define RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_TS 0x00000008u
+#define RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_XPS 0x00000010u
+
+#define RDP_PRINTER_REDIRECTION_CACHE_ADD 0x00000001u
+#define RDP_PRINTER_REDIRECTION_CACHE_UPDATE 0x00000002u
+#define RDP_PRINTER_REDIRECTION_CACHE_DELETE 0x00000003u
+#define RDP_PRINTER_REDIRECTION_CACHE_RENAME 0x00000004u
+
+typedef struct rdp_printer_redirection_announce
+{
+    uint32_t flags;
+    uint32_t code_page;
+    const uint8_t* pnp_name;
+    uint32_t pnp_name_len;
+    const uint8_t* driver_name;
+    uint32_t driver_name_len;
+    const uint8_t* printer_name;
+    uint32_t printer_name_len;
+    const uint8_t* cached_fields;
+    uint32_t cached_fields_len;
+} rdp_printer_redirection_announce;
+
+typedef struct rdp_printer_redirection_cache_event
+{
+    uint32_t event_id;
+    char port_name[8];
+    const uint8_t* pnp_name;
+    uint32_t pnp_name_len;
+    const uint8_t* driver_name;
+    uint32_t driver_name_len;
+    const uint8_t* printer_name;
+    uint32_t printer_name_len;
+    const uint8_t* old_printer_name;
+    uint32_t old_printer_name_len;
+    const uint8_t* new_printer_name;
+    uint32_t new_printer_name_len;
+    const uint8_t* cached_fields;
+    uint32_t cached_fields_len;
+} rdp_printer_redirection_cache_event;
+
+typedef struct rdp_printer_redirection_xps_mode
+{
+    uint32_t printer_id;
+    uint32_t flags;
+} rdp_printer_redirection_xps_mode;
+
+librdp_status rdp_printer_redirection_write_announce_data(
+    rdp_buffer* buffer,
+    const rdp_printer_redirection_announce* announce);
+librdp_status rdp_printer_redirection_parse_announce_data(
+    const void* data,
+    size_t length,
+    rdp_printer_redirection_announce* announce);
+librdp_status rdp_printer_redirection_parse_cache_event(
+    const void* data,
+    size_t length,
+    rdp_printer_redirection_cache_event* event);
+librdp_status rdp_printer_redirection_parse_xps_mode(
+    const void* data,
+    size_t length,
+    rdp_printer_redirection_xps_mode* mode);
+
+#endif
