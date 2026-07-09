@@ -26,6 +26,7 @@ add_library(librdp
     src/channels/auth_redirection.c
     src/channels/core_input.c
     src/channels/device_redirection.c
+    src/channels/desktop_composition.c
     src/channels/display_control.c
     src/channels/dynamic_channel.c
     src/channels/echo_channel.c
@@ -140,6 +141,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_audio_input fuzz/audio_input_fuzzer.c)
     add_librdp_fuzzer(fuzz_display_control fuzz/display_control_fuzzer.c)
     add_librdp_fuzzer(fuzz_device_redirection fuzz/device_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_desktop_composition fuzz/desktop_composition_fuzzer.c)
     add_librdp_fuzzer(fuzz_filesystem_redirection fuzz/filesystem_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_port_redirection fuzz/port_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_printer_redirection fuzz/printer_redirection_fuzzer.c)

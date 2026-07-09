@@ -5,6 +5,7 @@
 #include "channels/auth_redirection.h"
 #include "channels/core_input.h"
 #include "channels/device_redirection.h"
+#include "channels/desktop_composition.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
@@ -8125,6 +8126,132 @@ static int test_auth_smartcard_redirection_channels(void)
     return 0;
 }
 
+static int test_desktop_composition_channel(void)
+{
+    const uint8_t payload[] = {0xde, 0xad, 0xbe, 0xef};
+    rdp_desktop_composition_header header;
+    rdp_desktop_composition_toggle toggle;
+    rdp_desktop_composition_lsurface lsurface;
+    rdp_desktop_composition_surfobj surfobj;
+    rdp_desktop_composition_assoc assoc;
+    rdp_desktop_composition_u64_order u64_order;
+    rdp_desktop_composition_u32_order u32_order;
+    rdp_desktop_composition_opaque opaque;
+    rdp_buffer buffer;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_operation_valid(RDP_DESKTOP_COMPOSITION_OP_TOGGLE));
+    PCHECK(!rdp_desktop_composition_operation_valid(0));
+    PCHECK(rdp_desktop_composition_parse_header(payload, sizeof(payload), &header) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_desktop_composition_write_toggle(&buffer,
+                                                RDP_DESKTOP_COMPOSITION_EVENT_COMPOSITION_ON) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 5u);
+    PCHECK(rdp_desktop_composition_parse_toggle(buffer.data, buffer.length, &toggle) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(toggle.header.size == 1u && toggle.event_type == RDP_DESKTOP_COMPOSITION_EVENT_COMPOSITION_ON);
+    buffer.data[4] = 0xffu;
+    PCHECK(rdp_desktop_composition_parse_toggle(buffer.data, buffer.length, &toggle) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_lsurface(&buffer,
+                                                  1,
+                                                  RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
+                                                      RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION,
+                                                  0x0102030405060708ull,
+                                                  1024,
+                                                  768,
+                                                  0x1112131415161718ull,
+                                                  0x2122232425262728ull) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 38u);
+    PCHECK(rdp_desktop_composition_parse_lsurface(buffer.data, buffer.length, &lsurface) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(lsurface.create == 1u &&
+           lsurface.flags == (RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
+                              RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION) &&
+           lsurface.surface_id == 0x0102030405060708ull &&
+           lsurface.width == 1024u &&
+           lsurface.height == 768u &&
+           lsurface.window_id == 0x1112131415161718ull &&
+           lsurface.luid == 0x2122232425262728ull);
+    PCHECK(rdp_desktop_composition_write_lsurface(&buffer, 1, 0x80, 1, 1, 1, 1, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_surfobj(&buffer,
+                                                 0x8f,
+                                                 32,
+                                                 0x3132333435363738ull,
+                                                 64,
+                                                 32) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 26u);
+    PCHECK(rdp_desktop_composition_parse_surfobj(buffer.data, buffer.length, &surfobj) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(surfobj.cache_id == 0x8fu &&
+           surfobj.surface_bpp == 32u &&
+           surfobj.surface_id == 0x3132333435363738ull &&
+           surfobj.width == 64u &&
+           surfobj.height == 32u);
+    buffer.data[9] = 1u;
+    PCHECK(rdp_desktop_composition_parse_surfobj(buffer.data, buffer.length, &surfobj) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_assoc(&buffer,
+                                               1,
+                                               0x4142434445464748ull,
+                                               0x5152535455565758ull) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 21u);
+    PCHECK(rdp_desktop_composition_parse_assoc(buffer.data, buffer.length, &assoc) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(assoc.associate == 1u &&
+           assoc.logical_surface_id == 0x4142434445464748ull &&
+           assoc.redirection_surface_id == 0x5152535455565758ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_compref(&buffer, 0x6162636465666768ull) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 12u);
+    PCHECK(rdp_desktop_composition_parse_compref(buffer.data, buffer.length, &u64_order) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(u64_order.value == 0x6162636465666768ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_switch_surfobj(&buffer, 0x44u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 8u);
+    PCHECK(rdp_desktop_composition_parse_switch_surfobj(buffer.data, buffer.length, &u32_order) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(u32_order.value == 0x44u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_desktop_composition_write_opaque(&buffer,
+                                                RDP_DESKTOP_COMPOSITION_OP_FLUSH_COMPOSE_ONCE,
+                                                payload,
+                                                sizeof(payload)) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 8u);
+    PCHECK(rdp_desktop_composition_parse_opaque(buffer.data, buffer.length, &opaque) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(opaque.header.operation == RDP_DESKTOP_COMPOSITION_OP_FLUSH_COMPOSE_ONCE &&
+           opaque.payload_len == sizeof(payload) &&
+           memcmp(opaque.payload, payload, sizeof(payload)) == 0);
+    buffer.data[2] = 0xffu;
+    PCHECK(rdp_desktop_composition_parse_opaque(buffer.data, buffer.length, &opaque) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
 static int test_video_redirection_channel(void)
 {
     const uint8_t guid[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -9473,6 +9600,8 @@ int test_protocol(void)
     if (test_webauthn_channel() != 0)
         return 1;
     if (test_remote_programs_channel() != 0)
+        return 1;
+    if (test_desktop_composition_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
         return 1;
