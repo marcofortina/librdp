@@ -61,10 +61,22 @@ librdp_status rdp_audio_input_write_version(rdp_buffer* buffer, uint32_t version
 librdp_status rdp_audio_input_parse_formats(const void* data,
                                             size_t length,
                                             rdp_audio_input_formats* formats);
+librdp_status rdp_audio_input_parse_client_formats(const void* data,
+                                                   size_t length,
+                                                   rdp_audio_input_formats* formats);
 librdp_status rdp_audio_input_write_formats(rdp_buffer* buffer,
                                            const rdp_audio_format* formats,
                                            uint32_t format_count);
+librdp_status rdp_audio_input_write_formats_with_extra(rdp_buffer* buffer,
+                                                       const rdp_audio_format* formats,
+                                                       uint32_t format_count,
+                                                       const void* extra_data,
+                                                       size_t extra_data_len);
 librdp_status rdp_audio_input_parse_open(const void* data, size_t length, rdp_audio_input_open* open);
+librdp_status rdp_audio_input_write_open(rdp_buffer* buffer,
+                                         uint32_t frames_per_packet,
+                                         uint32_t initial_format,
+                                         const rdp_audio_format* format);
 librdp_status rdp_audio_input_write_open_reply(rdp_buffer* buffer, uint32_t result);
 librdp_status rdp_audio_input_parse_open_reply(const void* data, size_t length, uint32_t* result);
 librdp_status rdp_audio_input_write_incoming_data(rdp_buffer* buffer);

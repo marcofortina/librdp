@@ -89,6 +89,51 @@ typedef struct rdp_audio_output_wave2
     size_t data_len;
 } rdp_audio_output_wave2;
 
+typedef struct rdp_audio_output_crypt_key
+{
+    uint32_t reserved;
+    const uint8_t* seed;
+    size_t seed_len;
+} rdp_audio_output_crypt_key;
+
+typedef struct rdp_audio_output_wave_encrypt
+{
+    uint16_t timestamp;
+    uint16_t format_no;
+    uint8_t block_no;
+    const uint8_t* signature;
+    size_t signature_len;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_audio_output_wave_encrypt;
+
+typedef struct rdp_audio_output_udp_wave
+{
+    uint8_t block_no;
+    uint16_t fragment_no;
+    uint8_t fragment_no_size;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_audio_output_udp_wave;
+
+typedef struct rdp_audio_output_udp_wave_last
+{
+    uint16_t total_size;
+    uint16_t timestamp;
+    uint16_t format_no;
+    uint8_t block_no;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_audio_output_udp_wave_last;
+
+typedef struct rdp_audio_output_frag_data
+{
+    const uint8_t* signature;
+    size_t signature_len;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_audio_output_frag_data;
+
 typedef struct rdp_audio_output_setting
 {
     uint32_t value;
@@ -110,6 +155,7 @@ librdp_status rdp_audio_output_write_client_formats(rdp_buffer* buffer,
                                                    const rdp_audio_format* formats,
                                                    uint16_t format_count);
 librdp_status rdp_audio_output_write_quality_mode(rdp_buffer* buffer, uint16_t quality_mode);
+librdp_status rdp_audio_output_parse_quality_mode(const void* data, size_t length, uint16_t* quality_mode);
 librdp_status rdp_audio_output_parse_training(const void* data,
                                              size_t length,
                                              rdp_audio_output_training* training);
@@ -126,10 +172,31 @@ librdp_status rdp_audio_output_parse_wave2(const void* data, size_t length, rdp_
 librdp_status rdp_audio_output_write_wave_confirm(rdp_buffer* buffer,
                                                  uint16_t timestamp,
                                                  uint8_t block_no);
+librdp_status rdp_audio_output_parse_wave_confirm(const void* data,
+                                                 size_t length,
+                                                 uint16_t* timestamp,
+                                                 uint8_t* block_no);
+librdp_status rdp_audio_output_parse_crypt_key(const void* data,
+                                              size_t length,
+                                              rdp_audio_output_crypt_key* crypt_key);
+librdp_status rdp_audio_output_parse_wave_encrypt(const void* data,
+                                                 size_t length,
+                                                 int has_signature,
+                                                 rdp_audio_output_wave_encrypt* wave);
+librdp_status rdp_audio_output_parse_udp_wave(const void* data,
+                                             size_t length,
+                                             rdp_audio_output_udp_wave* wave);
+librdp_status rdp_audio_output_parse_udp_wave_last(const void* data,
+                                                  size_t length,
+                                                  rdp_audio_output_udp_wave_last* wave);
+librdp_status rdp_audio_output_parse_frag_data(const void* data,
+                                              size_t length,
+                                              rdp_audio_output_frag_data* frag);
 librdp_status rdp_audio_output_parse_setting(const void* data,
                                             size_t length,
                                             uint8_t expected_type,
                                             rdp_audio_output_setting* setting);
+librdp_status rdp_audio_output_write_setting(rdp_buffer* buffer, uint8_t msg_type, uint32_t value);
 librdp_status rdp_audio_output_parse_close(const void* data, size_t length);
 
 #endif

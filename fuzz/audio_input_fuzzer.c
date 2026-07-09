@@ -17,6 +17,7 @@ int LLVMFuzzerTestOneInput(const unsigned char* data, unsigned long size)
     (void)rdp_audio_input_parse_header(data, (size_t)size, &header);
     (void)rdp_audio_input_parse_version(data, (size_t)size, &value);
     (void)rdp_audio_input_parse_formats(data, (size_t)size, &formats);
+    (void)rdp_audio_input_parse_client_formats(data, (size_t)size, &formats);
     (void)rdp_audio_input_parse_open(data, (size_t)size, &open);
     (void)rdp_audio_input_parse_open_reply(data, (size_t)size, &value);
     (void)rdp_audio_input_parse_empty(data, (size_t)size, RDP_AUDIO_INPUT_DATA_INCOMING);
@@ -34,6 +35,10 @@ int LLVMFuzzerTestOneInput(const unsigned char* data, unsigned long size)
     (void)rdp_audio_input_write_version(&out, RDP_AUDIO_INPUT_VERSION_2);
     out.length = 0;
     (void)rdp_audio_input_write_formats(&out, &pcm, 1);
+    out.length = 0;
+    (void)rdp_audio_input_write_formats_with_extra(&out, &pcm, 1, data, (size_t)size);
+    out.length = 0;
+    (void)rdp_audio_input_write_open(&out, (uint32_t)size, size > 0 ? data[0] : 0, &pcm);
     out.length = 0;
     (void)rdp_audio_input_write_open_reply(&out, RDP_AUDIO_INPUT_RESULT_FAIL);
     out.length = 0;

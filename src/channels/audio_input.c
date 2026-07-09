@@ -2,6 +2,7 @@
 
 #include "common/stream.h"
 
+#include <stdint.h>
 #include <string.h>
 
 static int rdp_audio_input_valid_message(uint8_t message_id)
@@ -93,15 +94,34 @@ librdp_status rdp_audio_input_parse_formats(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
-librdp_status rdp_audio_input_write_formats(rdp_buffer* buffer,
-                                           const rdp_audio_format* formats,
-                                           uint32_t format_count)
+librdp_status rdp_audio_input_parse_client_formats(const void* data,
+                                                   size_t length,
+                                                   rdp_audio_input_formats* formats)
+{
+    size_t useful_size = 0;
+    librdp_status status = rdp_audio_input_parse_formats(data, length, formats);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    useful_size = length - formats->extra_data_len;
+    if (formats->formats_packet_size != useful_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_input_write_formats_with_extra(rdp_buffer* buffer,
+                                                       const rdp_audio_format* formats,
+                                                       uint32_t format_count,
+                                                       const void* extra_data,
+                                                       size_t extra_data_len)
 {
     rdp_buffer body;
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t i = 0;
+    size_t useful_size = 0;
 
-    if (!buffer || (!formats && format_count > 0) || format_count > RDP_AUDIO_FORMAT_MAX_COUNT)
+    if (!buffer || (!formats && format_count > 0) || (!extra_data && extra_data_len > 0) ||
+        format_count > RDP_AUDIO_FORMAT_MAX_COUNT)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&body);
@@ -114,19 +134,35 @@ librdp_status rdp_audio_input_write_formats(rdp_buffer* buffer,
         status = rdp_audio_format_write(&body, &formats[i]);
     if (status == LIBRDP_STATUS_OK)
     {
-        if (body.length > 0xffffffffu)
+        if (body.length > UINT32_MAX - 1u)
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        else
+            useful_size = 1u + body.length;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&body, extra_data, extra_data_len);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (body.length > UINT32_MAX)
             status = LIBRDP_STATUS_INVALID_ARGUMENT;
         else
         {
-            body.data[4] = (uint8_t)((1u + body.length) & 0xffu);
-            body.data[5] = (uint8_t)(((1u + body.length) >> 8) & 0xffu);
-            body.data[6] = (uint8_t)(((1u + body.length) >> 16) & 0xffu);
-            body.data[7] = (uint8_t)(((1u + body.length) >> 24) & 0xffu);
+            body.data[4] = (uint8_t)(useful_size & 0xffu);
+            body.data[5] = (uint8_t)((useful_size >> 8) & 0xffu);
+            body.data[6] = (uint8_t)((useful_size >> 16) & 0xffu);
+            body.data[7] = (uint8_t)((useful_size >> 24) & 0xffu);
             status = rdp_buffer_append(buffer, body.data, body.length);
         }
     }
     rdp_buffer_free(&body);
     return status;
+}
+
+librdp_status rdp_audio_input_write_formats(rdp_buffer* buffer,
+                                           const rdp_audio_format* formats,
+                                           uint32_t format_count)
+{
+    return rdp_audio_input_write_formats_with_extra(buffer, formats, format_count, NULL, 0);
 }
 
 librdp_status rdp_audio_input_parse_open(const void* data, size_t length, rdp_audio_input_open* open)
@@ -153,6 +189,25 @@ librdp_status rdp_audio_input_parse_open(const void* data, size_t length, rdp_au
         consumed != header.body_len - 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_audio_input_write_open(rdp_buffer* buffer,
+                                         uint32_t frames_per_packet,
+                                         uint32_t initial_format,
+                                         const rdp_audio_format* format)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !format)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, RDP_AUDIO_INPUT_OPEN);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, frames_per_packet);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, initial_format);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_audio_format_write(buffer, format);
+    return status;
 }
 
 librdp_status rdp_audio_input_write_open_reply(rdp_buffer* buffer, uint32_t result)
