@@ -44,6 +44,7 @@ add_library(librdp
     src/channels/video_optimized.c
     src/channels/video_redirection.c
     src/channels/virtual_channel.c
+    src/channels/webauthn_channel.c
     src/channels/xps_print.c
     src/clipboard/clipboard.c
     src/common/buffer.c
@@ -166,6 +167,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_video_redirection fuzz/video_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_video_optimized fuzz/video_optimized_fuzzer.c)
     add_librdp_fuzzer(fuzz_gdi_orders fuzz/gdi_orders_fuzzer.c)
+    add_librdp_fuzzer(fuzz_webauthn_channel fuzz/webauthn_channel_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)

@@ -22,6 +22,7 @@
 #include "channels/video_capture.h"
 #include "channels/video_optimized.h"
 #include "channels/video_redirection.h"
+#include "channels/webauthn_channel.h"
 #include "channels/xps_print.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
@@ -407,6 +408,85 @@ static int test_video_capture_channel(void)
                                           RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE,
                                           &opaque) == LIBRDP_STATUS_OK);
     PCHECK(opaque.payload_len == sizeof(opaque_data));
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
+static int test_webauthn_channel(void)
+{
+    const uint8_t command_payload[] = {RDP_WEBAUTHN_CMD_MAKE_CREDENTIAL, 0xa0};
+    const uint8_t response_payload[] = {0x01, 0x00, 0x00, 0x00};
+    uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
+        0x10, 0x11, 0x12, 0x13,
+        0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b,
+        0x1c, 0x1d, 0x1e, 0x1f
+    };
+    rdp_webauthn_request request;
+    rdp_webauthn_response response;
+    rdp_buffer buffer;
+    uint32_t value = 0;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_command_valid(RDP_WEBAUTHN_COMMAND_WEB_AUTHN));
+    PCHECK(!rdp_webauthn_command_valid(0xffffffffu));
+    PCHECK(rdp_webauthn_flags_valid(RDP_WEBAUTHN_FLAG_UV_PREFERRED |
+                                    RDP_WEBAUTHN_FLAG_HMAC_SECRET_EXTENSION));
+    PCHECK(!rdp_webauthn_flags_valid(0x00000001u));
+
+    PCHECK(rdp_webauthn_write_request(&buffer,
+                                      RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
+                                      RDP_WEBAUTHN_FLAG_UV_PREFERRED,
+                                      command_payload,
+                                      sizeof(command_payload),
+                                      "example.test",
+                                      guid) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_request(buffer.data, buffer.length, &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN &&
+           request.has_flags == 1u &&
+           request.flags == RDP_WEBAUTHN_FLAG_UV_PREFERRED &&
+           request.request_len == sizeof(command_payload) &&
+           request.request[0] == RDP_WEBAUTHN_CMD_MAKE_CREDENTIAL &&
+           request.rp_id_len == strlen("example.test") &&
+           request.transaction_id_len == RDP_WEBAUTHN_GUID_LENGTH);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_request(&buffer,
+                                      RDP_WEBAUTHN_COMMAND_CANCEL,
+                                      0,
+                                      guid,
+                                      sizeof(guid),
+                                      NULL,
+                                      NULL) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_request(buffer.data, buffer.length, &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.command == RDP_WEBAUTHN_COMMAND_CANCEL &&
+           request.request_len == RDP_WEBAUTHN_GUID_LENGTH);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_response(&buffer, 0, response_payload, sizeof(response_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(response.hresult == 0 && response.payload_len == sizeof(response_payload));
+    PCHECK(rdp_webauthn_parse_u32_response(&response, &value) == LIBRDP_STATUS_OK);
+    PCHECK(value == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_webauthn_write_u32_response(&buffer, 0, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_response(buffer.data, buffer.length, &response) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_u32_response(&response, &value) == LIBRDP_STATUS_OK);
+    PCHECK(value == 0x11223344u);
+    PCHECK(rdp_webauthn_write_request(&buffer,
+                                      RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
+                                      0x00000001u,
+                                      command_payload,
+                                      sizeof(command_payload),
+                                      NULL,
+                                      NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     rdp_buffer_free(&buffer);
     return 0;
@@ -9276,6 +9356,8 @@ int test_protocol(void)
     if (test_auth_smartcard_redirection_channels() != 0)
         return 1;
     if (test_video_capture_channel() != 0)
+        return 1;
+    if (test_webauthn_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
         return 1;
