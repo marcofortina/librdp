@@ -15,6 +15,7 @@
 #include "channels/printer_redirection.h"
 #include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
+#include "channels/xps_print.h"
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
@@ -5461,6 +5462,171 @@ static int test_telemetry_multiparty_channels(void)
     return 0;
 }
 
+static int test_xps_print_channel(void)
+{
+    const uint8_t guid[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    const uint8_t xml[] = {'<', 'x', '/', '>'};
+    const uint8_t cap_data[] = {1, 2, 3};
+    const uint8_t prop_name[] = {'P', 0, 'r', 0};
+    const uint8_t prop_value32[] = {0x78, 0x56, 0x34, 0x12};
+    const uint32_t versions[] = {1, 2};
+    uint32_t new_id = 0x10203040u;
+    rdp_buffer buffer;
+    rdp_xps_print_header header;
+    rdp_xps_print_interface_query query;
+    rdp_xps_print_interface_query_response query_response;
+    rdp_xps_print_xml_document document;
+    rdp_xps_print_device_capability capability;
+    rdp_xps_print_printer_property property;
+    rdp_xps_print_u32_request u32_request;
+    rdp_xps_print_result result;
+    rdp_xps_print_versions_response versions_response;
+    rdp_xps_print_blob_result blob_result;
+    rdp_xps_print_optional_blob_result optional_result;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_header(&buffer,
+                                      0,
+                                      7,
+                                      1,
+                                      RDP_XPS_PRINT_FUNC_QUERY_INTERFACE) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&buffer, guid, sizeof(guid)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_interface_query(buffer.data, buffer.length, &query) == LIBRDP_STATUS_OK);
+    PCHECK(query.header.message_id == 7 && query.guid[15] == 15);
+    PCHECK(rdp_xps_print_parse_interface_query(buffer.data,
+                                               buffer.length - 1u,
+                                               &query) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_interface_query_response(&buffer, 0, 7, &new_id) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_interface_query_response(buffer.data,
+                                                        buffer.length,
+                                                        &query_response) == LIBRDP_STATUS_OK);
+    PCHECK(query_response.has_new_interface_id && query_response.new_interface_id == new_id);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_header(&buffer, 0, 8, 1, RDP_XPS_PRINT_FUNC_RELEASE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_release(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
+    PCHECK(header.message_id == 8);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_xml_document(&buffer, xml, (uint32_t)sizeof(xml)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_xml_document(buffer.data, buffer.length, &document) == LIBRDP_STATUS_OK);
+    PCHECK(document.size == sizeof(xml) && memcmp(document.data, xml, sizeof(xml)) == 0);
+    buffer.data[0] = 0xff;
+    PCHECK(rdp_xps_print_parse_xml_document(buffer.data, buffer.length, &document) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_device_capability(&buffer, 0xffffffffu, 0, cap_data, sizeof(cap_data)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_device_capability(buffer.data, buffer.length, &capability) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(capability.return_value == 0xffffffffu &&
+           capability.data_len == sizeof(cap_data) &&
+           capability.data[2] == 3);
+    buffer.data[buffer.length - 1u] = 0xff;
+    PCHECK(rdp_xps_print_parse_device_capability(buffer.data,
+                                                 buffer.length,
+                                                 &capability) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_printer_property(&buffer,
+                                                RDP_XPS_PRINT_PROPERTY_INT32,
+                                                prop_name,
+                                                sizeof(prop_name),
+                                                prop_value32,
+                                                sizeof(prop_value32)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_printer_property(buffer.data, buffer.length, &property) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(property.property_type == RDP_XPS_PRINT_PROPERTY_INT32 &&
+           property.name_len == sizeof(prop_name) &&
+           property.value[0] == 0x78);
+    PCHECK(rdp_xps_print_write_printer_property(&buffer,
+                                                RDP_XPS_PRINT_PROPERTY_INT32,
+                                                prop_name,
+                                                3,
+                                                prop_value32,
+                                                sizeof(prop_value32)) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_header(&buffer,
+                                      RDP_XPS_PRINT_INTERFACE_DEFAULT,
+                                      9,
+                                      1,
+                                      RDP_XPS_PRINT_DRIVER_INIT_PRINTER) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_u32_request(buffer.data,
+                                           buffer.length,
+                                           RDP_XPS_PRINT_DRIVER_INIT_PRINTER,
+                                           &u32_request) == LIBRDP_STATUS_OK);
+    PCHECK(u32_request.value == 0x11223344u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_result(&buffer, 0, 9, 0x80004005u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_result(buffer.data, buffer.length, &result) == LIBRDP_STATUS_OK);
+    PCHECK(result.result == 0x80004005u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_versions_response(&buffer, 0, 10, versions, 2, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_versions_response(buffer.data,
+                                                 buffer.length,
+                                                 &versions_response) == LIBRDP_STATUS_OK);
+    PCHECK(versions_response.version_count == 2 &&
+           test_read_u32_le(versions_response.versions + 4) == 2);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_blob_result(&buffer, 0, 11, cap_data, sizeof(cap_data), 0) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_blob_result(buffer.data, buffer.length, &blob_result) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(blob_result.data_len == sizeof(cap_data) && blob_result.data[0] == 1);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_xps_print_write_optional_blob_result(&buffer,
+                                                    0,
+                                                    12,
+                                                    xml,
+                                                    sizeof(xml),
+                                                    RDP_XPS_PRINT_NULL_PRESENT,
+                                                    0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_optional_blob_result(buffer.data,
+                                                    buffer.length,
+                                                    &optional_result) == LIBRDP_STATUS_OK);
+    PCHECK(optional_result.null_flag == RDP_XPS_PRINT_NULL_PRESENT &&
+           optional_result.data_len == sizeof(xml));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_xps_print_write_optional_blob_result(&buffer,
+                                                    0,
+                                                    13,
+                                                    NULL,
+                                                    0,
+                                                    RDP_XPS_PRINT_NULL_ABSENT,
+                                                    0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_xps_print_parse_optional_blob_result(buffer.data,
+                                                    buffer.length,
+                                                    &optional_result) == LIBRDP_STATUS_OK);
+    PCHECK(optional_result.null_flag == RDP_XPS_PRINT_NULL_ABSENT &&
+           optional_result.data_len == 0);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
 static int test_usb_redirection_channel(void)
 {
     const uint8_t text[] = {'D', 0, 0, 0};
@@ -5956,6 +6122,8 @@ int test_protocol(void)
     if (test_printer_redirection_channel() != 0)
         return 1;
     if (test_telemetry_multiparty_channels() != 0)
+        return 1;
+    if (test_xps_print_channel() != 0)
         return 1;
     if (test_usb_redirection_channel() != 0)
         return 1;

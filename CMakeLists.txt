@@ -37,6 +37,7 @@ add_library(librdp
     src/channels/telemetry.c
     src/channels/usb_redirection.c
     src/channels/virtual_channel.c
+    src/channels/xps_print.c
     src/clipboard/clipboard.c
     src/common/buffer.c
     src/common/stream.c
@@ -146,6 +147,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_credssp fuzz/credssp_fuzzer.c)
     add_librdp_fuzzer(fuzz_udp_transport fuzz/udp_transport_fuzzer.c)
     add_librdp_fuzzer(fuzz_multitransport fuzz/multitransport_fuzzer.c)
+    add_librdp_fuzzer(fuzz_xps_print fuzz/xps_print_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
