@@ -17,6 +17,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_auth_redirection_compare_credentials_result compare;
     rdp_auth_redirection_octet_string octet;
     rdp_auth_redirection_asn1_data asn1;
+    rdp_auth_redirection_finalize_key_agreement_call finalize_call;
+    rdp_auth_redirection_call_message call_message;
+    rdp_auth_redirection_response_message response_message;
     rdp_buffer buffer;
     uint32_t blob_len = 0;
 
@@ -24,8 +27,16 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_auth_redirection_parse_outer_packet(data, size, &outer);
     (void)rdp_auth_redirection_parse_inner_buffer(data, size, &inner);
     (void)rdp_auth_redirection_parse_call(data, size, &call);
+    (void)rdp_auth_redirection_parse_call_message(data, size, &call_message);
     (void)rdp_auth_redirection_parse_response(data, size, &response);
+    (void)rdp_auth_redirection_parse_response_message(data, size, &response_message);
     (void)rdp_auth_redirection_parse_octet_string(data, size, &octet);
+    (void)rdp_auth_redirection_parse_octet_response(
+        data,
+        size,
+        RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY,
+        &response,
+        &octet);
     (void)rdp_auth_redirection_parse_asn1_data(data, size, &asn1);
     (void)rdp_auth_redirection_parse_asn1_response(
         data,
@@ -47,6 +58,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         size,
         RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE,
         &handle);
+    (void)rdp_auth_redirection_parse_finalize_key_agreement_call(data, size, &finalize_call);
     (void)rdp_auth_redirection_parse_nt_response_response(data, size, &fixed);
     (void)rdp_auth_redirection_parse_user_session_key_response(data, size, &fixed);
     (void)rdp_auth_redirection_parse_compare_credentials_response(data, size, &response, &compare);
@@ -68,6 +80,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                               size);
     buffer.length = 0;
     (void)rdp_auth_redirection_write_octet_string(&buffer, data, blob_len);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_octet_response(
+        &buffer,
+        RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY,
+        0,
+        data,
+        blob_len);
     buffer.length = 0;
     (void)rdp_auth_redirection_write_asn1_data(&buffer,
                                                RDP_AUTH_REDIRECTION_ASN1_PDU_AS_REP,
@@ -102,6 +121,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         &buffer,
         RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT,
         (int64_t)size);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_finalize_key_agreement_call(&buffer,
+                                                                 (int64_t)size,
+                                                                 18,
+                                                                 data,
+                                                                 blob_len,
+                                                                 data,
+                                                                 blob_len);
     buffer.length = 0;
     compare.nt_equal = size > 0 ? (uint32_t)(data[0] & 1u) : 0;
     compare.lm_equal = size > 1 ? (uint32_t)(data[1] & 1u) : 0;

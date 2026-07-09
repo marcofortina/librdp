@@ -55,6 +55,16 @@
 #define RDP_AUTH_REDIRECTION_ASN1_PDU_COMPAT_AS_REP 69u
 #define RDP_AUTH_REDIRECTION_ASN1_PDU_AS_REP 70u
 #define RDP_AUTH_REDIRECTION_ASN1_PDU_TGS_REP 71u
+#define RDP_AUTH_REDIRECTION_MESSAGE_RAW 0u
+#define RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION 1u
+#define RDP_AUTH_REDIRECTION_MESSAGE_ECDH_KEY_AGREEMENT 2u
+#define RDP_AUTH_REDIRECTION_MESSAGE_DH_KEY_AGREEMENT 3u
+#define RDP_AUTH_REDIRECTION_MESSAGE_KEY_AGREEMENT_HANDLE 4u
+#define RDP_AUTH_REDIRECTION_MESSAGE_FINALIZE_KEY_AGREEMENT 5u
+#define RDP_AUTH_REDIRECTION_MESSAGE_FIXED_RESPONSE 6u
+#define RDP_AUTH_REDIRECTION_MESSAGE_COMPARE_CREDENTIALS 7u
+#define RDP_AUTH_REDIRECTION_MESSAGE_ASN1_RESPONSE 8u
+#define RDP_AUTH_REDIRECTION_MESSAGE_OCTET_RESPONSE 9u
 
 typedef struct rdp_auth_redirection_outer_packet
 {
@@ -137,6 +147,44 @@ typedef struct rdp_auth_redirection_asn1_data
     const uint8_t* value;
 } rdp_auth_redirection_asn1_data;
 
+typedef struct rdp_auth_redirection_finalize_key_agreement_call
+{
+    int64_t handle;
+    uint32_t kerb_etype;
+    uint32_t remote_nonce_len;
+    const uint8_t* remote_nonce;
+    uint32_t x509_public_key_len;
+    const uint8_t* x509_public_key;
+} rdp_auth_redirection_finalize_key_agreement_call;
+
+typedef struct rdp_auth_redirection_call_message
+{
+    uint32_t kind;
+    rdp_auth_redirection_call call;
+    union
+    {
+        rdp_auth_redirection_negotiate_version negotiate_version;
+        rdp_auth_redirection_ecdh_key_agreement_call ecdh;
+        rdp_auth_redirection_dh_key_agreement_call dh;
+        rdp_auth_redirection_key_agreement_handle_call key_handle;
+        rdp_auth_redirection_finalize_key_agreement_call finalize_key_agreement;
+    } body;
+} rdp_auth_redirection_call_message;
+
+typedef struct rdp_auth_redirection_response_message
+{
+    uint32_t kind;
+    rdp_auth_redirection_response response;
+    union
+    {
+        rdp_auth_redirection_negotiate_version negotiate_version;
+        rdp_auth_redirection_fixed_response fixed;
+        rdp_auth_redirection_compare_credentials_result compare_credentials;
+        rdp_auth_redirection_asn1_data asn1;
+        rdp_auth_redirection_octet_string octet;
+    } body;
+} rdp_auth_redirection_response_message;
+
 int rdp_auth_redirection_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_kerb_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_ntlm_call_id_valid(uint32_t call_id);
@@ -149,6 +197,18 @@ librdp_status rdp_auth_redirection_parse_octet_string(
     rdp_auth_redirection_octet_string* string);
 librdp_status rdp_auth_redirection_write_octet_string(
     rdp_buffer* buffer,
+    const void* value,
+    uint32_t length);
+librdp_status rdp_auth_redirection_parse_octet_response(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    rdp_auth_redirection_response* response,
+    rdp_auth_redirection_octet_string* string);
+librdp_status rdp_auth_redirection_write_octet_response(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    uint32_t status,
     const void* value,
     uint32_t length);
 librdp_status rdp_auth_redirection_parse_asn1_data(
@@ -198,6 +258,10 @@ librdp_status rdp_auth_redirection_write_call(
     uint32_t call_id,
     const void* payload,
     size_t payload_len);
+librdp_status rdp_auth_redirection_parse_call_message(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_call_message* message);
 librdp_status rdp_auth_redirection_parse_response(
     const void* data,
     size_t length,
@@ -208,6 +272,10 @@ librdp_status rdp_auth_redirection_write_response(
     uint32_t status,
     const void* payload,
     size_t payload_len);
+librdp_status rdp_auth_redirection_parse_response_message(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_response_message* message);
 librdp_status rdp_auth_redirection_parse_negotiate_version_call(
     const void* data,
     size_t length,
@@ -247,6 +315,18 @@ librdp_status rdp_auth_redirection_write_key_agreement_handle_call(
     rdp_buffer* buffer,
     uint32_t call_id,
     int64_t handle);
+librdp_status rdp_auth_redirection_parse_finalize_key_agreement_call(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_finalize_key_agreement_call* call);
+librdp_status rdp_auth_redirection_write_finalize_key_agreement_call(
+    rdp_buffer* buffer,
+    int64_t handle,
+    uint32_t kerb_etype,
+    const void* remote_nonce,
+    uint32_t remote_nonce_len,
+    const void* x509_public_key,
+    uint32_t x509_public_key_len);
 librdp_status rdp_auth_redirection_parse_nt_response_response(
     const void* data,
     size_t length,

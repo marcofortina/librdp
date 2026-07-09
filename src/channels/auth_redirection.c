@@ -128,6 +128,49 @@ librdp_status rdp_auth_redirection_write_octet_string(
     return rdp_buffer_append(buffer, value, length);
 }
 
+librdp_status rdp_auth_redirection_parse_octet_response(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    rdp_auth_redirection_response* response,
+    rdp_auth_redirection_octet_string* string)
+{
+    if (!data || !response || !string)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_auth_redirection_call_id_valid(expected_call_id))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_auth_redirection_parse_response(data, length, response) != LIBRDP_STATUS_OK ||
+        response->call_id != expected_call_id)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_auth_redirection_parse_octet_string(response->payload,
+                                                   response->payload_len,
+                                                   string);
+}
+
+librdp_status rdp_auth_redirection_write_octet_response(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    uint32_t status,
+    const void* value,
+    uint32_t length)
+{
+    rdp_buffer payload;
+    librdp_status result = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_auth_redirection_call_id_valid(call_id))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    result = rdp_auth_redirection_write_octet_string(&payload, value, length);
+    if (result == LIBRDP_STATUS_OK)
+        result = rdp_auth_redirection_write_response(buffer,
+                                                     call_id,
+                                                     status,
+                                                     payload.data,
+                                                     payload.length);
+    rdp_buffer_free(&payload);
+    return result;
+}
+
 librdp_status rdp_auth_redirection_parse_asn1_data(
     const void* data,
     size_t length,
@@ -422,6 +465,148 @@ librdp_status rdp_auth_redirection_write_response(
     return rdp_buffer_append(buffer, payload, payload_len);
 }
 
+librdp_status rdp_auth_redirection_parse_call_message(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_call_message* message)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(message, 0, sizeof(*message));
+    status = rdp_auth_redirection_parse_call(data, length, &message->call);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (message->call.payload_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    message->kind = RDP_AUTH_REDIRECTION_MESSAGE_RAW;
+    switch (message->call.call_id)
+    {
+        case RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION:
+            status = rdp_auth_redirection_parse_negotiate_version_call(
+                data,
+                length,
+                &message->body.negotiate_version);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_ECDH_KEY_AGREEMENT:
+            status = rdp_auth_redirection_parse_ecdh_key_agreement_call(data,
+                                                                        length,
+                                                                        &message->body.ecdh);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_ECDH_KEY_AGREEMENT;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_DH_KEY_AGREEMENT:
+            status = rdp_auth_redirection_parse_dh_key_agreement_call(data,
+                                                                      length,
+                                                                      &message->body.dh);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_DH_KEY_AGREEMENT;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE:
+            status = rdp_auth_redirection_parse_key_agreement_handle_call(
+                data,
+                length,
+                message->call.call_id,
+                &message->body.key_handle);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_KEY_AGREEMENT_HANDLE;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_FINALIZE_KEY_AGREEMENT:
+            status = rdp_auth_redirection_parse_finalize_key_agreement_call(
+                data,
+                length,
+                &message->body.finalize_key_agreement);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_FINALIZE_KEY_AGREEMENT;
+            return status;
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
+librdp_status rdp_auth_redirection_parse_response_message(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_response_message* message)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(message, 0, sizeof(*message));
+    status = rdp_auth_redirection_parse_response(data, length, &message->response);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (message->response.payload_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    message->kind = RDP_AUTH_REDIRECTION_MESSAGE_RAW;
+    switch (message->response.call_id)
+    {
+        case RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION:
+            status = rdp_auth_redirection_parse_negotiate_version_response(
+                data,
+                length,
+                &message->response,
+                &message->body.negotiate_version);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_NT_RESPONSE:
+            status = rdp_auth_redirection_parse_nt_response_response(data,
+                                                                     length,
+                                                                     &message->body.fixed);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_FIXED_RESPONSE;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT:
+            status = rdp_auth_redirection_parse_user_session_key_response(
+                data,
+                length,
+                &message->body.fixed);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_FIXED_RESPONSE;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS:
+            status = rdp_auth_redirection_parse_compare_credentials_response(
+                data,
+                length,
+                &message->response,
+                &message->body.compare_credentials);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_COMPARE_CREDENTIALS;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DECRYPT_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_COMPUTE_TGS_CHECKSUM:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_BUILD_ENCRYPTED_AUTH_DATA:
+            status = rdp_auth_redirection_parse_asn1_response(data,
+                                                              length,
+                                                              message->response.call_id,
+                                                              &message->response,
+                                                              &message->body.asn1);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_ASN1_RESPONSE;
+            return status;
+        case RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE:
+            status = rdp_auth_redirection_parse_octet_response(data,
+                                                               length,
+                                                               message->response.call_id,
+                                                               &message->response,
+                                                               &message->body.octet);
+            if (status == LIBRDP_STATUS_OK)
+                message->kind = RDP_AUTH_REDIRECTION_MESSAGE_OCTET_RESPONSE;
+            return status;
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
 librdp_status rdp_auth_redirection_parse_negotiate_version_call(
     const void* data,
     size_t length,
@@ -617,6 +802,88 @@ librdp_status rdp_auth_redirection_write_key_agreement_handle_call(
         status = rdp_buffer_append_u32_le(&payload, (uint32_t)(value >> 32));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_auth_redirection_write_call(buffer, call_id, payload.data, payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_auth_redirection_parse_finalize_key_agreement_call(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_finalize_key_agreement_call* call)
+{
+    rdp_auth_redirection_call parsed;
+    rdp_stream stream;
+    uint32_t low = 0;
+    uint32_t high = 0;
+
+    if (!data || !call)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(call, 0, sizeof(*call));
+    if (rdp_auth_redirection_parse_call(data, length, &parsed) != LIBRDP_STATUS_OK ||
+        parsed.call_id != RDP_AUTH_REDIRECTION_CALL_KERB_FINALIZE_KEY_AGREEMENT ||
+        parsed.payload_len < 20u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, parsed.payload, parsed.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &low) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &high) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &call->kerb_etype) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &call->remote_nonce_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    call->handle = (int64_t)(((uint64_t)high << 32) | low);
+    if (call->remote_nonce_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH ||
+        call->remote_nonce_len > rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &call->remote_nonce, call->remote_nonce_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_u32_le(&stream, &call->x509_public_key_len) != LIBRDP_STATUS_OK ||
+        call->x509_public_key_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH ||
+        call->x509_public_key_len != rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &call->x509_public_key, call->x509_public_key_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_finalize_key_agreement_call(
+    rdp_buffer* buffer,
+    int64_t handle,
+    uint32_t kerb_etype,
+    const void* remote_nonce,
+    uint32_t remote_nonce_len,
+    const void* x509_public_key,
+    uint32_t x509_public_key_len)
+{
+    rdp_buffer payload;
+    uint64_t value = (uint64_t)handle;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer ||
+        (!remote_nonce && remote_nonce_len > 0) ||
+        (!x509_public_key && x509_public_key_len > 0) ||
+        remote_nonce_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH ||
+        x509_public_key_len > RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, (uint32_t)(value & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, (uint32_t)(value >> 32));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, kerb_etype);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, remote_nonce_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&payload, remote_nonce, remote_nonce_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, x509_public_key_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&payload, x509_public_key, x509_public_key_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_call(buffer,
+                                                 RDP_AUTH_REDIRECTION_CALL_KERB_FINALIZE_KEY_AGREEMENT,
+                                                 payload.data,
+                                                 payload.length);
     rdp_buffer_free(&payload);
     return status;
 }
