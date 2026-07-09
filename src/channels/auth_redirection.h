@@ -50,6 +50,11 @@
 #define RDP_AUTH_REDIRECTION_ECDH_KEY_BITS_P521 521u
 #define RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH 24u
 #define RDP_AUTH_REDIRECTION_USER_SESSION_KEY_LENGTH 16u
+#define RDP_AUTH_REDIRECTION_BLOB_MAX_LENGTH 16777216u
+#define RDP_AUTH_REDIRECTION_ASN1_PDU_IGNORED 0u
+#define RDP_AUTH_REDIRECTION_ASN1_PDU_COMPAT_AS_REP 69u
+#define RDP_AUTH_REDIRECTION_ASN1_PDU_AS_REP 70u
+#define RDP_AUTH_REDIRECTION_ASN1_PDU_TGS_REP 71u
 
 typedef struct rdp_auth_redirection_outer_packet
 {
@@ -119,11 +124,55 @@ typedef struct rdp_auth_redirection_compare_credentials_result
     uint32_t sha_equal;
 } rdp_auth_redirection_compare_credentials_result;
 
+typedef struct rdp_auth_redirection_octet_string
+{
+    uint32_t length;
+    const uint8_t* value;
+} rdp_auth_redirection_octet_string;
+
+typedef struct rdp_auth_redirection_asn1_data
+{
+    uint32_t pdu;
+    uint32_t length;
+    const uint8_t* value;
+} rdp_auth_redirection_asn1_data;
+
 int rdp_auth_redirection_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_kerb_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_ntlm_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_negotiate_call_id_valid(uint32_t call_id);
 int rdp_auth_redirection_ecdh_key_bits_valid(uint32_t key_bits);
+int rdp_auth_redirection_asn1_pdu_valid(uint32_t pdu);
+librdp_status rdp_auth_redirection_parse_octet_string(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_octet_string* string);
+librdp_status rdp_auth_redirection_write_octet_string(
+    rdp_buffer* buffer,
+    const void* value,
+    uint32_t length);
+librdp_status rdp_auth_redirection_parse_asn1_data(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_asn1_data* asn1);
+librdp_status rdp_auth_redirection_write_asn1_data(
+    rdp_buffer* buffer,
+    uint32_t pdu,
+    const void* value,
+    uint32_t length);
+librdp_status rdp_auth_redirection_parse_asn1_response(
+    const void* data,
+    size_t length,
+    uint32_t expected_call_id,
+    rdp_auth_redirection_response* response,
+    rdp_auth_redirection_asn1_data* asn1);
+librdp_status rdp_auth_redirection_write_asn1_response(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    uint32_t status,
+    uint32_t pdu,
+    const void* value,
+    uint32_t length);
 librdp_status rdp_auth_redirection_parse_outer_packet(
     const void* data,
     size_t length,
