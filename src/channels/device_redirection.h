@@ -228,6 +228,9 @@ librdp_status rdp_device_redirection_write_capability_list(
 librdp_status rdp_device_redirection_parse_general_capability(
     const rdp_device_redirection_capability* capability,
     rdp_device_redirection_general_capability* general);
+librdp_status rdp_device_redirection_write_general_capability(
+    rdp_buffer* buffer,
+    const rdp_device_redirection_general_capability* general);
 librdp_status rdp_device_redirection_make_default_capability_config(
     rdp_device_redirection_capability_config* config);
 librdp_status rdp_device_redirection_write_client_capability_response(

@@ -5576,6 +5576,37 @@ static int test_device_redirection_channel(void)
     bad_cap.length = 43;
     PCHECK(rdp_device_redirection_parse_general_capability(&bad_cap, &general) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_device_redirection_write_general_capability(&packet, &general) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == 44);
+    caps.capabilities[0].type = test_read_u16_le(packet.data);
+    caps.capabilities[0].length = test_read_u16_le(packet.data + 2);
+    caps.capabilities[0].version = test_read_u32_le(packet.data + 4);
+    caps.capabilities[0].data = packet.data + 8;
+    caps.capabilities[0].data_len = packet.length - 8u;
+    PCHECK(rdp_device_redirection_parse_general_capability(&caps.capabilities[0], &general) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(general.version == RDP_DEVICE_REDIRECTION_CAP_VERSION_2 &&
+           general.protocol_minor_version == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13);
+    general.version = RDP_DEVICE_REDIRECTION_CAP_VERSION_1;
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_device_redirection_write_general_capability(&packet, &general) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == 40);
+    caps.capabilities[0].type = test_read_u16_le(packet.data);
+    caps.capabilities[0].length = test_read_u16_le(packet.data + 2);
+    caps.capabilities[0].version = test_read_u32_le(packet.data + 4);
+    caps.capabilities[0].data = packet.data + 8;
+    caps.capabilities[0].data_len = packet.length - 8u;
+    PCHECK(rdp_device_redirection_parse_general_capability(&caps.capabilities[0], &general) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(general.version == RDP_DEVICE_REDIRECTION_CAP_VERSION_1);
+    general.protocol_minor_version = 0xffffu;
+    PCHECK(rdp_device_redirection_write_general_capability(&packet, &general) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
     PCHECK(rdp_device_redirection_write_capability_list(&packet,
                                                         RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
                                                         caps.capabilities,

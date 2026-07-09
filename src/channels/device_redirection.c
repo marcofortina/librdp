@@ -499,6 +499,59 @@ librdp_status rdp_device_redirection_parse_general_capability(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_device_redirection_write_general_capability(
+    rdp_buffer* buffer,
+    const rdp_device_redirection_general_capability* general)
+{
+    uint16_t length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !general ||
+        (general->version != RDP_DEVICE_REDIRECTION_CAP_VERSION_1 &&
+         general->version != RDP_DEVICE_REDIRECTION_CAP_VERSION_2) ||
+        general->protocol_major_version != RDP_DEVICE_REDIRECTION_VERSION_MAJOR ||
+        !rdp_device_redirection_valid_version_minor(general->protocol_minor_version))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    length = general->version == RDP_DEVICE_REDIRECTION_CAP_VERSION_1
+                 ? RDP_DEVICE_REDIRECTION_GENERAL_CAPABILITY_V1_LENGTH
+                 : RDP_DEVICE_REDIRECTION_GENERAL_CAPABILITY_V2_LENGTH;
+    status = rdp_device_redirection_write_capability_header(buffer,
+                                                            RDP_DEVICE_REDIRECTION_CAP_GENERAL,
+                                                            length,
+                                                            general->version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->os_type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->os_version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, general->protocol_major_version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, general->protocol_minor_version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->io_code1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->io_code2);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->extended_pdu);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->extra_flags1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, general->extra_flags2);
+    if (status != LIBRDP_STATUS_OK || general->version == RDP_DEVICE_REDIRECTION_CAP_VERSION_1)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, general->special_type_device_cap);
+}
+
 librdp_status rdp_device_redirection_make_default_capability_config(
     rdp_device_redirection_capability_config* config)
 {
@@ -547,41 +600,7 @@ librdp_status rdp_device_redirection_write_client_capability_response(
     status = rdp_buffer_append_u16_le(buffer, 0);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    status = rdp_device_redirection_write_capability_header(
-        buffer,
-        RDP_DEVICE_REDIRECTION_CAP_GENERAL,
-        RDP_DEVICE_REDIRECTION_GENERAL_CAPABILITY_V2_LENGTH,
-        RDP_DEVICE_REDIRECTION_CAP_VERSION_2);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.os_type);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.os_version);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, config->general.protocol_major_version);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, config->general.protocol_minor_version);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.io_code1);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.io_code2);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.extended_pdu);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.extra_flags1);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.extra_flags2);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, config->general.special_type_device_cap);
+    status = rdp_device_redirection_write_general_capability(buffer, &config->general);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (config->include_printer)

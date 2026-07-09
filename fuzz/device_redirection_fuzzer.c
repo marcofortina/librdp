@@ -60,6 +60,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_device_redirection_make_default_capability_config(&config);
     config.include_drive = (uint8_t)(size & 1u);
     config.include_smartcard = (uint8_t)((size >> 1u) & 1u);
+    (void)rdp_device_redirection_write_general_capability(&buffer, &config.general);
+    buffer.length = 0;
     (void)rdp_device_redirection_write_client_capability_response(&buffer, &config);
     buffer.length = 0;
     generic_capability.type = RDP_DEVICE_REDIRECTION_CAP_DRIVE;
