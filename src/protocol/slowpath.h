@@ -72,6 +72,10 @@ typedef struct rdp_slowpath_save_session_info
 librdp_status rdp_slowpath_parse_share_control_header(const void* data,
                                                       size_t length,
                                                       rdp_slowpath_share_control_header* header);
+librdp_status rdp_slowpath_write_share_control_header(rdp_buffer* buffer,
+                                                      uint16_t total_length,
+                                                      uint16_t pdu_type,
+                                                      uint16_t channel_id);
 librdp_status rdp_slowpath_parse_demand_active(const void* data,
                                                size_t length,
                                                rdp_slowpath_demand_active* demand);
@@ -87,6 +91,13 @@ librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
                                           uint8_t pdu_type2,
                                           const void* payload,
                                           size_t payload_len);
+librdp_status rdp_slowpath_write_share_data_header(rdp_buffer* buffer,
+                                                   uint32_t share_id,
+                                                   uint8_t stream_id,
+                                                   uint16_t uncompressed_length,
+                                                   uint8_t pdu_type2,
+                                                   uint8_t compressed_type,
+                                                   uint16_t compressed_length);
 librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
                                                     uint32_t share_id,
                                                     uint16_t channel_id);

@@ -2211,6 +2211,23 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);
+    rdp_buffer_free(&client_refresh_rect);
+    rdp_buffer_init(&client_refresh_rect);
+    PCHECK(rdp_slowpath_write_share_control_header(&client_refresh_rect,
+                                                   6,
+                                                   (uint16_t)(RDP_SLOWPATH_PDU_VERSION |
+                                                              RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE),
+                                                   1004) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_slowpath_parse_share_control_header(client_refresh_rect.data,
+                                                   client_refresh_rect.length,
+                                                   &slow_header) == LIBRDP_STATUS_OK);
+    PCHECK(slow_header.total_length == 6 &&
+           slow_header.pdu_type == (RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE) &&
+           slow_header.channel_id == 1004);
+    PCHECK(rdp_slowpath_write_share_control_header(&client_refresh_rect,
+                                                   5,
+                                                   RDP_SLOWPATH_PDU_VERSION,
+                                                   1004) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active), &demand) == LIBRDP_STATUS_OK);
     PCHECK(demand.share_id == 0x12345678u);
     PCHECK(demand.source_descriptor_len == 3 && memcmp(demand.source_descriptor, "srv", 3) == 0);
@@ -2225,6 +2242,26 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(data_pdu.share_id == 0x12345678u && data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
     PCHECK(data_pdu.payload_len == 40);
+    rdp_buffer_free(&client_refresh_rect);
+    rdp_buffer_init(&client_refresh_rect);
+    PCHECK(rdp_slowpath_write_share_data_header(&client_refresh_rect,
+                                                data_pdu.share_id,
+                                                data_pdu.stream_id,
+                                                data_pdu.uncompressed_length,
+                                                data_pdu.pdu_type2,
+                                                data_pdu.compressed_type,
+                                                data_pdu.compressed_length) == LIBRDP_STATUS_OK);
+    PCHECK(client_refresh_rect.length == 12 &&
+           test_read_u32_le(client_refresh_rect.data) == data_pdu.share_id &&
+           client_refresh_rect.data[5] == data_pdu.stream_id &&
+           client_refresh_rect.data[8] == data_pdu.pdu_type2);
+    PCHECK(rdp_slowpath_write_share_data_header(&client_refresh_rect,
+                                                data_pdu.share_id,
+                                                0,
+                                                data_pdu.uncompressed_length,
+                                                data_pdu.pdu_type2,
+                                                0,
+                                                0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &bitmap_header) ==
            LIBRDP_STATUS_OK);
     PCHECK(bitmap_header.update_type == RDP_UPDATE_TYPE_BITMAP && bitmap_header.count == 1);

@@ -31,6 +31,15 @@ static uint16_t rdp_slowpath_base_type(uint16_t pdu_type)
     return (uint16_t)(pdu_type & 0x000fu);
 }
 
+static int rdp_slowpath_valid_share_control_type(uint16_t pdu_type)
+{
+    uint16_t type = rdp_slowpath_base_type(pdu_type);
+
+    return type == RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE ||
+           type == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE ||
+           type == RDP_SLOWPATH_PDU_TYPE_DATA;
+}
+
 #define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 17u
 
 static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
@@ -76,6 +85,23 @@ static librdp_status rdp_slowpath_write_capability_header(rdp_buffer* buffer, ui
     status = rdp_buffer_append_u16_le(buffer, type);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, length);
+    return status;
+}
+
+librdp_status rdp_slowpath_write_share_control_header(rdp_buffer* buffer,
+                                                      uint16_t total_length,
+                                                      uint16_t pdu_type,
+                                                      uint16_t channel_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || total_length < 6u || !rdp_slowpath_valid_share_control_type(pdu_type))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, total_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, pdu_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, channel_id);
     return status;
 }
 
@@ -432,6 +458,36 @@ static librdp_status rdp_slowpath_write_bitmap_codecs_capability(rdp_buffer* buf
     return status;
 }
 
+librdp_status rdp_slowpath_write_share_data_header(rdp_buffer* buffer,
+                                                   uint32_t share_id,
+                                                   uint8_t stream_id,
+                                                   uint16_t uncompressed_length,
+                                                   uint8_t pdu_type2,
+                                                   uint8_t compressed_type,
+                                                   uint16_t compressed_length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (stream_id == 0 || (compressed_type == 0 && compressed_length != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, share_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, stream_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, uncompressed_length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, pdu_type2);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, compressed_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, compressed_length);
+    return status;
+}
+
 librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
                                           uint32_t share_id,
                                           uint16_t channel_id,
@@ -448,25 +504,19 @@ librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
     if (total > 0xffffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_buffer_append_u16_le(buffer, (uint16_t)total);
+    status = rdp_slowpath_write_share_control_header(
+        buffer,
+        (uint16_t)total,
+        (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA),
+        channel_id);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA));
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, channel_id);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(buffer, share_id);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u8(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u8(buffer, 1);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)payload_len);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u8(buffer, pdu_type2);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u8(buffer, 0);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, 0);
+        status = rdp_slowpath_write_share_data_header(buffer,
+                                                      share_id,
+                                                      1,
+                                                      (uint16_t)payload_len,
+                                                      pdu_type2,
+                                                      0,
+                                                      0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, payload, payload_len);
     return status;
@@ -534,11 +584,11 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK && total > 0xffffu)
         status = LIBRDP_STATUS_INVALID_ARGUMENT;
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)total);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE));
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, channel_id);
+        status = rdp_slowpath_write_share_control_header(
+            buffer,
+            (uint16_t)total,
+            (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE),
+            channel_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, share_id);
     if (status == LIBRDP_STATUS_OK)
