@@ -140,8 +140,20 @@ static int x11_pipewire_map_format(const librdp_audio_format* format,
 
     if (!format || !spa_format || !frame_size)
         return 0;
-    if (format->format_tag != LIBRDP_AUDIO_FORMAT_PCM || format->channels == 0 ||
-        format->samples_per_sec == 0 || format->block_align == 0)
+    if (format->channels == 0 || format->samples_per_sec == 0 || format->block_align == 0)
+        return 0;
+    if (format->format_tag == LIBRDP_AUDIO_FORMAT_ALAW ||
+        format->format_tag == LIBRDP_AUDIO_FORMAT_MULAW)
+    {
+        if (format->bits_per_sample != 8 || format->block_align != format->channels)
+            return 0;
+        *spa_format = format->format_tag == LIBRDP_AUDIO_FORMAT_ALAW ?
+            SPA_AUDIO_FORMAT_ALAW :
+            SPA_AUDIO_FORMAT_ULAW;
+        *frame_size = format->block_align;
+        return 1;
+    }
+    if (format->format_tag != LIBRDP_AUDIO_FORMAT_PCM)
         return 0;
     switch (format->bits_per_sample)
     {

@@ -13,6 +13,8 @@ extern "C" {
 typedef struct librdp_session librdp_session;
 
 #define LIBRDP_AUDIO_FORMAT_PCM 0x0001u
+#define LIBRDP_AUDIO_FORMAT_ALAW 0x0006u
+#define LIBRDP_AUDIO_FORMAT_MULAW 0x0007u
 #define LIBRDP_AUDIO_INPUT_RESULT_OK 0x00000000u
 #define LIBRDP_AUDIO_INPUT_RESULT_FAIL 0x80004005u
 
