@@ -930,6 +930,7 @@ static int test_settings_surface_input_session(void)
     uint16_t flags = 0;
     librdp_key_event key = {30, LIBRDP_KEY_PRESSED};
     librdp_mouse_event mouse = {10, 11, LIBRDP_MOUSE_BUTTON_LEFT, LIBRDP_MOUSE_PRESSED};
+    librdp_display_monitor display_monitors[2];
     librdp_touch_contact touch_contact;
     librdp_touch_frame touch_frame;
     librdp_pen_contact pen_contact;
@@ -1168,8 +1169,38 @@ static int test_settings_surface_input_session(void)
     CHECK(rdp_input_make_pointer_flags(&mouse, &flags) == LIBRDP_STATUS_OK && flags == 0x8001u);
     mouse.button = LIBRDP_MOUSE_BUTTON_LEFT;
 
+    memset(display_monitors, 0, sizeof(display_monitors));
+    display_monitors[0].flags = LIBRDP_DISPLAY_MONITOR_PRIMARY;
+    display_monitors[0].width = 800;
+    display_monitors[0].height = 600;
+    display_monitors[0].physical_width = 210;
+    display_monitors[0].physical_height = 158;
+    display_monitors[0].desktop_scale_factor = 100;
+    display_monitors[0].device_scale_factor = 100;
+    display_monitors[1].left = 800;
+    display_monitors[1].width = 640;
+    display_monitors[1].height = 480;
+    display_monitors[1].physical_width = 169;
+    display_monitors[1].physical_height = 127;
+    display_monitors[1].desktop_scale_factor = 100;
+    display_monitors[1].device_scale_factor = 100;
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(librdp_session_set_display_layout(NULL, display_monitors, 1) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_display_layout(session, NULL, 1) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_display_layout(session, display_monitors, 0) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_display_layout(session,
+                                            display_monitors,
+                                            LIBRDP_DISPLAY_MAX_MONITORS + 1u) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_set_display_layout(session, display_monitors, 2) == LIBRDP_STATUS_OK);
+    display_monitors[1].left = 700;
+    CHECK(librdp_session_set_display_layout(session, display_monitors, 2) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_monitors[1].left = 800;
     CHECK(librdp_session_refresh(session, 0, 0, 1, 1) == LIBRDP_STATUS_STATE);
     CHECK(librdp_session_clipboard_set_data(session,
                                             LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,

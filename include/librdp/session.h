@@ -14,6 +14,9 @@ extern "C" {
 
 typedef struct librdp_session librdp_session;
 
+#define LIBRDP_DISPLAY_MONITOR_PRIMARY 0x00000001u
+#define LIBRDP_DISPLAY_MAX_MONITORS 16u
+
 typedef enum librdp_session_state
 {
     LIBRDP_SESSION_IDLE = 0,
@@ -25,6 +28,20 @@ typedef enum librdp_session_state
     LIBRDP_SESSION_FAILED = 6
 } librdp_session_state;
 
+typedef struct librdp_display_monitor
+{
+    uint32_t flags;
+    int32_t left;
+    int32_t top;
+    uint32_t width;
+    uint32_t height;
+    uint32_t physical_width;
+    uint32_t physical_height;
+    uint32_t orientation;
+    uint32_t desktop_scale_factor;
+    uint32_t device_scale_factor;
+} librdp_display_monitor;
+
 typedef void (*librdp_event_callback)(librdp_session* session, const librdp_event* event, void* user_data);
 
 librdp_session* librdp_session_new(const librdp_settings* settings);
@@ -34,6 +51,9 @@ librdp_status librdp_session_connect(librdp_session* session);
 librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
 librdp_status librdp_session_disconnect(librdp_session* session);
 librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uint32_t height);
+librdp_status librdp_session_set_display_layout(librdp_session* session,
+                                                const librdp_display_monitor* monitors,
+                                                uint32_t monitor_count);
 librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* event);
 librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* event);

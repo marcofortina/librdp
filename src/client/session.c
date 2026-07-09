@@ -381,6 +381,9 @@ struct librdp_session
     rdp_display_control_caps display_control_caps;
     uint32_t requested_desktop_width;
     uint32_t requested_desktop_height;
+    uint8_t requested_monitor_layout_valid;
+    uint32_t requested_monitor_count;
+    rdp_display_control_monitor requested_monitors[LIBRDP_DISPLAY_MAX_MONITORS];
     uint32_t sent_desktop_width;
     uint32_t sent_desktop_height;
     uint32_t graphics_channel_id;
@@ -10339,28 +10342,91 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
                                               size_t* pdu_len,
                                               const char* event);
 
-static librdp_status rdp_session_send_display_control_layout(librdp_session* session,
-                                                             uint32_t width,
-                                                             uint32_t height)
+static librdp_status rdp_session_display_layout_bounds(const rdp_display_control_monitor* monitors,
+                                                       uint32_t monitor_count,
+                                                       uint32_t* width,
+                                                       uint32_t* height)
 {
-    rdp_display_control_monitor monitor;
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+    uint32_t i = 0;
+
+    if (!monitors || monitor_count == 0 || !width || !height)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    left = monitors[0].left;
+    top = monitors[0].top;
+    right = (int64_t)monitors[0].left + (int64_t)monitors[0].width;
+    bottom = (int64_t)monitors[0].top + (int64_t)monitors[0].height;
+    for (i = 1u; i < monitor_count; i++)
+    {
+        int64_t monitor_right = (int64_t)monitors[i].left + (int64_t)monitors[i].width;
+        int64_t monitor_bottom = (int64_t)monitors[i].top + (int64_t)monitors[i].height;
+
+        if ((int64_t)monitors[i].left < left)
+            left = monitors[i].left;
+        if ((int64_t)monitors[i].top < top)
+            top = monitors[i].top;
+        if (monitor_right > right)
+            right = monitor_right;
+        if (monitor_bottom > bottom)
+            bottom = monitor_bottom;
+    }
+    if (right <= left || bottom <= top ||
+        right - left > UINT32_MAX ||
+        bottom - top > UINT32_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *width = (uint32_t)(right - left);
+    *height = (uint32_t)(bottom - top);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_copy_display_monitors(rdp_display_control_monitor* dst,
+                                                       const librdp_display_monitor* src,
+                                                       uint32_t monitor_count)
+{
+    uint32_t i = 0;
+
+    if (!dst || !src || monitor_count == 0 || monitor_count > LIBRDP_DISPLAY_MAX_MONITORS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < monitor_count; i++)
+    {
+        dst[i].flags = src[i].flags;
+        dst[i].left = src[i].left;
+        dst[i].top = src[i].top;
+        dst[i].width = src[i].width;
+        dst[i].height = src[i].height;
+        dst[i].physical_width = src[i].physical_width;
+        dst[i].physical_height = src[i].physical_height;
+        dst[i].orientation = src[i].orientation;
+        dst[i].desktop_scale_factor = src[i].desktop_scale_factor;
+        dst[i].device_scale_factor = src[i].device_scale_factor;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_send_display_control_monitors(librdp_session* session,
+                                                               const rdp_display_control_monitor* monitors,
+                                                               uint32_t monitor_count)
+{
     rdp_buffer layout;
+    uint32_t width = 0;
+    uint32_t height = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session)
+    if (!session || !monitors || monitor_count == 0 || monitor_count > LIBRDP_DISPLAY_MAX_MONITORS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!session->display_control_ready || session->display_control_channel_id_bytes == 0)
         return LIBRDP_STATUS_STATE;
-    if (session->sent_desktop_width == width && session->sent_desktop_height == height)
-        return LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&layout);
-    status = rdp_display_control_make_single_monitor(&monitor, width, height);
+    status = rdp_display_control_write_monitor_layout_with_caps(&layout,
+                                                                monitors,
+                                                                monitor_count,
+                                                                &session->display_control_caps);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_display_control_write_monitor_layout_with_caps(&layout,
-                                                                    &monitor,
-                                                                    1,
-                                                                    &session->display_control_caps);
+        status = rdp_session_display_layout_bounds(monitors, monitor_count, &width, &height);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_dynamic_channel_data(session,
                                                        session->display_control_channel_id,
@@ -10375,11 +10441,32 @@ static librdp_status rdp_session_send_display_control_layout(librdp_session* ses
         session->sent_desktop_height = height;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.display_control.layout_sent",
-                        "dvc_channel_id=%u width=%u height=%u",
+                        "dvc_channel_id=%u monitors=%u width=%u height=%u",
                         session->display_control_channel_id,
+                        monitor_count,
                         width,
                         height);
     }
+    return status;
+}
+
+static librdp_status rdp_session_send_display_control_layout(librdp_session* session,
+                                                             uint32_t width,
+                                                             uint32_t height)
+{
+    rdp_display_control_monitor monitor;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->display_control_ready || session->display_control_channel_id_bytes == 0)
+        return LIBRDP_STATUS_STATE;
+    if (session->sent_desktop_width == width && session->sent_desktop_height == height)
+        return LIBRDP_STATUS_OK;
+
+    status = rdp_display_control_make_single_monitor(&monitor, width, height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_display_control_monitors(session, &monitor, 1u);
     return status;
 }
 
@@ -10394,6 +10481,9 @@ static librdp_status rdp_session_request_display_control_layout(librdp_session* 
 
     session->requested_desktop_width = width;
     session->requested_desktop_height = height;
+    session->requested_monitor_layout_valid = 0;
+    session->requested_monitor_count = 0;
+    memset(session->requested_monitors, 0, sizeof(session->requested_monitors));
     status = rdp_session_send_display_control_layout(session, width, height);
     if (status == LIBRDP_STATUS_STATE)
     {
@@ -15517,12 +15607,17 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                         caps.max_num_monitors,
                         caps.max_monitor_area_factor_a,
                         caps.max_monitor_area_factor_b);
-        status = rdp_session_request_display_control_layout(
-            session,
-            session->requested_desktop_width != 0 ? session->requested_desktop_width :
-                                                    librdp_surface_width(session->surface),
-            session->requested_desktop_height != 0 ? session->requested_desktop_height :
-                                                     librdp_surface_height(session->surface));
+        if (session->requested_monitor_layout_valid)
+            status = rdp_session_send_display_control_monitors(session,
+                                                               session->requested_monitors,
+                                                               session->requested_monitor_count);
+        else
+            status = rdp_session_request_display_control_layout(
+                session,
+                session->requested_desktop_width != 0 ? session->requested_desktop_width :
+                                                        librdp_surface_width(session->surface),
+                session->requested_desktop_height != 0 ? session->requested_desktop_height :
+                                                         librdp_surface_height(session->surface));
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
@@ -18775,6 +18870,53 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
 
     status = rdp_session_request_display_control_layout(session, width, height);
     return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_OK : status;
+}
+
+librdp_status librdp_session_set_display_layout(librdp_session* session,
+                                                const librdp_display_monitor* monitors,
+                                                uint32_t monitor_count)
+{
+    rdp_display_control_monitor internal[LIBRDP_DISPLAY_MAX_MONITORS];
+    rdp_buffer validation;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !monitors || monitor_count == 0 || monitor_count > LIBRDP_DISPLAY_MAX_MONITORS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(internal, 0, sizeof(internal));
+    status = rdp_session_copy_display_monitors(internal, monitors, monitor_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_display_layout_bounds(internal, monitor_count, &width, &height);
+    rdp_buffer_init(&validation);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_display_control_write_monitor_layout(&validation, internal, monitor_count);
+    rdp_buffer_free(&validation);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    memcpy(session->requested_monitors, internal, sizeof(internal[0]) * monitor_count);
+    if (monitor_count < LIBRDP_DISPLAY_MAX_MONITORS)
+        memset(session->requested_monitors + monitor_count,
+               0,
+               sizeof(internal[0]) * (LIBRDP_DISPLAY_MAX_MONITORS - monitor_count));
+    session->requested_monitor_count = monitor_count;
+    session->requested_monitor_layout_valid = 1;
+    session->requested_desktop_width = width;
+    session->requested_desktop_height = height;
+
+    status = rdp_session_send_display_control_monitors(session, internal, monitor_count);
+    if (status == LIBRDP_STATUS_STATE)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.display_control.layout.local",
+                        "monitors=%u width=%u height=%u wire=not_sent",
+                        monitor_count,
+                        width,
+                        height);
+        return LIBRDP_STATUS_OK;
+    }
+    return status;
 }
 
 librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
