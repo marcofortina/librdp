@@ -162,6 +162,82 @@ librdp_status rdp_filesystem_redirection_parse_lock_request(
     const void* data,
     size_t length,
     rdp_filesystem_redirection_lock_request* request);
+librdp_status rdp_filesystem_redirection_write_create_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t desired_access,
+    uint64_t allocation_size,
+    uint32_t file_attributes,
+    uint32_t shared_access,
+    uint32_t create_disposition,
+    uint32_t create_options,
+    const void* path,
+    uint32_t path_len);
+librdp_status rdp_filesystem_redirection_write_close_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id);
+librdp_status rdp_filesystem_redirection_write_read_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t length,
+    uint64_t offset);
+librdp_status rdp_filesystem_redirection_write_write_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint64_t offset,
+    const void* data,
+    uint32_t data_len);
+librdp_status rdp_filesystem_redirection_write_control_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t output_buffer_length,
+    uint32_t io_control_code,
+    const void* input,
+    uint32_t input_len);
+librdp_status rdp_filesystem_redirection_write_information_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t major_function,
+    uint32_t information_class,
+    const void* data,
+    uint32_t data_len);
+librdp_status rdp_filesystem_redirection_write_query_directory_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t information_class,
+    uint8_t initial_query,
+    const void* path,
+    uint32_t path_len);
+librdp_status rdp_filesystem_redirection_write_notify_change_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint8_t watch_tree,
+    uint32_t completion_filter);
+librdp_status rdp_filesystem_redirection_write_lock_request(
+    rdp_buffer* buffer,
+    uint32_t device_id,
+    uint32_t file_id,
+    uint32_t completion_id,
+    uint32_t operation,
+    uint32_t flags,
+    const rdp_filesystem_redirection_lock_info* locks,
+    uint32_t lock_count);
 
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,

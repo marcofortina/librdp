@@ -17,6 +17,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_filesystem_redirection_create_response create_response;
     rdp_filesystem_redirection_length_response length_response;
     rdp_buffer buffer;
+    const uint8_t path[] = {'f', 0, 0, 0};
+    rdp_filesystem_redirection_lock_info locks[1];
+    uint32_t bounded_data = size < 64u ? (uint32_t)size : 64u;
 
     (void)rdp_filesystem_redirection_parse_create_request(data, size, &create_request);
     (void)rdp_filesystem_redirection_parse_close_request(data, size, &close_request);
@@ -34,6 +37,40 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_filesystem_redirection_parse_length_response(data, size, &length_response);
 
     rdp_buffer_init(&buffer);
+    (void)rdp_filesystem_redirection_write_create_request(&buffer, 1, 2, 3, 0, 0, 0, 0, 0, 0, path, sizeof(path));
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_close_request(&buffer, 1, 2, 3);
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_read_request(&buffer, 1, 2, 3, bounded_data, 0);
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_write_request(&buffer, 1, 2, 3, 0, data, bounded_data);
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_control_request(&buffer, 1, 2, 3, 0, 0, data, bounded_data);
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_information_request(&buffer,
+                                                               1,
+                                                               2,
+                                                               3,
+                                                               RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION,
+                                                               0,
+                                                               data,
+                                                               bounded_data);
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_query_directory_request(&buffer, 1, 2, 3, 0, 1, path, sizeof(path));
+    buffer.length = 0;
+    (void)rdp_filesystem_redirection_write_notify_change_request(&buffer, 1, 2, 3, 0, 0);
+    buffer.length = 0;
+    locks[0].length = 1;
+    locks[0].offset = 0;
+    (void)rdp_filesystem_redirection_write_lock_request(&buffer,
+                                                        1,
+                                                        2,
+                                                        3,
+                                                        RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK,
+                                                        0,
+                                                        locks,
+                                                        1);
+    buffer.length = 0;
     (void)rdp_filesystem_redirection_write_create_response(&buffer, 1, 2, 0, 3, 1);
     buffer.length = 0;
     (void)rdp_filesystem_redirection_write_close_response(&buffer, 1, 2, 0);
