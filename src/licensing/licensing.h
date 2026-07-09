@@ -24,6 +24,7 @@
 #define RDP_LICENSE_BLOB_DATA 0x0001u
 #define RDP_LICENSE_BLOB_RANDOM 0x0002u
 #define RDP_LICENSE_BLOB_CERTIFICATE 0x0003u
+#define RDP_LICENSE_BLOB_ERROR 0x0004u
 #define RDP_LICENSE_BLOB_ENCRYPTED_DATA 0x0009u
 #define RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG 0x000du
 #define RDP_LICENSE_BLOB_SCOPE 0x000eu
@@ -32,6 +33,11 @@
 
 #define RDP_LICENSE_KEY_EXCHANGE_RSA 0x00000001u
 #define RDP_LICENSE_SCOPE_MAX_COUNT 32u
+#define RDP_LICENSE_PRODUCT_INFO_LICENSE_ENFORCED 0x00008000u
+#define RDP_LICENSE_PRODUCT_INFO_RTM_LICENSE 0x00800000u
+#define RDP_LICENSE_PRODUCT_INFO_TEMPORARY_LICENSE 0x80000000u
+#define RDP_LICENSE_SERVER_INFO_VERSION_1 0x00010000u
+#define RDP_LICENSE_SERVER_INFO_VERSION_2 0x00030000u
 
 typedef struct rdp_license_preamble
 {
@@ -102,6 +108,38 @@ typedef struct rdp_license_new_license_info
     const uint8_t* license_info;
 } rdp_license_new_license_info;
 
+typedef struct rdp_license_version_info
+{
+    uint16_t major_version;
+    uint16_t minor_version;
+    uint32_t flags;
+} rdp_license_version_info;
+
+typedef struct rdp_license_product_certificate_info
+{
+    uint32_t version;
+    uint32_t license_count;
+    uint32_t platform_id;
+    uint32_t language_id;
+    const uint8_t* requested_product_id;
+    uint16_t requested_product_id_len;
+    const uint8_t* adjusted_product_id;
+    uint16_t adjusted_product_id_len;
+    rdp_license_version_info version_info;
+} rdp_license_product_certificate_info;
+
+typedef struct rdp_license_server_info
+{
+    uint32_t version;
+    const uint8_t* issuer_name;
+    uint16_t issuer_name_len;
+    const uint8_t* issuer_id;
+    uint16_t issuer_id_len;
+    const uint8_t* scope;
+    uint16_t scope_len;
+    uint8_t has_issuer_id;
+} rdp_license_server_info;
+
 typedef struct rdp_license_hardware_id
 {
     uint32_t platform_id;
@@ -159,6 +197,18 @@ librdp_status rdp_license_parse_new_or_upgrade(const void* data,
 librdp_status rdp_license_parse_new_license_info(const void* data,
                                                  size_t length,
                                                  rdp_license_new_license_info* info);
+librdp_status rdp_license_parse_product_certificate_info(
+    const void* data,
+    size_t length,
+    rdp_license_product_certificate_info* info);
+librdp_status rdp_license_write_product_certificate_info(
+    rdp_buffer* buffer,
+    const rdp_license_product_certificate_info* info);
+librdp_status rdp_license_parse_server_info(const void* data,
+                                            size_t length,
+                                            rdp_license_server_info* info);
+librdp_status rdp_license_write_server_info(rdp_buffer* buffer,
+                                            const rdp_license_server_info* info);
 librdp_status rdp_license_parse_hardware_id(const void* data,
                                             size_t length,
                                             rdp_license_hardware_id* hardware_id);

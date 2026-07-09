@@ -12,6 +12,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_license_platform_challenge challenge;
     rdp_license_new_or_upgrade license;
     rdp_license_new_license_info info;
+    rdp_license_product_certificate_info product_certificate;
+    rdp_license_server_info server_info;
     rdp_license_hardware_id hardware_id;
     rdp_license_platform_challenge_response_data challenge_data;
     rdp_license_error_alert alert;
@@ -26,6 +28,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_license_parse_platform_challenge(data, size, &challenge);
     (void)rdp_license_parse_new_or_upgrade(data, size, &license);
     (void)rdp_license_parse_new_license_info(data, size, &info);
+    (void)rdp_license_parse_product_certificate_info(data, size, &product_certificate);
+    (void)rdp_license_parse_server_info(data, size, &server_info);
     (void)rdp_license_parse_hardware_id(data, size, &hardware_id);
     (void)rdp_license_parse_platform_challenge_response_data(data, size, &challenge_data);
     (void)rdp_license_parse_error_alert(data, size, &alert);
@@ -47,6 +51,27 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                                         &encrypted,
                                                         &encrypted,
                                                         random);
+    buffer.length = 0;
+    product_certificate.version = 1;
+    product_certificate.license_count = 1;
+    product_certificate.platform_id = 0x03010000u;
+    product_certificate.language_id = 0x0409u;
+    product_certificate.requested_product_id = (const uint8_t*)"A";
+    product_certificate.requested_product_id_len = 1;
+    product_certificate.adjusted_product_id = (const uint8_t*)"B";
+    product_certificate.adjusted_product_id_len = 1;
+    product_certificate.version_info.major_version = 10;
+    product_certificate.version_info.flags = RDP_LICENSE_PRODUCT_INFO_RTM_LICENSE;
+    (void)rdp_license_write_product_certificate_info(&buffer, &product_certificate);
+    buffer.length = 0;
+    server_info.issuer_name = (const uint8_t*)"\x4c\x00\x00\x00";
+    server_info.issuer_name_len = 4;
+    server_info.scope = (const uint8_t*)"\x44\x00\x00\x00";
+    server_info.scope_len = 4;
+    server_info.issuer_id = NULL;
+    server_info.issuer_id_len = 0;
+    server_info.has_issuer_id = 0;
+    (void)rdp_license_write_server_info(&buffer, &server_info);
     rdp_buffer_free(&buffer);
     return 0;
 }

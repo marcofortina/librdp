@@ -29,6 +29,7 @@ static int rdp_license_valid_blob_type(uint16_t type)
     return type == RDP_LICENSE_BLOB_DATA ||
            type == RDP_LICENSE_BLOB_RANDOM ||
            type == RDP_LICENSE_BLOB_CERTIFICATE ||
+           type == RDP_LICENSE_BLOB_ERROR ||
            type == RDP_LICENSE_BLOB_ENCRYPTED_DATA ||
            type == RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG ||
            type == RDP_LICENSE_BLOB_SCOPE ||
@@ -90,6 +91,34 @@ static librdp_status rdp_license_write_blob_checked(rdp_buffer* buffer,
     if (!blob || blob->type != expected_type)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_license_write_binary_blob(buffer, blob->type, blob->data, blob->length);
+}
+
+static int rdp_license_range_valid(size_t length, size_t offset, size_t range_len)
+{
+    return offset <= length && range_len <= length - offset;
+}
+
+static int rdp_license_utf16z_valid(const uint8_t* data, size_t length)
+{
+    if (!data || length < 2u || (length % 2u) != 0)
+        return 0;
+    return data[length - 2u] == 0 && data[length - 1u] == 0;
+}
+
+static librdp_status rdp_license_append_version_info(rdp_buffer* buffer,
+                                                     const rdp_license_version_info* info)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, info->major_version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, info->minor_version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, info->flags);
 }
 
 librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble)
@@ -296,6 +325,237 @@ librdp_status rdp_license_parse_new_license_info(const void* data,
         info->product_id_len == 0 || info->license_info_len == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_license_parse_product_certificate_info(
+    const void* data,
+    size_t length,
+    rdp_license_product_certificate_info* info)
+{
+    rdp_stream stream;
+    uint16_t requested_offset = 0;
+    uint16_t adjusted_offset = 0;
+    uint16_t version_info_offset = 0;
+    uint16_t version_info_count = 0;
+
+    if (!data || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 36u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(info, 0, sizeof(*info));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &info->version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &info->license_count) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &info->platform_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &info->language_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &requested_offset) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &info->requested_product_id_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &adjusted_offset) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &info->adjusted_product_id_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &version_info_offset) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &version_info_count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (version_info_count != 1u ||
+        !rdp_license_range_valid(length, requested_offset, info->requested_product_id_len) ||
+        !rdp_license_range_valid(length, adjusted_offset, info->adjusted_product_id_len) ||
+        !rdp_license_range_valid(length, version_info_offset, 8u) ||
+        info->requested_product_id_len == 0 ||
+        info->adjusted_product_id_len == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    info->requested_product_id = (const uint8_t*)data + requested_offset;
+    info->adjusted_product_id = (const uint8_t*)data + adjusted_offset;
+    rdp_stream_init(&stream, (const uint8_t*)data + version_info_offset, 8u);
+    if (rdp_stream_read_u16_le(&stream, &info->version_info.major_version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &info->version_info.minor_version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &info->version_info.flags) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_license_write_product_certificate_info(
+    rdp_buffer* buffer,
+    const rdp_license_product_certificate_info* info)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t requested_offset = 28u;
+    uint32_t adjusted_offset = 0;
+    uint32_t version_info_offset = 0;
+
+    if (!buffer || !info ||
+        !info->requested_product_id || !info->adjusted_product_id ||
+        info->requested_product_id_len == 0 ||
+        info->adjusted_product_id_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    adjusted_offset = requested_offset + info->requested_product_id_len;
+    version_info_offset = adjusted_offset + info->adjusted_product_id_len;
+    if (version_info_offset > UINT16_MAX - 8u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, info->version);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, info->license_count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, info->platform_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, info->language_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)requested_offset);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, info->requested_product_id_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)adjusted_offset);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, info->adjusted_product_id_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)version_info_offset);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer,
+                               info->requested_product_id,
+                               info->requested_product_id_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer,
+                               info->adjusted_product_id,
+                               info->adjusted_product_id_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_license_append_version_info(buffer, &info->version_info);
+}
+
+librdp_status rdp_license_parse_server_info(const void* data,
+                                            size_t length,
+                                            rdp_license_server_info* info)
+{
+    rdp_stream stream;
+    uint16_t issuer_name_offset = 0;
+    uint16_t issuer_id_offset = 0;
+    uint16_t scope_offset = 0;
+    const uint8_t* variable = NULL;
+    size_t variable_len = 0;
+
+    if (!data || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(info, 0, sizeof(*info));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &info->version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &issuer_name_offset) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (issuer_name_offset != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (info->version == RDP_LICENSE_SERVER_INFO_VERSION_1)
+    {
+        if (rdp_stream_read_u16_le(&stream, &scope_offset) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        variable = (const uint8_t*)data + 8u;
+        variable_len = length - 8u;
+        if (scope_offset == 0 ||
+            scope_offset > variable_len)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        info->issuer_name = variable;
+        info->issuer_name_len = scope_offset;
+        info->scope = variable + scope_offset;
+        info->scope_len = (uint16_t)(variable_len - scope_offset);
+        if (!rdp_license_utf16z_valid(info->issuer_name, info->issuer_name_len) ||
+            !rdp_license_utf16z_valid(info->scope, info->scope_len))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        return LIBRDP_STATUS_OK;
+    }
+    if (info->version == RDP_LICENSE_SERVER_INFO_VERSION_2)
+    {
+        if (length < 10u ||
+            rdp_stream_read_u16_le(&stream, &issuer_id_offset) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(&stream, &scope_offset) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        variable = (const uint8_t*)data + 10u;
+        variable_len = length - 10u;
+        if (issuer_id_offset == 0 ||
+            scope_offset <= issuer_id_offset ||
+            scope_offset > variable_len)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        info->issuer_name = variable;
+        info->issuer_name_len = issuer_id_offset;
+        info->issuer_id = variable + issuer_id_offset;
+        info->issuer_id_len = (uint16_t)(scope_offset - issuer_id_offset);
+        info->scope = variable + scope_offset;
+        info->scope_len = (uint16_t)(variable_len - scope_offset);
+        info->has_issuer_id = 1;
+        if (!rdp_license_utf16z_valid(info->issuer_name, info->issuer_name_len) ||
+            !rdp_license_utf16z_valid(info->issuer_id, info->issuer_id_len) ||
+            !rdp_license_utf16z_valid(info->scope, info->scope_len))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_license_write_server_info(rdp_buffer* buffer,
+                                            const rdp_license_server_info* info)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t issuer_id_offset = 0;
+    uint32_t scope_offset = 0;
+
+    if (!buffer || !info ||
+        !rdp_license_utf16z_valid(info->issuer_name, info->issuer_name_len) ||
+        !rdp_license_utf16z_valid(info->scope, info->scope_len))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (info->has_issuer_id)
+    {
+        if (!rdp_license_utf16z_valid(info->issuer_id, info->issuer_id_len))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        issuer_id_offset = info->issuer_name_len;
+        scope_offset = issuer_id_offset + info->issuer_id_len;
+        if (scope_offset > UINT16_MAX)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        status = rdp_buffer_append_u32_le(buffer, RDP_LICENSE_SERVER_INFO_VERSION_2);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append_u16_le(buffer, 0);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)issuer_id_offset);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)scope_offset);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append(buffer, info->issuer_name, info->issuer_name_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_buffer_append(buffer, info->issuer_id, info->issuer_id_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_buffer_append(buffer, info->scope, info->scope_len);
+    }
+    scope_offset = info->issuer_name_len;
+    if (scope_offset > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, RDP_LICENSE_SERVER_INFO_VERSION_1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)scope_offset);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, info->issuer_name, info->issuer_name_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, info->scope, info->scope_len);
 }
 
 librdp_status rdp_license_parse_hardware_id(const void* data,
