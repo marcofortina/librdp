@@ -3,7 +3,31 @@
 #include "common/stream.h"
 
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
+
+#define RDP_BITMAP_FLAG_COMPRESSED 0x0001u
+#define RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER 0x0400u
+#define RDP_BITMAP_RLE_BG_RUN 0x00u
+#define RDP_BITMAP_RLE_FG_RUN 0x01u
+#define RDP_BITMAP_RLE_FGBG_IMAGE 0x02u
+#define RDP_BITMAP_RLE_COLOR_RUN 0x03u
+#define RDP_BITMAP_RLE_COLOR_IMAGE 0x04u
+#define RDP_BITMAP_RLE_SET_FG_FG_RUN 0x0cu
+#define RDP_BITMAP_RLE_SET_FG_FGBG_IMAGE 0x0du
+#define RDP_BITMAP_RLE_DITHERED_RUN 0x0eu
+#define RDP_BITMAP_RLE_MEGA_BG_RUN 0xf0u
+#define RDP_BITMAP_RLE_MEGA_FG_RUN 0xf1u
+#define RDP_BITMAP_RLE_MEGA_FGBG_IMAGE 0xf2u
+#define RDP_BITMAP_RLE_MEGA_COLOR_RUN 0xf3u
+#define RDP_BITMAP_RLE_MEGA_COLOR_IMAGE 0xf4u
+#define RDP_BITMAP_RLE_MEGA_SET_FG_RUN 0xf6u
+#define RDP_BITMAP_RLE_MEGA_SET_FG_FGBG_IMAGE 0xf7u
+#define RDP_BITMAP_RLE_MEGA_DITHERED_RUN 0xf8u
+#define RDP_BITMAP_RLE_SPECIAL_FGBG_1 0xf9u
+#define RDP_BITMAP_RLE_SPECIAL_FGBG_2 0xfau
+#define RDP_BITMAP_RLE_SPECIAL_WHITE 0xfdu
+#define RDP_BITMAP_RLE_SPECIAL_BLACK 0xfeu
 
 static librdp_status rdp_bitmap_parse_rectangles(rdp_stream* stream, uint16_t count, rdp_bitmap_update* update)
 {
@@ -196,6 +220,513 @@ static uint8_t rdp_scale_6_to_8(uint16_t value)
     return (uint8_t)((value * 255u + 31u) / 63u);
 }
 
+typedef struct rdp_bitmap_rle_reader
+{
+    const uint8_t* current;
+    const uint8_t* end;
+    uint32_t* pixels;
+    size_t position;
+    size_t total;
+    uint16_t width;
+    uint16_t bits_per_pixel;
+    uint32_t foreground;
+    uint8_t insert_foreground;
+} rdp_bitmap_rle_reader;
+
+static uint8_t rdp_bitmap_rle_bytes_per_pixel(uint16_t bits_per_pixel)
+{
+    if (bits_per_pixel == 16u)
+        return 2;
+    if (bits_per_pixel == 24u)
+        return 3;
+    if (bits_per_pixel == 32u)
+        return 4;
+    return 0;
+}
+
+static uint32_t rdp_bitmap_rle_white(uint16_t bits_per_pixel)
+{
+    if (bits_per_pixel == 16u)
+        return 0xffffu;
+    return 0x00ffffffu;
+}
+
+static uint8_t rdp_bitmap_rle_code(uint8_t header)
+{
+    if ((header & 0xc0u) != 0xc0u)
+        return (uint8_t)(header >> 5);
+    if ((header & 0xf0u) == 0xf0u)
+        return header;
+    return (uint8_t)(header >> 4);
+}
+
+static librdp_status rdp_bitmap_rle_read_pixel(rdp_bitmap_rle_reader* reader, uint32_t* pixel)
+{
+    uint8_t bytes = 0;
+
+    if (!reader || !pixel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    bytes = rdp_bitmap_rle_bytes_per_pixel(reader->bits_per_pixel);
+    if (bytes == 0 || (size_t)(reader->end - reader->current) < bytes)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (reader->bits_per_pixel == 16u)
+    {
+        *pixel = (uint32_t)reader->current[0] | ((uint32_t)reader->current[1] << 8);
+    }
+    else
+    {
+        *pixel = (uint32_t)reader->current[0] | ((uint32_t)reader->current[1] << 8) |
+                 ((uint32_t)reader->current[2] << 16);
+    }
+    reader->current += bytes;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_rle_write_pixel(rdp_bitmap_rle_reader* reader, uint32_t pixel)
+{
+    if (!reader || !reader->pixels || reader->position >= reader->total)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    reader->pixels[reader->position++] = pixel;
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_bitmap_rle_previous_pixel(const rdp_bitmap_rle_reader* reader)
+{
+    if (!reader || reader->position < reader->width)
+        return 0;
+    return reader->pixels[reader->position - reader->width];
+}
+
+static librdp_status rdp_bitmap_rle_repeat(rdp_bitmap_rle_reader* reader, uint32_t pixel, uint32_t count)
+{
+    uint32_t i = 0;
+
+    for (i = 0; i < count; i++)
+    {
+        librdp_status status = rdp_bitmap_rle_write_pixel(reader, pixel);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_rle_copy_previous(rdp_bitmap_rle_reader* reader, uint32_t count)
+{
+    uint32_t i = 0;
+
+    for (i = 0; i < count; i++)
+    {
+        librdp_status status = rdp_bitmap_rle_write_pixel(reader, rdp_bitmap_rle_previous_pixel(reader));
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_rle_xor_previous(rdp_bitmap_rle_reader* reader, uint32_t count)
+{
+    uint32_t i = 0;
+
+    for (i = 0; i < count; i++)
+    {
+        librdp_status status =
+            rdp_bitmap_rle_write_pixel(reader, rdp_bitmap_rle_previous_pixel(reader) ^ reader->foreground);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_rle_run_length(const rdp_bitmap_rle_reader* reader,
+                                               uint8_t code,
+                                               uint32_t* run_length,
+                                               size_t* consumed)
+{
+    const uint8_t* order = NULL;
+    uint8_t low = 0;
+
+    if (!reader || !run_length || !consumed || reader->current >= reader->end)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order = reader->current;
+    *consumed = 1;
+    if (code == RDP_BITMAP_RLE_MEGA_BG_RUN || code == RDP_BITMAP_RLE_MEGA_FG_RUN ||
+        code == RDP_BITMAP_RLE_MEGA_SET_FG_RUN || code == RDP_BITMAP_RLE_MEGA_DITHERED_RUN ||
+        code == RDP_BITMAP_RLE_MEGA_COLOR_RUN || code == RDP_BITMAP_RLE_MEGA_FGBG_IMAGE ||
+        code == RDP_BITMAP_RLE_MEGA_SET_FG_FGBG_IMAGE || code == RDP_BITMAP_RLE_MEGA_COLOR_IMAGE)
+    {
+        if ((size_t)(reader->end - order) < 3u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        *run_length = (uint32_t)order[1] | ((uint32_t)order[2] << 8);
+        *consumed = 3;
+        return *run_length == 0 ? LIBRDP_STATUS_PROTOCOL_ERROR : LIBRDP_STATUS_OK;
+    }
+    if (code == RDP_BITMAP_RLE_FGBG_IMAGE)
+    {
+        low = (uint8_t)(order[0] & 0x1fu);
+        if (low == 0)
+        {
+            if ((size_t)(reader->end - order) < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            *run_length = (uint32_t)order[1] + 1u;
+            *consumed = 2;
+        }
+        else
+        {
+            *run_length = (uint32_t)low * 8u;
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (code == RDP_BITMAP_RLE_SET_FG_FGBG_IMAGE)
+    {
+        low = (uint8_t)(order[0] & 0x0fu);
+        if (low == 0)
+        {
+            if ((size_t)(reader->end - order) < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            *run_length = (uint32_t)order[1] + 1u;
+            *consumed = 2;
+        }
+        else
+        {
+            *run_length = (uint32_t)low * 8u;
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (code == RDP_BITMAP_RLE_SET_FG_FG_RUN || code == RDP_BITMAP_RLE_DITHERED_RUN)
+    {
+        low = (uint8_t)(order[0] & 0x0fu);
+        if (low == 0)
+        {
+            if ((size_t)(reader->end - order) < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            *run_length = (uint32_t)order[1] + 16u;
+            *consumed = 2;
+        }
+        else
+        {
+            *run_length = low;
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (code == RDP_BITMAP_RLE_BG_RUN || code == RDP_BITMAP_RLE_FG_RUN ||
+        code == RDP_BITMAP_RLE_COLOR_RUN || code == RDP_BITMAP_RLE_COLOR_IMAGE)
+    {
+        low = (uint8_t)(order[0] & 0x1fu);
+        if (low == 0)
+        {
+            if ((size_t)(reader->end - order) < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            *run_length = (uint32_t)order[1] + 32u;
+            *consumed = 2;
+        }
+        else
+        {
+            *run_length = low;
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_bitmap_rle_write_fgbg(rdp_bitmap_rle_reader* reader,
+                                               uint8_t mask,
+                                               uint32_t count,
+                                               uint8_t first_line)
+{
+    uint32_t bit = 0;
+
+    if (!reader || count > 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (bit = 0; bit < count; bit++)
+    {
+        uint32_t pixel = 0;
+
+        if (first_line)
+            pixel = (mask & (uint8_t)(1u << bit)) ? reader->foreground : 0;
+        else
+            pixel = (mask & (uint8_t)(1u << bit)) ? (rdp_bitmap_rle_previous_pixel(reader) ^ reader->foreground) :
+                                                     rdp_bitmap_rle_previous_pixel(reader);
+        if (rdp_bitmap_rle_write_pixel(reader, pixel) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_rle_decode_stream(const uint8_t* data,
+                                                  size_t length,
+                                                  uint16_t width,
+                                                  uint16_t height,
+                                                  uint16_t bits_per_pixel,
+                                                  uint32_t* pixels)
+{
+    rdp_bitmap_rle_reader reader;
+
+    if (!data || !pixels || width == 0 || height == 0 || !rdp_bitmap_rle_bytes_per_pixel(bits_per_pixel))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((size_t)width > SIZE_MAX / height)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memset(&reader, 0, sizeof(reader));
+    reader.current = data;
+    reader.end = data + length;
+    reader.pixels = pixels;
+    reader.total = (size_t)width * height;
+    reader.width = width;
+    reader.bits_per_pixel = bits_per_pixel;
+    reader.foreground = rdp_bitmap_rle_white(bits_per_pixel);
+
+    while (reader.current < reader.end)
+    {
+        uint8_t first_line = reader.position < reader.width;
+        uint8_t code = rdp_bitmap_rle_code(*reader.current);
+        uint32_t run = 0;
+        size_t consumed = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (code == RDP_BITMAP_RLE_BG_RUN || code == RDP_BITMAP_RLE_MEGA_BG_RUN)
+        {
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            if (reader.insert_foreground)
+            {
+                if (run == 0)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                status = first_line ? rdp_bitmap_rle_write_pixel(&reader, reader.foreground) :
+                                      rdp_bitmap_rle_write_pixel(&reader,
+                                                                 rdp_bitmap_rle_previous_pixel(&reader) ^
+                                                                     reader.foreground);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+                run--;
+            }
+            status = first_line ? rdp_bitmap_rle_repeat(&reader, 0, run) : rdp_bitmap_rle_copy_previous(&reader, run);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.insert_foreground = 1;
+            continue;
+        }
+
+        reader.insert_foreground = 0;
+        if (code == RDP_BITMAP_RLE_FG_RUN || code == RDP_BITMAP_RLE_MEGA_FG_RUN ||
+            code == RDP_BITMAP_RLE_SET_FG_FG_RUN || code == RDP_BITMAP_RLE_MEGA_SET_FG_RUN)
+        {
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            if (code == RDP_BITMAP_RLE_SET_FG_FG_RUN || code == RDP_BITMAP_RLE_MEGA_SET_FG_RUN)
+            {
+                status = rdp_bitmap_rle_read_pixel(&reader, &reader.foreground);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
+            status = first_line ? rdp_bitmap_rle_repeat(&reader, reader.foreground, run) :
+                                  rdp_bitmap_rle_xor_previous(&reader, run);
+        }
+        else if (code == RDP_BITMAP_RLE_DITHERED_RUN || code == RDP_BITMAP_RLE_MEGA_DITHERED_RUN)
+        {
+            uint32_t a = 0;
+            uint32_t b = 0;
+            uint32_t i = 0;
+
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            status = rdp_bitmap_rle_read_pixel(&reader, &a);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_bitmap_rle_read_pixel(&reader, &b);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            for (i = 0; i < run; i++)
+            {
+                status = rdp_bitmap_rle_write_pixel(&reader, a);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_bitmap_rle_write_pixel(&reader, b);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
+        }
+        else if (code == RDP_BITMAP_RLE_COLOR_RUN || code == RDP_BITMAP_RLE_MEGA_COLOR_RUN)
+        {
+            uint32_t color = 0;
+
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            status = rdp_bitmap_rle_read_pixel(&reader, &color);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_bitmap_rle_repeat(&reader, color, run);
+        }
+        else if (code == RDP_BITMAP_RLE_FGBG_IMAGE || code == RDP_BITMAP_RLE_MEGA_FGBG_IMAGE ||
+                 code == RDP_BITMAP_RLE_SET_FG_FGBG_IMAGE || code == RDP_BITMAP_RLE_MEGA_SET_FG_FGBG_IMAGE)
+        {
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            if (code == RDP_BITMAP_RLE_SET_FG_FGBG_IMAGE || code == RDP_BITMAP_RLE_MEGA_SET_FG_FGBG_IMAGE)
+            {
+                status = rdp_bitmap_rle_read_pixel(&reader, &reader.foreground);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
+            while (run > 8u)
+            {
+                if (reader.current >= reader.end)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                status = rdp_bitmap_rle_write_fgbg(&reader, *reader.current++, 8, first_line);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+                run -= 8u;
+            }
+            if (run > 0)
+            {
+                if (reader.current >= reader.end)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                status = rdp_bitmap_rle_write_fgbg(&reader, *reader.current++, run, first_line);
+            }
+        }
+        else if (code == RDP_BITMAP_RLE_COLOR_IMAGE || code == RDP_BITMAP_RLE_MEGA_COLOR_IMAGE)
+        {
+            uint32_t i = 0;
+
+            status = rdp_bitmap_rle_run_length(&reader, code, &run, &consumed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            reader.current += consumed;
+            for (i = 0; i < run; i++)
+            {
+                uint32_t color = 0;
+
+                status = rdp_bitmap_rle_read_pixel(&reader, &color);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_bitmap_rle_write_pixel(&reader, color);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
+        }
+        else if (code == RDP_BITMAP_RLE_SPECIAL_FGBG_1 || code == RDP_BITMAP_RLE_SPECIAL_FGBG_2)
+        {
+            uint8_t mask = code == RDP_BITMAP_RLE_SPECIAL_FGBG_1 ? 0x03u : 0x05u;
+
+            reader.current++;
+            status = rdp_bitmap_rle_write_fgbg(&reader, mask, 8, first_line);
+        }
+        else if (code == RDP_BITMAP_RLE_SPECIAL_WHITE || code == RDP_BITMAP_RLE_SPECIAL_BLACK)
+        {
+            reader.current++;
+            status = rdp_bitmap_rle_write_pixel(
+                &reader,
+                code == RDP_BITMAP_RLE_SPECIAL_WHITE ? rdp_bitmap_rle_white(bits_per_pixel) : 0);
+        }
+        else
+        {
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return reader.position == reader.total ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static void rdp_bitmap_raw_pixel_to_bgra(uint32_t pixel, uint16_t bits_per_pixel, uint8_t* dst)
+{
+    if (bits_per_pixel == 16u)
+    {
+        dst[0] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
+        dst[1] = rdp_scale_6_to_8((uint16_t)((pixel >> 5) & 0x003fu));
+        dst[2] = rdp_scale_5_to_8((uint16_t)((pixel >> 11) & 0x001fu));
+    }
+    else
+    {
+        dst[0] = (uint8_t)(pixel & 0xffu);
+        dst[1] = (uint8_t)((pixel >> 8) & 0xffu);
+        dst[2] = (uint8_t)((pixel >> 16) & 0xffu);
+    }
+    dst[3] = 0xffu;
+}
+
+static librdp_status rdp_bitmap_compressed_payload(const rdp_bitmap_rect* rect,
+                                                   const uint8_t** payload,
+                                                   size_t* payload_len)
+{
+    uint16_t body_len = 0;
+
+    if (!rect || !payload || !payload_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((rect->flags & RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER) != 0)
+    {
+        *payload = rect->data;
+        *payload_len = rect->data_len;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rect->data_len < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    body_len = (uint16_t)(rect->data[2] | ((uint16_t)rect->data[3] << 8));
+    if (body_len == 0)
+        body_len = (uint16_t)(rect->data_len - 8u);
+    if ((size_t)body_len > rect->data_len - 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *payload = rect->data + 8u;
+    *payload_len = body_len;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_decode_compressed_bgra32(const rdp_bitmap_rect* rect,
+                                                         rdp_buffer* output,
+                                                         size_t* stride)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    uint32_t* pixels = NULL;
+    size_t pixel_count = 0;
+    size_t dst_stride = 0;
+    size_t dst_size = 0;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!rect || !output || !stride)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((rect->flags & ~(RDP_BITMAP_FLAG_COMPRESSED | RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER)) != 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (rect->width == 0 || rect->height == 0 || (rect->bits_per_pixel != 16 && rect->bits_per_pixel != 24 &&
+                                                  rect->bits_per_pixel != 32))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((size_t)rect->width > SIZE_MAX / rect->height)
+        return LIBRDP_STATUS_NO_MEMORY;
+    pixel_count = (size_t)rect->width * rect->height;
+    if (pixel_count > SIZE_MAX / sizeof(uint32_t))
+        return LIBRDP_STATUS_NO_MEMORY;
+    dst_stride = (size_t)rect->width * 4u;
+    if ((size_t)rect->height > SIZE_MAX / dst_stride)
+        return LIBRDP_STATUS_NO_MEMORY;
+    dst_size = dst_stride * rect->height;
+
+    status = rdp_bitmap_compressed_payload(rect, &payload, &payload_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    pixels = (uint32_t*)calloc(pixel_count, sizeof(uint32_t));
+    if (!pixels)
+        return LIBRDP_STATUS_NO_MEMORY;
+    status = rdp_bitmap_rle_decode_stream(payload, payload_len, rect->width, rect->height, rect->bits_per_pixel, pixels);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+    status = rdp_buffer_reserve(output, dst_size);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+    output->length = dst_size;
+    for (i = 0; i < pixel_count; i++)
+        rdp_bitmap_raw_pixel_to_bgra(pixels[i], rect->bits_per_pixel, output->data + (i * 4u));
+    *stride = dst_stride;
+
+out:
+    free(pixels);
+    return status;
+}
+
 librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buffer* output, size_t* stride)
 {
     uint16_t row = 0;
@@ -208,6 +739,8 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
 
     if (!rect || !output || !stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((rect->flags & RDP_BITMAP_FLAG_COMPRESSED) != 0)
+        return rdp_bitmap_decode_compressed_bgra32(rect, output, stride);
     if (rect->flags != 0 || (rect->bits_per_pixel != 16 && rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rect->width == 0 || rect->height == 0)
