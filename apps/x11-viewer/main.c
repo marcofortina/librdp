@@ -1464,7 +1464,7 @@ static int add_usb_arg(librdp_settings* settings, const char* text)
 
 static int add_webauthn_arg(librdp_settings* settings, const char* text)
 {
-    const char* value = text && text[0] != '\0' ? text : "mock";
+    const char* value = text && text[0] != '\0' ? text : "fido2";
 
     return settings &&
            librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK &&
@@ -2556,7 +2556,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path|fido2|fido2=/dev/hidrawN]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;
