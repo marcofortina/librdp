@@ -19,7 +19,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_rfx_component_quant zero_delta;
     rdp_rfx_tile_pixels pixels;
     rdp_rfx_progressive_tile_state state;
+    rdp_buffer output;
 
+    rdp_buffer_init(&output);
     memset(&component_quant, 0, sizeof(component_quant));
     memset(&progressive_quant, 0, sizeof(progressive_quant));
     memset(&added_quant, 0, sizeof(added_quant));
@@ -35,6 +37,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_rfx_rlgr_decode(RDP_RFX_RLGR3, data, size, coefficients, 64, &written);
     (void)rdp_rfx_parse_component_quant(data, size, &component_quant);
     (void)rdp_rfx_parse_progressive_quant(data, size, &progressive_quant);
+    (void)rdp_rfx_write_component_quant(&output, &component_quant);
+    output.length = 0;
+    (void)rdp_rfx_write_component_quant(&output, &valid_quant);
+    output.length = 0;
+    (void)rdp_rfx_write_progressive_quant(&output, &progressive_quant);
+    output.length = 0;
     (void)rdp_rfx_add_component_quant(&component_quant, &progressive_quant.y, &added_quant);
     (void)rdp_rfx_differential_decode(tile_coefficients, RDP_RFX_TILE_COEFFICIENTS);
     (void)rdp_rfx_inverse_quantize(tile_coefficients, RDP_RFX_TILE_COEFFICIENTS, &valid_quant);
@@ -106,5 +114,6 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                                   1,
                                                   &state,
                                                   &pixels);
+    rdp_buffer_free(&output);
     return 0;
 }

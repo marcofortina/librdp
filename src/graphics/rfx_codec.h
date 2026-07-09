@@ -6,6 +6,8 @@
 
 #include <librdp/error.h>
 
+#include "common/buffer.h"
+
 #define RDP_RFX_TILE_COEFFICIENTS 4096u
 
 typedef enum rdp_rfx_rlgr_mode
@@ -73,9 +75,11 @@ librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,
 librdp_status rdp_rfx_parse_component_quant(const void* data,
                                             size_t length,
                                             rdp_rfx_component_quant* quant);
+librdp_status rdp_rfx_write_component_quant(rdp_buffer* buffer, const rdp_rfx_component_quant* quant);
 librdp_status rdp_rfx_parse_progressive_quant(const void* data,
                                               size_t length,
                                               rdp_rfx_progressive_quant* quant);
+librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_progressive_quant* quant);
 librdp_status rdp_rfx_add_component_quant(const rdp_rfx_component_quant* base,
                                           const rdp_rfx_component_quant* delta,
                                           rdp_rfx_component_quant* output);

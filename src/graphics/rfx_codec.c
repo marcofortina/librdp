@@ -266,6 +266,25 @@ librdp_status rdp_rfx_parse_component_quant(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_rfx_write_component_quant(rdp_buffer* buffer, const rdp_rfx_component_quant* quant)
+{
+    uint8_t values[10];
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_rfx_component_quant_in_range(quant, 15))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_rfx_component_quant_to_values(quant, values);
+    for (i = 0; i < 5u && status == LIBRDP_STATUS_OK; i++)
+    {
+        uint8_t packed = (uint8_t)(values[i * 2u] | (uint8_t)(values[(i * 2u) + 1u] << 4));
+        status = rdp_buffer_append_u8(buffer, packed);
+    }
+    return status;
+}
+
 librdp_status rdp_rfx_parse_progressive_quant(const void* data,
                                               size_t length,
                                               rdp_rfx_progressive_quant* quant)
@@ -288,6 +307,26 @@ librdp_status rdp_rfx_parse_progressive_quant(const void* data,
         !rdp_rfx_component_quant_in_range(&quant->cr, 8))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_progressive_quant* quant)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !quant)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_rfx_component_quant_in_range(&quant->y, 8) ||
+        !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
+        !rdp_rfx_component_quant_in_range(&quant->cr, 8))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, quant->quality);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_write_component_quant(buffer, &quant->y);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_write_component_quant(buffer, &quant->cb);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rfx_write_component_quant(buffer, &quant->cr);
+    return status;
 }
 
 librdp_status rdp_rfx_add_component_quant(const rdp_rfx_component_quant* base,

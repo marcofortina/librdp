@@ -2346,6 +2346,16 @@ static int test_path_security_license_channels(void)
            rfx_quant.hl1 == 7 &&
            rfx_quant.lh1 == 8 &&
            rfx_quant.hh1 == 9);
+    rdp_buffer_free(&graphics_decoded);
+    rdp_buffer_init(&graphics_decoded);
+    PCHECK(rdp_rfx_write_component_quant(&graphics_decoded, &rfx_quant) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == sizeof(rfx_quant_values));
+    PCHECK(rdp_rfx_parse_component_quant(graphics_decoded.data,
+                                         graphics_decoded.length,
+                                         &rfx_decode_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_decode_quant.ll3 == rfx_quant.ll3 &&
+           rfx_decode_quant.hl3 == rfx_quant.hl3 &&
+           rfx_decode_quant.hh1 == rfx_quant.hh1);
     PCHECK(rdp_rfx_parse_progressive_quant(rfx_progressive_quant_values,
                                            sizeof(rfx_progressive_quant_values),
                                            &rfx_progressive_quant) == LIBRDP_STATUS_OK);
@@ -2353,6 +2363,23 @@ static int test_path_security_license_channels(void)
            rfx_progressive_quant.y.ll3 == 1 &&
            rfx_progressive_quant.cb.ll3 == 2 &&
            rfx_progressive_quant.cr.ll3 == 3);
+    rdp_buffer_free(&graphics_decoded);
+    rdp_buffer_init(&graphics_decoded);
+    PCHECK(rdp_rfx_write_progressive_quant(&graphics_decoded, &rfx_progressive_quant) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == sizeof(rfx_progressive_quant_values));
+    PCHECK(rdp_rfx_parse_progressive_quant(graphics_decoded.data,
+                                           graphics_decoded.length,
+                                           &rfx_progressive_quant) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_progressive_quant.quality == 0x64 &&
+           rfx_progressive_quant.y.ll3 == 1 &&
+           rfx_progressive_quant.cb.ll3 == 2 &&
+           rfx_progressive_quant.cr.ll3 == 3);
+    rfx_decode_quant = rfx_quant;
+    rfx_decode_quant.ll3 = 16;
+    PCHECK(rdp_rfx_write_component_quant(&graphics_decoded, &rfx_decode_quant) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&graphics_decoded);
+    rdp_buffer_init(&graphics_decoded);
     PCHECK(rdp_rfx_add_component_quant(&rfx_quant,
                                        &rfx_progressive_quant.y,
                                        &rfx_added_quant) == LIBRDP_STATUS_OK);
