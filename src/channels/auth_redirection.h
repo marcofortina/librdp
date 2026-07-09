@@ -51,7 +51,21 @@ typedef struct rdp_auth_redirection_call
     size_t payload_len;
 } rdp_auth_redirection_call;
 
+typedef struct rdp_auth_redirection_response
+{
+    uint32_t call_id;
+    uint32_t status;
+    const uint8_t* payload;
+    size_t payload_len;
+} rdp_auth_redirection_response;
+
+typedef struct rdp_auth_redirection_negotiate_version
+{
+    uint32_t version;
+} rdp_auth_redirection_negotiate_version;
+
 int rdp_auth_redirection_call_id_valid(uint32_t call_id);
+int rdp_auth_redirection_negotiate_call_id_valid(uint32_t call_id);
 librdp_status rdp_auth_redirection_parse_outer_packet(
     const void* data,
     size_t length,
@@ -77,5 +91,31 @@ librdp_status rdp_auth_redirection_write_call(
     uint32_t call_id,
     const void* payload,
     size_t payload_len);
+librdp_status rdp_auth_redirection_parse_response(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_response* response);
+librdp_status rdp_auth_redirection_write_response(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    uint32_t status,
+    const void* payload,
+    size_t payload_len);
+librdp_status rdp_auth_redirection_parse_negotiate_version_call(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_negotiate_version* version);
+librdp_status rdp_auth_redirection_write_negotiate_version_call(
+    rdp_buffer* buffer,
+    uint32_t call_id);
+librdp_status rdp_auth_redirection_parse_negotiate_version_response(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_response* response,
+    rdp_auth_redirection_negotiate_version* version);
+librdp_status rdp_auth_redirection_write_negotiate_version_response(
+    rdp_buffer* buffer,
+    uint32_t call_id,
+    uint32_t status);
 
 #endif
