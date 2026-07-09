@@ -49,6 +49,7 @@ add_library(librdp
     src/graphics/avc.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
+    src/graphics/gdi_orders.c
     src/graphics/nscodec.c
     src/graphics/planar.c
     src/graphics/rfx_codec.c
@@ -156,6 +157,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_smartcard_redirection fuzz/smartcard_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_video_redirection fuzz/video_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_video_optimized fuzz/video_optimized_fuzzer.c)
+    add_librdp_fuzzer(fuzz_gdi_orders fuzz/gdi_orders_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)

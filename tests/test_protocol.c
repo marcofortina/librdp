@@ -25,6 +25,7 @@
 #include "common/stream.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/gdi_orders.h"
 #include "graphics/nscodec.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
@@ -6338,6 +6339,264 @@ static int test_video_optimized_channel(void)
     return 0;
 }
 
+static int test_gdi_orders(void)
+{
+    const uint8_t secondary_payload[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    const uint8_t primary_order[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_DSTBLT,
+        0x0cu,
+        0xaau,
+        0xbbu
+    };
+    const uint8_t primary_bounds[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x0fu,
+        0x03u,
+        0x34u,
+        0x12u,
+        0x78u,
+        0x56u,
+        0xdeu,
+        0xadu
+    };
+    const uint8_t bad_bounds[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x01u,
+        0x11u
+    };
+    const uint8_t altsec_order[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_SWITCH_SURFACE << 2u) | RDP_GDI_TS_SECONDARY),
+        0x34u,
+        0x12u
+    };
+    rdp_buffer secondary;
+    rdp_buffer slow;
+    rdp_buffer fast;
+    rdp_buffer mixed;
+    rdp_buffer payload;
+    rdp_buffer capability;
+    rdp_gdi_orders_update update;
+    rdp_gdi_order_list list;
+    rdp_gdi_primary_order_header primary;
+    rdp_gdi_secondary_order_header secondary_header;
+    rdp_gdi_altsec_order_header altsec;
+    rdp_gdi_bitmap_cache_error bitmap_error;
+    rdp_gdi_bitmap_cache_error parsed_error;
+    rdp_gdi_color_cache_capability color;
+    rdp_gdi_ninegrid_capability ninegrid;
+    rdp_gdi_gdiplus_capability gdiplus;
+    uint32_t flags = 0;
+    size_t i = 0;
+
+    rdp_buffer_init(&secondary);
+    rdp_buffer_init(&slow);
+    rdp_buffer_init(&fast);
+    rdp_buffer_init(&mixed);
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&capability);
+
+    PCHECK(rdp_buffer_append_u8(&secondary,
+                                RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&secondary, 3) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&secondary, 0x0400u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&secondary,
+                                RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&secondary, secondary_payload, sizeof(secondary_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(secondary_header.actual_length == secondary.length &&
+           secondary_header.payload_len == sizeof(secondary_payload) &&
+           secondary_header.order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED);
+
+    PCHECK(rdp_buffer_append_u16_le(&slow, RDP_GDI_UPDATE_TYPE_ORDERS) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&slow, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&slow, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&slow, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&slow, secondary.data, secondary.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_slow_orders_update_payload(slow.data,
+                                                    slow.length,
+                                                    &update) == LIBRDP_STATUS_OK);
+    PCHECK(update.update_type == RDP_GDI_UPDATE_TYPE_ORDERS &&
+           update.number_orders == 1 &&
+           update.order_data_len == secondary.length);
+    PCHECK(rdp_gdi_parse_order_list(update.order_data,
+                                    update.order_data_len,
+                                    update.number_orders,
+                                    RDP_GDI_ORDER_PATBLT,
+                                    &list) == LIBRDP_STATUS_OK);
+    PCHECK(list.count == 1 &&
+           list.orders[0].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
+           list.orders[0].length == secondary.length);
+
+    PCHECK(rdp_buffer_append_u16_le(&fast, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&fast, secondary.data, secondary.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast.data,
+                                                    fast.length,
+                                                    &update) == LIBRDP_STATUS_OK);
+    PCHECK(update.number_orders == 1 && update.order_data_len == secondary.length);
+
+    PCHECK(rdp_gdi_parse_primary_order(primary_order,
+                                       sizeof(primary_order),
+                                       RDP_GDI_ORDER_PATBLT,
+                                       &primary) == LIBRDP_STATUS_OK);
+    PCHECK(primary.order_type == RDP_GDI_ORDER_DSTBLT &&
+           primary.field_flags == 0x0cu &&
+           primary.payload_len == 2u &&
+           primary.payload[0] == 0xaau);
+    PCHECK(rdp_gdi_parse_primary_order(primary_bounds,
+                                       sizeof(primary_bounds),
+                                       RDP_GDI_ORDER_PATBLT,
+                                       &primary) == LIBRDP_STATUS_OK);
+    PCHECK(primary.order_type == RDP_GDI_ORDER_OPAQUERECT &&
+           primary.bounds_flags == 0x03u &&
+           primary.bounds_len == 5u &&
+           primary.payload_len == 2u);
+    PCHECK(rdp_gdi_parse_primary_order(bad_bounds,
+                                       sizeof(bad_bounds),
+                                       RDP_GDI_ORDER_PATBLT,
+                                       &primary) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_gdi_parse_altsec_order(altsec_order,
+                                      sizeof(altsec_order),
+                                      &altsec) == LIBRDP_STATUS_OK);
+    PCHECK(altsec.order_type == RDP_GDI_ALTSEC_SWITCH_SURFACE &&
+           altsec.payload_len == 2u);
+
+    PCHECK(rdp_buffer_append(&mixed, secondary.data, secondary.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&mixed, altsec_order, sizeof(altsec_order)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_order_list(mixed.data,
+                                    mixed.length,
+                                    2,
+                                    RDP_GDI_ORDER_PATBLT,
+                                    &list) == LIBRDP_STATUS_OK);
+    PCHECK(list.count == 2 &&
+           list.orders[0].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
+           list.orders[1].kind == RDP_GDI_ORDER_KIND_ALTSEC);
+    mixed.length = 0;
+    PCHECK(rdp_buffer_append(&mixed, primary_order, sizeof(primary_order)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&mixed, secondary.data, secondary.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_order_list(mixed.data,
+                                    mixed.length,
+                                    2,
+                                    RDP_GDI_ORDER_PATBLT,
+                                    &list) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_gdi_parse_order_list(NULL, 0, 0, RDP_GDI_ORDER_PATBLT, &list) == LIBRDP_STATUS_OK);
+
+    memset(&bitmap_error, 0, sizeof(bitmap_error));
+    bitmap_error.count = 2;
+    bitmap_error.infos[0].cache_id = 1;
+    bitmap_error.infos[0].flags = RDP_GDI_BITMAP_CACHE_ERROR_FLUSH_CACHE;
+    bitmap_error.infos[0].new_num_entries = 128;
+    bitmap_error.infos[1].cache_id = 2;
+    bitmap_error.infos[1].flags = RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID;
+    bitmap_error.infos[1].new_num_entries = 256;
+    PCHECK(rdp_gdi_write_bitmap_cache_error_payload(&payload, &bitmap_error) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_bitmap_cache_error_payload(payload.data,
+                                                    payload.length,
+                                                    &parsed_error) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_error.count == 2 &&
+           parsed_error.infos[1].cache_id == 2 &&
+           parsed_error.infos[1].new_num_entries == 256);
+    payload.data[5] = 0x80u;
+    PCHECK(rdp_gdi_parse_bitmap_cache_error_payload(payload.data,
+                                                    payload.length,
+                                                    &parsed_error) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_cache_error_flags(&payload,
+                                           RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_error_flags(payload.data,
+                                           payload.length,
+                                           RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE,
+                                           &flags) == LIBRDP_STATUS_OK);
+    PCHECK(flags == RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE);
+    PCHECK(rdp_gdi_parse_cache_error_flags(payload.data,
+                                           payload.length,
+                                           RDP_GDI_GDIPLUS_CACHE_ERROR_FLUSH_AND_DISABLE + 1u,
+                                           &flags) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_CAPSTYPE_COLOR_CACHE) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_COLOR_CACHE_CAPABILITY_LENGTH) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 6) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_color_cache_capability(capability.data,
+                                                capability.length,
+                                                &color) == LIBRDP_STATUS_OK);
+    PCHECK(color.color_table_cache_size == 6);
+    rdp_buffer_free(&capability);
+    rdp_buffer_init(&capability);
+
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_CAPSTYPE_DRAW_NINEGRID_CACHE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_DRAW_NINEGRID_CAPABILITY_LENGTH) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&capability, RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 2560) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 256) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_ninegrid_capability(capability.data,
+                                             capability.length,
+                                             &ninegrid) == LIBRDP_STATUS_OK);
+    PCHECK(ninegrid.support_level == RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 &&
+           ninegrid.cache_size == 2560 &&
+           ninegrid.cache_entries == 256);
+    capability.data[8] = 1;
+    capability.data[9] = 10;
+    PCHECK(rdp_gdi_parse_ninegrid_capability(capability.data,
+                                             capability.length,
+                                             &ninegrid) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&capability);
+    rdp_buffer_init(&capability);
+
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_CAPSTYPE_DRAW_GDIPLUS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, RDP_GDI_DRAW_GDIPLUS_CAPABILITY_LENGTH) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&capability, RDP_GDI_GDIPLUS_SUPPORT_SUPPORTED) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&capability, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&capability, RDP_GDI_GDIPLUS_CACHE_LEVEL_ONE) ==
+           LIBRDP_STATUS_OK);
+    for (i = 0; i < 5u; i++)
+    {
+        static const uint16_t entries[5] = {10u, 5u, 5u, 10u, 2u};
+
+        PCHECK(rdp_buffer_append_u16_le(&capability, entries[i]) == LIBRDP_STATUS_OK);
+    }
+    PCHECK(rdp_buffer_append_u16_le(&capability, 512) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 2048) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 1024) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 64) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 4096) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 256) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&capability, 128) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_gdiplus_capability(capability.data,
+                                            capability.length,
+                                            &gdiplus) == LIBRDP_STATUS_OK);
+    PCHECK(gdiplus.support_level == RDP_GDI_GDIPLUS_SUPPORT_SUPPORTED &&
+           gdiplus.cache_entries[0] == 10 &&
+           gdiplus.cache_chunk_size[1] == 2048 &&
+           gdiplus.image_cache_properties[2] == 128);
+    capability.data[16] = 11;
+    capability.data[17] = 0;
+    PCHECK(rdp_gdi_parse_gdiplus_capability(capability.data,
+                                            capability.length,
+                                            &gdiplus) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    rdp_buffer_free(&capability);
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&mixed);
+    rdp_buffer_free(&fast);
+    rdp_buffer_free(&slow);
+    rdp_buffer_free(&secondary);
+    return 0;
+}
+
 static int test_usb_redirection_channel(void)
 {
     const uint8_t text[] = {'D', 0, 0, 0};
@@ -6841,6 +7100,8 @@ int test_protocol(void)
     if (test_video_redirection_channel() != 0)
         return 1;
     if (test_video_optimized_channel() != 0)
+        return 1;
+    if (test_gdi_orders() != 0)
         return 1;
     if (test_usb_redirection_channel() != 0)
         return 1;
