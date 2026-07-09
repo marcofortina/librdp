@@ -23,6 +23,7 @@ add_library(librdp
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c
+    src/channels/auth_redirection.c
     src/channels/core_input.c
     src/channels/device_redirection.c
     src/channels/display_control.c
@@ -34,6 +35,7 @@ add_library(librdp
     src/channels/multiparty.c
     src/channels/printer_redirection.c
     src/channels/pnp_redirection.c
+    src/channels/smartcard_redirection.c
     src/channels/telemetry.c
     src/channels/usb_redirection.c
     src/channels/virtual_channel.c
@@ -148,6 +150,8 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_udp_transport fuzz/udp_transport_fuzzer.c)
     add_librdp_fuzzer(fuzz_multitransport fuzz/multitransport_fuzzer.c)
     add_librdp_fuzzer(fuzz_xps_print fuzz/xps_print_fuzzer.c)
+    add_librdp_fuzzer(fuzz_auth_redirection fuzz/auth_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_smartcard_redirection fuzz/smartcard_redirection_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
