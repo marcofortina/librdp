@@ -212,6 +212,13 @@ typedef struct rdp_graphics_end_frame
     uint32_t frame_id;
 } rdp_graphics_end_frame;
 
+typedef struct rdp_graphics_frame_ack
+{
+    uint32_t queue_depth;
+    uint32_t frame_id;
+    uint32_t total_frames_decoded;
+} rdp_graphics_frame_ack;
+
 typedef struct rdp_graphics_decompressor
 {
     uint8_t* history;
@@ -387,17 +394,35 @@ librdp_status rdp_graphics_parse_caps_confirm(const void* data,
 librdp_status rdp_graphics_parse_create_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_create_surface* create_surface);
+librdp_status rdp_graphics_write_create_surface(rdp_buffer* buffer,
+                                                uint16_t surface_id,
+                                                uint16_t width,
+                                                uint16_t height,
+                                                uint8_t pixel_format);
 librdp_status rdp_graphics_parse_delete_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_delete_surface* delete_surface);
+librdp_status rdp_graphics_write_delete_surface(rdp_buffer* buffer, uint16_t surface_id);
 librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_graphics_reset* reset);
+librdp_status rdp_graphics_write_reset(rdp_buffer* buffer, uint32_t width, uint32_t height);
 librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
                                                        size_t length,
                                                        rdp_graphics_map_surface_to_output* map);
+librdp_status rdp_graphics_write_map_surface_to_output(rdp_buffer* buffer,
+                                                       uint16_t surface_id,
+                                                       uint32_t output_origin_x,
+                                                       uint32_t output_origin_y);
 librdp_status rdp_graphics_parse_map_surface_to_scaled_output(
     const void* data,
     size_t length,
     rdp_graphics_map_surface_to_scaled_output* map);
+librdp_status rdp_graphics_write_map_surface_to_scaled_output(
+    rdp_buffer* buffer,
+    uint16_t surface_id,
+    uint32_t output_origin_x,
+    uint32_t output_origin_y,
+    uint32_t target_width,
+    uint32_t target_height);
 librdp_status rdp_graphics_parse_point16(const void* data, size_t length, rdp_graphics_point16* point);
 librdp_status rdp_graphics_parse_rect16(const void* data, size_t length, rdp_graphics_rect16* rect);
 librdp_status rdp_graphics_parse_solid_fill(const void* data,
@@ -427,9 +452,14 @@ librdp_status rdp_graphics_parse_delete_encoding_context(const void* data,
 librdp_status rdp_graphics_parse_start_frame(const void* data,
                                              size_t length,
                                              rdp_graphics_start_frame* start_frame);
+librdp_status rdp_graphics_write_start_frame(rdp_buffer* buffer, uint32_t timestamp, uint32_t frame_id);
 librdp_status rdp_graphics_parse_end_frame(const void* data,
                                            size_t length,
                                            rdp_graphics_end_frame* end_frame);
+librdp_status rdp_graphics_write_end_frame(rdp_buffer* buffer, uint32_t frame_id);
+librdp_status rdp_graphics_parse_frame_ack(const void* data,
+                                           size_t length,
+                                           rdp_graphics_frame_ack* ack);
 librdp_status rdp_graphics_write_frame_ack(rdp_buffer* buffer,
                                            uint32_t queue_depth,
                                            uint32_t frame_id,

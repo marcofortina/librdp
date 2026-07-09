@@ -25,6 +25,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_graphics_delete_encoding_context delete_context;
     rdp_graphics_start_frame start_frame;
     rdp_graphics_end_frame end_frame;
+    rdp_graphics_frame_ack frame_ack;
     rdp_graphics_decompressor decompressor;
     rdp_graphics_progressive_block progressive_block;
     rdp_graphics_progressive_context progressive_context;
@@ -62,6 +63,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_parse_delete_encoding_context(data, size, &delete_context);
     (void)rdp_graphics_parse_start_frame(data, size, &start_frame);
     (void)rdp_graphics_parse_end_frame(data, size, &end_frame);
+    (void)rdp_graphics_parse_frame_ack(data, size, &frame_ack);
     (void)rdp_graphics_progressive_parse_block(data, size, &progressive_block);
     (void)rdp_graphics_progressive_parse_context(data, size, &progressive_context);
     (void)rdp_graphics_progressive_parse_frame_begin(data, size, &progressive_frame_begin);
@@ -78,6 +80,20 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_graphics_decode_segmented_data(&decompressor, data, size, &output);
     output.length = 0;
     (void)rdp_graphics_write_default_caps_advertise(&output);
+    output.length = 0;
+    (void)rdp_graphics_write_create_surface(&output, 1, 64, 64, RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888);
+    output.length = 0;
+    (void)rdp_graphics_write_delete_surface(&output, 1);
+    output.length = 0;
+    (void)rdp_graphics_write_reset(&output, 64, 64);
+    output.length = 0;
+    (void)rdp_graphics_write_map_surface_to_output(&output, 1, 0, 0);
+    output.length = 0;
+    (void)rdp_graphics_write_map_surface_to_scaled_output(&output, 1, 0, 0, 64, 64);
+    output.length = 0;
+    (void)rdp_graphics_write_start_frame(&output, 1, 1);
+    output.length = 0;
+    (void)rdp_graphics_write_end_frame(&output, 1);
     output.length = 0;
     (void)rdp_graphics_write_frame_ack(&output, RDP_GRAPHICS_QUEUE_DEPTH_UNAVAILABLE, 1, 1);
     rdp_buffer_free(&output);
