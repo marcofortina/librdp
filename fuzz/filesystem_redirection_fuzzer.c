@@ -16,10 +16,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_filesystem_redirection_lock_request lock_request;
     rdp_filesystem_redirection_create_response create_response;
     rdp_filesystem_redirection_length_response length_response;
+    rdp_device_redirection_io_completion completion_response;
     rdp_buffer buffer;
     const uint8_t path[] = {'f', 0, 0, 0};
     rdp_filesystem_redirection_lock_info locks[1];
     uint32_t bounded_data = size < 64u ? (uint32_t)size : 64u;
+
+    if (!data && size > 0)
+        return 0;
 
     (void)rdp_filesystem_redirection_parse_create_request(data, size, &create_request);
     (void)rdp_filesystem_redirection_parse_close_request(data, size, &close_request);
@@ -34,7 +38,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_filesystem_redirection_parse_notify_change_request(data, size, &notify_request);
     (void)rdp_filesystem_redirection_parse_lock_request(data, size, &lock_request);
     (void)rdp_filesystem_redirection_parse_create_response(data, size, &create_response);
+    (void)rdp_filesystem_redirection_parse_close_response(data, size, &completion_response);
     (void)rdp_filesystem_redirection_parse_length_response(data, size, &length_response);
+    (void)rdp_filesystem_redirection_parse_lock_response(data, size, &completion_response);
 
     rdp_buffer_init(&buffer);
     (void)rdp_filesystem_redirection_write_create_request(&buffer, 1, 2, 3, 0, 0, 0, 0, 0, 0, path, sizeof(path));

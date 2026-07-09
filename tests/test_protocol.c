@@ -5281,6 +5281,7 @@ static int test_filesystem_redirection_channel(void)
     rdp_filesystem_redirection_lock_request lock_request;
     rdp_filesystem_redirection_create_response create_response;
     rdp_filesystem_redirection_length_response length_response;
+    rdp_device_redirection_io_completion completion_response;
     rdp_buffer request;
     rdp_buffer response;
 
@@ -5663,7 +5664,14 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_init(&response);
 
     PCHECK(rdp_filesystem_redirection_write_close_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
-    PCHECK(response.length == 20u);
+    PCHECK(rdp_filesystem_redirection_parse_close_response(response.data,
+                                                           response.length,
+                                                           &completion_response) == LIBRDP_STATUS_OK);
+    PCHECK(completion_response.device_id == 1u && completion_response.completion_id == 3u);
+    response.data[16] = 1;
+    PCHECK(rdp_filesystem_redirection_parse_close_response(response.data,
+                                                           response.length,
+                                                           &completion_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_read_response(&response, 1, 3, 0, data, (uint32_t)sizeof(data)) ==
@@ -5689,7 +5697,10 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_lock_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
-    PCHECK(response.length == 21u);
+    PCHECK(rdp_filesystem_redirection_parse_lock_response(response.data,
+                                                          response.length,
+                                                          &completion_response) == LIBRDP_STATUS_OK);
+    PCHECK(completion_response.io_status == 0 && completion_response.payload_len == 5u);
 
     rdp_buffer_free(&response);
     rdp_buffer_free(&request);

@@ -253,6 +253,10 @@ librdp_status rdp_filesystem_redirection_write_close_response(rdp_buffer* buffer
                                                               uint32_t device_id,
                                                               uint32_t completion_id,
                                                               uint32_t io_status);
+librdp_status rdp_filesystem_redirection_parse_close_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response);
 librdp_status rdp_filesystem_redirection_write_read_response(rdp_buffer* buffer,
                                                              uint32_t device_id,
                                                              uint32_t completion_id,
@@ -283,5 +287,9 @@ librdp_status rdp_filesystem_redirection_write_lock_response(rdp_buffer* buffer,
                                                              uint32_t device_id,
                                                              uint32_t completion_id,
                                                              uint32_t io_status);
+librdp_status rdp_filesystem_redirection_parse_lock_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response);
 
 #endif

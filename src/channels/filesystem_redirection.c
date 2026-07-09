@@ -128,6 +128,29 @@ static librdp_status rdp_filesystem_write_completion_header(rdp_buffer* buffer,
     return rdp_device_redirection_write_io_completion(buffer, device_id, completion_id, io_status, NULL, 0);
 }
 
+static librdp_status rdp_filesystem_parse_padding_response(const void* data,
+                                                           size_t length,
+                                                           size_t padding_len,
+                                                           rdp_device_redirection_io_completion* response)
+{
+    size_t i = 0;
+
+    if (!data || !response)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u + padding_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(response, 0, sizeof(*response));
+    if (rdp_device_redirection_parse_io_completion(data, length, response) != LIBRDP_STATUS_OK ||
+        response->payload_len != padding_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < padding_len; i++)
+    {
+        if (response->payload[i] != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_filesystem_write_request_header(rdp_buffer* buffer,
                                                          uint32_t device_id,
                                                          uint32_t file_id,
@@ -796,6 +819,14 @@ librdp_status rdp_filesystem_redirection_write_close_response(rdp_buffer* buffer
     return rdp_buffer_append_u32_le(buffer, 0);
 }
 
+librdp_status rdp_filesystem_redirection_parse_close_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response)
+{
+    return rdp_filesystem_parse_padding_response(data, length, 4u, response);
+}
+
 librdp_status rdp_filesystem_redirection_write_read_response(rdp_buffer* buffer,
                                                              uint32_t device_id,
                                                              uint32_t completion_id,
@@ -900,4 +931,12 @@ librdp_status rdp_filesystem_redirection_write_lock_response(rdp_buffer* buffer,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append(buffer, padding, sizeof(padding));
+}
+
+librdp_status rdp_filesystem_redirection_parse_lock_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response)
+{
+    return rdp_filesystem_parse_padding_response(data, length, 5u, response);
 }
