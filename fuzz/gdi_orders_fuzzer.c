@@ -18,6 +18,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer buffer;
     uint32_t flags = 0;
     const uint8_t payload[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    const uint8_t bounds[] = {0x03u, 0, 0, 1, 0};
 
     (void)rdp_gdi_parse_slow_orders_update_payload(data, size, &update);
     (void)rdp_gdi_parse_fast_orders_update_payload(data, size, &update);
@@ -35,11 +36,37 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_gdi_parse_gdiplus_capability(data, size, &gdiplus);
 
     rdp_buffer_init(&buffer);
+    (void)rdp_gdi_write_primary_order(&buffer,
+                                      RDP_GDI_ORDER_PATBLT,
+                                      RDP_GDI_ORDER_DSTBLT,
+                                      RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+                                      0x0cu,
+                                      NULL,
+                                      0,
+                                      payload,
+                                      2u);
+    buffer.length = 0;
+    (void)rdp_gdi_write_primary_order(&buffer,
+                                      RDP_GDI_ORDER_PATBLT,
+                                      RDP_GDI_ORDER_OPAQUERECT,
+                                      RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS |
+                                          RDP_GDI_TS_TYPE_CHANGE,
+                                      0x0fu,
+                                      bounds,
+                                      sizeof(bounds),
+                                      payload,
+                                      2u);
+    buffer.length = 0;
     (void)rdp_gdi_write_secondary_order(&buffer,
                                         0,
                                         RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED,
                                         payload,
                                         sizeof(payload));
+    buffer.length = 0;
+    (void)rdp_gdi_write_altsec_order(&buffer,
+                                     RDP_GDI_ALTSEC_SWITCH_SURFACE,
+                                     payload,
+                                     2u);
     buffer.length = 0;
     (void)rdp_gdi_write_slow_orders_update_payload(&buffer,
                                                    1,

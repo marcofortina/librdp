@@ -210,6 +210,15 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
                                           size_t length,
                                           uint8_t previous_order_type,
                                           rdp_gdi_primary_order_header* header);
+librdp_status rdp_gdi_write_primary_order(rdp_buffer* buffer,
+                                          uint8_t previous_order_type,
+                                          uint8_t order_type,
+                                          uint8_t control_flags,
+                                          uint32_t field_flags,
+                                          const void* bounds,
+                                          size_t bounds_len,
+                                          const void* payload,
+                                          size_t payload_len);
 librdp_status rdp_gdi_parse_secondary_order(const void* data,
                                             size_t length,
                                             rdp_gdi_secondary_order_header* header);
@@ -221,6 +230,10 @@ librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header);
+librdp_status rdp_gdi_write_altsec_order(rdp_buffer* buffer,
+                                         uint8_t order_type,
+                                         const void* payload,
+                                         size_t payload_len);
 librdp_status rdp_gdi_parse_bitmap_cache_error_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_bitmap_cache_error* error);
