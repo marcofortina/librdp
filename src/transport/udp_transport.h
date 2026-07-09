@@ -207,6 +207,9 @@ librdp_status rdp_udp2_write_ack_vector_packet(rdp_buffer* buffer,
                                                uint8_t send_ack_time_gap_ms,
                                                const uint8_t* coded_ack_vector,
                                                uint8_t coded_ack_vector_size);
+librdp_status rdp_udp2_write_ack_of_acks_packet(rdp_buffer* buffer,
+                                                uint8_t log_window_size,
+                                                uint16_t sequence_number);
 librdp_status rdp_udp2_parse_prefix(uint8_t value, rdp_udp2_prefix* prefix);
 librdp_status rdp_udp2_wrap_packet(rdp_buffer* output,
                                    const void* packet,

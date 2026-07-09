@@ -106,6 +106,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
                                            data,
                                            size < 16u ? (uint8_t)size : 16u);
     buffer.length = 0;
+    (void)rdp_udp2_write_ack_of_acks_packet(&buffer, 4, 3);
+    buffer.length = 0;
     (void)rdp_udp2_wrap_packet(&buffer, data, size < 64u ? size : 64u, RDP_UDP2_PACKET_TYPE_DATA);
     if (buffer.length > 0)
     {

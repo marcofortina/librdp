@@ -723,6 +723,22 @@ librdp_status rdp_udp2_write_ack_vector_packet(rdp_buffer* buffer,
     return rdp_udp2_write_packet(buffer, &packet);
 }
 
+librdp_status rdp_udp2_write_ack_of_acks_packet(rdp_buffer* buffer,
+                                                uint8_t log_window_size,
+                                                uint16_t sequence_number)
+{
+    rdp_udp2_packet packet;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&packet, 0, sizeof(packet));
+    packet.header.flags = RDP_UDP2_FLAG_AOA;
+    packet.header.log_window_size = log_window_size;
+    packet.has_ack_of_acks = 1;
+    packet.ack_of_acks_sequence_number = sequence_number;
+    return rdp_udp2_write_packet(buffer, &packet);
+}
+
 librdp_status rdp_udp2_parse_prefix(uint8_t value, rdp_udp2_prefix* prefix)
 {
     if (!prefix)

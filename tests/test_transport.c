@@ -296,6 +296,14 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    TCHECK(rdp_udp2_write_ack_of_acks_packet(&buffer, 4, 0x3030u) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &udp2_packet) == LIBRDP_STATUS_OK);
+    TCHECK(udp2_packet.has_ack_of_acks && udp2_packet.ack_of_acks_sequence_number == 0x3030u);
+    TCHECK(!udp2_packet.has_ack && !udp2_packet.has_data && !udp2_packet.has_ack_vector);
+    TCHECK(rdp_udp2_write_ack_of_acks_packet(NULL, 4, 0x3030u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     TCHECK(rdp_udp2_unwrap_packet(&unwrapped,
                                   wire_example,
                                   sizeof(wire_example),
