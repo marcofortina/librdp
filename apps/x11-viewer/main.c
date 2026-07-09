@@ -1332,6 +1332,34 @@ static int add_drive_arg(librdp_settings* settings, const char* text)
     return librdp_settings_add_drive(settings, name, separator + 1) == LIBRDP_STATUS_OK;
 }
 
+static int add_printer_arg(librdp_settings* settings, const char* text)
+{
+    const char* first = NULL;
+    const char* second = NULL;
+    char name[128];
+    char driver[128];
+    size_t name_len = 0;
+    size_t driver_len = 0;
+
+    if (!settings || !text)
+        return 0;
+    first = strchr(text, '=');
+    if (!first || first == text || first[1] == '\0')
+        return 0;
+    second = strchr(first + 1, '=');
+    if (!second || second == first + 1 || second[1] == '\0')
+        return 0;
+    name_len = (size_t)(first - text);
+    driver_len = (size_t)(second - first - 1);
+    if (name_len >= sizeof(name) || driver_len >= sizeof(driver))
+        return 0;
+    memcpy(name, text, name_len);
+    name[name_len] = '\0';
+    memcpy(driver, first + 1, driver_len);
+    driver[driver_len] = '\0';
+    return librdp_settings_add_printer(settings, name, driver, second + 1) == LIBRDP_STATUS_OK;
+}
+
 static int require_value(int argc, int* index)
 {
     if (*index + 1 >= argc)
@@ -1746,6 +1774,11 @@ static int configure_settings(librdp_settings* settings, int argc, char** argv)
             if (!require_value(argc, &i) || !add_drive_arg(settings, argv[i]))
                 return 0;
         }
+        else if (strcmp(argv[i], "--printer") == 0)
+        {
+            if (!require_value(argc, &i) || !add_printer_arg(settings, argv[i]))
+                return 0;
+        }
         else
         {
             return 0;
@@ -1777,7 +1810,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--printer name=driver=path]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;

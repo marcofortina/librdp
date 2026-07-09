@@ -11,6 +11,13 @@ typedef struct rdp_settings_drive
     char* path;
 } rdp_settings_drive;
 
+typedef struct rdp_settings_printer
+{
+    char* name;
+    char* driver;
+    char* output_path;
+} rdp_settings_printer;
+
 struct librdp_settings
 {
     char* target;
@@ -23,6 +30,8 @@ struct librdp_settings
     librdp_security_mode security_mode;
     uint32_t drive_count;
     rdp_settings_drive drives[LIBRDP_SETTINGS_MAX_DRIVES];
+    uint32_t printer_count;
+    rdp_settings_printer printers[LIBRDP_SETTINGS_MAX_PRINTERS];
 };
 
 static char* rdp_strdup(const char* value)
@@ -81,6 +90,16 @@ static int rdp_settings_valid_drive_name(const char* name)
     return 1;
 }
 
+static int rdp_settings_valid_printer_text(const char* value)
+{
+    size_t length = 0;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    length = strlen(value);
+    return length <= 127u;
+}
+
 librdp_settings* librdp_settings_new(void)
 {
     librdp_settings* settings = (librdp_settings*)calloc(1, sizeof(*settings));
@@ -128,6 +147,17 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
             return NULL;
         }
     }
+    for (uint32_t i = 0; i < settings->printer_count; i++)
+    {
+        if (librdp_settings_add_printer(copy,
+                                        settings->printers[i].name,
+                                        settings->printers[i].driver,
+                                        settings->printers[i].output_path) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
 
     return copy;
 }
@@ -143,6 +173,12 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->domain);
     for (uint32_t i = 0; i < settings->drive_count; i++)
         free(settings->drives[i].path);
+    for (uint32_t i = 0; i < settings->printer_count; i++)
+    {
+        free(settings->printers[i].name);
+        free(settings->printers[i].driver);
+        free(settings->printers[i].output_path);
+    }
     free(settings);
 }
 
@@ -218,6 +254,38 @@ librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* n
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_settings_add_printer(librdp_settings* settings,
+                                          const char* name,
+                                          const char* driver,
+                                          const char* output_path)
+{
+    rdp_settings_printer* printer = NULL;
+    char* name_copy = NULL;
+    char* driver_copy = NULL;
+    char* output_copy = NULL;
+
+    if (!settings || !rdp_settings_valid_printer_text(name) ||
+        !rdp_settings_valid_printer_text(driver) || !output_path || output_path[0] == '\0' ||
+        settings->printer_count >= LIBRDP_SETTINGS_MAX_PRINTERS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    name_copy = rdp_strdup(name);
+    driver_copy = rdp_strdup(driver);
+    output_copy = rdp_strdup(output_path);
+    if (!name_copy || !driver_copy || !output_copy)
+    {
+        free(name_copy);
+        free(driver_copy);
+        free(output_copy);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    printer = &settings->printers[settings->printer_count];
+    printer->name = name_copy;
+    printer->driver = driver_copy;
+    printer->output_path = output_copy;
+    settings->printer_count++;
+    return LIBRDP_STATUS_OK;
+}
+
 uint32_t librdp_settings_drive_count(const librdp_settings* settings)
 {
     return settings ? settings->drive_count : 0;
@@ -235,6 +303,32 @@ const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t
     if (!settings || index >= settings->drive_count)
         return NULL;
     return settings->drives[index].path;
+}
+
+uint32_t librdp_settings_printer_count(const librdp_settings* settings)
+{
+    return settings ? settings->printer_count : 0;
+}
+
+const char* librdp_settings_printer_name(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->printer_count)
+        return NULL;
+    return settings->printers[index].name;
+}
+
+const char* librdp_settings_printer_driver(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->printer_count)
+        return NULL;
+    return settings->printers[index].driver;
+}
+
+const char* librdp_settings_printer_output_path(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->printer_count)
+        return NULL;
+    return settings->printers[index].output_path;
 }
 
 const char* librdp_settings_target(const librdp_settings* settings)
@@ -282,4 +376,11 @@ uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, 
     if (!settings || index >= settings->drive_count)
         return 0;
     return 0x00010000u + index;
+}
+
+uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->printer_count)
+        return 0;
+    return 0x00020000u + index;
 }

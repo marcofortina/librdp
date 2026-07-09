@@ -950,12 +950,24 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_drive_path(settings, 0), "/tmp") == 0);
     CHECK(librdp_settings_drive_name(settings, 1) == NULL);
     CHECK(librdp_settings_drive_path(settings, 1) == NULL);
+    CHECK(librdp_settings_printer_count(settings) == 0);
+    CHECK(librdp_settings_add_printer(settings, "Print", "Generic", "/tmp") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_printer_count(settings) == 1);
+    CHECK(strcmp(librdp_settings_printer_name(settings, 0), "Print") == 0);
+    CHECK(strcmp(librdp_settings_printer_driver(settings, 0), "Generic") == 0);
+    CHECK(strcmp(librdp_settings_printer_output_path(settings, 0), "/tmp") == 0);
+    CHECK(librdp_settings_printer_name(settings, 1) == NULL);
+    CHECK(librdp_settings_printer_driver(settings, 1) == NULL);
+    CHECK(librdp_settings_printer_output_path(settings, 1) == NULL);
     CHECK(librdp_settings_set_port(settings, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_desktop_size(settings, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_security_mode(settings, (librdp_security_mode)99) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_drive(settings, "", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_drive(settings, "BAD/NAME", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_drive(settings, "D:", "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_printer(settings, "", "Generic", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_printer(settings, "Print", "", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_printer(settings, "Print", "Generic", "") == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     copy = librdp_settings_clone(settings);
     CHECK(copy != NULL);
@@ -966,6 +978,10 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_drive_count(copy) == 1);
     CHECK(strcmp(librdp_settings_drive_name(copy, 0), "C:") == 0);
     CHECK(strcmp(librdp_settings_drive_path(copy, 0), "/tmp") == 0);
+    CHECK(librdp_settings_printer_count(copy) == 1);
+    CHECK(strcmp(librdp_settings_printer_name(copy, 0), "Print") == 0);
+    CHECK(strcmp(librdp_settings_printer_driver(copy, 0), "Generic") == 0);
+    CHECK(strcmp(librdp_settings_printer_output_path(copy, 0), "/tmp") == 0);
 
     surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
     CHECK(surface != NULL);

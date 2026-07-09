@@ -5050,6 +5050,19 @@ static int test_printer_redirection_channel(void)
     PCHECK(rdp_printer_redirection_parse_xps_mode(packet.data, packet.length, &mode) ==
            LIBRDP_STATUS_OK);
     PCHECK(mode.printer_id == 0x10203040u && mode.flags == 1u);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+
+    PCHECK(rdp_printer_redirection_write_create_response(&packet, 1, 2, 0, 3) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == 20u);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_printer_redirection_write_close_response(&packet, 1, 2, 0) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == 20u);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_printer_redirection_write_write_response(&packet, 1, 2, 0, 4) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == 21u);
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&buffer);

@@ -72,5 +72,23 @@ librdp_status rdp_printer_redirection_parse_xps_mode(
     const void* data,
     size_t length,
     rdp_printer_redirection_xps_mode* mode);
+librdp_status rdp_printer_redirection_write_create_response(rdp_buffer* buffer,
+                                                            uint32_t device_id,
+                                                            uint32_t completion_id,
+                                                            uint32_t io_status,
+                                                            uint32_t file_id);
+librdp_status rdp_printer_redirection_write_close_response(rdp_buffer* buffer,
+                                                           uint32_t device_id,
+                                                           uint32_t completion_id,
+                                                           uint32_t io_status);
+librdp_status rdp_printer_redirection_write_write_response(rdp_buffer* buffer,
+                                                           uint32_t device_id,
+                                                           uint32_t completion_id,
+                                                           uint32_t io_status,
+                                                           uint32_t written);
+librdp_status rdp_printer_redirection_write_device_control_response(rdp_buffer* buffer,
+                                                                    uint32_t device_id,
+                                                                    uint32_t completion_id,
+                                                                    uint32_t io_status);
 
 #endif
