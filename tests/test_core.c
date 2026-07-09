@@ -47,6 +47,9 @@ typedef struct event_counter
     int audio_output_close;
     int audio_input_formats;
     int audio_input_open;
+    int video_capture_open;
+    int video_capture_sample_request;
+    int video_capture_close;
     int disconnected;
 } event_counter;
 
@@ -110,6 +113,15 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
             counter->audio_input_open++;
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+            counter->video_capture_open++;
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+            counter->video_capture_sample_request++;
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            counter->video_capture_close++;
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
@@ -1138,6 +1150,19 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_audio_input_send_data(session, "x", 1) == LIBRDP_STATUS_STATE);
     CHECK(librdp_session_audio_input_send_format_change(NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_audio_input_send_format_change(session, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_video_capture_send_sample(NULL, 0, "x", 1) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_video_capture_send_sample(session, 0, NULL, 1) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_video_capture_send_sample(session, 0, "x", 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_video_capture_send_error(NULL,
+                                                  0,
+                                                  LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_video_capture_send_error(session,
+                                                  0,
+                                                  LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED) ==
+          LIBRDP_STATUS_STATE);
     memset(&touch_contact, 0, sizeof(touch_contact));
     touch_contact.contact_id = 1;
     touch_contact.x = 100;

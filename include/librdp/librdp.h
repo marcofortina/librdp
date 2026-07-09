@@ -10,5 +10,6 @@
 #include <librdp/session.h>
 #include <librdp/settings.h>
 #include <librdp/surface.h>
+#include <librdp/video.h>
 
 #endif

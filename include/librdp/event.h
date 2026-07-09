@@ -9,6 +9,7 @@
 #include <librdp/clipboard.h>
 #include <librdp/error.h>
 #include <librdp/input.h>
+#include <librdp/video.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,7 +35,10 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_AUDIO_OUTPUT_DATA = 15,
     LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE = 16,
     LIBRDP_EVENT_AUDIO_INPUT_FORMATS = 17,
-    LIBRDP_EVENT_AUDIO_INPUT_OPEN = 18
+    LIBRDP_EVENT_AUDIO_INPUT_OPEN = 18,
+    LIBRDP_EVENT_VIDEO_CAPTURE_OPEN = 19,
+    LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST = 20,
+    LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE = 21
 } librdp_event_type;
 
 typedef enum librdp_pointer_update_type
@@ -143,6 +147,23 @@ typedef struct librdp_audio_input_open_event
     librdp_audio_format format;
 } librdp_audio_input_open_event;
 
+typedef struct librdp_video_capture_open_event
+{
+    uint8_t stream_index;
+    librdp_video_capture_media media;
+} librdp_video_capture_open_event;
+
+typedef struct librdp_video_capture_sample_request_event
+{
+    uint8_t stream_index;
+    librdp_video_capture_media media;
+} librdp_video_capture_sample_request_event;
+
+typedef struct librdp_video_capture_close_event
+{
+    uint8_t stream_index;
+} librdp_video_capture_close_event;
+
 typedef struct librdp_event
 {
     librdp_event_type type;
@@ -171,6 +192,9 @@ typedef struct librdp_event
         librdp_audio_output_data_event audio_output_data;
         librdp_audio_input_formats_event audio_input_formats;
         librdp_audio_input_open_event audio_input_open;
+        librdp_video_capture_open_event video_capture_open;
+        librdp_video_capture_sample_request_event video_capture_sample_request;
+        librdp_video_capture_close_event video_capture_close;
     } data;
 } librdp_event;
 

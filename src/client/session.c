@@ -1,4 +1,5 @@
 #include <librdp/session.h>
+#include <librdp/video.h>
 
 #include "channels/audio_format.h"
 #include "channels/audio_input.h"
@@ -392,6 +393,8 @@ struct librdp_session
     uint8_t video_capture_active;
     uint8_t video_capture_streaming;
     uint8_t video_capture_selected_stream;
+    uint8_t video_capture_sample_reply_pending;
+    rdp_video_capture_media_type video_capture_media;
     uint32_t usb_redirection_channel_id;
     uint8_t usb_redirection_channel_id_bytes;
     uint8_t usb_redirection_ready;
@@ -505,6 +508,8 @@ static void rdp_session_video_capture_reset(librdp_session* session)
     session->video_capture_active = 0;
     session->video_capture_streaming = 0;
     session->video_capture_selected_stream = 0;
+    session->video_capture_sample_reply_pending = 0;
+    memset(&session->video_capture_media, 0, sizeof(session->video_capture_media));
 }
 
 static rdp_session_video_stream* rdp_session_video_stream_find(librdp_session* session,
@@ -12514,6 +12519,16 @@ static const char* rdp_session_video_capture_source_kind(const char* source)
     return "device";
 }
 
+static int rdp_session_video_capture_source_is_file(const char* source)
+{
+    struct stat st;
+
+    if (!source || source[0] == '\0')
+        return 0;
+    memset(&st, 0, sizeof(st));
+    return stat(source, &st) == 0 && S_ISREG(st.st_mode);
+}
+
 static void rdp_session_video_capture_media_from_source(const char* source,
                                                         rdp_video_capture_media_type* media)
 {
@@ -12557,6 +12572,69 @@ static void rdp_session_video_capture_media_from_source(const char* source,
     {
         media->format = RDP_VIDEO_CAPTURE_MEDIA_RGB32;
     }
+}
+
+static void rdp_session_video_capture_update_media(librdp_session* session, const char* source)
+{
+    if (!session)
+        return;
+    rdp_session_video_capture_media_from_source(source, &session->video_capture_media);
+}
+
+static void rdp_session_video_capture_media_to_public(const rdp_video_capture_media_type* in,
+                                                      librdp_video_capture_media* out)
+{
+    if (!in || !out)
+        return;
+    memset(out, 0, sizeof(*out));
+    out->format = in->format;
+    out->width = in->width;
+    out->height = in->height;
+    out->frame_rate_numerator = in->frame_rate_numerator;
+    out->frame_rate_denominator = in->frame_rate_denominator;
+    out->pixel_aspect_ratio_numerator = in->pixel_aspect_ratio_numerator;
+    out->pixel_aspect_ratio_denominator = in->pixel_aspect_ratio_denominator;
+    out->flags = in->flags;
+}
+
+static void rdp_session_emit_video_capture_open(librdp_session* session, uint8_t stream_index)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_VIDEO_CAPTURE_OPEN;
+    event.data.video_capture_open.stream_index = stream_index;
+    rdp_session_video_capture_media_to_public(&session->video_capture_media,
+                                              &event.data.video_capture_open.media);
+    rdp_session_emit(session, &event);
+}
+
+static void rdp_session_emit_video_capture_sample_request(librdp_session* session, uint8_t stream_index)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST;
+    event.data.video_capture_sample_request.stream_index = stream_index;
+    rdp_session_video_capture_media_to_public(&session->video_capture_media,
+                                              &event.data.video_capture_sample_request.media);
+    rdp_session_emit(session, &event);
+}
+
+static void rdp_session_emit_video_capture_close(librdp_session* session, uint8_t stream_index)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE;
+    event.data.video_capture_close.stream_index = stream_index;
+    rdp_session_emit(session, &event);
 }
 
 static librdp_status rdp_session_video_capture_read_sample(const char* source,
@@ -12812,7 +12890,8 @@ static librdp_status rdp_session_send_video_capture_media_list(librdp_session* s
                                                     0,
                                                     RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND,
                                                     "client.rdpecam.media.error");
-    rdp_session_video_capture_media_from_source(source, &media);
+    rdp_session_video_capture_update_media(session, source);
+    media = session->video_capture_media;
     rdp_buffer_init(&response);
     status = rdp_video_capture_write_media_list(&response,
                                                 rdp_session_video_capture_version(session),
@@ -12856,12 +12935,49 @@ static librdp_status rdp_session_send_video_capture_sample_error(librdp_session*
                                                      "client.rdpecam.sample.error");
     rdp_buffer_free(&response);
     if (status == LIBRDP_STATUS_OK)
+    {
+        session->video_capture_sample_reply_pending = 0;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpecam.sample.error",
                         "dvc_channel_id=%u stream=%u error=%u",
                         session->video_capture_channel_id,
                         stream_index,
                         error_code);
+    }
+    return status;
+}
+
+static librdp_status rdp_session_send_video_capture_sample_payload(librdp_session* session,
+                                                                   uint8_t stream_index,
+                                                                   const void* data,
+                                                                   size_t data_len,
+                                                                   const char* event)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0) || !event ||
+        data_len > RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&response);
+    status = rdp_video_capture_write_sample(&response,
+                                            rdp_session_video_capture_version(session),
+                                            stream_index,
+                                            data,
+                                            data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_video_capture_data(session, &response, event);
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        session->video_capture_sample_reply_pending = 0;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        event,
+                        "dvc_channel_id=%u stream=%u data_len=%u",
+                        session->video_capture_channel_id,
+                        stream_index,
+                        (unsigned)data_len);
+    }
     return status;
 }
 
@@ -12869,7 +12985,6 @@ static librdp_status rdp_session_send_video_capture_sample(librdp_session* sessi
 {
     const char* source = rdp_session_video_capture_source(session);
     rdp_buffer sample;
-    rdp_buffer response;
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t error_code = RDP_VIDEO_CAPTURE_ERROR_UNEXPECTED;
 
@@ -12880,30 +12995,16 @@ static librdp_status rdp_session_send_video_capture_sample(librdp_session* sessi
                                                           stream_index,
                                                           RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND);
     rdp_buffer_init(&sample);
-    rdp_buffer_init(&response);
     status = rdp_session_video_capture_read_sample(source, &sample, &error_code);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_video_capture_write_sample(&response,
-                                                rdp_session_video_capture_version(session),
-                                                stream_index,
-                                                sample.data,
-                                                sample.length);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_send_video_capture_data(session,
-                                                     &response,
-                                                     "client.rdpecam.sample.response");
-    rdp_buffer_free(&response);
+        status = rdp_session_send_video_capture_sample_payload(session,
+                                                               stream_index,
+                                                               sample.data,
+                                                               sample.length,
+                                                               "client.rdpecam.sample.response");
     rdp_buffer_free(&sample);
     if (status == LIBRDP_STATUS_OK)
-    {
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.rdpecam.sample.response",
-                        "dvc_channel_id=%u stream=%u source_kind=%s",
-                        session->video_capture_channel_id,
-                        stream_index,
-                        rdp_session_video_capture_source_kind(source));
         return LIBRDP_STATUS_OK;
-    }
     return rdp_session_send_video_capture_sample_error(session, stream_index, error_code);
 }
 
@@ -13095,6 +13196,8 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
                                                    &request);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            if (session->video_capture_streaming)
+                rdp_session_emit_video_capture_close(session, session->video_capture_selected_stream);
             session->video_capture_active = 0;
             session->video_capture_streaming = 0;
             return rdp_session_send_video_capture_success(session, "client.rdpecam.deactivate.success");
@@ -13152,12 +13255,18 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
                                                             0,
                                                             RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND,
                                                             "client.rdpecam.stream.error");
+            rdp_session_video_capture_update_media(session, source);
             session->video_capture_selected_stream = request.stream_index;
             session->video_capture_active = header.message_id == RDP_VIDEO_CAPTURE_MESSAGE_START_STREAMS_REQUEST ?
                                                 1u :
                                                 session->video_capture_active;
             session->video_capture_streaming =
                 header.message_id == RDP_VIDEO_CAPTURE_MESSAGE_START_STREAMS_REQUEST ? 1u : 0u;
+            if (header.message_id == RDP_VIDEO_CAPTURE_MESSAGE_START_STREAMS_REQUEST &&
+                !rdp_session_video_capture_source_is_file(source))
+                rdp_session_emit_video_capture_open(session, request.stream_index);
+            if (header.message_id == RDP_VIDEO_CAPTURE_MESSAGE_STOP_STREAMS_REQUEST)
+                rdp_session_emit_video_capture_close(session, request.stream_index);
             return rdp_session_send_video_capture_success(
                 session,
                 header.message_id == RDP_VIDEO_CAPTURE_MESSAGE_START_STREAMS_REQUEST ?
@@ -13184,6 +13293,20 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
                     session,
                     request.stream_index,
                     RDP_VIDEO_CAPTURE_ERROR_NOT_INITIALIZED);
+            if (!rdp_session_video_capture_source_is_file(source))
+            {
+                session->video_capture_sample_reply_pending = 1;
+                rdp_session_emit_video_capture_sample_request(session, request.stream_index);
+                if (session->video_capture_sample_reply_pending)
+                {
+                    session->video_capture_sample_reply_pending = 0;
+                    return rdp_session_send_video_capture_sample_error(
+                        session,
+                        request.stream_index,
+                        RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED);
+                }
+                return LIBRDP_STATUS_OK;
+            }
             return rdp_session_send_video_capture_sample(session, request.stream_index);
         }
         case RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_REQUEST:
@@ -16833,6 +16956,46 @@ librdp_status librdp_session_audio_input_send_format_change(librdp_session* sess
                         session->audio_input_channel_id,
                         new_format);
     return status;
+}
+
+librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
+                                                       uint8_t stream_index,
+                                                       const void* data,
+                                                       size_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0) || data_len > RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (session->video_capture_channel_id == 0 || session->video_capture_channel_id_bytes == 0 ||
+        !session->video_capture_active || !session->video_capture_streaming ||
+        !session->video_capture_sample_reply_pending ||
+        stream_index != session->video_capture_selected_stream)
+        return LIBRDP_STATUS_STATE;
+    status = rdp_session_send_video_capture_sample_payload(session,
+                                                           stream_index,
+                                                           data,
+                                                           data_len,
+                                                           "client.rdpecam.sample.response");
+    return status;
+}
+
+librdp_status librdp_session_video_capture_send_error(librdp_session* session,
+                                                      uint8_t stream_index,
+                                                      uint32_t error_code)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (session->video_capture_channel_id == 0 || session->video_capture_channel_id_bytes == 0 ||
+        !session->video_capture_active || !session->video_capture_streaming ||
+        !session->video_capture_sample_reply_pending ||
+        stream_index != session->video_capture_selected_stream)
+        return LIBRDP_STATUS_STATE;
+    return rdp_session_send_video_capture_sample_error(session, stream_index, error_code);
 }
 
 static void rdp_session_free_buffers(rdp_buffer* buffers, uint16_t count)
