@@ -2,6 +2,8 @@
 
 #include "common/trace.h"
 
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,6 +15,11 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+
+#if defined(__linux__) && defined(LIBRDP_HAVE_JPEG)
+#include <jpeglib.h>
+#include <setjmp.h>
 #endif
 
 #define X11_CAMERA_BUFFER_COUNT 4u
@@ -33,12 +40,28 @@ struct x11_camera_capture
     uint32_t width;
     uint32_t height;
     uint32_t fourcc;
+    uint8_t output_format;
 #else
     int unused;
 #endif
 };
 
 #ifdef __linux__
+#ifdef LIBRDP_HAVE_JPEG
+typedef struct x11_camera_jpeg_error
+{
+    struct jpeg_error_mgr base;
+    jmp_buf jump;
+} x11_camera_jpeg_error;
+
+static void x11_camera_jpeg_error_exit(j_common_ptr cinfo)
+{
+    x11_camera_jpeg_error* error = (x11_camera_jpeg_error*)cinfo->err;
+
+    longjmp(error->jump, 1);
+}
+#endif
+
 static uint32_t x11_camera_fourcc(uint8_t format)
 {
     switch (format)
@@ -164,16 +187,15 @@ static int x11_camera_prepare_buffers(x11_camera_capture* capture)
     return x11_camera_queue_all(capture);
 }
 
-static int x11_camera_apply_format(x11_camera_capture* capture, const librdp_video_capture_media* media)
+static int x11_camera_set_format(x11_camera_capture* capture,
+                                 const librdp_video_capture_media* media,
+                                 uint32_t fourcc)
 {
     struct v4l2_format format;
     struct v4l2_streamparm params;
-    uint32_t fourcc = 0;
 
-    if (!capture || capture->fd < 0 || !media)
-        return 0;
-    fourcc = x11_camera_fourcc(media->format);
-    if (fourcc == 0 || media->width == 0 || media->height == 0)
+    if (!capture || capture->fd < 0 || !media || fourcc == 0 || media->width == 0 ||
+        media->height == 0)
         return 0;
     memset(&format, 0, sizeof(format));
     format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -197,6 +219,135 @@ static int x11_camera_apply_format(x11_camera_capture* capture, const librdp_vid
     capture->fourcc = format.fmt.pix.pixelformat;
     return 1;
 }
+
+static int x11_camera_apply_format(x11_camera_capture* capture, const librdp_video_capture_media* media)
+{
+    uint32_t fourcc = 0;
+
+    if (!capture || capture->fd < 0 || !media)
+        return 0;
+    fourcc = x11_camera_fourcc(media->format);
+    capture->output_format = media->format;
+    if (x11_camera_set_format(capture, media, fourcc))
+        return 1;
+#ifdef LIBRDP_HAVE_JPEG
+    if (media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG &&
+        x11_camera_set_format(capture, media, V4L2_PIX_FMT_YUYV))
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.camera.format.fallback",
+                        "backend=v4l2 requested=%u capture_fourcc=%u output=%u",
+                        fourcc,
+                        capture->fourcc,
+                        media->format);
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+#ifdef LIBRDP_HAVE_JPEG
+static uint8_t x11_camera_clip_rgb(int value)
+{
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return (uint8_t)value;
+}
+
+static void x11_camera_yuyv_pair_to_rgb(const uint8_t* in, uint8_t* out0, uint8_t* out1)
+{
+    const int y0 = in[0];
+    const int cb = (int)in[1] - 128;
+    const int y1 = in[2];
+    const int cr = (int)in[3] - 128;
+    const int r_add = (91881 * cr) >> 16;
+    const int g_sub = ((22554 * cb) + (46802 * cr)) >> 16;
+    const int b_add = (116130 * cb) >> 16;
+
+    out0[0] = x11_camera_clip_rgb(y0 + r_add);
+    out0[1] = x11_camera_clip_rgb(y0 - g_sub);
+    out0[2] = x11_camera_clip_rgb(y0 + b_add);
+    out1[0] = x11_camera_clip_rgb(y1 + r_add);
+    out1[1] = x11_camera_clip_rgb(y1 - g_sub);
+    out1[2] = x11_camera_clip_rgb(y1 + b_add);
+}
+
+static int x11_camera_encode_yuyv_jpeg(const uint8_t* input,
+                                       size_t input_len,
+                                       uint32_t width,
+                                       uint32_t height,
+                                       uint8_t** data,
+                                       size_t* data_len)
+{
+    struct jpeg_compress_struct cinfo;
+    x11_camera_jpeg_error jerr;
+    uint8_t* row = NULL;
+    unsigned char* jpeg = NULL;
+    unsigned long jpeg_len = 0;
+    size_t required = 0;
+
+    if (!input || !data || !data_len || width == 0 || height == 0 ||
+        width > SIZE_MAX / height / 2u)
+        return 0;
+    required = (size_t)width * (size_t)height * 2u;
+    if (input_len < required || width > UINT_MAX || height > UINT_MAX)
+        return 0;
+    row = (uint8_t*)malloc((size_t)width * 3u);
+    if (!row)
+        return 0;
+    memset(&cinfo, 0, sizeof(cinfo));
+    memset(&jerr, 0, sizeof(jerr));
+    cinfo.err = jpeg_std_error(&jerr.base);
+    jerr.base.error_exit = x11_camera_jpeg_error_exit;
+    if (setjmp(jerr.jump))
+    {
+        jpeg_destroy_compress(&cinfo);
+        free(row);
+        free(jpeg);
+        return 0;
+    }
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, &jpeg, &jpeg_len);
+    cinfo.image_width = width;
+    cinfo.image_height = height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, 85, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+    while (cinfo.next_scanline < cinfo.image_height)
+    {
+        const uint8_t* source = input + ((size_t)cinfo.next_scanline * (size_t)width * 2u);
+        uint32_t x = 0;
+        JSAMPROW row_ptr = row;
+
+        for (x = 0; x < width; x += 2u)
+        {
+            uint8_t* out0 = row + ((size_t)x * 3u);
+            uint8_t* out1 = out0 + 3u;
+
+            if (x + 1u < width)
+                x11_camera_yuyv_pair_to_rgb(source + ((size_t)x * 2u), out0, out1);
+            else
+                x11_camera_yuyv_pair_to_rgb(source + ((size_t)x * 2u), out0, out0);
+        }
+        jpeg_write_scanlines(&cinfo, &row_ptr, 1);
+    }
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    free(row);
+    if (!jpeg || jpeg_len == 0 || jpeg_len > SIZE_MAX)
+    {
+        free(jpeg);
+        return 0;
+    }
+    *data = (uint8_t*)jpeg;
+    *data_len = (size_t)jpeg_len;
+    return 1;
+}
+#endif
 #endif
 
 x11_camera_capture* x11_camera_capture_new(void)
@@ -227,6 +378,7 @@ void x11_camera_capture_stop(x11_camera_capture* capture)
     capture->width = 0;
     capture->height = 0;
     capture->fourcc = 0;
+    capture->output_format = 0;
     rdp_trace_event(RDP_TRACE_CLIENT, "x11.camera.stop", "backend=v4l2");
 #else
     (void)capture;
@@ -285,10 +437,11 @@ int x11_camera_capture_start(x11_camera_capture* capture,
     capture->streaming = 1;
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.camera.start",
-                    "backend=v4l2 width=%u height=%u fourcc=%u buffers=%u",
+                    "backend=v4l2 width=%u height=%u fourcc=%u output_format=%u buffers=%u",
                     capture->width,
                     capture->height,
                     capture->fourcc,
+                    capture->output_format,
                     capture->buffer_count);
     return 1;
 #else
@@ -331,16 +484,35 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
         (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
         return -1;
     }
-    copy = (uint8_t*)malloc(buffer.bytesused ? buffer.bytesused : 1u);
-    if (!copy)
+#ifdef LIBRDP_HAVE_JPEG
+    if (capture->fourcc == V4L2_PIX_FMT_YUYV &&
+        capture->output_format == LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG)
     {
-        (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
-        return -1;
+        if (!x11_camera_encode_yuyv_jpeg((const uint8_t*)capture->buffers[buffer.index].data,
+                                         buffer.bytesused,
+                                         capture->width,
+                                         capture->height,
+                                         &copy,
+                                         data_len))
+        {
+            (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+            return -1;
+        }
     }
-    if (buffer.bytesused > 0)
-        memcpy(copy, capture->buffers[buffer.index].data, buffer.bytesused);
+    else
+#endif
+    {
+        copy = (uint8_t*)malloc(buffer.bytesused ? buffer.bytesused : 1u);
+        if (!copy)
+        {
+            (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+            return -1;
+        }
+        if (buffer.bytesused > 0)
+            memcpy(copy, capture->buffers[buffer.index].data, buffer.bytesused);
+        *data_len = buffer.bytesused;
+    }
     *data = copy;
-    *data_len = buffer.bytesused;
     if (x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer) < 0)
     {
         free(copy);
@@ -351,7 +523,9 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_TRACE,
                           "x11.camera.sample",
-                          "backend=v4l2 bytes=%u",
+                          "backend=v4l2 fourcc=%u output_format=%u bytes=%u",
+                          capture->fourcc,
+                          capture->output_format,
                           (unsigned)*data_len);
     return 1;
 #else

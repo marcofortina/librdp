@@ -205,6 +205,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
     pkg_check_modules(LIBRDP_VIEWER_LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
     pkg_check_modules(LIBRDP_VIEWER_PCSC QUIET IMPORTED_TARGET libpcsclite)
     pkg_check_modules(LIBRDP_VIEWER_FIDO2 QUIET IMPORTED_TARGET libfido2)
+    pkg_check_modules(LIBRDP_VIEWER_JPEG QUIET IMPORTED_TARGET libjpeg)
     add_executable(librdp-x11-viewer
         apps/x11-viewer/audio_pipewire.c
         apps/x11-viewer/camera_v4l2.c
@@ -240,5 +241,9 @@ if(LIBRDP_BUILD_X11_VIEWER)
     if(LIBRDP_VIEWER_FIDO2_FOUND)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_FIDO2=1)
         target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_VIEWER_FIDO2)
+    endif()
+    if(LIBRDP_VIEWER_JPEG_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_JPEG=1)
+        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_VIEWER_JPEG)
     endif()
 endif()
