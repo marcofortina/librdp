@@ -473,6 +473,24 @@ librdp_status rdp_pnp_redirection_parse_client_io_header(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_pnp_redirection_write_server_io_header(rdp_buffer* buffer,
+                                                        uint32_t request_id,
+                                                        uint8_t unused,
+                                                        uint32_t function_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_pnp_redirection_valid_io_function(function_id))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_pnp_redirection_append_u24_le(buffer, request_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, unused);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, function_id);
+}
+
 librdp_status rdp_pnp_redirection_write_client_io_header(rdp_buffer* buffer,
                                                         uint32_t request_id,
                                                         uint8_t packet_type)
@@ -508,6 +526,24 @@ librdp_status rdp_pnp_redirection_parse_capabilities_request(
         !rdp_pnp_redirection_valid_io_version(version->version))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_write_capabilities_request(rdp_buffer* buffer,
+                                                             uint32_t request_id,
+                                                             uint8_t unused,
+                                                             uint16_t version)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!rdp_pnp_redirection_valid_io_version(version))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_CAPABILITIES_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u16_le(buffer, version);
 }
 
 librdp_status rdp_pnp_redirection_write_capabilities_reply(rdp_buffer* buffer,
@@ -550,6 +586,38 @@ librdp_status rdp_pnp_redirection_parse_create_request(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_pnp_redirection_write_create_request(rdp_buffer* buffer,
+                                                       uint32_t request_id,
+                                                       uint8_t unused,
+                                                       uint32_t device_id,
+                                                       uint32_t desired_access,
+                                                       uint32_t share_mode,
+                                                       uint32_t creation_disposition,
+                                                       uint32_t flags_and_attributes)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_CREATE_FILE_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, device_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, desired_access);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, share_mode);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, creation_disposition);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, flags_and_attributes);
+}
+
 librdp_status rdp_pnp_redirection_write_status_reply(rdp_buffer* buffer,
                                                      uint32_t request_id,
                                                      uint32_t result)
@@ -584,6 +652,30 @@ librdp_status rdp_pnp_redirection_parse_read_request(
         rdp_stream_read_u32_le(&stream, &request->offset_low) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_write_read_request(rdp_buffer* buffer,
+                                                     uint32_t request_id,
+                                                     uint8_t unused,
+                                                     uint32_t bytes_to_read,
+                                                     uint32_t offset_high,
+                                                     uint32_t offset_low)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_READ_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, bytes_to_read);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, offset_high);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, offset_low);
 }
 
 librdp_status rdp_pnp_redirection_write_read_reply(rdp_buffer* buffer,
@@ -638,6 +730,39 @@ librdp_status rdp_pnp_redirection_parse_write_request(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_pnp_redirection_write_write_request(rdp_buffer* buffer,
+                                                      uint32_t request_id,
+                                                      uint8_t unused,
+                                                      uint32_t offset_high,
+                                                      uint32_t offset_low,
+                                                      const uint8_t* data,
+                                                      uint32_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_WRITE_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, offset_high);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, offset_low);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, data, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u8(buffer, 0);
+}
+
 librdp_status rdp_pnp_redirection_write_write_reply(rdp_buffer* buffer,
                                                     uint32_t request_id,
                                                     uint32_t result,
@@ -683,6 +808,45 @@ librdp_status rdp_pnp_redirection_parse_control_request(
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     request->actual_output_len = (uint32_t)output_remaining;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_write_control_request(rdp_buffer* buffer,
+                                                        uint32_t request_id,
+                                                        uint8_t unused,
+                                                        uint32_t io_code,
+                                                        const uint8_t* input,
+                                                        uint32_t input_len,
+                                                        uint32_t output_len,
+                                                        const uint8_t* output,
+                                                        uint32_t actual_output_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!input && input_len > 0) || (!output && actual_output_len > 0) ||
+        actual_output_len > output_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_CONTROL_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, io_code);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, input_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, output_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, input, input_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append(buffer, output, actual_output_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u8(buffer, 0);
 }
 
 librdp_status rdp_pnp_redirection_write_control_reply(rdp_buffer* buffer,
@@ -733,6 +897,28 @@ librdp_status rdp_pnp_redirection_parse_cancel_request(
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     request->id_to_cancel = rdp_pnp_redirection_read_u24_le(id);
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_write_cancel_request(rdp_buffer* buffer,
+                                                       uint32_t request_id,
+                                                       uint8_t unused,
+                                                       uint8_t cancel_unused,
+                                                       uint32_t id_to_cancel)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (id_to_cancel > RDP_PNP_REDIRECTION_REQUEST_ID_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_pnp_redirection_write_server_io_header(buffer,
+                                                        request_id,
+                                                        unused,
+                                                        RDP_PNP_REDIRECTION_IO_SPECIFIC_CANCEL_REQUEST);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, cancel_unused);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_pnp_redirection_append_u24_le(buffer, id_to_cancel);
 }
 
 librdp_status rdp_pnp_redirection_write_custom_event(rdp_buffer* buffer,

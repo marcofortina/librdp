@@ -61,15 +61,44 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     buffer.length = 0;
     (void)rdp_pnp_redirection_write_device_removal(&buffer, 1);
     buffer.length = 0;
+    (void)rdp_pnp_redirection_write_capabilities_request(&buffer,
+                                                         2,
+                                                         0,
+                                                         RDP_PNP_REDIRECTION_IO_VERSION_6);
+    buffer.length = 0;
     (void)rdp_pnp_redirection_write_capabilities_reply(&buffer, 2, RDP_PNP_REDIRECTION_IO_VERSION_6);
+    buffer.length = 0;
+    (void)rdp_pnp_redirection_write_create_request(&buffer, 3, 0, 1, 0xc0000000u, 3, 3, 0x40);
     buffer.length = 0;
     (void)rdp_pnp_redirection_write_status_reply(&buffer, 3, 0);
     buffer.length = 0;
+    (void)rdp_pnp_redirection_write_read_request(&buffer, 4, 0, 64, 0, 0);
+    buffer.length = 0;
     (void)rdp_pnp_redirection_write_read_reply(&buffer, 4, 0, data, size < 32u ? (uint32_t)size : 32u);
+    buffer.length = 0;
+    (void)rdp_pnp_redirection_write_write_request(&buffer,
+                                                  5,
+                                                  0,
+                                                  0,
+                                                  0,
+                                                  data,
+                                                  size < 32u ? (uint32_t)size : 32u);
     buffer.length = 0;
     (void)rdp_pnp_redirection_write_write_reply(&buffer, 5, 0, size < 32u ? (uint32_t)size : 32u);
     buffer.length = 0;
+    (void)rdp_pnp_redirection_write_control_request(&buffer,
+                                                    6,
+                                                    0,
+                                                    0x1020,
+                                                    data,
+                                                    size < 16u ? (uint32_t)size : 16u,
+                                                    16,
+                                                    data,
+                                                    size < 16u ? (uint32_t)size : 16u);
+    buffer.length = 0;
     (void)rdp_pnp_redirection_write_control_reply(&buffer, 6, 0, data, size < 32u ? (uint32_t)size : 32u);
+    buffer.length = 0;
+    (void)rdp_pnp_redirection_write_cancel_request(&buffer, 7, 0, 0, 5);
     buffer.length = 0;
     (void)rdp_pnp_redirection_write_custom_event(&buffer, guid, data, size < 32u ? (uint32_t)size : 32u);
     rdp_buffer_free(&buffer);

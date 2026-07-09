@@ -202,6 +202,10 @@ librdp_status rdp_pnp_redirection_parse_client_io_header(
     const void* data,
     size_t length,
     rdp_pnp_redirection_client_io_header* header);
+librdp_status rdp_pnp_redirection_write_server_io_header(rdp_buffer* buffer,
+                                                        uint32_t request_id,
+                                                        uint8_t unused,
+                                                        uint32_t function_id);
 librdp_status rdp_pnp_redirection_write_client_io_header(rdp_buffer* buffer,
                                                         uint32_t request_id,
                                                         uint8_t packet_type);
@@ -209,6 +213,10 @@ librdp_status rdp_pnp_redirection_parse_capabilities_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_io_version* version);
+librdp_status rdp_pnp_redirection_write_capabilities_request(rdp_buffer* buffer,
+                                                             uint32_t request_id,
+                                                             uint8_t unused,
+                                                             uint16_t version);
 librdp_status rdp_pnp_redirection_write_capabilities_reply(rdp_buffer* buffer,
                                                            uint32_t request_id,
                                                            uint16_t version);
@@ -216,6 +224,14 @@ librdp_status rdp_pnp_redirection_parse_create_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_create_request* request);
+librdp_status rdp_pnp_redirection_write_create_request(rdp_buffer* buffer,
+                                                       uint32_t request_id,
+                                                       uint8_t unused,
+                                                       uint32_t device_id,
+                                                       uint32_t desired_access,
+                                                       uint32_t share_mode,
+                                                       uint32_t creation_disposition,
+                                                       uint32_t flags_and_attributes);
 librdp_status rdp_pnp_redirection_write_status_reply(rdp_buffer* buffer,
                                                      uint32_t request_id,
                                                      uint32_t result);
@@ -223,6 +239,12 @@ librdp_status rdp_pnp_redirection_parse_read_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_read_request* request);
+librdp_status rdp_pnp_redirection_write_read_request(rdp_buffer* buffer,
+                                                     uint32_t request_id,
+                                                     uint8_t unused,
+                                                     uint32_t bytes_to_read,
+                                                     uint32_t offset_high,
+                                                     uint32_t offset_low);
 librdp_status rdp_pnp_redirection_write_read_reply(rdp_buffer* buffer,
                                                    uint32_t request_id,
                                                    uint32_t result,
@@ -232,6 +254,13 @@ librdp_status rdp_pnp_redirection_parse_write_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_write_request* request);
+librdp_status rdp_pnp_redirection_write_write_request(rdp_buffer* buffer,
+                                                      uint32_t request_id,
+                                                      uint8_t unused,
+                                                      uint32_t offset_high,
+                                                      uint32_t offset_low,
+                                                      const uint8_t* data,
+                                                      uint32_t data_len);
 librdp_status rdp_pnp_redirection_write_write_reply(rdp_buffer* buffer,
                                                     uint32_t request_id,
                                                     uint32_t result,
@@ -240,6 +269,15 @@ librdp_status rdp_pnp_redirection_parse_control_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_control_request* request);
+librdp_status rdp_pnp_redirection_write_control_request(rdp_buffer* buffer,
+                                                        uint32_t request_id,
+                                                        uint8_t unused,
+                                                        uint32_t io_code,
+                                                        const uint8_t* input,
+                                                        uint32_t input_len,
+                                                        uint32_t output_len,
+                                                        const uint8_t* output,
+                                                        uint32_t actual_output_len);
 librdp_status rdp_pnp_redirection_write_control_reply(rdp_buffer* buffer,
                                                       uint32_t request_id,
                                                       uint32_t result,
@@ -249,6 +287,11 @@ librdp_status rdp_pnp_redirection_parse_cancel_request(
     const void* data,
     size_t length,
     rdp_pnp_redirection_cancel_request* request);
+librdp_status rdp_pnp_redirection_write_cancel_request(rdp_buffer* buffer,
+                                                       uint32_t request_id,
+                                                       uint8_t unused,
+                                                       uint8_t cancel_unused,
+                                                       uint32_t id_to_cancel);
 librdp_status rdp_pnp_redirection_write_custom_event(rdp_buffer* buffer,
                                                      const uint8_t event_guid[16],
                                                      const uint8_t* data,
