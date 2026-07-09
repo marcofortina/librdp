@@ -3795,6 +3795,22 @@ static int test_path_security_license_channels(void)
                                             &input_sc_ready) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_input_channel_write_sc_ready(&dyn_response,
+                                            RDP_INPUT_CHANNEL_PROTOCOL_V300,
+                                            RDP_INPUT_CHANNEL_SC_READY_MULTIPEN,
+                                            1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_parse_sc_ready(dyn_response.data,
+                                            dyn_response.length,
+                                            &input_sc_ready) == LIBRDP_STATUS_OK);
+    PCHECK(input_sc_ready.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 &&
+           input_sc_ready.has_supported_features &&
+           input_sc_ready.supported_features == RDP_INPUT_CHANNEL_SC_READY_MULTIPEN);
+    PCHECK(rdp_input_channel_write_sc_ready(&dyn_response,
+                                            RDP_INPUT_CHANNEL_PROTOCOL_V300,
+                                            0,
+                                            0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
     PCHECK(rdp_input_channel_write_cs_ready(&dyn_response,
                                             RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION |
                                             RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN,

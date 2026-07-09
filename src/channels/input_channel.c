@@ -150,6 +150,27 @@ librdp_status rdp_input_channel_parse_sc_ready(const void* data, size_t length, 
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_input_channel_write_sc_ready(rdp_buffer* buffer,
+                                               uint32_t protocol_version,
+                                               uint32_t supported_features,
+                                               uint8_t has_supported_features)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t length = has_supported_features ? 14u : 10u;
+
+    if (!buffer || !rdp_input_channel_valid_protocol(protocol_version) ||
+        (supported_features & ~RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0 ||
+        (protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 && !has_supported_features) ||
+        (!has_supported_features && supported_features != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_input_channel_write_header(buffer, RDP_INPUT_CHANNEL_EVENT_SC_READY, length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, protocol_version);
+    if (status == LIBRDP_STATUS_OK && has_supported_features)
+        status = rdp_buffer_append_u32_le(buffer, supported_features);
+    return status;
+}
+
 librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
                                                uint32_t flags,
                                                uint32_t protocol_version,

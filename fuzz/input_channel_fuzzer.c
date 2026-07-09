@@ -37,6 +37,11 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
             (void)rdp_input_channel_pen_frame_get_contact(&pen_frame, 0, &pen_contact);
     }
 
+    (void)rdp_input_channel_write_sc_ready(&out,
+                                           RDP_INPUT_CHANNEL_PROTOCOL_V300,
+                                           RDP_INPUT_CHANNEL_SC_READY_MULTIPEN,
+                                           1);
+    out.length = 0;
     (void)rdp_input_channel_write_cs_ready(&out,
                                            RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION,
                                            RDP_INPUT_CHANNEL_PROTOCOL_V300,

@@ -131,6 +131,10 @@ typedef struct rdp_input_channel_pen_event
 librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rdp_input_channel_header* header);
 librdp_status rdp_input_channel_write_header(rdp_buffer* buffer, uint16_t event_id, uint32_t pdu_length);
 librdp_status rdp_input_channel_parse_sc_ready(const void* data, size_t length, rdp_input_channel_sc_ready* ready);
+librdp_status rdp_input_channel_write_sc_ready(rdp_buffer* buffer,
+                                               uint32_t protocol_version,
+                                               uint32_t supported_features,
+                                               uint8_t has_supported_features);
 librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
                                                uint32_t flags,
                                                uint32_t protocol_version,
