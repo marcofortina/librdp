@@ -40,6 +40,7 @@ add_library(librdp
     src/channels/smartcard_redirection.c
     src/channels/telemetry.c
     src/channels/usb_redirection.c
+    src/channels/video_capture.c
     src/channels/video_optimized.c
     src/channels/video_redirection.c
     src/channels/virtual_channel.c
@@ -161,6 +162,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_xps_print fuzz/xps_print_fuzzer.c)
     add_librdp_fuzzer(fuzz_auth_redirection fuzz/auth_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_smartcard_redirection fuzz/smartcard_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_video_capture fuzz/video_capture_fuzzer.c)
     add_librdp_fuzzer(fuzz_video_redirection fuzz/video_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_video_optimized fuzz/video_optimized_fuzzer.c)
     add_librdp_fuzzer(fuzz_gdi_orders fuzz/gdi_orders_fuzzer.c)

@@ -19,6 +19,7 @@
 #include "channels/smartcard_redirection.h"
 #include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
+#include "channels/video_capture.h"
 #include "channels/video_optimized.h"
 #include "channels/video_redirection.h"
 #include "channels/xps_print.h"
@@ -242,6 +243,170 @@ static int test_port_redirection_channel(void)
     PCHECK(completion.device_id == 0x100u &&
            completion.completion_id == 3u &&
            completion.payload_len == sizeof(input) + 4u);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
+static int test_video_capture_channel(void)
+{
+    const uint8_t device_name[] = {'C', 0, 'a', 0, 'm', 0};
+    const uint8_t sample_data[] = {0x00, 0x00, 0x01, 0x65};
+    const uint8_t opaque_data[] = {0xaa, 0xbb, 0xcc};
+    rdp_video_capture_header header;
+    rdp_video_capture_device_notification notification;
+    rdp_video_capture_error error;
+    rdp_video_capture_stream_description stream = {
+        RDP_VIDEO_CAPTURE_STREAM_SOURCE_COLOR,
+        RDP_VIDEO_CAPTURE_STREAM_CATEGORY_CAPTURE,
+        1,
+        1
+    };
+    rdp_video_capture_stream_list stream_list;
+    rdp_video_capture_media_type media = {
+        RDP_VIDEO_CAPTURE_MEDIA_NV12,
+        1280,
+        720,
+        30,
+        1,
+        1,
+        1,
+        RDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED
+    };
+    rdp_video_capture_media_type parsed_media;
+    rdp_video_capture_media_list media_list;
+    rdp_video_capture_stream_index index;
+    rdp_video_capture_sample sample;
+    rdp_video_capture_opaque opaque;
+    uint8_t sample_error_index = 0;
+    rdp_buffer buffer;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_empty(&buffer,
+                                         RDP_VIDEO_CAPTURE_VERSION_2,
+                                         RDP_VIDEO_CAPTURE_MESSAGE_SELECT_VERSION_REQUEST) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_empty(buffer.data,
+                                         buffer.length,
+                                         RDP_VIDEO_CAPTURE_MESSAGE_SELECT_VERSION_REQUEST,
+                                         &header) == LIBRDP_STATUS_OK);
+    PCHECK(header.version == RDP_VIDEO_CAPTURE_VERSION_2);
+    buffer.data[1] = RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_REQUEST;
+    PCHECK(rdp_video_capture_parse_header(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
+    buffer.data[0] = RDP_VIDEO_CAPTURE_VERSION_1;
+    PCHECK(rdp_video_capture_parse_header(buffer.data, buffer.length, &header) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_device_added(&buffer,
+                                                RDP_VIDEO_CAPTURE_VERSION_2,
+                                                device_name,
+                                                sizeof(device_name),
+                                                "cam0") == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_device_added(buffer.data, buffer.length, &notification) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(notification.device_name_len == sizeof(device_name) &&
+           notification.channel_name_len == 4u &&
+           memcmp(notification.channel_name, "cam0", 4u) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_device_removed(&buffer,
+                                                  RDP_VIDEO_CAPTURE_VERSION_2,
+                                                  "cam0") == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_device_removed(buffer.data, buffer.length, &notification) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(notification.channel_name_len == 4u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_error(&buffer,
+                                         RDP_VIDEO_CAPTURE_VERSION_2,
+                                         RDP_VIDEO_CAPTURE_ERROR_INVALID_REQUEST) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_error(buffer.data, buffer.length, &error) == LIBRDP_STATUS_OK);
+    PCHECK(error.error_code == RDP_VIDEO_CAPTURE_ERROR_INVALID_REQUEST);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_stream_list(&buffer, RDP_VIDEO_CAPTURE_VERSION_2, &stream, 1) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_stream_list(buffer.data, buffer.length, &stream_list) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(stream_list.count == 1u &&
+           stream_list.streams[0].frame_source_types == RDP_VIDEO_CAPTURE_STREAM_SOURCE_COLOR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_media_type(&buffer, &media) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == RDP_VIDEO_CAPTURE_MEDIA_TYPE_LENGTH);
+    PCHECK(rdp_video_capture_parse_media_type(buffer.data, buffer.length, &parsed_media) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(parsed_media.width == 1280u && parsed_media.height == 720u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_media_list(&buffer,
+                                              RDP_VIDEO_CAPTURE_VERSION_2,
+                                              RDP_VIDEO_CAPTURE_MESSAGE_MEDIA_TYPE_LIST_RESPONSE,
+                                              &media,
+                                              1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_media_list(buffer.data,
+                                              buffer.length,
+                                              RDP_VIDEO_CAPTURE_MESSAGE_MEDIA_TYPE_LIST_RESPONSE,
+                                              &media_list) == LIBRDP_STATUS_OK);
+    PCHECK(media_list.count == 1u && media_list.media[0].format == RDP_VIDEO_CAPTURE_MEDIA_NV12);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_stream_index(&buffer,
+                                                RDP_VIDEO_CAPTURE_VERSION_2,
+                                                RDP_VIDEO_CAPTURE_MESSAGE_SAMPLE_REQUEST,
+                                                7) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_stream_index(buffer.data,
+                                                buffer.length,
+                                                RDP_VIDEO_CAPTURE_MESSAGE_SAMPLE_REQUEST,
+                                                &index) == LIBRDP_STATUS_OK);
+    PCHECK(index.stream_index == 7u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_sample(&buffer,
+                                          RDP_VIDEO_CAPTURE_VERSION_2,
+                                          1,
+                                          sample_data,
+                                          sizeof(sample_data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_sample(buffer.data, buffer.length, &sample) == LIBRDP_STATUS_OK);
+    PCHECK(sample.stream_index == 1u && sample.sample_len == sizeof(sample_data));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_sample_error(&buffer,
+                                                RDP_VIDEO_CAPTURE_VERSION_2,
+                                                1,
+                                                RDP_VIDEO_CAPTURE_ERROR_INVALID_STREAM_NUMBER) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_sample_error(buffer.data,
+                                                buffer.length,
+                                                &error,
+                                                &sample_error_index) == LIBRDP_STATUS_OK);
+    PCHECK(sample_error_index == 1u &&
+           error.error_code == RDP_VIDEO_CAPTURE_ERROR_INVALID_STREAM_NUMBER);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_opaque(&buffer,
+                                          RDP_VIDEO_CAPTURE_VERSION_2,
+                                          RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE,
+                                          opaque_data,
+                                          sizeof(opaque_data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_opaque(buffer.data,
+                                          buffer.length,
+                                          RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE,
+                                          &opaque) == LIBRDP_STATUS_OK);
+    PCHECK(opaque.payload_len == sizeof(opaque_data));
 
     rdp_buffer_free(&buffer);
     return 0;
@@ -9109,6 +9274,8 @@ int test_protocol(void)
     if (test_xps_print_channel() != 0)
         return 1;
     if (test_auth_smartcard_redirection_channels() != 0)
+        return 1;
+    if (test_video_capture_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
         return 1;
