@@ -24,6 +24,14 @@ typedef struct rdp_settings_printer
     char* output_path;
 } rdp_settings_printer;
 
+typedef struct rdp_settings_pnp_device
+{
+    char* hardware_id;
+    char* compatibility_id;
+    char* description;
+    uint32_t device_caps;
+} rdp_settings_pnp_device;
+
 struct librdp_settings
 {
     char* target;
@@ -56,6 +64,8 @@ struct librdp_settings
     char* usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
     uint32_t rail_app_count;
     char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
+    uint32_t pnp_device_count;
+    rdp_settings_pnp_device pnp_devices[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
 };
 
 #define RDP_SETTINGS_TEXT_MAX 4096u
@@ -281,6 +291,18 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
             return NULL;
         }
     }
+    for (uint32_t i = 0; i < settings->pnp_device_count; i++)
+    {
+        if (librdp_settings_add_pnp_device(copy,
+                                           settings->pnp_devices[i].hardware_id,
+                                           settings->pnp_devices[i].compatibility_id,
+                                           settings->pnp_devices[i].description,
+                                           settings->pnp_devices[i].device_caps) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
     for (uint32_t i = 0; i < settings->rail_app_count; i++)
     {
         if (librdp_settings_add_rail_app(copy, settings->rail_apps[i]) != LIBRDP_STATUS_OK)
@@ -325,6 +347,12 @@ void librdp_settings_free(librdp_settings* settings)
         free(settings->smartcards[i]);
     for (uint32_t i = 0; i < settings->usb_device_count; i++)
         free(settings->usb_devices[i]);
+    for (uint32_t i = 0; i < settings->pnp_device_count; i++)
+    {
+        free(settings->pnp_devices[i].hardware_id);
+        free(settings->pnp_devices[i].compatibility_id);
+        free(settings->pnp_devices[i].description);
+    }
     for (uint32_t i = 0; i < settings->rail_app_count; i++)
         free(settings->rail_apps[i]);
     free(settings);
@@ -560,6 +588,45 @@ librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const ch
                                  selector);
 }
 
+librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
+                                             const char* hardware_id,
+                                             const char* compatibility_id,
+                                             const char* description,
+                                             uint32_t device_caps)
+{
+    rdp_settings_pnp_device* device = NULL;
+    char* hardware_copy = NULL;
+    char* compatibility_copy = NULL;
+    char* description_copy = NULL;
+
+    if (!settings || !rdp_settings_valid_text(hardware_id) ||
+        !rdp_settings_valid_text(compatibility_id) ||
+        !rdp_settings_valid_text(description) ||
+        (device_caps & ~(LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED |
+                         LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED |
+                         LIBRDP_PNP_DEVICE_CAP_REMOVABLE |
+                         LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK)) != 0 ||
+        settings->pnp_device_count >= LIBRDP_SETTINGS_MAX_PNP_DEVICES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    hardware_copy = rdp_strdup(hardware_id);
+    compatibility_copy = rdp_strdup(compatibility_id);
+    description_copy = rdp_strdup(description);
+    if (!hardware_copy || !compatibility_copy || !description_copy)
+    {
+        free(hardware_copy);
+        free(compatibility_copy);
+        free(description_copy);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    device = &settings->pnp_devices[settings->pnp_device_count++];
+    memset(device, 0, sizeof(*device));
+    device->hardware_id = hardware_copy;
+    device->compatibility_id = compatibility_copy;
+    device->description = description_copy;
+    device->device_caps = device_caps;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider)
 {
     if (!settings)
@@ -722,6 +789,39 @@ const char* librdp_settings_usb_device_selector(const librdp_settings* settings,
     return settings->usb_devices[index];
 }
 
+uint32_t librdp_settings_pnp_device_count(const librdp_settings* settings)
+{
+    return settings ? settings->pnp_device_count : 0;
+}
+
+const char* librdp_settings_pnp_device_hardware_id(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->pnp_device_count)
+        return NULL;
+    return settings->pnp_devices[index].hardware_id;
+}
+
+const char* librdp_settings_pnp_device_compatibility_id(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->pnp_device_count)
+        return NULL;
+    return settings->pnp_devices[index].compatibility_id;
+}
+
+const char* librdp_settings_pnp_device_description(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->pnp_device_count)
+        return NULL;
+    return settings->pnp_devices[index].description;
+}
+
+uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->pnp_device_count)
+        return 0;
+    return settings->pnp_devices[index].device_caps;
+}
+
 const char* librdp_settings_webauthn_provider(const librdp_settings* settings)
 {
     return settings ? settings->webauthn_provider : NULL;
@@ -817,4 +917,11 @@ uint32_t rdp_settings_parallel_port_device_id_internal(const librdp_settings* se
     if (!settings || index >= settings->parallel_port_count)
         return 0;
     return 0x00050000u + index;
+}
+
+uint32_t rdp_settings_pnp_device_id_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->pnp_device_count)
+        return 0;
+    return 0x00060000u + index;
 }

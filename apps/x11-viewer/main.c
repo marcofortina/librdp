@@ -1520,7 +1520,7 @@ static void trace_viewer_settings(const librdp_settings* settings)
 
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.viewer.features",
-                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u drives=%u printers=%u",
+                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u drives=%u printers=%u pnp_devices=%u",
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u,
@@ -1534,7 +1534,8 @@ static void trace_viewer_settings(const librdp_settings* settings)
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
                     librdp_settings_drive_count(settings),
-                    librdp_settings_printer_count(settings));
+                    librdp_settings_printer_count(settings),
+                    librdp_settings_pnp_device_count(settings));
     if (librdp_settings_audio_output_device(settings))
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "x11.audio.output.config",

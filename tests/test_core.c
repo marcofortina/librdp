@@ -1007,6 +1007,13 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_add_camera(settings, "device=/dev/video0") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_smartcard(settings, "pcsc") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_usb_device(settings, "1234:5678") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_pnp_device(settings,
+                                         "LIBRDP\\PNP\\TEST_DEVICE",
+                                         "LIBRDP\\PNP\\TEST",
+                                         "Host test device",
+                                         LIBRDP_PNP_DEVICE_CAP_REMOVABLE |
+                                             LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK) ==
+          LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_webauthn_provider(settings, "mock=/tmp/auth.json") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_rail_app(settings, "notepad.exe") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_echo_payload(settings, "probe") == LIBRDP_STATUS_OK);
@@ -1022,6 +1029,16 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_usb_device_count(settings) == 1);
     CHECK(strcmp(librdp_settings_usb_device_selector(settings, 0), "1234:5678") == 0);
     CHECK(librdp_settings_usb_device_selector(settings, 1) == NULL);
+    CHECK(librdp_settings_pnp_device_count(settings) == 1);
+    CHECK(strcmp(librdp_settings_pnp_device_hardware_id(settings, 0), "LIBRDP\\PNP\\TEST_DEVICE") == 0);
+    CHECK(strcmp(librdp_settings_pnp_device_compatibility_id(settings, 0), "LIBRDP\\PNP\\TEST") == 0);
+    CHECK(strcmp(librdp_settings_pnp_device_description(settings, 0), "Host test device") == 0);
+    CHECK(librdp_settings_pnp_device_caps(settings, 0) ==
+          (LIBRDP_PNP_DEVICE_CAP_REMOVABLE | LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK));
+    CHECK(librdp_settings_pnp_device_hardware_id(settings, 1) == NULL);
+    CHECK(librdp_settings_pnp_device_compatibility_id(settings, 1) == NULL);
+    CHECK(librdp_settings_pnp_device_description(settings, 1) == NULL);
+    CHECK(librdp_settings_pnp_device_caps(settings, 1) == 0);
     CHECK(strcmp(librdp_settings_webauthn_provider(settings), "mock=/tmp/auth.json") == 0);
     CHECK(librdp_settings_rail_app_count(settings) == 1);
     CHECK(strcmp(librdp_settings_rail_app(settings, 0), "notepad.exe") == 0);
@@ -1049,6 +1066,26 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_add_camera(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_smartcard(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_usb_device(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_pnp_device(settings,
+                                         "",
+                                         "LIBRDP\\PNP\\BAD",
+                                         "bad",
+                                         0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_pnp_device(settings,
+                                         "LIBRDP\\PNP\\BAD",
+                                         "",
+                                         "bad",
+                                         0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_pnp_device(settings,
+                                         "LIBRDP\\PNP\\BAD",
+                                         "LIBRDP\\PNP\\BAD",
+                                         "",
+                                         0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_pnp_device(settings,
+                                         "LIBRDP\\PNP\\BAD",
+                                         "LIBRDP\\PNP\\BAD",
+                                         "bad",
+                                         0x80000000u) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_webauthn_provider(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_webauthn_provider(settings, "fido2") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_rail_app(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -1083,6 +1120,12 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_camera_source(copy, 0), "device=/dev/video0") == 0);
     CHECK(strcmp(librdp_settings_smartcard_source(copy, 0), "pcsc") == 0);
     CHECK(strcmp(librdp_settings_usb_device_selector(copy, 0), "1234:5678") == 0);
+    CHECK(librdp_settings_pnp_device_count(copy) == 1);
+    CHECK(strcmp(librdp_settings_pnp_device_hardware_id(copy, 0), "LIBRDP\\PNP\\TEST_DEVICE") == 0);
+    CHECK(strcmp(librdp_settings_pnp_device_compatibility_id(copy, 0), "LIBRDP\\PNP\\TEST") == 0);
+    CHECK(strcmp(librdp_settings_pnp_device_description(copy, 0), "Host test device") == 0);
+    CHECK(librdp_settings_pnp_device_caps(copy, 0) ==
+          (LIBRDP_PNP_DEVICE_CAP_REMOVABLE | LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK));
     CHECK(strcmp(librdp_settings_webauthn_provider(copy), "mock=/tmp/auth.json") == 0);
     CHECK(strcmp(librdp_settings_rail_app(copy, 0), "notepad.exe") == 0);
     CHECK(strcmp(librdp_settings_echo_payload(copy), "probe") == 0);

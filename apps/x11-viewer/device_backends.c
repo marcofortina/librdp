@@ -2,6 +2,7 @@
 
 #include "common/trace.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -414,21 +415,139 @@ static uint32_t x11_count_dir_entries(const char* path)
 #endif
 }
 
-static int x11_probe_pnp(void)
+static void x11_pnp_sanitize(const char* text, char* out, size_t out_len)
+{
+    size_t i = 0;
+    size_t j = 0;
+
+    if (!out || out_len == 0)
+        return;
+    out[0] = '\0';
+    if (!text)
+        return;
+    for (i = 0; text[i] != '\0' && j + 1u < out_len; i++)
+    {
+        unsigned char ch = (unsigned char)text[i];
+
+        if (isalnum(ch))
+            out[j++] = (char)toupper(ch);
+        else if (j > 0 && out[j - 1u] != '_')
+            out[j++] = '_';
+    }
+    if (j == 0)
+        out[j++] = '0';
+    out[j] = '\0';
+}
+
+static int x11_register_pnp_device(librdp_settings* settings,
+                                   const char* class_name,
+                                   const char* entry_name,
+                                   uint32_t caps)
+{
+    char safe[64];
+    char hardware[160];
+    char compatibility[128];
+    char description[160];
+    int written = 0;
+
+    if (!settings || !class_name || !entry_name || entry_name[0] == '.')
+        return 0;
+    x11_pnp_sanitize(entry_name, safe, sizeof(safe));
+    written = snprintf(hardware, sizeof(hardware), "LIBRDP\\PNP\\%s_%s", class_name, safe);
+    if (written < 0 || (size_t)written >= sizeof(hardware))
+        return 0;
+    written = snprintf(compatibility, sizeof(compatibility), "LIBRDP\\PNP\\%s", class_name);
+    if (written < 0 || (size_t)written >= sizeof(compatibility))
+        return 0;
+    written = snprintf(description, sizeof(description), "Host %s device %s", class_name, entry_name);
+    if (written < 0 || (size_t)written >= sizeof(description))
+        return 0;
+    if (librdp_settings_add_pnp_device(settings,
+                                       hardware,
+                                       compatibility,
+                                       description,
+                                       caps) != LIBRDP_STATUS_OK)
+        return 0;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.pnp.device",
+                    "class=\"%s\" name=\"%s\" hardware=\"%s\" caps=%u",
+                    class_name,
+                    entry_name,
+                    hardware,
+                    caps);
+    return 1;
+}
+
+static uint32_t x11_register_pnp_dir(librdp_settings* settings,
+                                     const char* path,
+                                     const char* class_name,
+                                     uint32_t caps)
+{
+#ifdef __linux__
+    DIR* dir = NULL;
+    struct dirent* entry = NULL;
+    uint32_t count = 0;
+
+    if (!settings || !path || !class_name)
+        return 0;
+    dir = opendir(path);
+    if (!dir)
+        return 0;
+    while ((entry = readdir(dir)) != NULL &&
+           librdp_settings_pnp_device_count(settings) < LIBRDP_SETTINGS_MAX_PNP_DEVICES)
+    {
+        if (x11_register_pnp_device(settings, class_name, entry->d_name, caps))
+            count++;
+    }
+    closedir(dir);
+    return count;
+#else
+    (void)settings;
+    (void)path;
+    (void)class_name;
+    (void)caps;
+    return 0;
+#endif
+}
+
+static int x11_probe_pnp(librdp_settings* settings)
 {
     const uint32_t input_count = x11_count_dir_entries("/sys/class/input");
     const uint32_t block_count = x11_count_dir_entries("/sys/block");
     const uint32_t net_count = x11_count_dir_entries("/sys/class/net");
-    const int ok = input_count > 0 || block_count > 0 || net_count > 0;
+    uint32_t registered = 0;
+    const int available = input_count > 0 || block_count > 0 || net_count > 0;
 
+    if (!settings)
+        return 0;
+    if (librdp_settings_pnp_device_count(settings) == 0)
+    {
+        registered += x11_register_pnp_dir(settings,
+                                           "/sys/class/input",
+                                           "INPUT",
+                                           LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK);
+        registered += x11_register_pnp_dir(settings,
+                                           "/sys/block",
+                                           "BLOCK",
+                                           LIBRDP_PNP_DEVICE_CAP_REMOVABLE |
+                                               LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK);
+        registered += x11_register_pnp_dir(settings,
+                                           "/sys/class/net",
+                                           "NET",
+                                           LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK);
+    }
+    else
+        registered = librdp_settings_pnp_device_count(settings);
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.pnp.probe",
-                    "ok=%u input=%u block=%u net=%u",
-                    ok ? 1u : 0u,
+                    "ok=%u input=%u block=%u net=%u registered=%u",
+                    registered > 0 ? 1u : 0u,
                     input_count,
                     block_count,
-                    net_count);
-    return ok;
+                    net_count,
+                    registered);
+    (void)available;
+    return registered > 0;
 }
 
 static void x11_probe_cr2(uint32_t width, uint32_t height)
@@ -440,7 +559,7 @@ static void x11_probe_cr2(uint32_t width, uint32_t height)
                     height);
 }
 
-int x11_device_backends_probe(const librdp_settings* settings)
+int x11_device_backends_probe(librdp_settings* settings)
 {
     uint32_t i = 0;
 
@@ -490,7 +609,7 @@ int x11_device_backends_probe(const librdp_settings* settings)
         if (!x11_probe_webauthn(librdp_settings_webauthn_provider(settings)))
             return 0;
     }
-    if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_PNP) && !x11_probe_pnp())
+    if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_PNP) && !x11_probe_pnp(settings))
         return 0;
     if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CR2))
         x11_probe_cr2(librdp_settings_width(settings), librdp_settings_height(settings));

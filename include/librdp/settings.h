@@ -17,6 +17,12 @@ extern "C" {
 #define LIBRDP_SETTINGS_MAX_RAIL_APPS 16u
 #define LIBRDP_SETTINGS_MAX_SERIAL_PORTS 8u
 #define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u
+#define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u
+
+#define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u
+#define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u
+#define LIBRDP_PNP_DEVICE_CAP_REMOVABLE 0x00000004u
+#define LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK 0x00000008u
 
 typedef struct librdp_settings librdp_settings;
 
@@ -75,6 +81,11 @@ librdp_status librdp_settings_set_video_output_path(librdp_settings* settings, c
 librdp_status librdp_settings_add_camera(librdp_settings* settings, const char* source);
 librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const char* source);
 librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector);
+librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
+                                             const char* hardware_id,
+                                             const char* compatibility_id,
+                                             const char* description,
+                                             uint32_t device_caps);
 librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider);
 librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app);
 librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const char* payload);
@@ -100,6 +111,11 @@ uint32_t librdp_settings_smartcard_count(const librdp_settings* settings);
 const char* librdp_settings_smartcard_source(const librdp_settings* settings, uint32_t index);
 uint32_t librdp_settings_usb_device_count(const librdp_settings* settings);
 const char* librdp_settings_usb_device_selector(const librdp_settings* settings, uint32_t index);
+uint32_t librdp_settings_pnp_device_count(const librdp_settings* settings);
+const char* librdp_settings_pnp_device_hardware_id(const librdp_settings* settings, uint32_t index);
+const char* librdp_settings_pnp_device_compatibility_id(const librdp_settings* settings, uint32_t index);
+const char* librdp_settings_pnp_device_description(const librdp_settings* settings, uint32_t index);
+uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32_t index);
 const char* librdp_settings_webauthn_provider(const librdp_settings* settings);
 uint32_t librdp_settings_rail_app_count(const librdp_settings* settings);
 const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t index);

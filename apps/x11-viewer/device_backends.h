@@ -3,6 +3,6 @@
 
 #include <librdp/settings.h>
 
-int x11_device_backends_probe(const librdp_settings* settings);
+int x11_device_backends_probe(librdp_settings* settings);
 
 #endif
