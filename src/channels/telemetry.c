@@ -4,6 +4,41 @@
 
 #include <string.h>
 
+void rdp_telemetry_pdu_init(rdp_telemetry_pdu* pdu,
+                            uint32_t prompt_for_credentials_ms,
+                            uint32_t prompt_for_credentials_done_ms,
+                            uint32_t graphics_channel_opened_ms,
+                            uint32_t first_graphics_received_ms)
+{
+    if (!pdu)
+        return;
+    memset(pdu, 0, sizeof(*pdu));
+    pdu->id = RDP_TELEMETRY_PDU_ID;
+    pdu->length = RDP_TELEMETRY_PDU_LENGTH;
+    pdu->prompt_for_credentials_ms = prompt_for_credentials_ms;
+    pdu->prompt_for_credentials_done_ms = prompt_for_credentials_done_ms;
+    pdu->graphics_channel_opened_ms = graphics_channel_opened_ms;
+    pdu->first_graphics_received_ms = first_graphics_received_ms;
+}
+
+librdp_status rdp_telemetry_write_metrics(rdp_buffer* buffer,
+                                          uint32_t prompt_for_credentials_ms,
+                                          uint32_t prompt_for_credentials_done_ms,
+                                          uint32_t graphics_channel_opened_ms,
+                                          uint32_t first_graphics_received_ms)
+{
+    rdp_telemetry_pdu pdu;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_telemetry_pdu_init(&pdu,
+                           prompt_for_credentials_ms,
+                           prompt_for_credentials_done_ms,
+                           graphics_channel_opened_ms,
+                           first_graphics_received_ms);
+    return rdp_telemetry_write_pdu(buffer, &pdu);
+}
+
 librdp_status rdp_telemetry_parse_pdu(const void* data, size_t length, rdp_telemetry_pdu* pdu)
 {
     rdp_stream stream;

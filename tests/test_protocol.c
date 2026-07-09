@@ -6452,11 +6452,10 @@ static int test_telemetry_multiparty_channels(void)
 
     rdp_buffer_init(&buffer);
 
-    memset(&telemetry, 0, sizeof(telemetry));
-    telemetry.prompt_for_credentials_ms = 1;
-    telemetry.prompt_for_credentials_done_ms = 2;
-    telemetry.graphics_channel_opened_ms = 3;
-    telemetry.first_graphics_received_ms = 4;
+    rdp_telemetry_pdu_init(&telemetry, 1, 2, 3, 4);
+    PCHECK(telemetry.id == RDP_TELEMETRY_PDU_ID &&
+           telemetry.length == RDP_TELEMETRY_PDU_LENGTH &&
+           telemetry.prompt_for_credentials_done_ms == 2);
     PCHECK(rdp_telemetry_write_pdu(&buffer, &telemetry) == LIBRDP_STATUS_OK);
     PCHECK(rdp_telemetry_parse_pdu(buffer.data, buffer.length, &telemetry) == LIBRDP_STATUS_OK);
     PCHECK(telemetry.id == RDP_TELEMETRY_PDU_ID &&
@@ -6464,6 +6463,15 @@ static int test_telemetry_multiparty_channels(void)
            telemetry.first_graphics_received_ms == 4);
     buffer.data[0] = 2;
     PCHECK(rdp_telemetry_parse_pdu(buffer.data, buffer.length, &telemetry) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_telemetry_write_metrics(&buffer, 5, 6, 7, 8) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_telemetry_parse_pdu(buffer.data, buffer.length, &telemetry) == LIBRDP_STATUS_OK);
+    PCHECK(telemetry.prompt_for_credentials_ms == 5 &&
+           telemetry.prompt_for_credentials_done_ms == 6 &&
+           telemetry.graphics_channel_opened_ms == 7 &&
+           telemetry.first_graphics_received_ms == 8);
+    PCHECK(rdp_telemetry_write_metrics(NULL, 0, 0, 0, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

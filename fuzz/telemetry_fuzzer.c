@@ -10,13 +10,17 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     (void)rdp_telemetry_parse_pdu(data, size, &pdu);
     rdp_buffer_init(&buffer);
-    pdu.id = RDP_TELEMETRY_PDU_ID;
-    pdu.length = RDP_TELEMETRY_PDU_LENGTH;
-    pdu.prompt_for_credentials_ms = (uint32_t)size;
-    pdu.prompt_for_credentials_done_ms = (uint32_t)(size >> 1);
-    pdu.graphics_channel_opened_ms = (uint32_t)(size >> 2);
-    pdu.first_graphics_received_ms = (uint32_t)(size >> 3);
+    rdp_telemetry_pdu_init(&pdu,
+                           (uint32_t)size,
+                           (uint32_t)(size >> 1),
+                           (uint32_t)(size >> 2),
+                           (uint32_t)(size >> 3));
     (void)rdp_telemetry_write_pdu(&buffer, &pdu);
+    (void)rdp_telemetry_write_metrics(&buffer,
+                                      (uint32_t)(size >> 4),
+                                      (uint32_t)(size >> 5),
+                                      (uint32_t)(size >> 6),
+                                      (uint32_t)(size >> 7));
     rdp_buffer_free(&buffer);
     return 0;
 }
