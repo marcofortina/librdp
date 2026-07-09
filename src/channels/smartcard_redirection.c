@@ -29,6 +29,11 @@ int rdp_smartcard_redirection_protocol_mask_valid(uint32_t protocols)
            base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW;
 }
 
+int rdp_smartcard_redirection_bool_valid(uint32_t value)
+{
+    return value <= 1u;
+}
+
 int rdp_smartcard_redirection_disposition_valid(uint32_t disposition)
 {
     return disposition <= RDP_SMARTCARD_REDIRECTION_EJECT_CARD;
@@ -322,6 +327,53 @@ librdp_status rdp_smartcard_redirection_write_handle(
     return rdp_smartcard_redirection_write_opaque(buffer, handle, handle_len);
 }
 
+librdp_status rdp_smartcard_redirection_parse_scard_io_request(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_scard_io_request* request)
+{
+    rdp_stream stream;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(request, 0, sizeof(*request));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &request->protocol) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &request->extra_bytes_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_smartcard_redirection_protocol_mask_valid(request->protocol) ||
+        request->extra_bytes_len > RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA ||
+        request->extra_bytes_len != rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &request->extra_bytes, request->extra_bytes_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_smartcard_redirection_write_scard_io_request(
+    rdp_buffer* buffer,
+    uint32_t protocol,
+    const void* extra_bytes,
+    uint32_t extra_bytes_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!extra_bytes && extra_bytes_len > 0) ||
+        !rdp_smartcard_redirection_protocol_mask_valid(protocol) ||
+        extra_bytes_len > RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, protocol);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, extra_bytes_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, extra_bytes, extra_bytes_len);
+}
+
 librdp_status rdp_smartcard_redirection_parse_connect_common(
     const void* data,
     size_t length,
@@ -480,4 +532,82 @@ librdp_status rdp_smartcard_redirection_write_long_return(
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_buffer_append_u32_le(buffer, return_code);
+}
+
+librdp_status rdp_smartcard_redirection_parse_count_return(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_count_return* result)
+{
+    rdp_stream stream;
+
+    if (!data || !result)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(result, 0, sizeof(*result));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &result->return_code) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &result->value) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_smartcard_redirection_write_count_return(
+    rdp_buffer* buffer,
+    uint32_t return_code,
+    uint32_t value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, return_code);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append_u32_le(buffer, value);
+}
+
+librdp_status rdp_smartcard_redirection_parse_buffer_return(
+    const void* data,
+    size_t length,
+    uint32_t max_data_len,
+    rdp_smartcard_redirection_buffer_return* result)
+{
+    rdp_stream stream;
+
+    if (!data || !result)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(result, 0, sizeof(*result));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u32_le(&stream, &result->return_code) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &result->data_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (result->data_len > max_data_len || result->data_len != rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &result->data, result->data_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_smartcard_redirection_write_buffer_return(
+    rdp_buffer* buffer,
+    uint32_t return_code,
+    const void* data,
+    uint32_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0) ||
+        data_len > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, return_code);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, data, data_len);
 }

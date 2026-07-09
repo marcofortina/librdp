@@ -10,21 +10,37 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_smartcard_redirection_establish_context_call call;
     rdp_smartcard_redirection_context context;
     rdp_smartcard_redirection_handle handle;
+    rdp_smartcard_redirection_scard_io_request scard_io;
     rdp_smartcard_redirection_connect_common connect;
     rdp_smartcard_redirection_reconnect_call reconnect;
     rdp_smartcard_redirection_handle_disposition_call disposition;
     rdp_smartcard_redirection_long_return result;
+    rdp_smartcard_redirection_count_return count;
+    rdp_smartcard_redirection_buffer_return buffer_return;
     rdp_buffer buffer;
+    uint32_t bounded_extra = size > RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA ?
+        RDP_SMARTCARD_REDIRECTION_IO_REQUEST_MAX_EXTRA :
+        (uint32_t)size;
+    uint32_t bounded_buffer = size > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH ?
+        RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH :
+        (uint32_t)size;
 
     (void)rdp_smartcard_redirection_parse_device_control_request(data, size, &request);
     (void)rdp_smartcard_redirection_parse_device_control_response(data, size, &response);
     (void)rdp_smartcard_redirection_parse_establish_context_call(data, size, &call);
     (void)rdp_smartcard_redirection_parse_context(data, size, &context);
     (void)rdp_smartcard_redirection_parse_handle(data, size, &handle);
+    (void)rdp_smartcard_redirection_parse_scard_io_request(data, size, &scard_io);
     (void)rdp_smartcard_redirection_parse_connect_common(data, size, &connect);
     (void)rdp_smartcard_redirection_parse_reconnect_call(data, size, &reconnect);
     (void)rdp_smartcard_redirection_parse_handle_disposition_call(data, size, &disposition);
     (void)rdp_smartcard_redirection_parse_long_return(data, size, &result);
+    (void)rdp_smartcard_redirection_parse_count_return(data, size, &count);
+    (void)rdp_smartcard_redirection_parse_buffer_return(
+        data,
+        size,
+        RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH,
+        &buffer_return);
 
     rdp_buffer_init(&buffer);
     (void)rdp_smartcard_redirection_write_device_control_request(
@@ -47,6 +63,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
             (uint32_t)size);
     buffer.length = 0;
     (void)rdp_smartcard_redirection_write_handle(&buffer, data, 0, data, 0);
+    buffer.length = 0;
+    (void)rdp_smartcard_redirection_write_scard_io_request(
+        &buffer,
+        RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1,
+        data,
+        bounded_extra);
     buffer.length = 0;
     (void)rdp_smartcard_redirection_write_connect_common(
         &buffer,
@@ -72,6 +94,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         data,
         0,
         RDP_SMARTCARD_REDIRECTION_LEAVE_CARD);
+    buffer.length = 0;
+    (void)rdp_smartcard_redirection_write_count_return(&buffer, 0, (uint32_t)size);
+    buffer.length = 0;
+    (void)rdp_smartcard_redirection_write_buffer_return(&buffer, 0, data, bounded_buffer);
     rdp_buffer_free(&buffer);
     return 0;
 }
