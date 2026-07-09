@@ -16,6 +16,7 @@
 #include "channels/port_redirection.h"
 #include "channels/pnp_redirection.h"
 #include "channels/printer_redirection.h"
+#include "channels/remote_programs.h"
 #include "channels/smartcard_redirection.h"
 #include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
@@ -487,6 +488,118 @@ static int test_webauthn_channel(void)
                                       sizeof(command_payload),
                                       NULL,
                                       NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
+static int test_remote_programs_channel(void)
+{
+    const uint8_t exe[] = {'n', 0, 'o', 0, 't', 0, 'e', 0, 'p', 0, 'a', 0, 'd', 0};
+    const uint8_t args[] = {'/', 0, 'A', 0};
+    const uint8_t opaque_payload[] = {0x11, 0x22, 0x33};
+    rdp_remote_programs_header header;
+    rdp_remote_programs_u32_order u32_order;
+    rdp_remote_programs_handshake_ex handshake_ex;
+    rdp_remote_programs_exec exec;
+    rdp_remote_programs_exec_result exec_result;
+    rdp_remote_programs_activate activate;
+    rdp_remote_programs_opaque opaque;
+    rdp_buffer buffer;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_order_valid(RDP_REMOTE_PROGRAMS_ORDER_EXEC));
+    PCHECK(!rdp_remote_programs_order_valid(0x7777u));
+    PCHECK(rdp_remote_programs_exec_flags_valid(RDP_REMOTE_PROGRAMS_EXEC_FLAG_FILE |
+                                                RDP_REMOTE_PROGRAMS_EXEC_FLAG_TRANSLATE_FILES));
+    PCHECK(!rdp_remote_programs_exec_flags_valid(RDP_REMOTE_PROGRAMS_EXEC_FLAG_TRANSLATE_FILES));
+
+    PCHECK(rdp_remote_programs_write_u32_order(&buffer,
+                                               RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE,
+                                               22621u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_header(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
+    PCHECK(header.order_type == RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE && header.order_length == 8u);
+    PCHECK(rdp_remote_programs_parse_u32_order(buffer.data,
+                                               buffer.length,
+                                               RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE,
+                                               &u32_order) == LIBRDP_STATUS_OK);
+    PCHECK(u32_order.value == 22621u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_u32_order(&buffer,
+                                               RDP_REMOTE_PROGRAMS_ORDER_CLIENTSTATUS,
+                                               RDP_REMOTE_PROGRAMS_CLIENTSTATUS_ZORDER_SYNC |
+                                                   RDP_REMOTE_PROGRAMS_CLIENTSTATUS_HIGH_DPI_ICONS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_u32_order(buffer.data,
+                                               buffer.length,
+                                               RDP_REMOTE_PROGRAMS_ORDER_CLIENTSTATUS,
+                                               &u32_order) == LIBRDP_STATUS_OK);
+    PCHECK((u32_order.value & RDP_REMOTE_PROGRAMS_CLIENTSTATUS_ZORDER_SYNC) != 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_handshake_ex(&buffer,
+                                                  22621u,
+                                                  RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_HIDEF |
+                                                      RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_TEXT_SCALE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_handshake_ex(buffer.data,
+                                                  buffer.length,
+                                                  &handshake_ex) == LIBRDP_STATUS_OK);
+    PCHECK(handshake_ex.build_number == 22621u &&
+           (handshake_ex.flags & RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_HIDEF) != 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_exec(&buffer,
+                                          RDP_REMOTE_PROGRAMS_EXEC_FLAG_EXPAND_ARGUMENTS,
+                                          exe,
+                                          sizeof(exe),
+                                          NULL,
+                                          0,
+                                          args,
+                                          sizeof(args)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_exec(buffer.data, buffer.length, &exec) == LIBRDP_STATUS_OK);
+    PCHECK(exec.exe_or_file_len == sizeof(exe) &&
+           exec.arguments_len == sizeof(args) &&
+           memcmp(exec.exe_or_file, exe, sizeof(exe)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_exec_result(&buffer,
+                                                 RDP_REMOTE_PROGRAMS_EXEC_FLAG_EXPAND_ARGUMENTS,
+                                                 RDP_REMOTE_PROGRAMS_EXEC_RESULT_OK,
+                                                 0,
+                                                 exe,
+                                                 sizeof(exe)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_exec_result(buffer.data,
+                                                 buffer.length,
+                                                 &exec_result) == LIBRDP_STATUS_OK);
+    PCHECK(exec_result.exec_result == RDP_REMOTE_PROGRAMS_EXEC_RESULT_OK &&
+           exec_result.exe_or_file_len == sizeof(exe));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_activate(&buffer, 0x11223344u, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_activate(buffer.data, buffer.length, &activate) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(activate.window_id == 0x11223344u && activate.enabled == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_opaque(&buffer,
+                                            RDP_REMOTE_PROGRAMS_ORDER_SYSPARAM,
+                                            opaque_payload,
+                                            sizeof(opaque_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_opaque(buffer.data, buffer.length, &opaque) == LIBRDP_STATUS_OK);
+    PCHECK(opaque.header.order_type == RDP_REMOTE_PROGRAMS_ORDER_SYSPARAM &&
+           opaque.payload_len == sizeof(opaque_payload));
+    buffer.data[2] = 0xffu;
+    PCHECK(rdp_remote_programs_parse_opaque(buffer.data, buffer.length, &opaque) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&buffer);
     return 0;
@@ -9358,6 +9471,8 @@ int test_protocol(void)
     if (test_video_capture_channel() != 0)
         return 1;
     if (test_webauthn_channel() != 0)
+        return 1;
+    if (test_remote_programs_channel() != 0)
         return 1;
     if (test_video_redirection_channel() != 0)
         return 1;

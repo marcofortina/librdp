@@ -36,6 +36,7 @@ add_library(librdp
     src/channels/multiparty.c
     src/channels/port_redirection.c
     src/channels/printer_redirection.c
+    src/channels/remote_programs.c
     src/channels/pnp_redirection.c
     src/channels/smartcard_redirection.c
     src/channels/telemetry.c
@@ -142,6 +143,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_filesystem_redirection fuzz/filesystem_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_port_redirection fuzz/port_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_printer_redirection fuzz/printer_redirection_fuzzer.c)
+    add_librdp_fuzzer(fuzz_remote_programs fuzz/remote_programs_fuzzer.c)
     add_librdp_fuzzer(fuzz_pnp_redirection fuzz/pnp_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_usb_redirection fuzz/usb_redirection_fuzzer.c)
     add_librdp_fuzzer(fuzz_core_input fuzz/core_input_fuzzer.c)
