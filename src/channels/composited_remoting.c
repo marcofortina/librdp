@@ -158,6 +158,358 @@ int rdp_composited_notification_code_valid(uint32_t notification_code)
     }
 }
 
+static rdp_composited_render_resource* rdp_composited_render_tree_find_mutable(
+    rdp_composited_render_tree* tree,
+    uint32_t resource)
+{
+    uint32_t i = 0;
+
+    if (!tree)
+        return NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        if (tree->resources[i].active && tree->resources[i].resource == resource)
+            return &tree->resources[i];
+    }
+    return NULL;
+}
+
+static rdp_composited_render_resource* rdp_composited_render_tree_upsert(
+    rdp_composited_render_tree* tree,
+    uint32_t resource,
+    uint32_t resource_type)
+{
+    uint32_t i = 0;
+    rdp_composited_render_resource* entry =
+        rdp_composited_render_tree_find_mutable(tree, resource);
+
+    if (entry)
+    {
+        if (resource_type != 0)
+            entry->resource_type = resource_type;
+        return entry;
+    }
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        if (!tree->resources[i].active)
+        {
+            memset(&tree->resources[i], 0, sizeof(tree->resources[i]));
+            tree->resources[i].active = 1;
+            tree->resources[i].resource = resource;
+            tree->resources[i].resource_type = resource_type;
+            tree->resource_count++;
+            return &tree->resources[i];
+        }
+    }
+    return NULL;
+}
+
+static void rdp_composited_render_tree_delete(rdp_composited_render_tree* tree, uint32_t resource)
+{
+    rdp_composited_render_resource* entry = rdp_composited_render_tree_find_mutable(tree, resource);
+
+    if (!entry)
+        return;
+    memset(entry, 0, sizeof(*entry));
+    if (tree->resource_count > 0)
+        tree->resource_count--;
+}
+
+void rdp_composited_render_tree_init(rdp_composited_render_tree* tree)
+{
+    if (!tree)
+        return;
+    memset(tree, 0, sizeof(*tree));
+}
+
+void rdp_composited_render_tree_reset(rdp_composited_render_tree* tree)
+{
+    rdp_composited_render_tree_init(tree);
+}
+
+const rdp_composited_render_resource* rdp_composited_render_tree_find(
+    const rdp_composited_render_tree* tree,
+    uint32_t resource)
+{
+    uint32_t i = 0;
+
+    if (!tree)
+        return NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        if (tree->resources[i].active && tree->resources[i].resource == resource)
+            return &tree->resources[i];
+    }
+    return NULL;
+}
+
+static librdp_status rdp_composited_render_apply_u32(rdp_composited_render_tree* tree,
+                                                     const rdp_composited_channel_message* message)
+{
+    rdp_composited_u32_target_order order;
+    rdp_composited_render_resource* target = NULL;
+    librdp_status status = rdp_composited_parse_u32_target_order(message->data,
+                                                                 message->message_size,
+                                                                 message->control_code,
+                                                                 &order);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    target = rdp_composited_render_tree_upsert(tree, order.target_resource, 0);
+    if (!target)
+        return LIBRDP_STATUS_NO_MEMORY;
+    target->target_resource = order.target_resource;
+    switch (message->control_code)
+    {
+        case RDP_COMPOSITED_CMD_TARGET_SET_ROOT:
+            target->root_resource = order.value;
+            break;
+        case RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR:
+            target->clear_color[0] = (uint8_t)(order.value & 0xffu);
+            target->clear_color[1] = (uint8_t)((order.value >> 8) & 0xffu);
+            target->clear_color[2] = (uint8_t)((order.value >> 16) & 0xffu);
+            target->clear_color[3] = (uint8_t)((order.value >> 24) & 0xffu);
+            break;
+        case RDP_COMPOSITED_CMD_TARGET_INVALIDATE:
+            tree->invalidation_count++;
+            break;
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_IMAGE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_CLIP:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_DX_CLIP:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_COMPOSE_ONCE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_MAXIMIZED_CLIP_MARGINS:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_PROTECT_CONTENT:
+            target->target_resource = order.value;
+            break;
+        default:
+            break;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_composited_render_tree_apply_message(
+    rdp_composited_render_tree* tree,
+    const rdp_composited_channel_message* message)
+{
+    rdp_composited_render_resource* entry = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!tree || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_composited_channel_command_known(message->control_code))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    tree->command_count++;
+    switch (message->control_code)
+    {
+        case RDP_COMPOSITED_CMD_CREATE_RESOURCE:
+        {
+            rdp_composited_resource_order order;
+            status = rdp_composited_parse_resource_order(message->data,
+                                                         message->message_size,
+                                                         RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                                         &order);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree, order.resource, order.resource_type);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_DELETE_RESOURCE:
+        {
+            rdp_composited_resource_order order;
+            status = rdp_composited_parse_resource_order(message->data,
+                                                         message->message_size,
+                                                         RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                                         &order);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_composited_render_tree_delete(tree, order.resource);
+            break;
+        }
+        case RDP_COMPOSITED_CMD_DUPLICATE_HANDLE:
+        {
+            rdp_composited_duplicate_handle duplicate;
+            const rdp_composited_render_resource* source = NULL;
+
+            status = rdp_composited_parse_duplicate_handle(message->data, message->message_size, &duplicate);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            source = rdp_composited_render_tree_find(tree, duplicate.original);
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      duplicate.duplicate,
+                                                      source ? source->resource_type : 0);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->duplicate_source = duplicate.original;
+            entry->duplicate_target_channel = duplicate.target_channel;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_CREATE:
+        {
+            rdp_composited_window_node_create window_node;
+
+            status = rdp_composited_parse_window_node_create(message->data,
+                                                             message->message_size,
+                                                             &window_node);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      window_node.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->sprite_id = window_node.sprite_id;
+            entry->window_id = window_node.window_id;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_HWND_TARGET_CREATE:
+        {
+            rdp_composited_target_create target;
+
+            status = rdp_composited_parse_target_create(message->data, message->message_size, &target);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      target.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_HWND_TARGET);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->width = target.width;
+            entry->height = target.height;
+            memcpy(entry->clear_color, target.clear_color, sizeof(entry->clear_color));
+            break;
+        }
+        case RDP_COMPOSITED_CMD_GLYPH_RUN_CREATE:
+        {
+            rdp_composited_glyph_run glyph_run;
+
+            status = rdp_composited_parse_glyph_run(message->data, message->message_size, &glyph_run);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      glyph_run.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_GLYPH_RUN);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->target_resource = glyph_run.target_resource;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP:
+        {
+            rdp_composited_gdi_sprite_bitmap sprite;
+
+            status = rdp_composited_parse_gdi_sprite_bitmap(message->data, message->message_size, &sprite);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      sprite.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->sprite_id = sprite.sprite_id;
+            entry->logical_surface_id = sprite.logical_surface_id;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_SURFACE:
+        {
+            rdp_composited_gdi_surface_update surface_update;
+
+            status = rdp_composited_parse_gdi_surface_update(message->data,
+                                                             message->message_size,
+                                                             &surface_update);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      surface_update.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->dxgi_format = surface_update.dxgi_format;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_META_TARGET_CREATE:
+        case RDP_COMPOSITED_CMD_META_TARGET_UPDATE:
+        {
+            rdp_composited_meta_target meta;
+
+            status = rdp_composited_parse_meta_target(message->data,
+                                                      message->message_size,
+                                                      message->control_code,
+                                                      &meta);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      meta.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->surface_count = meta.textures.surface_count;
+            entry->dxgi_format = meta.textures.dxgi_format;
+            entry->texture_width = meta.textures.width;
+            entry->texture_height = meta.textures.height;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_TARGET_SET_ROOT:
+        case RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR:
+        case RDP_COMPOSITED_CMD_TARGET_INVALIDATE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_IMAGE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_CLIP:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_DX_CLIP:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_COMPOSE_ONCE:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_MAXIMIZED_CLIP_MARGINS:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION:
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_PROTECT_CONTENT:
+            return rdp_composited_render_apply_u32(tree, message);
+        case RDP_COMPOSITED_CMD_SYNC_FLUSH:
+        case RDP_COMPOSITED_CMD_ASYNC_FLUSH:
+            tree->flush_count++;
+            break;
+        case RDP_COMPOSITED_CMD_ROUNDTRIP_REQUEST:
+            tree->roundtrip_count++;
+            break;
+        case RDP_COMPOSITED_CMD_REQUEST_TIER:
+            tree->tier_request_count++;
+            break;
+        case RDP_COMPOSITED_CMD_REGISTER_NOTIFICATIONS:
+            tree->notification_registration_count++;
+            break;
+        default:
+            tree->skipped_known_count++;
+            break;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_composited_render_tree_apply_batch(rdp_composited_render_tree* tree,
+                                                     const void* data,
+                                                     size_t length)
+{
+    rdp_composited_batch_reader reader;
+    rdp_composited_channel_message message;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!tree || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_composited_batch_init(&reader, data, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    while ((status = rdp_composited_batch_next(&reader, &message)) == LIBRDP_STATUS_OK)
+    {
+        status = rdp_composited_render_tree_apply_message(tree, &message);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return status == LIBRDP_STATUS_AGAIN ? LIBRDP_STATUS_OK : status;
+}
+
 librdp_status rdp_composited_parse_control(const void* data,
                                            size_t length,
                                            rdp_composited_control* message)
@@ -352,6 +704,7 @@ librdp_status rdp_composited_parse_channel_message(const void* data,
     if (length < 8u || length > UINT32_MAX || !rdp_composited_aligned_size(length))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     memset(message, 0, sizeof(*message));
+    message->data = (const uint8_t*)data;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u32_le(&stream, &message->message_size) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &message->control_code) != LIBRDP_STATUS_OK ||

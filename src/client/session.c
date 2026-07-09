@@ -3,6 +3,7 @@
 #include "channels/audio_format.h"
 #include "channels/audio_input.h"
 #include "channels/audio_output.h"
+#include "channels/composited_remoting.h"
 #include "channels/core_input.h"
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
@@ -351,6 +352,12 @@ struct librdp_session
     uint32_t audio_input_version;
     uint32_t audio_input_selected_format_count;
     librdp_audio_format audio_input_selected_formats[RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT];
+    uint32_t composited_channel_id;
+    uint8_t composited_channel_id_bytes;
+    uint8_t composited_ready;
+    uint8_t composited_connection_open;
+    uint32_t composited_connection_id;
+    uint32_t composited_open_channel_id;
     uint32_t usb_redirection_channel_id;
     uint8_t usb_redirection_channel_id_bytes;
     uint8_t usb_redirection_ready;
@@ -365,6 +372,7 @@ struct librdp_session
     rdp_session_graphics_cache_entry graphics_cache[RDP_SESSION_GRAPHICS_CACHE_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
+    rdp_composited_render_tree composited_tree;
     rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
 #ifdef RDP_HAVE_PCSC
     rdp_session_smartcard_context smartcard_contexts[RDP_SESSION_MAX_SMARTCARD_CONTEXTS];
@@ -423,6 +431,19 @@ static librdp_status rdp_session_fail(librdp_session* session, librdp_status sta
     event.data.error.status = status;
     rdp_session_emit(session, &event);
     return status;
+}
+
+static void rdp_session_composited_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->composited_channel_id = 0;
+    session->composited_channel_id_bytes = 0;
+    session->composited_ready = 0;
+    session->composited_connection_open = 0;
+    session->composited_connection_id = 0;
+    session->composited_open_channel_id = 0;
+    rdp_composited_render_tree_reset(&session->composited_tree);
 }
 
 static void rdp_session_emit_surface_invalidated(librdp_session* session,
@@ -7244,6 +7265,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0 ||
            strcmp(name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_COMPOSITED_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_AUDIO_INPUT_CHANNEL_NAME) == 0;
 }
 
@@ -11701,6 +11723,194 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_session_send_composited_packet(librdp_session* session,
+                                                        const rdp_buffer* payload,
+                                                        const char* event)
+{
+    if (!session || !payload || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->composited_channel_id == 0 || session->composited_channel_id_bytes == 0)
+        return LIBRDP_STATUS_STATE;
+    return rdp_session_send_dynamic_channel_data(session,
+                                                 session->composited_channel_id,
+                                                 session->composited_channel_id_bytes,
+                                                 payload->data,
+                                                 payload->length,
+                                                 event);
+}
+
+static uint32_t rdp_session_composited_payload_code(const rdp_composited_control* control)
+{
+    const uint8_t* data = NULL;
+
+    if (!control || control->payload_len < 4u)
+        return 0;
+    data = control->payload;
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static librdp_status rdp_session_handle_composited_message(librdp_session* session,
+                                                           uint32_t channel_id,
+                                                           const uint8_t* data,
+                                                           size_t data_len)
+{
+    rdp_composited_control control;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_composited_parse_control(data, data_len, &control);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.cr2.pdu.invalid",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        return status;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.cr2.control",
+                          "dvc_channel_id=%u control=%u word0=%u word1=%u payload_len=%u enabled=%u",
+                          channel_id,
+                          control.control_code,
+                          control.word0,
+                          control.word1,
+                          (unsigned)control.payload_len,
+                          librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_CR2) ? 1u : 0u);
+    switch (control.control_code)
+    {
+        case RDP_COMPOSITED_CONTROL_VERSION_REQUEST:
+        {
+            uint32_t versions[1] = {RDP_COMPOSITED_PROTOCOL_VERSION};
+            rdp_buffer response;
+
+            rdp_buffer_init(&response);
+            status = rdp_composited_write_version_reply(&response, versions, 1);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_send_composited_packet(session, &response, "client.cr2.version_reply");
+            rdp_buffer_free(&response);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.version_reply",
+                            "dvc_channel_id=%u version=%u",
+                            channel_id,
+                            RDP_COMPOSITED_PROTOCOL_VERSION);
+            break;
+        }
+        case RDP_COMPOSITED_CONTROL_VERSION_ANNOUNCEMENT:
+        {
+            rdp_composited_version_reply reply;
+
+            status = rdp_composited_parse_version_reply(control.payload, control.payload_len, &reply);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                session->composited_ready =
+                    rdp_composited_version_reply_has(&reply, RDP_COMPOSITED_PROTOCOL_VERSION) ? 1u : 0u;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.cr2.version_announcement",
+                                "dvc_channel_id=%u versions=%u supported=%u",
+                                channel_id,
+                                reply.version_count,
+                                session->composited_ready ? 1u : 0u);
+            }
+            else
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.cr2.version_announcement.invalid",
+                                "dvc_channel_id=%u payload_len=%u status=%s",
+                                channel_id,
+                                (unsigned)control.payload_len,
+                                librdp_status_string(status));
+                return status;
+            }
+            break;
+        }
+        case RDP_COMPOSITED_CONTROL_OPEN_CONNECTION:
+            session->composited_connection_open = 1;
+            session->composited_connection_id = control.word0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.connection.open",
+                            "dvc_channel_id=%u connection_id=%u flags=%u",
+                            channel_id,
+                            control.word0,
+                            control.word1);
+            break;
+        case RDP_COMPOSITED_CONTROL_CLOSE_CONNECTION:
+            session->composited_connection_open = 0;
+            session->composited_connection_id = 0;
+            session->composited_open_channel_id = 0;
+            rdp_composited_render_tree_reset(&session->composited_tree);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.connection.close",
+                            "dvc_channel_id=%u",
+                            channel_id);
+            break;
+        case RDP_COMPOSITED_CONTROL_OPEN_CHANNEL:
+            session->composited_ready = 1;
+            session->composited_open_channel_id = control.word0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.channel.open",
+                            "dvc_channel_id=%u channel=%u flags=%u",
+                            channel_id,
+                            control.word0,
+                            control.word1);
+            break;
+        case RDP_COMPOSITED_CONTROL_CLOSE_CHANNEL:
+            if (session->composited_open_channel_id == control.word0)
+                session->composited_open_channel_id = 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.channel.close",
+                            "dvc_channel_id=%u channel=%u",
+                            channel_id,
+                            control.word0);
+            break;
+        case RDP_COMPOSITED_CONTROL_DATA_ON_CHANNEL:
+        {
+            uint32_t before_commands = session->composited_tree.command_count;
+            uint32_t before_resources = session->composited_tree.resource_count;
+
+            status = rdp_composited_render_tree_apply_batch(&session->composited_tree,
+                                                            control.payload,
+                                                            control.payload_len);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.render.batch",
+                            "dvc_channel_id=%u channel=%u payload_len=%u status=%s commands=%u resources=%u resource_delta=%d invalidations=%u skipped=%u",
+                            channel_id,
+                            control.word0,
+                            (unsigned)control.payload_len,
+                            librdp_status_string(status),
+                            session->composited_tree.command_count - before_commands,
+                            session->composited_tree.resource_count,
+                            (int)session->composited_tree.resource_count - (int)before_resources,
+                            session->composited_tree.invalidation_count,
+                            session->composited_tree.skipped_known_count);
+            return status;
+        }
+        case RDP_COMPOSITED_CONTROL_CONNECTION_NOTIFICATION:
+        case RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION:
+        case RDP_COMPOSITED_CONTROL_CONNECTION_BROADCAST:
+        case RDP_COMPOSITED_CONTROL_SURFACE_MANAGER_EVENT:
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.cr2.notification",
+                                  "dvc_channel_id=%u control=%u channel=%u code=%u payload_len=%u",
+                                  channel_id,
+                                  control.control_code,
+                                  control.word0,
+                                  rdp_session_composited_payload_code(&control),
+                                  (unsigned)control.payload_len);
+            break;
+        default:
+            break;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,
                                                                 uint32_t channel_id,
@@ -11861,6 +12071,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     else if (strcmp(entry->name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0)
     {
         status = rdp_session_handle_usb_redirection_message(session, data, data_len);
+    }
+    else if (strcmp(entry->name, RDP_COMPOSITED_CHANNEL_NAME) == 0)
+    {
+        status = rdp_session_handle_composited_message(session, channel_id, data, data_len);
     }
     else
     {
@@ -12024,6 +12238,22 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             request.channel_id,
                             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ? 1u : 0u,
                             librdp_settings_usb_device_count(session->settings));
+        }
+        else if (request.name_len == sizeof(RDP_COMPOSITED_CHANNEL_NAME) - 1u &&
+                 memcmp(request.name, RDP_COMPOSITED_CHANNEL_NAME, request.name_len) == 0)
+        {
+            session->composited_channel_id = request.channel_id;
+            session->composited_channel_id_bytes = request.channel_id_bytes;
+            session->composited_ready = 0;
+            session->composited_connection_open = 0;
+            session->composited_connection_id = 0;
+            session->composited_open_channel_id = 0;
+            rdp_composited_render_tree_reset(&session->composited_tree);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.cr2.channel",
+                            "dvc_channel_id=%u enabled=%u",
+                            request.channel_id,
+                            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_CR2) ? 1u : 0u);
         }
         else if (request.name_len == sizeof(RDP_SESSION_MOUSE_CURSOR_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_MOUSE_CURSOR_NAME, request.name_len) == 0)
@@ -12399,6 +12629,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             }
             if (entry->channel_id == session->usb_redirection_channel_id)
                 rdp_session_usb_redirection_reset(session);
+            if (entry->channel_id == session->composited_channel_id)
+                rdp_session_composited_reset(session);
             rdp_session_dynamic_channel_clear_entry(entry);
         }
     }
@@ -12950,6 +13182,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->fastpath_fragment);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
+    rdp_composited_render_tree_init(&session->composited_tree);
     rdp_session_redirected_files_clear(session);
     session->avc = rdp_avc_decoder_new();
     if (!session->avc)
@@ -12975,6 +13208,7 @@ void librdp_session_free(librdp_session* session)
     (void)librdp_session_disconnect(session);
     rdp_session_smartcard_reset(session);
     rdp_session_usb_redirection_reset(session);
+    rdp_session_composited_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
@@ -13141,6 +13375,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    rdp_session_composited_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);
@@ -13931,6 +14166,7 @@ fail:
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    rdp_session_composited_reset(session);
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
@@ -14859,6 +15095,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    rdp_session_composited_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);

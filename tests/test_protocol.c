@@ -8566,10 +8566,13 @@ static int test_composited_remoting_channel(void)
     rdp_composited_meta_target meta;
     rdp_composited_batch_reader reader;
     rdp_composited_channel_message message;
+    rdp_composited_render_tree tree;
+    const rdp_composited_render_resource* render_resource = NULL;
     rdp_buffer buffer;
     rdp_buffer batch;
     rdp_buffer wrapped;
 
+    rdp_composited_render_tree_init(&tree);
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&batch);
     rdp_buffer_init(&wrapped);
@@ -8742,6 +8745,14 @@ static int test_composited_remoting_channel(void)
     PCHECK(rdp_composited_batch_next(&reader, &message) == LIBRDP_STATUS_OK);
     PCHECK(message.control_code == RDP_COMPOSITED_CMD_DUPLICATE_HANDLE);
     PCHECK(rdp_composited_batch_next(&reader, &message) == LIBRDP_STATUS_AGAIN);
+    PCHECK(rdp_composited_render_tree_apply_batch(&tree, batch.data, batch.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(tree.command_count == 2u && tree.resource_count == 2u);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x10u);
+    PCHECK(render_resource && render_resource->resource_type == RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x30u);
+    PCHECK(render_resource && render_resource->duplicate_source == 0x10u &&
+           render_resource->duplicate_target_channel == 0x20u);
     PCHECK(rdp_composited_write_data_on_channel(&wrapped, 7u, batch.data, batch.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_composited_parse_control(wrapped.data, wrapped.length, &control) == LIBRDP_STATUS_OK);
@@ -8751,6 +8762,43 @@ static int test_composited_remoting_channel(void)
     wrapped.data[7] = 1u;
     PCHECK(rdp_composited_parse_control(wrapped.data, wrapped.length, &control) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_create(&buffer, 0x40u, 640u, 480u, color) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource && render_resource->resource_type == RDP_COMPOSITED_RESOURCE_HWND_TARGET &&
+           render_resource->width == 640u && render_resource->height == 480u &&
+           memcmp(render_resource->clear_color, color, sizeof(color)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_u32_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_TARGET_SET_ROOT,
+                                                 0x40u,
+                                                 0x10u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource && render_resource->root_resource == 0x10u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_resource_order(&buffer,
+                                               RDP_COMPOSITED_CMD_DELETE_RESOURCE,
+                                               0x10u,
+                                               RDP_COMPOSITED_RESOURCE_WINDOW_NODE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_find(&tree, 0x10u) == NULL);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     rdp_buffer_free(&wrapped);
     rdp_buffer_free(&batch);

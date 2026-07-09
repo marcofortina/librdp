@@ -93,6 +93,7 @@
 #define RDP_COMPOSITED_RESOURCE_DESKTOP_TARGET 0x00000019u
 #define RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET 0x00000023u
 #define RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP 0x00000038u
+#define RDP_COMPOSITED_RENDER_RESOURCE_LIMIT 512u
 
 typedef struct rdp_composited_control
 {
@@ -108,6 +109,7 @@ typedef struct rdp_composited_channel_message
 {
     uint32_t message_size;
     uint32_t control_code;
+    const uint8_t* data;
     const uint8_t* payload;
     size_t payload_len;
 } rdp_composited_channel_message;
@@ -208,9 +210,54 @@ typedef struct rdp_composited_meta_target
     rdp_composited_texture_set textures;
 } rdp_composited_meta_target;
 
+typedef struct rdp_composited_render_resource
+{
+    uint8_t active;
+    uint32_t resource;
+    uint32_t resource_type;
+    uint32_t duplicate_source;
+    uint32_t duplicate_target_channel;
+    uint32_t target_resource;
+    uint32_t root_resource;
+    uint32_t width;
+    uint32_t height;
+    uint32_t dxgi_format;
+    uint32_t surface_count;
+    uint32_t texture_width;
+    uint32_t texture_height;
+    uint64_t sprite_id;
+    uint64_t window_id;
+    uint64_t logical_surface_id;
+    uint8_t clear_color[16];
+} rdp_composited_render_resource;
+
+typedef struct rdp_composited_render_tree
+{
+    rdp_composited_render_resource resources[RDP_COMPOSITED_RENDER_RESOURCE_LIMIT];
+    uint32_t resource_count;
+    uint32_t command_count;
+    uint32_t flush_count;
+    uint32_t roundtrip_count;
+    uint32_t tier_request_count;
+    uint32_t notification_registration_count;
+    uint32_t invalidation_count;
+    uint32_t skipped_known_count;
+} rdp_composited_render_tree;
+
 int rdp_composited_control_code_valid(uint32_t control_code);
 int rdp_composited_channel_command_known(uint32_t control_code);
 int rdp_composited_notification_code_valid(uint32_t notification_code);
+void rdp_composited_render_tree_init(rdp_composited_render_tree* tree);
+void rdp_composited_render_tree_reset(rdp_composited_render_tree* tree);
+const rdp_composited_render_resource* rdp_composited_render_tree_find(
+    const rdp_composited_render_tree* tree,
+    uint32_t resource);
+librdp_status rdp_composited_render_tree_apply_message(
+    rdp_composited_render_tree* tree,
+    const rdp_composited_channel_message* message);
+librdp_status rdp_composited_render_tree_apply_batch(rdp_composited_render_tree* tree,
+                                                     const void* data,
+                                                     size_t length);
 librdp_status rdp_composited_parse_control(const void* data,
                                            size_t length,
                                            rdp_composited_control* message);
