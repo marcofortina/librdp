@@ -2111,6 +2111,29 @@ static int test_path_security_license_channels(void)
         0x03, 0x03,
         0x02, 0x00
     };
+    const uint8_t clear_missing_glyph_hit[] = {
+        0x03, 0x0a,
+        0x03, 0x00
+    };
+    const uint8_t clear_empty_payload[] = {
+        0x00, 0x0b
+    };
+    const uint8_t clear_unknown_subcodec_bitmap[] = {
+        0x00, 0x0c,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x19, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x0c, 0x00, 0x00, 0x00,
+        0xff,
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12
+    };
     const uint8_t graphics_start_frame[] = {
         0x0b, 0x00, 0x00, 0x00,
         0x10, 0x00, 0x00, 0x00,
@@ -5896,6 +5919,27 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[0] == 9 &&
            clear_pixels.data[2] == 7 &&
            clear_pixels.data[7] == 0xff);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_missing_glyph_hit,
+                                        sizeof(clear_missing_glyph_hit),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_empty_payload,
+                                        sizeof(clear_empty_payload),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_unknown_subcodec_bitmap,
+                                        sizeof(clear_unknown_subcodec_bitmap),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_clipboard_parse_packet(clip_caps, sizeof(clip_caps), &cb) == LIBRDP_STATUS_OK);

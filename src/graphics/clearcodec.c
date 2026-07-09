@@ -66,7 +66,7 @@ static librdp_status rdp_clearcodec_copy_glyph(const rdp_clearcodec_glyph* glyph
     if (size > ((size_t)-1) / 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (glyph->pixel_count < size || glyph->pixels.length < size * 4u)
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     row_stride = (size_t)width * 4u;
     size *= 4u;
     status = rdp_buffer_reserve(pixels, size);
@@ -732,7 +732,7 @@ static librdp_status rdp_clearcodec_decode_subcodecs(rdp_clearcodec_context* con
         else if (subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RLEX)
             status = rdp_clearcodec_decode_rlex_subcodec(&subcodec, width, height, pixels, stride);
         else
-            return LIBRDP_STATUS_UNSUPPORTED;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (status != LIBRDP_STATUS_OK)
             return status;
         offset += subcodec.total_len;
@@ -861,7 +861,7 @@ librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
     if ((stream.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0)
         return rdp_clearcodec_copy_glyph(&context->glyphs[stream.glyph_index], width, height, pixels, stride);
     if (stream.payload_len == 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     status = rdp_clearcodec_parse_composite_payload(stream.payload, stream.payload_len, &payload);
     if (status != LIBRDP_STATUS_OK)
         return status;
