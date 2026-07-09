@@ -4620,6 +4620,21 @@ static int test_path_security_license_channels(void)
            dyn_compressed_pdu.channel_id_bytes == 1 &&
            dyn_compressed_pdu.data_len == 3 &&
            dyn_compressed_pdu.data[0] == 0xe0);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_dynamic_channel_write_compressed_data(&dyn_response,
+                                                     dyn_compressed_pdu.channel_id,
+                                                     dyn_compressed_pdu.channel_id_bytes,
+                                                     dyn_compressed_pdu.data,
+                                                     dyn_compressed_pdu.data_len) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(dyn_data_compressed) &&
+           memcmp(dyn_response.data, dyn_data_compressed, sizeof(dyn_data_compressed)) == 0);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_compressed_data(&dyn_response,
+                                                     7,
+                                                     1,
+                                                     dyn_compressed_pdu.data,
+                                                     1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_parse_compressed_data_first(dyn_data_first_compressed,
                                                            sizeof(dyn_data_first_compressed),
                                                            &dyn_first_compressed_pdu) == LIBRDP_STATUS_OK);
@@ -4627,6 +4642,24 @@ static int test_path_security_license_channels(void)
            dyn_first_compressed_pdu.total_length == 300 &&
            dyn_first_compressed_pdu.data_len == 3 &&
            dyn_first_compressed_pdu.data[1] == 0x06);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_dynamic_channel_write_compressed_data_first(&dyn_response,
+                                                           dyn_first_compressed_pdu.channel_id,
+                                                           dyn_first_compressed_pdu.channel_id_bytes,
+                                                           dyn_first_compressed_pdu.total_length,
+                                                           dyn_first_compressed_pdu.data,
+                                                           dyn_first_compressed_pdu.data_len) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == sizeof(dyn_data_first_compressed) &&
+           memcmp(dyn_response.data, dyn_data_first_compressed, sizeof(dyn_data_first_compressed)) == 0);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_compressed_data_first(&dyn_response,
+                                                           7,
+                                                           1,
+                                                           1,
+                                                           dyn_first_compressed_pdu.data,
+                                                           dyn_first_compressed_pdu.data_len) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_parse_soft_sync_request(dyn_soft_sync_request,
                                                        sizeof(dyn_soft_sync_request),
                                                        &dyn_soft_sync) == LIBRDP_STATUS_OK);

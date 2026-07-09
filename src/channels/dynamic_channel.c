@@ -529,6 +529,29 @@ librdp_status rdp_dynamic_channel_parse_compressed_data(
     return rdp_stream_read_bytes(&stream, &pdu->data, pdu->data_len);
 }
 
+librdp_status rdp_dynamic_channel_write_compressed_data(rdp_buffer* buffer,
+                                                        uint32_t channel_id,
+                                                        uint8_t channel_id_bytes,
+                                                        const void* data,
+                                                        size_t data_len)
+{
+    uint8_t cb_id = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !data || data_len < 2u ||
+        1u + channel_id_bytes + data_len > RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED << 4) | cb_id));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_dynamic_channel_write_channel_id(buffer, channel_id, channel_id_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
+}
+
 librdp_status rdp_dynamic_channel_parse_compressed_data_first(
     const void* data,
     size_t length,
@@ -560,6 +583,39 @@ librdp_status rdp_dynamic_channel_parse_compressed_data_first(
     if (pdu->data_len < 2u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return rdp_stream_read_bytes(&stream, &pdu->data, pdu->data_len);
+}
+
+librdp_status rdp_dynamic_channel_write_compressed_data_first(rdp_buffer* buffer,
+                                                              uint32_t channel_id,
+                                                              uint8_t channel_id_bytes,
+                                                              uint32_t total_length,
+                                                              const void* data,
+                                                              size_t data_len)
+{
+    uint8_t cb_id = 0;
+    uint8_t length_bytes = 0;
+    uint8_t length_code = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !data || total_length == 0 || data_len < 2u || data_len > total_length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    length_bytes = rdp_dynamic_channel_length_bytes(total_length);
+    length_code = rdp_dynamic_channel_length_code(length_bytes);
+    if (1u + channel_id_bytes + length_bytes + data_len > RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer,
+                                  (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST_COMPRESSED << 4) |
+                                            ((uint32_t)length_code << 2) | cb_id));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_dynamic_channel_write_channel_id(buffer, channel_id, channel_id_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_dynamic_channel_write_length(buffer, total_length, length_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
+    return status;
 }
 
 static librdp_status rdp_dynamic_channel_validate_soft_sync_lists(const uint8_t* data,

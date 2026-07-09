@@ -158,10 +158,21 @@ librdp_status rdp_dynamic_channel_parse_compressed_data(
     const void* data,
     size_t length,
     rdp_dynamic_channel_compressed_data_pdu* pdu);
+librdp_status rdp_dynamic_channel_write_compressed_data(rdp_buffer* buffer,
+                                                        uint32_t channel_id,
+                                                        uint8_t channel_id_bytes,
+                                                        const void* data,
+                                                        size_t data_len);
 librdp_status rdp_dynamic_channel_parse_compressed_data_first(
     const void* data,
     size_t length,
     rdp_dynamic_channel_compressed_data_first_pdu* pdu);
+librdp_status rdp_dynamic_channel_write_compressed_data_first(rdp_buffer* buffer,
+                                                              uint32_t channel_id,
+                                                              uint8_t channel_id_bytes,
+                                                              uint32_t total_length,
+                                                              const void* data,
+                                                              size_t data_len);
 librdp_status rdp_dynamic_channel_parse_soft_sync_request(
     const void* data,
     size_t length,
