@@ -3029,6 +3029,194 @@ static librdp_status rdp_session_make_print_job_path(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_session_make_printer_cache_path(librdp_session* session,
+                                                         uint32_t printer_index,
+                                                         const char* printer_name,
+                                                         char** path)
+{
+    const char* output = NULL;
+    char safe[128];
+    int needed = 0;
+    size_t output_len = 0;
+    size_t i = 0;
+
+    if (!session || !path || !printer_name)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *path = NULL;
+    output = librdp_settings_printer_output_path(session->settings, printer_index);
+    if (!output || output[0] == '\0')
+        return LIBRDP_STATUS_STATE;
+    for (i = 0; i + 1u < sizeof(safe) && printer_name[i]; i++)
+        safe[i] = rdp_session_print_path_char(printer_name[i]);
+    safe[i] = '\0';
+    output_len = strlen(output);
+    needed = snprintf(NULL,
+                      0,
+                      "%s%s%s.cache",
+                      output,
+                      output_len > 0 && output[output_len - 1u] == '/' ? "" : "/",
+                      safe);
+    if (needed <= 0)
+        return LIBRDP_STATUS_NO_MEMORY;
+    *path = (char*)malloc((size_t)needed + 1u);
+    if (!*path)
+        return LIBRDP_STATUS_NO_MEMORY;
+    (void)snprintf(*path,
+                   (size_t)needed + 1u,
+                   "%s%s%s.cache",
+                   output,
+                   output_len > 0 && output[output_len - 1u] == '/' ? "" : "/",
+                   safe);
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_session_printer_index_from_utf16_name(librdp_session* session,
+                                                          const uint8_t* name,
+                                                          uint32_t name_len,
+                                                          uint32_t* printer_index,
+                                                          char** utf8_name)
+{
+    char* converted = NULL;
+    uint32_t count = 0;
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !printer_index || !utf8_name)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    *printer_index = UINT32_MAX;
+    *utf8_name = NULL;
+    status = rdp_session_utf16le_path_to_utf8(name, name_len, &converted);
+    if (status != LIBRDP_STATUS_OK)
+        return rdp_session_filesystem_error_from_status(status);
+    count = librdp_settings_printer_count(session->settings);
+    for (i = 0; i < count; i++)
+    {
+        const char* configured = librdp_settings_printer_name(session->settings, i);
+
+        if (configured && strcmp(configured, converted) == 0)
+        {
+            *printer_index = i;
+            *utf8_name = converted;
+            return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+        }
+    }
+    free(converted);
+    return RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
+}
+
+static uint32_t rdp_session_write_printer_cache_file(const char* path,
+                                                     const uint8_t* data,
+                                                     uint32_t data_len)
+{
+    int fd = -1;
+    uint32_t written = 0;
+
+    if (!path || (!data && data_len > 0))
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0)
+        return rdp_session_errno_to_device_status(errno);
+    while (written < data_len)
+    {
+        ssize_t count = write(fd, data + written, data_len - written);
+
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+        {
+            uint32_t status = count < 0 ? rdp_session_errno_to_device_status(errno) :
+                                          RDP_SESSION_DEVICE_UNSUCCESSFUL;
+            (void)close(fd);
+            return status;
+        }
+        written += (uint32_t)count;
+    }
+    if (close(fd) != 0)
+        return rdp_session_errno_to_device_status(errno);
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
+                                                      const rdp_printer_redirection_cache_event* event)
+{
+    char* name = NULL;
+    char* old_name = NULL;
+    char* new_name = NULL;
+    char* path = NULL;
+    char* new_path = NULL;
+    uint32_t index = UINT32_MAX;
+    uint32_t new_index = UINT32_MAX;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+
+    if (!session || !event)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    switch (event->event_id)
+    {
+        case RDP_PRINTER_REDIRECTION_CACHE_ADD:
+        case RDP_PRINTER_REDIRECTION_CACHE_UPDATE:
+            io_status = rdp_session_printer_index_from_utf16_name(session,
+                                                                  event->printer_name,
+                                                                  event->printer_name_len,
+                                                                  &index,
+                                                                  &name);
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            {
+                if (rdp_session_make_printer_cache_path(session, index, name, &path) != LIBRDP_STATUS_OK)
+                    io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+                else
+                    io_status = rdp_session_write_printer_cache_file(path,
+                                                                     event->cached_fields,
+                                                                     event->cached_fields_len);
+            }
+            break;
+        case RDP_PRINTER_REDIRECTION_CACHE_DELETE:
+            io_status = rdp_session_printer_index_from_utf16_name(session,
+                                                                  event->printer_name,
+                                                                  event->printer_name_len,
+                                                                  &index,
+                                                                  &name);
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            {
+                if (rdp_session_make_printer_cache_path(session, index, name, &path) != LIBRDP_STATUS_OK)
+                    io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+                else if (unlink(path) != 0 && errno != ENOENT)
+                    io_status = rdp_session_errno_to_device_status(errno);
+            }
+            break;
+        case RDP_PRINTER_REDIRECTION_CACHE_RENAME:
+            io_status = rdp_session_printer_index_from_utf16_name(session,
+                                                                  event->old_printer_name,
+                                                                  event->old_printer_name_len,
+                                                                  &index,
+                                                                  &old_name);
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+                io_status = rdp_session_printer_index_from_utf16_name(session,
+                                                                      event->new_printer_name,
+                                                                      event->new_printer_name_len,
+                                                                      &new_index,
+                                                                      &new_name);
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            {
+                if (rdp_session_make_printer_cache_path(session, index, old_name, &path) != LIBRDP_STATUS_OK ||
+                    rdp_session_make_printer_cache_path(session, new_index, new_name, &new_path) !=
+                        LIBRDP_STATUS_OK)
+                    io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+                else if (rename(path, new_path) != 0 && errno != ENOENT)
+                    io_status = rdp_session_errno_to_device_status(errno);
+            }
+            break;
+        default:
+            io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            break;
+    }
+    free(name);
+    free(old_name);
+    free(new_name);
+    free(path);
+    free(new_path);
+    return io_status;
+}
+
 static librdp_status rdp_session_send_printer_response(librdp_session* session,
                                                        const rdp_buffer* response,
                                                        const char* event)
@@ -3480,16 +3668,20 @@ static librdp_status rdp_session_handle_printer_component_message(librdp_session
     if (packet_id == RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA)
     {
         rdp_printer_redirection_cache_event event;
+        uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 
         status = rdp_printer_redirection_parse_cache_event(data, data_len, &event);
         if (status == LIBRDP_STATUS_OK)
+            io_status = rdp_session_store_printer_cache_event(session, &event);
+        if (status == LIBRDP_STATUS_OK)
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.rdpdr.printer.cache",
-                            "channel_id=%u event_id=%u printer_name_len=%u cached_len=%u",
+                            "channel_id=%u event_id=%u printer_name_len=%u cached_len=%u status=%u",
                             session->device_redirection_channel_id,
                             event.event_id,
                             event.printer_name_len,
-                            event.cached_fields_len);
+                            event.cached_fields_len,
+                            io_status);
     }
     else if (packet_id == RDP_DEVICE_REDIRECTION_PAKID_PRINTER_USING_XPS)
     {
