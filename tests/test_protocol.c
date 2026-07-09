@@ -13,6 +13,7 @@
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
 #include "channels/multiparty.h"
+#include "channels/port_redirection.h"
 #include "channels/pnp_redirection.h"
 #include "channels/printer_redirection.h"
 #include "channels/smartcard_redirection.h"
@@ -160,6 +161,87 @@ static int test_session_selection_and_echo(void)
     PCHECK(rdp_echo_channel_parse_response(buffer.data, buffer.length, &echo) == LIBRDP_STATUS_OK);
     PCHECK(echo.payload_len == sizeof(echo_payload));
     PCHECK(rdp_echo_channel_write_request(&buffer, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
+static int test_port_redirection_channel(void)
+{
+    const uint8_t input[] = {0x80, 0x25, 0x00, 0x00};
+    char com1[8] = {'C', 'O', 'M', '1', ':', 0, 0, 0};
+    char lpt1[8] = {'L', 'P', 'T', '1', ':', 0, 0, 0};
+    rdp_device_redirection_device_announce devices[2];
+    rdp_device_redirection_device_list list;
+    rdp_filesystem_redirection_control_request control;
+    rdp_device_redirection_io_completion completion;
+    rdp_buffer buffer;
+
+    rdp_buffer_init(&buffer);
+    memset(devices, 0, sizeof(devices));
+
+    PCHECK(rdp_port_redirection_device_type_valid(RDP_DEVICE_REDIRECTION_TYPE_SERIAL));
+    PCHECK(rdp_port_redirection_device_type_valid(RDP_DEVICE_REDIRECTION_TYPE_PARALLEL));
+    PCHECK(!rdp_port_redirection_device_type_valid(RDP_DEVICE_REDIRECTION_TYPE_PRINTER));
+    PCHECK(rdp_port_redirection_ioctl_serial(RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BAUD_RATE));
+    PCHECK(rdp_port_redirection_ioctl_parallel(RDP_PORT_REDIRECTION_IOCTL_PAR_QUERY_DEVICE_ID));
+    PCHECK(!rdp_port_redirection_ioctl_known(0xffffffffu));
+
+    PCHECK(rdp_port_redirection_make_announce(&devices[0],
+                                              RDP_PORT_REDIRECTION_SERIAL,
+                                              0x100u,
+                                              com1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_port_redirection_make_announce(&devices[1],
+                                              RDP_PORT_REDIRECTION_PARALLEL,
+                                              0x101u,
+                                              lpt1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_port_redirection_write_device_list_announce(&buffer, devices, 2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_port_redirection_parse_device_list_announce(buffer.data, buffer.length, &list) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(list.count == 2u &&
+           list.devices[0].device_type == RDP_DEVICE_REDIRECTION_TYPE_SERIAL &&
+           list.devices[1].device_type == RDP_DEVICE_REDIRECTION_TYPE_PARALLEL);
+    devices[0].device_type = RDP_DEVICE_REDIRECTION_TYPE_PRINTER;
+    PCHECK(rdp_port_redirection_write_device_list_announce(&buffer, devices, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_port_redirection_write_control_request(&buffer,
+                                                      0x100u,
+                                                      2u,
+                                                      3u,
+                                                      4u,
+                                                      RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BAUD_RATE,
+                                                      input,
+                                                      sizeof(input)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_port_redirection_parse_control_request(buffer.data, buffer.length, &control) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(control.io.device_id == 0x100u &&
+           control.io_control_code == RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BAUD_RATE &&
+           control.input_buffer_length == sizeof(input));
+    PCHECK(rdp_port_redirection_write_control_request(&buffer,
+                                                      0x100u,
+                                                      2u,
+                                                      3u,
+                                                      4u,
+                                                      0xffffffffu,
+                                                      input,
+                                                      sizeof(input)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_port_redirection_write_control_response(&buffer,
+                                                       0x100u,
+                                                       3u,
+                                                       RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                                                       input,
+                                                       sizeof(input)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_completion(buffer.data, buffer.length, &completion) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(completion.device_id == 0x100u &&
+           completion.completion_id == 3u &&
+           completion.payload_len == sizeof(input) + 4u);
 
     rdp_buffer_free(&buffer);
     return 0;
@@ -9017,6 +9099,8 @@ int test_protocol(void)
     if (test_device_redirection_channel() != 0)
         return 1;
     if (test_filesystem_redirection_channel() != 0)
+        return 1;
+    if (test_port_redirection_channel() != 0)
         return 1;
     if (test_printer_redirection_channel() != 0)
         return 1;
