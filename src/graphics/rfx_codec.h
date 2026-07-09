@@ -72,6 +72,7 @@ librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,
                                   int32_t* coefficients,
                                   size_t coefficient_count,
                                   size_t* coefficients_written);
+librdp_status rdp_rfx_rlgr_write_zeroes(rdp_buffer* buffer, size_t coefficient_count);
 librdp_status rdp_rfx_parse_component_quant(const void* data,
                                             size_t length,
                                             rdp_rfx_component_quant* quant);

@@ -19,6 +19,13 @@ typedef struct rdp_rfx_bit_reader
     size_t bit_pos;
 } rdp_rfx_bit_reader;
 
+typedef struct rdp_rfx_bit_writer
+{
+    rdp_buffer* buffer;
+    uint8_t current;
+    uint8_t bits;
+} rdp_rfx_bit_writer;
+
 typedef struct rdp_rfx_band
 {
     size_t offset;
@@ -158,6 +165,61 @@ static uint8_t rdp_rfx_min_bits(uint32_t value)
         value >>= 1;
     }
     return bits;
+}
+
+static librdp_status rdp_rfx_bit_writer_init(rdp_rfx_bit_writer* writer, rdp_buffer* buffer)
+{
+    if (!writer || !buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    writer->buffer = buffer;
+    writer->current = 0;
+    writer->bits = 0;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_write_bit(rdp_rfx_bit_writer* writer, uint8_t bit)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!writer || !writer->buffer || bit > 1u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    writer->current = (uint8_t)((writer->current << 1) | bit);
+    writer->bits++;
+    if (writer->bits == 8u)
+    {
+        status = rdp_buffer_append_u8(writer->buffer, writer->current);
+        writer->current = 0;
+        writer->bits = 0;
+    }
+    return status;
+}
+
+static librdp_status rdp_rfx_write_bits(rdp_rfx_bit_writer* writer, uint32_t value, uint8_t count)
+{
+    uint8_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!writer || count > 31u || (count < 32u && count > 0 && (value >> count) != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < count; i++)
+    {
+        uint8_t shift = (uint8_t)(count - 1u - i);
+        status = rdp_rfx_write_bit(writer, (uint8_t)((value >> shift) & 1u));
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_bit_writer_flush(rdp_rfx_bit_writer* writer)
+{
+    if (!writer || !writer->buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (writer->bits == 0)
+        return LIBRDP_STATUS_OK;
+    writer->current = (uint8_t)(writer->current << (8u - writer->bits));
+    writer->bits = 0;
+    return rdp_buffer_append_u8(writer->buffer, writer->current);
 }
 
 static int32_t rdp_rfx_from_2mag_sign(uint32_t value)
@@ -1779,4 +1841,43 @@ librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,
                                     coefficient_count,
                                     coefficients_written,
                                     0);
+}
+
+librdp_status rdp_rfx_rlgr_write_zeroes(rdp_buffer* buffer, size_t coefficient_count)
+{
+    rdp_rfx_bit_writer writer;
+    size_t remaining = coefficient_count;
+    int k = 1;
+    int kp = 1 << RDP_RFX_RLGR_LS;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || coefficient_count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_rfx_bit_writer_init(&writer, buffer);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    while (remaining > 0)
+    {
+        size_t chunk = (size_t)1u << (uint8_t)k;
+
+        if (chunk <= remaining)
+        {
+            status = rdp_rfx_write_bit(&writer, 0);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            remaining -= chunk;
+            k = rdp_rfx_update_param(&kp, RDP_RFX_RLGR_UP_GR);
+            continue;
+        }
+
+        status = rdp_rfx_write_bit(&writer, 1);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_rfx_write_bits(&writer, (uint32_t)remaining, (uint8_t)k);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        remaining = 0;
+    }
+
+    return rdp_rfx_bit_writer_flush(&writer);
 }

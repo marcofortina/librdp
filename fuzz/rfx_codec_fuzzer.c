@@ -43,6 +43,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     output.length = 0;
     (void)rdp_rfx_write_progressive_quant(&output, &progressive_quant);
     output.length = 0;
+    (void)rdp_rfx_rlgr_write_zeroes(&output, RDP_RFX_TILE_COEFFICIENTS);
+    output.length = 0;
+    (void)rdp_rfx_rlgr_write_zeroes(&output, 2);
+    output.length = 0;
     (void)rdp_rfx_add_component_quant(&component_quant, &progressive_quant.y, &added_quant);
     (void)rdp_rfx_differential_decode(tile_coefficients, RDP_RFX_TILE_COEFFICIENTS);
     (void)rdp_rfx_inverse_quantize(tile_coefficients, RDP_RFX_TILE_COEFFICIENTS, &valid_quant);

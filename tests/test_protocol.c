@@ -2466,6 +2466,40 @@ static int test_path_security_license_channels(void)
     rfx_zero_rlgr[1] = 0x00;
     rfx_zero_rlgr[2] = 0x08;
     rfx_zero_rlgr[3] = 0x08;
+    rdp_buffer_free(&graphics_decoded);
+    rdp_buffer_init(&graphics_decoded);
+    PCHECK(rdp_rfx_rlgr_write_zeroes(&graphics_decoded,
+                                     RDP_RFX_TILE_COEFFICIENTS) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_decoded.length == sizeof(rfx_zero_rlgr) &&
+           memcmp(graphics_decoded.data, rfx_zero_rlgr, sizeof(rfx_zero_rlgr)) == 0);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               graphics_decoded.data,
+                               graphics_decoded.length,
+                               rfx_component,
+                               RDP_RFX_TILE_COEFFICIENTS,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == RDP_RFX_TILE_COEFFICIENTS &&
+           rfx_component[0] == 0 &&
+           rfx_component[RDP_RFX_TILE_COEFFICIENTS - 1u] == 0);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR3,
+                               graphics_decoded.data,
+                               graphics_decoded.length,
+                               rfx_component,
+                               RDP_RFX_TILE_COEFFICIENTS,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == RDP_RFX_TILE_COEFFICIENTS);
+    rdp_buffer_free(&graphics_decoded);
+    rdp_buffer_init(&graphics_decoded);
+    PCHECK(rdp_rfx_rlgr_write_zeroes(&graphics_decoded, 2) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_rfx_rlgr_decode(RDP_RFX_RLGR1,
+                               graphics_decoded.data,
+                               graphics_decoded.length,
+                               rfx_coefficients,
+                               2,
+                               &rfx_written) == LIBRDP_STATUS_OK);
+    PCHECK(rfx_written == 2 && rfx_coefficients[0] == 0 && rfx_coefficients[1] == 0);
+    PCHECK(rdp_rfx_rlgr_write_zeroes(NULL, 2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    graphics_decoded.length = 0;
     memset(&rfx_decode_quant, 0, sizeof(rfx_decode_quant));
     rfx_decode_quant.ll3 = 1;
     rfx_decode_quant.hl3 = 1;
