@@ -760,21 +760,25 @@ librdp_status rdp_usb_redirection_parse_transfer(const void* data,
         rdp_stream_read_bytes(&stream, &transfer->ts_urb, transfer->cb_ts_urb) != LIBRDP_STATUS_OK ||
         rdp_usb_redirection_parse_urb_header(transfer->ts_urb,
                                              transfer->cb_ts_urb,
-                                             &transfer->urb) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &transfer->output_buffer_size) != LIBRDP_STATUS_OK)
+                                             &transfer->urb) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (expected_function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST)
+    if (rdp_stream_remaining(&stream) > 0)
     {
-        if (rdp_stream_remaining(&stream) > UINT32_MAX ||
-            rdp_stream_remaining(&stream) != transfer->output_buffer_size ||
-            rdp_stream_read_bytes(&stream,
-                                  &transfer->output_buffer,
-                                  transfer->output_buffer_size) != LIBRDP_STATUS_OK)
+        if (rdp_stream_read_u32_le(&stream, &transfer->output_buffer_size) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        transfer->output_buffer_len = transfer->output_buffer_size;
+        if (expected_function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST)
+        {
+            if (rdp_stream_remaining(&stream) > UINT32_MAX ||
+                rdp_stream_remaining(&stream) != transfer->output_buffer_size ||
+                rdp_stream_read_bytes(&stream,
+                                      &transfer->output_buffer,
+                                      transfer->output_buffer_size) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            transfer->output_buffer_len = transfer->output_buffer_size;
+        }
+        else if (rdp_stream_remaining(&stream) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    else if (rdp_stream_remaining(&stream) != 0)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 

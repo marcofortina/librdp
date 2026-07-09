@@ -9862,6 +9862,62 @@ static int test_usb_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_usb_redirection_write_header(&buffer,
+                                            7,
+                                            RDP_USB_REDIRECTION_MASK_PROXY,
+                                            21,
+                                            1,
+                                            RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 24) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, 24) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, RDP_USB_REDIRECTION_URB_BULK_OR_INTERRUPT_TRANSFER) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 101) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x01) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0x02) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)sizeof(payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&buffer, payload, sizeof(payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_usb_redirection_parse_transfer(buffer.data,
+                                              buffer.length,
+                                              RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST,
+                                              &transfer) == LIBRDP_STATUS_OK);
+    PCHECK(transfer.cb_ts_urb == 24 &&
+           transfer.urb.size == 24 &&
+           transfer.urb.function == RDP_USB_REDIRECTION_URB_BULK_OR_INTERRUPT_TRANSFER &&
+           transfer.output_buffer_len == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_usb_redirection_write_header(&buffer,
+                                            7,
+                                            RDP_USB_REDIRECTION_MASK_PROXY,
+                                            22,
+                                            1,
+                                            RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 28) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, 28) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, RDP_USB_REDIRECTION_URB_CONTROL_TRANSFER) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 102) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0x80) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, 6) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, 0x0100) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&buffer, 18) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 18) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_usb_redirection_parse_transfer(buffer.data,
+                                              buffer.length,
+                                              RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST,
+                                              &transfer) == LIBRDP_STATUS_OK);
+    PCHECK(transfer.cb_ts_urb == 28 &&
+           transfer.urb.size == 28 &&
+           transfer.urb.function == RDP_USB_REDIRECTION_URB_CONTROL_TRANSFER &&
+           transfer.output_buffer_size == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_usb_redirection_write_transfer_out_request(&buffer, 7, 13, 0x0009u, 100, 0, NULL, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
 
