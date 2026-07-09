@@ -42,6 +42,16 @@ static void rdp_pointer_write_invert_approximation(uint8_t* dst)
     dst[3] = 0xffu;
 }
 
+static uint8_t rdp_pointer_scale_5_to_8(uint16_t value)
+{
+    return (uint8_t)((value * 255u + 15u) / 31u);
+}
+
+static uint8_t rdp_pointer_scale_6_to_8(uint16_t value)
+{
+    return (uint8_t)((value * 255u + 31u) / 63u);
+}
+
 static librdp_status rdp_pointer_parse_color_attributes(rdp_stream* stream,
                                                         uint16_t bpp,
                                                         int large_lengths,
@@ -232,7 +242,7 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (update->kind != RDP_POINTER_UPDATE_KIND_SHAPE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (update->xor_bpp != 1u && update->xor_bpp != 24u && update->xor_bpp != 32u)
+    if (update->xor_bpp != 1u && update->xor_bpp != 16u && update->xor_bpp != 24u && update->xor_bpp != 32u)
         return LIBRDP_STATUS_UNSUPPORTED;
     if (update->width == 0 || update->height == 0 ||
         update->width > RDP_POINTER_MAX_DIMENSION || update->height > RDP_POINTER_MAX_DIMENSION)
@@ -314,6 +324,24 @@ librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_bu
                     dst[dst_pos + 0u] = pixel[0];
                     dst[dst_pos + 1u] = pixel[1];
                     dst[dst_pos + 2u] = pixel[2];
+                    dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
+                }
+            }
+            else if (update->xor_bpp == 16u)
+            {
+                const uint8_t* pixel = src + ((size_t)x * 2u);
+                uint16_t raw = (uint16_t)(pixel[0] | ((uint16_t)pixel[1] << 8));
+                int nonzero = raw != 0;
+
+                if (transparent && nonzero)
+                {
+                    rdp_pointer_write_invert_approximation(dst + dst_pos);
+                }
+                else
+                {
+                    dst[dst_pos + 0u] = rdp_pointer_scale_5_to_8((uint16_t)(raw & 0x001fu));
+                    dst[dst_pos + 1u] = rdp_pointer_scale_6_to_8((uint16_t)((raw >> 5) & 0x003fu));
+                    dst[dst_pos + 2u] = rdp_pointer_scale_5_to_8((uint16_t)((raw >> 11) & 0x001fu));
                     dst[dst_pos + 3u] = transparent ? 0u : 0xffu;
                 }
             }
