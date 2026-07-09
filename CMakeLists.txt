@@ -28,6 +28,7 @@ add_library(librdp
     src/channels/device_redirection.c
     src/channels/display_control.c
     src/channels/dynamic_channel.c
+    src/channels/echo_channel.c
     src/channels/filesystem_redirection.c
     src/channels/graphics_pipeline.c
     src/channels/input_channel.c
@@ -63,6 +64,7 @@ add_library(librdp
     src/protocol/gcc.c
     src/protocol/mcs.c
     src/protocol/pointer.c
+    src/protocol/session_selection.c
     src/protocol/slowpath.c
     src/protocol/tpkt.c
     src/protocol/x224.c
@@ -118,6 +120,7 @@ if(LIBRDP_BUILD_FUZZ)
     endfunction()
 
     add_librdp_fuzzer(fuzz_x224 fuzz/x224_fuzzer.c)
+    add_librdp_fuzzer(fuzz_session_selection fuzz/session_selection_fuzzer.c)
     add_librdp_fuzzer(fuzz_mcs fuzz/mcs_fuzzer.c)
     add_librdp_fuzzer(fuzz_pointer fuzz/pointer_fuzzer.c)
     add_librdp_fuzzer(fuzz_gcc fuzz/gcc_fuzzer.c)
@@ -127,6 +130,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_bitmap fuzz/bitmap_fuzzer.c)
     add_librdp_fuzzer(fuzz_virtual_channel fuzz/virtual_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_dynamic_channel fuzz/dynamic_channel_fuzzer.c)
+    add_librdp_fuzzer(fuzz_echo_channel fuzz/echo_channel_fuzzer.c)
     add_librdp_fuzzer(fuzz_audio_format fuzz/audio_format_fuzzer.c)
     add_librdp_fuzzer(fuzz_audio_output fuzz/audio_output_fuzzer.c)
     add_librdp_fuzzer(fuzz_audio_input fuzz/audio_input_fuzzer.c)

@@ -7,6 +7,7 @@
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
@@ -36,6 +37,7 @@
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/pointer.h"
+#include "protocol/session_selection.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
@@ -108,6 +110,58 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
         if (memcmp(data + i, needle, needle_len) == 0)
             return 1;
     }
+    return 0;
+}
+
+static int test_session_selection_and_echo(void)
+{
+    const uint8_t text_utf16[] = {'T', 0, 'e', 0, 's', 0, 't', 0, 0, 0};
+    const uint8_t echo_payload[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    uint8_t invalid_v1[] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00
+    };
+    rdp_buffer buffer;
+    rdp_session_selection_pdu selection;
+    rdp_echo_channel_pdu echo;
+
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_session_selection_write_v1(&buffer, 0xeec699ebu) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == RDP_SESSION_SELECTION_V1_LENGTH);
+    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) == LIBRDP_STATUS_OK);
+    PCHECK(selection.version == RDP_SESSION_SELECTION_VERSION1 && selection.id == 0xeec699ebu);
+    PCHECK(selection.text_chars == 0 && selection.text_utf16le == NULL);
+    buffer.data[0] = 0x0fu;
+    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_session_selection_parse_pdu(invalid_v1, sizeof(invalid_v1), &selection) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_session_selection_write_v2(&buffer, 0, text_utf16, 5) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == RDP_SESSION_SELECTION_V2_HEADER_LENGTH + sizeof(text_utf16));
+    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) == LIBRDP_STATUS_OK);
+    PCHECK(selection.version == RDP_SESSION_SELECTION_VERSION2 && selection.text_chars == 5);
+    PCHECK(memcmp(selection.text_utf16le, text_utf16, sizeof(text_utf16)) == 0);
+    buffer.data[16] = 6;
+    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_echo_channel_parse_request(echo_payload, sizeof(echo_payload), &echo) == LIBRDP_STATUS_OK);
+    PCHECK(echo.payload_len == sizeof(echo_payload) && memcmp(echo.payload, echo_payload, sizeof(echo_payload)) == 0);
+    PCHECK(rdp_echo_channel_write_response(&buffer, echo.payload, echo.payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == sizeof(echo_payload) && memcmp(buffer.data, echo_payload, sizeof(echo_payload)) == 0);
+    PCHECK(rdp_echo_channel_parse_response(buffer.data, buffer.length, &echo) == LIBRDP_STATUS_OK);
+    PCHECK(echo.payload_len == sizeof(echo_payload));
+    PCHECK(rdp_echo_channel_write_request(&buffer, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    rdp_buffer_free(&buffer);
     return 0;
 }
 
@@ -8950,6 +9004,8 @@ static int test_pnp_redirection_channel(void)
 
 int test_protocol(void)
 {
+    if (test_session_selection_and_echo() != 0)
+        return 1;
     if (test_tpkt_x224() != 0)
         return 1;
     if (test_mcs_gcc_capabilities() != 0)
