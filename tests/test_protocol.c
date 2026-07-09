@@ -1746,6 +1746,7 @@ static int test_path_security_license_channels(void)
     };
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    uint8_t fast_payload[130] = {0};
     rdp_fastpath_header fast;
     rdp_fastpath_update_list fast_updates;
     rdp_slowpath_share_control_header slow_header;
@@ -2050,11 +2051,68 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_fastpath_parse_header(fast_long, sizeof(fast_long), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 8 && fast.header_length == 3 && fast.long_length);
     PCHECK(rdp_fastpath_parse_header(fast_long, 2, &fast) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_fastpath_write_header(&decoded_fastpath,
+                                     RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+                                     0,
+                                     4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&decoded_fastpath, fast_payload, 4) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_fastpath_parse_header(decoded_fastpath.data,
+                                     decoded_fastpath.length,
+                                     &fast) == LIBRDP_STATUS_OK);
+    PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
+    rdp_buffer_free(&decoded_fastpath);
+    rdp_buffer_init(&decoded_fastpath);
+    PCHECK(rdp_fastpath_write_header(&decoded_fastpath,
+                                     RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+                                     0,
+                                     130) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&decoded_fastpath, fast_payload, sizeof(fast_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_fastpath_parse_header(decoded_fastpath.data,
+                                     decoded_fastpath.length,
+                                     &fast) == LIBRDP_STATUS_OK);
+    PCHECK(fast.length == 133 && fast.header_length == 3 && fast.long_length);
+    rdp_buffer_free(&decoded_fastpath);
+    rdp_buffer_init(&decoded_fastpath);
+    PCHECK(rdp_fastpath_write_header(&decoded_fastpath, 2, 0, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update), &fast_updates) ==
            LIBRDP_STATUS_OK);
     PCHECK(fast_updates.count == 1 && fast_updates.updates[0].update_code == RDP_FASTPATH_UPDATE_BITMAP &&
            fast_updates.updates[0].fragmentation == RDP_FASTPATH_FRAGMENT_SINGLE &&
            fast_updates.updates[0].compression == 0 && fast_updates.updates[0].data_len == 38);
+    PCHECK(rdp_fastpath_write_updates(&decoded_fastpath,
+                                      fast_updates.updates,
+                                      fast_updates.count) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_fastpath_parse_updates(decoded_fastpath.data,
+                                      decoded_fastpath.length,
+                                      &fast_updates) == LIBRDP_STATUS_OK);
+    PCHECK(fast_updates.count == 1 &&
+           fast_updates.updates[0].update_code == RDP_FASTPATH_UPDATE_BITMAP &&
+           fast_updates.updates[0].data_len == 38);
+    rdp_buffer_free(&decoded_fastpath);
+    rdp_buffer_init(&decoded_fastpath);
+    PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update), &fast_updates) ==
+           LIBRDP_STATUS_OK);
+    fast_updates.updates[0].compression = RDP_FASTPATH_OUTPUT_COMPRESSION_USED;
+    fast_updates.updates[0].compression_flags = 0x20u;
+    PCHECK(rdp_fastpath_write_updates(&decoded_fastpath,
+                                      fast_updates.updates,
+                                      1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_fastpath_parse_updates(decoded_fastpath.data,
+                                      decoded_fastpath.length,
+                                      &fast_updates) == LIBRDP_STATUS_OK);
+    PCHECK(fast_updates.updates[0].compression == RDP_FASTPATH_OUTPUT_COMPRESSION_USED &&
+           fast_updates.updates[0].compression_flags == 0x20u);
+    rdp_buffer_free(&decoded_fastpath);
+    rdp_buffer_init(&decoded_fastpath);
+    PCHECK(rdp_fastpath_write_update(&decoded_fastpath,
+                                     0x0fu,
+                                     RDP_FASTPATH_FRAGMENT_SINGLE,
+                                     0,
+                                     0,
+                                     NULL,
+                                     0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update), &fast_updates) ==
+           LIBRDP_STATUS_OK);
     PCHECK(rdp_bitmap_parse_fastpath_update(fast_updates.updates[0].data,
                                             fast_updates.updates[0].data_len,
                                             &bitmap_update) == LIBRDP_STATUS_OK);

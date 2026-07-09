@@ -7,6 +7,8 @@
 
 #include <librdp/error.h>
 
+#include "common/buffer.h"
+
 #define RDP_FASTPATH_OUTPUT_ACTION_FASTPATH 0x00u
 #define RDP_FASTPATH_OUTPUT_ACTION_X224 0x03u
 #define RDP_FASTPATH_OUTPUT_ENCRYPTED 0x01u
@@ -57,5 +59,19 @@ typedef struct rdp_fastpath_update_list
 
 librdp_status rdp_fastpath_parse_header(const void* data, size_t length, rdp_fastpath_header* header);
 librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fastpath_update_list* updates);
+librdp_status rdp_fastpath_write_header(rdp_buffer* buffer,
+                                        uint8_t action,
+                                        uint8_t security_flags,
+                                        size_t payload_len);
+librdp_status rdp_fastpath_write_update(rdp_buffer* buffer,
+                                        uint8_t update_code,
+                                        uint8_t fragmentation,
+                                        uint8_t compression,
+                                        uint8_t compression_flags,
+                                        const void* data,
+                                        size_t data_len);
+librdp_status rdp_fastpath_write_updates(rdp_buffer* buffer,
+                                         const rdp_fastpath_update* updates,
+                                         uint16_t count);
 
 #endif
