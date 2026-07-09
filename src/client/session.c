@@ -11740,6 +11740,18 @@ static uint32_t rdp_session_usb_libusb_status(int rc)
     }
 }
 
+static uint32_t rdp_session_usb_reset_interface(librdp_session* session, uint32_t interface_id)
+{
+    rdp_session_usb_device* device = rdp_session_usb_device_by_interface_mut(session, interface_id);
+    int rc = 0;
+
+    if (!device || !device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    rc = libusb_reset_device(device->handle);
+    return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+                                  rdp_session_usb_libusb_status(rc);
+}
+
 static uint32_t rdp_session_usb_claim_endpoint(rdp_session_usb_device* device,
                                                uint8_t endpoint,
                                                uint8_t* transfer_type)
@@ -12428,6 +12440,7 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
         rdp_usb_redirection_io_control control;
         rdp_buffer output;
         uint32_t result = RDP_SESSION_HRESULT_NOTIMPL;
+        uint32_t usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
 
         rdp_buffer_init(&output);
         status = rdp_usb_redirection_parse_io_control(data, data_len, header.function_id, &control);
@@ -12446,8 +12459,20 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
                 result = RDP_SESSION_HRESULT_OK;
             }
             else if (control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_RESET_PORT ||
-                     control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_CYCLE_PORT ||
-                     control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION)
+                     control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_CYCLE_PORT)
+            {
+#ifdef RDP_HAVE_LIBUSB
+                usbd_status = rdp_session_usb_reset_interface(session, control.header.interface_id);
+                result = usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
+                             RDP_SESSION_HRESULT_OK :
+                             RDP_SESSION_HRESULT_FAIL;
+#else
+                usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+                result = RDP_SESSION_HRESULT_NOTIMPL;
+#endif
+            }
+            else if (control.io_control_code ==
+                     RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION)
             {
                 result = RDP_SESSION_HRESULT_OK;
             }
@@ -12463,7 +12488,7 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
         }
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.urbdrc.io_control",
-                        "dvc_channel_id=%u interface_id=%u function_id=%u io_control=%u request_id=%u input_len=%u output_size=%u result=%u response_len=%u",
+                        "dvc_channel_id=%u interface_id=%u function_id=%u io_control=%u request_id=%u input_len=%u output_size=%u result=%u usbd_status=%u response_len=%u",
                         session->usb_redirection_channel_id,
                         control.header.interface_id,
                         control.header.function_id,
@@ -12472,6 +12497,7 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
                         control.input_buffer_len,
                         control.output_buffer_size,
                         result,
+                        usbd_status,
                         (unsigned)output.length);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_usb_send_io_completion(session,
