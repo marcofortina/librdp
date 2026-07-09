@@ -832,6 +832,7 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(list.sets[1].type == 2 && list.sets[1].data_len == 0);
     PCHECK(rdp_capabilities_parse(caps, 5, &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
+    memset(&config, 0, sizeof(config));
     config.desktop_width = 1024;
     config.desktop_height = 768;
     config.client_version = 0;
@@ -877,9 +878,10 @@ static int test_mcs_gcc_capabilities(void)
     config.enable_clipboard = 1;
     config.enable_audio_output = 1;
     config.enable_device_redirection = 1;
+    config.enable_remote_programs = 1;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
-    PCHECK(summary.channel_count == 4);
+    PCHECK(summary.channel_count == 5);
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_DYNVC_GFX) != 0);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT) != 0);
@@ -890,6 +892,7 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "cliprdr", 7));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rdpsnd", 6));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rdpdr", 5));
+    PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rail", 4));
     PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(gcc_request.length > client_blocks.length);

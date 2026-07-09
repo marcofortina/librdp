@@ -55,6 +55,7 @@ typedef struct rdp_gcc_client_config
     uint8_t enable_clipboard;
     uint8_t enable_audio_output;
     uint8_t enable_device_redirection;
+    uint8_t enable_remote_programs;
 } rdp_gcc_client_config;
 
 typedef struct rdp_gcc_client_data_summary
