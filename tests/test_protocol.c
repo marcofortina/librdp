@@ -9388,6 +9388,7 @@ static int test_usb_redirection_channel(void)
     const uint8_t ids[] = {'I', 0, 'D', 0, 0, 0, 0, 0};
     const uint8_t container[] = {'{', 0, '1', 0, '}', 0, 0, 0};
     const uint8_t payload[] = {1, 2, 3, 4};
+    const uint8_t urb_result[] = {8, 0, 0, 0, 0, 0, 0, 0};
     rdp_buffer buffer;
     rdp_buffer packet;
     rdp_usb_redirection_header header;
@@ -9525,7 +9526,7 @@ static int test_usb_redirection_channel(void)
                                                 7,
                                                 10,
                                                 RDP_USB_REDIRECTION_FN_IO_CONTROL,
-                                                0x220003u,
+                                                RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_URB,
                                                 payload,
                                                 (uint32_t)sizeof(payload),
                                                 16,
@@ -9534,7 +9535,8 @@ static int test_usb_redirection_channel(void)
                                                 buffer.length,
                                                 RDP_USB_REDIRECTION_FN_IO_CONTROL,
                                                 &control) == LIBRDP_STATUS_OK);
-    PCHECK(control.io_control_code == 0x220003u && control.request_id == 56);
+    PCHECK(control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_URB &&
+           control.request_id == 56);
     PCHECK(control.input_buffer_len == sizeof(payload) &&
            memcmp(control.input_buffer, payload, sizeof(payload)) == 0);
     rdp_buffer_free(&buffer);
@@ -9667,8 +9669,15 @@ static int test_usb_redirection_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     urb_completion.output_buffer_len = 0;
+    urb_completion.ts_urb_result = urb_result;
+    urb_completion.cb_ts_urb_result = sizeof(urb_result);
     PCHECK(rdp_usb_redirection_write_urb_completion_no_data(&buffer, 9, 18, &urb_completion) ==
            LIBRDP_STATUS_OK);
+    PCHECK(rdp_usb_redirection_parse_header(buffer.data, buffer.length, 1, &header) == LIBRDP_STATUS_OK);
+    PCHECK(header.function_id == RDP_USB_REDIRECTION_FN_URB_COMPLETION_NO_DATA);
+    PCHECK(header.payload_len == 24u);
+    PCHECK(header.payload[4] == sizeof(urb_result));
+    PCHECK(memcmp(header.payload + 8u, urb_result, sizeof(urb_result)) == 0);
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&buffer);
