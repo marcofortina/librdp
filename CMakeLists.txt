@@ -182,8 +182,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
     find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     pkg_check_modules(LIBRDP_PIPEWIRE QUIET IMPORTED_TARGET libpipewire-0.3)
+    pkg_check_modules(LIBRDP_VIEWER_LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
+    pkg_check_modules(LIBRDP_VIEWER_PCSC QUIET IMPORTED_TARGET libpcsclite)
     add_executable(librdp-x11-viewer
         apps/x11-viewer/audio_pipewire.c
+        apps/x11-viewer/device_backends.c
         apps/x11-viewer/main.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
@@ -203,5 +206,13 @@ if(LIBRDP_BUILD_X11_VIEWER)
     if(LIBRDP_PIPEWIRE_FOUND)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
         target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)
+    endif()
+    if(LIBRDP_VIEWER_LIBUSB_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_LIBUSB=1)
+        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_VIEWER_LIBUSB)
+    endif()
+    if(LIBRDP_VIEWER_PCSC_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PCSC=1)
+        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_VIEWER_PCSC)
     endif()
 endif()

@@ -2,6 +2,7 @@
 
 #include "audio_pipewire.h"
 #include "common/trace.h"
+#include "device_backends.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -12,6 +13,8 @@
 #include <X11/keysym.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <locale.h>
 #include <stdio.h>
@@ -66,8 +69,13 @@ typedef struct x11_app
     x11_pipewire_audio* audio;
     char* audio_output_device;
     char* audio_input_device;
+    char* echo_payload;
+    FILE* video_output_file;
     int audio_output_requested;
     int audio_input_requested;
+    int echo_requested;
+    int telemetry_requested;
+    int video_requested;
     int audio_input_active;
     size_t audio_input_chunk;
     uint8_t audio_input_buffer[16384];
@@ -1600,6 +1608,65 @@ static void x11_audio_free(x11_app* app)
     app->audio_input_active = 0;
 }
 
+static int x11_runtime_features_configure(x11_app* app, const librdp_settings* settings)
+{
+    const char* echo_payload = NULL;
+    const char* video_path = NULL;
+
+    if (!app || !settings)
+        return 0;
+    app->echo_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1 : 0;
+    app->telemetry_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1 : 0;
+    app->video_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1 : 0;
+    if (app->echo_requested)
+    {
+        echo_payload = librdp_settings_echo_payload(settings);
+        app->echo_payload = x11_strdup_text(echo_payload ? echo_payload : "probe");
+        if (!app->echo_payload)
+            return 0;
+    }
+    if (app->video_requested)
+    {
+        video_path = librdp_settings_video_output_path(settings);
+        if (video_path)
+        {
+            app->video_output_file = fopen(video_path, "ab");
+            if (!app->video_output_file)
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "x11.video.file.failed",
+                                "path=\"%s\" errno=%d",
+                                video_path,
+                                errno);
+                return 0;
+            }
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "x11.video.file.open",
+                            "path=\"%s\"",
+                            video_path);
+        }
+    }
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.runtime.features",
+                    "echo=%u telemetry=%u video=%u video_file=%u",
+                    app->echo_requested ? 1u : 0u,
+                    app->telemetry_requested ? 1u : 0u,
+                    app->video_requested ? 1u : 0u,
+                    app->video_output_file ? 1u : 0u);
+    return 1;
+}
+
+static void x11_runtime_features_free(x11_app* app)
+{
+    if (!app)
+        return;
+    free(app->echo_payload);
+    app->echo_payload = NULL;
+    if (app->video_output_file)
+        fclose(app->video_output_file);
+    app->video_output_file = NULL;
+}
+
 static size_t x11_audio_input_chunk_size(const librdp_audio_input_open_event* open)
 {
     size_t chunk = 0;
@@ -1648,6 +1715,122 @@ static void x11_audio_input_pump(x11_app* app)
                               "bytes=%u",
                               (unsigned)bytes);
     }
+}
+
+static int x11_channel_name_contains(const char* name, size_t name_len, const char* needle)
+{
+    size_t needle_len = 0;
+    size_t i = 0;
+    size_t j = 0;
+
+    if (!name || !needle)
+        return 0;
+    needle_len = strlen(needle);
+    if (needle_len == 0 || needle_len > name_len)
+        return 0;
+    for (i = 0; i + needle_len <= name_len; i++)
+    {
+        for (j = 0; j < needle_len; j++)
+        {
+            if (tolower((unsigned char)name[i + j]) != tolower((unsigned char)needle[j]))
+                break;
+        }
+        if (j == needle_len)
+            return 1;
+    }
+    return 0;
+}
+
+static int x11_channel_name_print_len(size_t name_len)
+{
+    return name_len > 255u ? 255 : (int)name_len;
+}
+
+static void x11_handle_channel_open(x11_app* app, librdp_session* session, const librdp_channel_open_event* event)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!app || !session || !event)
+        return;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.channel.open",
+                    "id=%u name=\"%.*s\" echo=%u telemetry=%u video=%u",
+                    event->channel_id,
+                    x11_channel_name_print_len(event->name_len),
+                    event->name ? event->name : "",
+                    app->echo_requested ? 1u : 0u,
+                    app->telemetry_requested ? 1u : 0u,
+                    app->video_requested ? 1u : 0u);
+    if (app->echo_requested && app->echo_payload &&
+        x11_channel_name_contains(event->name, event->name_len, "echo"))
+    {
+        status = librdp_session_channel_send(session,
+                                             event->channel_id,
+                                             app->echo_payload,
+                                             strlen(app->echo_payload));
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.echo.send",
+                        "id=%u bytes=%u status=%s",
+                        event->channel_id,
+                        (unsigned)strlen(app->echo_payload),
+                        librdp_status_string(status));
+    }
+}
+
+static void x11_handle_channel_data(x11_app* app, librdp_session* session, const librdp_channel_data_event* event)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t video_written = 0;
+
+    if (!app || !session || !event)
+        return;
+    if (app->video_output_file && x11_channel_name_contains(event->name, event->name_len, "video") &&
+        event->data_len > 0)
+    {
+        video_written = fwrite(event->data, 1, event->data_len, app->video_output_file);
+        fflush(app->video_output_file);
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "x11.channel.data",
+                          "id=%u name=\"%.*s\" bytes=%u video_written=%u",
+                          event->channel_id,
+                          x11_channel_name_print_len(event->name_len),
+                          event->name ? event->name : "",
+                          (unsigned)event->data_len,
+                          (unsigned)video_written);
+    if (app->echo_requested && x11_channel_name_contains(event->name, event->name_len, "echo"))
+    {
+        const void* payload = event->data;
+        size_t payload_len = event->data_len;
+
+        if (payload_len == 0 && app->echo_payload)
+        {
+            payload = app->echo_payload;
+            payload_len = strlen(app->echo_payload);
+        }
+        if (payload_len > 65536u)
+            payload_len = 65536u;
+        status = librdp_session_channel_send(session, event->channel_id, payload, payload_len);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "x11.echo.reply",
+                        "id=%u bytes=%u status=%s",
+                        event->channel_id,
+                        (unsigned)payload_len,
+                        librdp_status_string(status));
+    }
+}
+
+static void x11_handle_channel_close(x11_app* app, const librdp_channel_close_event* event)
+{
+    if (!app || !event)
+        return;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "x11.channel.close",
+                    "id=%u name=\"%.*s\"",
+                    event->channel_id,
+                    x11_channel_name_print_len(event->name_len),
+                    event->name ? event->name : "");
 }
 
 static void app_event(librdp_session* session, const librdp_event* event, void* user_data)
@@ -1792,6 +1975,15 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                             event->data.audio_input_open.initial_format);
             break;
         }
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+            x11_handle_channel_open(app, session, &event->data.channel_open);
+            break;
+        case LIBRDP_EVENT_CHANNEL_DATA:
+            x11_handle_channel_data(app, session, &event->data.channel_data);
+            break;
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            x11_handle_channel_close(app, &event->data.channel_close);
+            break;
         case LIBRDP_EVENT_ERROR:
             fprintf(stderr, "error=%s\n", librdp_status_string(event->data.error.status));
             app->running = 0;
@@ -2321,10 +2513,49 @@ int main(int argc, char** argv)
         XCloseDisplay(app.display);
         return 1;
     }
+    if (!x11_device_backends_probe(settings))
+    {
+        fprintf(stderr, "error=device_backend_probe\n");
+        librdp_settings_free(settings);
+        x11_runtime_features_free(&app);
+        x11_audio_free(&app);
+        if (app.xkb)
+            XkbFreeKeyboard(app.xkb, 0, True);
+        if (app.ic)
+            XDestroyIC(app.ic);
+        if (app.im)
+            XCloseIM(app.im);
+        x11_clipboard_free(&app);
+        clear_viewer_cursor(&app);
+        XFreeGC(app.display, app.gc);
+        XDestroyWindow(app.display, app.window);
+        XCloseDisplay(app.display);
+        return 1;
+    }
+    if (!x11_runtime_features_configure(&app, settings))
+    {
+        fprintf(stderr, "error=runtime_feature_config\n");
+        librdp_settings_free(settings);
+        x11_runtime_features_free(&app);
+        x11_audio_free(&app);
+        if (app.xkb)
+            XkbFreeKeyboard(app.xkb, 0, True);
+        if (app.ic)
+            XDestroyIC(app.ic);
+        if (app.im)
+            XCloseIM(app.im);
+        x11_clipboard_free(&app);
+        clear_viewer_cursor(&app);
+        XFreeGC(app.display, app.gc);
+        XDestroyWindow(app.display, app.window);
+        XCloseDisplay(app.display);
+        return 1;
+    }
     app.session = librdp_session_new(settings);
     librdp_settings_free(settings);
     if (!app.session)
     {
+        x11_runtime_features_free(&app);
         x11_audio_free(&app);
         if (app.xkb)
             XkbFreeKeyboard(app.xkb, 0, True);
@@ -2346,6 +2577,7 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "error=%s\n", librdp_status_string(status));
         librdp_session_free(app.session);
+        x11_runtime_features_free(&app);
         x11_audio_free(&app);
         if (app.xkb)
             XkbFreeKeyboard(app.xkb, 0, True);
@@ -2508,6 +2740,7 @@ int main(int argc, char** argv)
     ungrab_keyboard(&app, CurrentTime, 1);
     (void)librdp_session_disconnect(app.session);
     librdp_session_free(app.session);
+    x11_runtime_features_free(&app);
     x11_audio_free(&app);
     if (app.xkb)
         XkbFreeKeyboard(app.xkb, 0, True);
