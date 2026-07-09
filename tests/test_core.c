@@ -1050,6 +1050,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_add_smartcard(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_usb_device(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_webauthn_provider(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "fido2") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_rail_app(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_echo_payload(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
 

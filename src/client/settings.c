@@ -141,6 +141,16 @@ static int rdp_settings_valid_text(const char* value)
     return length <= RDP_SETTINGS_TEXT_MAX;
 }
 
+static int rdp_settings_valid_webauthn_provider(const char* value)
+{
+    if (!value)
+        return 1;
+    if (strcmp(value, "mock") == 0)
+        return 1;
+    return strncmp(value, "mock=", 5u) == 0 && value[5] != '\0' &&
+           strlen(value) <= RDP_SETTINGS_TEXT_MAX;
+}
+
 static librdp_status rdp_settings_add_text(char** values,
                                            uint32_t* count,
                                            uint32_t limit,
@@ -554,7 +564,7 @@ librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, c
 {
     if (!settings)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (provider && !rdp_settings_valid_text(provider))
+    if (!rdp_settings_valid_webauthn_provider(provider))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_set_string(&settings->webauthn_provider, provider);
 }

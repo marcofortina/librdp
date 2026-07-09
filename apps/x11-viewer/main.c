@@ -2555,7 +2555,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path|fido2]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
                 argv[0]);
         librdp_settings_free(settings);
         return 2;

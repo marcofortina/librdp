@@ -384,11 +384,6 @@ static int x11_probe_webauthn(const char* provider)
     }
     if (mock_path)
         return x11_probe_file_readable(mock_path, "x11.webauthn.mock.probe");
-    if (strcmp(provider, "fido2") == 0)
-    {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.webauthn.fido2.probe", "ok=0 reason=fido2_unavailable");
-        return 0;
-    }
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.webauthn.probe",
                     "ok=0 provider=\"%s\" reason=unsupported_provider",
