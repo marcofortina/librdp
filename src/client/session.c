@@ -13,6 +13,7 @@
 #include "channels/mouse_cursor.h"
 #include "channels/printer_redirection.h"
 #include "channels/smartcard_redirection.h"
+#include "channels/usb_redirection.h"
 #include "channels/virtual_channel.h"
 #include "channels/webauthn_channel.h"
 #include "client/settings_internal.h"
@@ -76,7 +77,9 @@
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
 #define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
 #define RDP_SESSION_WEBAUTHN_CHANNEL_NAME "WebAuthN_Channel"
+#define RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME "urbdrc"
 #define RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT 16u
+#define RDP_SESSION_USB_DEVICE_INTERFACE_BASE 4u
 #define RDP_SESSION_HRESULT_OK 0x00000000u
 #define RDP_SESSION_HRESULT_FAIL 0x80004005u
 #define RDP_SESSION_HRESULT_NOTIMPL 0x80004001u
@@ -296,6 +299,13 @@ struct librdp_session
     uint32_t audio_input_version;
     uint32_t audio_input_selected_format_count;
     librdp_audio_format audio_input_selected_formats[RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT];
+    uint32_t usb_redirection_channel_id;
+    uint8_t usb_redirection_channel_id_bytes;
+    uint8_t usb_redirection_ready;
+    uint8_t usb_request_completion_ready;
+    uint32_t usb_message_id;
+    uint32_t usb_request_completion_interface_id;
+    uint32_t usb_device_count_sent;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_clearcodec_context clearcodec;
     rdp_avc_decoder* avc;
@@ -5632,6 +5642,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0 ||
            strcmp(name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0 ||
            strcmp(name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_AUDIO_INPUT_CHANNEL_NAME) == 0;
 }
 
@@ -8980,6 +8991,580 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     return status;
 }
 
+static void rdp_session_usb_redirection_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->usb_redirection_channel_id = 0;
+    session->usb_redirection_channel_id_bytes = 0;
+    session->usb_redirection_ready = 0;
+    session->usb_request_completion_ready = 0;
+    session->usb_message_id = 0;
+    session->usb_request_completion_interface_id = 0;
+    session->usb_device_count_sent = 0;
+}
+
+static uint32_t rdp_session_usb_next_message_id(librdp_session* session)
+{
+    if (!session)
+        return 0;
+    session->usb_message_id++;
+    if (session->usb_message_id == 0)
+        session->usb_message_id++;
+    return session->usb_message_id;
+}
+
+static int rdp_session_usb_parse_pair(const char* text, uint32_t* first, uint32_t* second, int* decimal_only)
+{
+    char* end = NULL;
+    unsigned long a = 0;
+    unsigned long b = 0;
+    const char* separator = NULL;
+    const char* p = NULL;
+    int has_hex_alpha = 0;
+
+    if (!text || !first || !second || !decimal_only)
+        return 0;
+    separator = strchr(text, ':');
+    if (!separator || separator == text || separator[1] == '\0')
+        return 0;
+    for (p = text; *p; p++)
+    {
+        if ((*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F') || *p == 'x' || *p == 'X')
+            has_hex_alpha = 1;
+    }
+    a = strtoul(text, &end, has_hex_alpha ? 16 : 10);
+    if (end != separator)
+        return 0;
+    b = strtoul(separator + 1, &end, has_hex_alpha ? 16 : 10);
+    if (!end || *end != '\0' || a > 0xfffful || b > 0xfffful)
+        return 0;
+    *first = (uint32_t)a;
+    *second = (uint32_t)b;
+    *decimal_only = !has_hex_alpha;
+    return 1;
+}
+
+static librdp_status rdp_session_usb_checked_format(char* out, size_t out_len, const char* fmt, unsigned a, unsigned b, unsigned c)
+{
+    int written = 0;
+
+    if (!out || out_len == 0 || !fmt)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    written = snprintf(out, out_len, fmt, a, b, c);
+    if (written <= 0 || (size_t)written >= out_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!out || !first || !second)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_utf8_to_utf16le(first, out, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_utf8_to_utf16le(second, out, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(out, 0);
+    return status;
+}
+
+static librdp_status rdp_session_usb_build_device_strings(const char* selector,
+                                                          uint32_t index,
+                                                          rdp_buffer* instance,
+                                                          rdp_buffer* hardware,
+                                                          rdp_buffer* compatibility,
+                                                          rdp_buffer* container)
+{
+    uint32_t first = 0;
+    uint32_t second = 0;
+    int decimal_only = 0;
+    int bus_mode = 0;
+    char instance_text[96];
+    char hardware_first[96];
+    char hardware_second[96];
+    char container_text[48];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!selector || !instance || !hardware || !compatibility || !container)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    bus_mode = decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
+    if (bus_mode)
+    {
+        status = rdp_session_usb_checked_format(instance_text,
+                                                sizeof(instance_text),
+                                                "USB\\BUS_%03u&DEV_%03u\\RDP_%02u",
+                                                (unsigned)first,
+                                                (unsigned)second,
+                                                (unsigned)index + 1u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_usb_checked_format(hardware_first,
+                                                    sizeof(hardware_first),
+                                                    "USB\\BUS_%03u&DEV_%03u",
+                                                    (unsigned)first,
+                                                    (unsigned)second,
+                                                    0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_usb_checked_format(hardware_second,
+                                                    sizeof(hardware_second),
+                                                    "USB\\Class_00&SubClass_00&Prot_%02u",
+                                                    0,
+                                                    0,
+                                                    0);
+    }
+    else
+    {
+        status = rdp_session_usb_checked_format(instance_text,
+                                                sizeof(instance_text),
+                                                "USB\\VID_%04X&PID_%04X\\RDP_%02u",
+                                                (unsigned)first,
+                                                (unsigned)second,
+                                                (unsigned)index + 1u);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_usb_checked_format(hardware_first,
+                                                    sizeof(hardware_first),
+                                                    "USB\\VID_%04X&PID_%04X&REV_%04u",
+                                                    (unsigned)first,
+                                                    (unsigned)second,
+                                                    0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_usb_checked_format(hardware_second,
+                                                    sizeof(hardware_second),
+                                                    "USB\\VID_%04X&PID_%04X",
+                                                    (unsigned)first,
+                                                    (unsigned)second,
+                                                    0);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_checked_format(container_text,
+                                                sizeof(container_text),
+                                                "{00000000-0000-0000-0000-00000000%04X}",
+                                                (unsigned)(index + 1u),
+                                                0,
+                                                0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_utf8_to_utf16le(instance_text, instance, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_multisz2(hardware, hardware_first, hardware_second);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_usb_multisz2(compatibility,
+                                          "USB\\Class_00&SubClass_00&Prot_00",
+                                          "USB\\Class_00");
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_utf8_to_utf16le(container_text, container, 1);
+    return status;
+}
+
+static librdp_status rdp_session_send_usb_redirection_packet(librdp_session* session,
+                                                             const rdp_buffer* packet,
+                                                             const char* event)
+{
+    if (!session || !packet || !event || session->usb_redirection_channel_id_bytes == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_session_send_dynamic_channel_data(session,
+                                                 session->usb_redirection_channel_id,
+                                                 session->usb_redirection_channel_id_bytes,
+                                                 packet->data,
+                                                 packet->length,
+                                                 event);
+}
+
+static librdp_status rdp_session_usb_send_device_announcements(librdp_session* session)
+{
+    uint32_t count = 0;
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB))
+        return LIBRDP_STATUS_OK;
+
+    count = librdp_settings_usb_device_count(session->settings);
+    for (i = 0; i < count && status == LIBRDP_STATUS_OK; i++)
+    {
+        rdp_buffer packet;
+        rdp_buffer instance;
+        rdp_buffer hardware;
+        rdp_buffer compatibility;
+        rdp_buffer container;
+        rdp_usb_redirection_device_capabilities capabilities;
+        uint32_t interface_id = RDP_SESSION_USB_DEVICE_INTERFACE_BASE + i;
+        const char* selector = librdp_settings_usb_device_selector(session->settings, i);
+
+        rdp_buffer_init(&packet);
+        rdp_buffer_init(&instance);
+        rdp_buffer_init(&hardware);
+        rdp_buffer_init(&compatibility);
+        rdp_buffer_init(&container);
+        memset(&capabilities, 0, sizeof(capabilities));
+        capabilities.cb_size = RDP_USB_REDIRECTION_DEVICE_CAPABILITIES_SIZE;
+        capabilities.usb_bus_interface_version = 2;
+        capabilities.usbdi_version = 0x00000600u;
+        capabilities.supported_usb_version = 0x00000200u;
+        capabilities.device_is_high_speed = 1;
+
+        status = rdp_session_usb_build_device_strings(selector,
+                                                      i,
+                                                      &instance,
+                                                      &hardware,
+                                                      &compatibility,
+                                                      &container);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_usb_redirection_write_add_device(&packet,
+                                                          rdp_session_usb_next_message_id(session),
+                                                          interface_id,
+                                                          instance.data,
+                                                          (uint32_t)instance.length,
+                                                          hardware.data,
+                                                          (uint32_t)hardware.length,
+                                                          compatibility.data,
+                                                          (uint32_t)compatibility.length,
+                                                          container.data,
+                                                          (uint32_t)container.length,
+                                                          &capabilities);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_send_usb_redirection_packet(session,
+                                                             &packet,
+                                                             "client.urbdrc.add_device");
+        if (status == LIBRDP_STATUS_OK)
+        {
+            session->usb_device_count_sent++;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.urbdrc.add_device",
+                            "dvc_channel_id=%u selector=\"%s\" interface_id=%u count=%u",
+                            session->usb_redirection_channel_id,
+                            selector ? selector : "",
+                            interface_id,
+                            session->usb_device_count_sent);
+        }
+        rdp_buffer_free(&container);
+        rdp_buffer_free(&compatibility);
+        rdp_buffer_free(&hardware);
+        rdp_buffer_free(&instance);
+        rdp_buffer_free(&packet);
+    }
+    return status;
+}
+
+static librdp_status rdp_session_usb_send_io_completion(librdp_session* session,
+                                                        uint32_t request_id,
+                                                        uint32_t hresult,
+                                                        uint32_t information,
+                                                        const uint8_t* output,
+                                                        uint32_t output_len,
+                                                        const char* event)
+{
+    rdp_usb_redirection_io_completion completion;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!output && output_len > 0) || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->usb_request_completion_ready)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.completion.skipped",
+                        "request_id=%u reason=no_callback",
+                        request_id);
+        return LIBRDP_STATUS_OK;
+    }
+    memset(&completion, 0, sizeof(completion));
+    completion.request_id = request_id;
+    completion.hresult = hresult;
+    completion.information = information;
+    completion.output_buffer = output;
+    completion.output_buffer_len = output_len;
+    rdp_buffer_init(&packet);
+    status = rdp_usb_redirection_write_io_control_completion(&packet,
+                                                             session->usb_request_completion_interface_id,
+                                                             rdp_session_usb_next_message_id(session),
+                                                             &completion);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_usb_redirection_packet(session, &packet, event);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_session_usb_send_urb_completion(librdp_session* session,
+                                                         const rdp_usb_redirection_transfer* transfer,
+                                                         uint32_t hresult,
+                                                         const char* event)
+{
+    rdp_usb_redirection_urb_completion completion;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !transfer || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (transfer->urb.no_ack)
+        return LIBRDP_STATUS_OK;
+    if (!session->usb_request_completion_ready)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.urb_completion.skipped",
+                        "request_id=%u reason=no_callback",
+                        transfer->urb.request_id);
+        return LIBRDP_STATUS_OK;
+    }
+    memset(&completion, 0, sizeof(completion));
+    completion.request_id = transfer->urb.request_id;
+    completion.hresult = hresult;
+    rdp_buffer_init(&packet);
+    status = rdp_usb_redirection_write_urb_completion_no_data(&packet,
+                                                              session->usb_request_completion_interface_id,
+                                                              rdp_session_usb_next_message_id(session),
+                                                              &completion);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_usb_redirection_packet(session, &packet, event);
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session,
+                                                                const uint8_t* data,
+                                                                size_t data_len)
+{
+    rdp_usb_redirection_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_usb_redirection_parse_header(data, data_len, 1, &header);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.pdu.invalid",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        session->usb_redirection_channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        return status;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.urbdrc.pdu",
+                          "dvc_channel_id=%u interface_id=%u mask=%u message_id=%u function_id=%u payload_len=%u",
+                          session->usb_redirection_channel_id,
+                          header.interface_id,
+                          header.mask,
+                          header.message_id,
+                          header.function_id,
+                          (unsigned)header.payload_len);
+
+    if (header.interface_id == RDP_USB_REDIRECTION_INTERFACE_CAPABILITIES &&
+        header.mask == RDP_USB_REDIRECTION_MASK_NONE &&
+        header.function_id == RDP_USB_REDIRECTION_FN_EXCHANGE_CAPABILITY)
+    {
+        rdp_usb_redirection_capability_exchange exchange;
+        rdp_buffer response;
+        rdp_buffer add_channel;
+
+        rdp_buffer_init(&response);
+        rdp_buffer_init(&add_channel);
+        status = rdp_usb_redirection_parse_capability_request(data, data_len, &exchange);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_usb_redirection_write_capability_response(&response,
+                                                                   exchange.header.message_id,
+                                                                   exchange.capability_value,
+                                                                   RDP_SESSION_HRESULT_OK);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_send_usb_redirection_packet(session,
+                                                             &response,
+                                                             "client.urbdrc.capability.response");
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_usb_redirection_write_add_virtual_channel(&add_channel,
+                                                                   rdp_session_usb_next_message_id(session));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_send_usb_redirection_packet(session,
+                                                             &add_channel,
+                                                             "client.urbdrc.add_virtual_channel");
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.capability",
+                        "dvc_channel_id=%u capability=%u enabled=%u status=%s",
+                        session->usb_redirection_channel_id,
+                        status == LIBRDP_STATUS_OK ? exchange.capability_value : 0u,
+                        librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ? 1u : 0u,
+                        librdp_status_string(status));
+        rdp_buffer_free(&add_channel);
+        rdp_buffer_free(&response);
+        return status;
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        header.function_id == RDP_USB_REDIRECTION_FN_CHANNEL_CREATED)
+    {
+        rdp_usb_redirection_channel_created created;
+
+        status = rdp_usb_redirection_parse_channel_created(data, data_len, header.interface_id, &created);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        session->usb_redirection_ready = 1;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.channel_created",
+                        "dvc_channel_id=%u interface_id=%u version=%u.%u capabilities=%u",
+                        session->usb_redirection_channel_id,
+                        header.interface_id,
+                        created.major_version,
+                        created.minor_version,
+                        created.capabilities);
+        return rdp_session_usb_send_device_announcements(session);
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        header.function_id == RDP_USB_REDIRECTION_FN_REGISTER_REQUEST_CALLBACK)
+    {
+        rdp_usb_redirection_register_callback callback;
+
+        status = rdp_usb_redirection_parse_register_callback(data, data_len, &callback);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        session->usb_request_completion_ready = callback.has_request_completion ? 1u : 0u;
+        session->usb_request_completion_interface_id =
+            callback.has_request_completion ? callback.request_completion : 0u;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.register_callback",
+                        "dvc_channel_id=%u interface_id=%u callback_ready=%u callback_interface_id=%u",
+                        session->usb_redirection_channel_id,
+                        callback.header.interface_id,
+                        session->usb_request_completion_ready,
+                        session->usb_request_completion_interface_id);
+        return LIBRDP_STATUS_OK;
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        header.function_id == RDP_USB_REDIRECTION_FN_QUERY_DEVICE_TEXT)
+    {
+        static const char description[] = "librdp USB device";
+        rdp_usb_redirection_query_device_text query;
+        rdp_buffer text;
+        rdp_buffer response;
+
+        rdp_buffer_init(&text);
+        rdp_buffer_init(&response);
+        status = rdp_usb_redirection_parse_query_device_text(data, data_len, &query);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_utf8_to_utf16le(description, &text, 1);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_usb_redirection_write_query_device_text_response(&response,
+                                                                          query.header.interface_id,
+                                                                          query.header.message_id,
+                                                                          text.data,
+                                                                          (uint32_t)text.length,
+                                                                          RDP_SESSION_HRESULT_OK);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_send_usb_redirection_packet(session,
+                                                             &response,
+                                                             "client.urbdrc.query_device_text.response");
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.query_device_text",
+                        "dvc_channel_id=%u interface_id=%u text_type=%u locale_id=%u status=%s",
+                        session->usb_redirection_channel_id,
+                        header.interface_id,
+                        status == LIBRDP_STATUS_OK ? query.text_type : 0u,
+                        status == LIBRDP_STATUS_OK ? query.locale_id : 0u,
+                        librdp_status_string(status));
+        rdp_buffer_free(&response);
+        rdp_buffer_free(&text);
+        return status;
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        (header.function_id == RDP_USB_REDIRECTION_FN_IO_CONTROL ||
+         header.function_id == RDP_USB_REDIRECTION_FN_INTERNAL_IO_CONTROL))
+    {
+        rdp_usb_redirection_io_control control;
+
+        status = rdp_usb_redirection_parse_io_control(data, data_len, header.function_id, &control);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.io_control",
+                        "dvc_channel_id=%u interface_id=%u function_id=%u io_control=%u request_id=%u input_len=%u output_size=%u",
+                        session->usb_redirection_channel_id,
+                        control.header.interface_id,
+                        control.header.function_id,
+                        control.io_control_code,
+                        control.request_id,
+                        control.input_buffer_len,
+                        control.output_buffer_size);
+        return rdp_session_usb_send_io_completion(session,
+                                                  control.request_id,
+                                                  RDP_SESSION_HRESULT_NOTIMPL,
+                                                  0,
+                                                  NULL,
+                                                  0,
+                                                  "client.urbdrc.io_control.completion");
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        (header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST ||
+         header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST))
+    {
+        rdp_usb_redirection_transfer transfer;
+
+        status = rdp_usb_redirection_parse_transfer(data, data_len, header.function_id, &transfer);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.transfer",
+                        "dvc_channel_id=%u interface_id=%u function_id=%u urb_function=%u request_id=%u output_size=%u output_len=%u no_ack=%u",
+                        session->usb_redirection_channel_id,
+                        transfer.header.interface_id,
+                        transfer.header.function_id,
+                        transfer.urb.function,
+                        transfer.urb.request_id,
+                        transfer.output_buffer_size,
+                        transfer.output_buffer_len,
+                        transfer.urb.no_ack);
+        return rdp_session_usb_send_urb_completion(session,
+                                                   &transfer,
+                                                   RDP_SESSION_HRESULT_NOTIMPL,
+                                                   "client.urbdrc.urb.completion");
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        header.function_id == RDP_USB_REDIRECTION_FN_CANCEL_REQUEST)
+    {
+        rdp_usb_redirection_cancel_request cancel;
+
+        status = rdp_usb_redirection_parse_cancel_request(data, data_len, &cancel);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.cancel",
+                        "dvc_channel_id=%u interface_id=%u request_id=%u",
+                        session->usb_redirection_channel_id,
+                        cancel.header.interface_id,
+                        cancel.request_id);
+        return LIBRDP_STATUS_OK;
+    }
+    if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
+        header.function_id == RDP_USB_REDIRECTION_FN_RETRACT_DEVICE)
+    {
+        rdp_usb_redirection_retract_device retract;
+
+        status = rdp_usb_redirection_parse_retract_device(data, data_len, &retract);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.retract",
+                        "dvc_channel_id=%u interface_id=%u reason=%u",
+                        session->usb_redirection_channel_id,
+                        retract.header.interface_id,
+                        retract.reason);
+        return LIBRDP_STATUS_OK;
+    }
+
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.urbdrc.unsupported",
+                    "dvc_channel_id=%u interface_id=%u mask=%u function_id=%u payload_len=%u",
+                    session->usb_redirection_channel_id,
+                    header.interface_id,
+                    header.mask,
+                    header.function_id,
+                    (unsigned)header.payload_len);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,
                                                                 uint32_t channel_id,
@@ -9137,6 +9722,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         status = rdp_session_handle_webauthn_message(session, channel_id, channel_id_bytes, data, data_len);
     }
+    else if (strcmp(entry->name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0)
+    {
+        status = rdp_session_handle_usb_redirection_message(session, data, data_len);
+    }
     else
     {
         rdp_session_emit_channel_data(session, entry, data, data_len);
@@ -9282,6 +9871,23 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u enabled=%u",
                             request.channel_id,
                             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_WEBAUTHN) ? 1u : 0u);
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME, request.name_len) == 0)
+        {
+            session->usb_redirection_channel_id = request.channel_id;
+            session->usb_redirection_channel_id_bytes = request.channel_id_bytes;
+            session->usb_redirection_ready = 0;
+            session->usb_request_completion_ready = 0;
+            session->usb_message_id = 0;
+            session->usb_request_completion_interface_id = 0;
+            session->usb_device_count_sent = 0;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.urbdrc.channel",
+                            "dvc_channel_id=%u enabled=%u configured_devices=%u",
+                            request.channel_id,
+                            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB) ? 1u : 0u,
+                            librdp_settings_usb_device_count(session->settings));
         }
         else if (request.name_len == sizeof(RDP_SESSION_MOUSE_CURSOR_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_MOUSE_CURSOR_NAME, request.name_len) == 0)
@@ -9513,6 +10119,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 rdp_session_graphics_surfaces_clear(session);
                 rdp_session_graphics_cache_clear(session);
             }
+            if (entry->channel_id == session->usb_redirection_channel_id)
+                rdp_session_usb_redirection_reset(session);
             rdp_buffer_free(&entry->fragment);
             entry->fragment_expected = 0;
             entry->fragmenting = 0;
@@ -9988,6 +10596,7 @@ void librdp_session_free(librdp_session* session)
         return;
     (void)librdp_session_disconnect(session);
     rdp_session_smartcard_reset(session);
+    rdp_session_usb_redirection_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
@@ -10133,6 +10742,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
@@ -11561,6 +12171,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_session_graphics_surfaces_clear(session);
