@@ -61,7 +61,9 @@ add_library(librdp
     src/security/certificate.c
     src/security/security.c
     src/transport/tcp.c
+    src/transport/multitransport.c
     src/transport/transport.c
+    src/transport/udp_transport.c
 )
 
 target_include_directories(librdp
@@ -137,6 +139,8 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
     add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)
     add_librdp_fuzzer(fuzz_credssp fuzz/credssp_fuzzer.c)
+    add_librdp_fuzzer(fuzz_udp_transport fuzz/udp_transport_fuzzer.c)
+    add_librdp_fuzzer(fuzz_multitransport fuzz/multitransport_fuzzer.c)
 endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
