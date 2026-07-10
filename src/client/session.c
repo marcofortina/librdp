@@ -23200,14 +23200,16 @@ static librdp_status rdp_session_handle_video_capture_control_message(librdp_ses
             break;
         }
         default:
-            rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                  RDP_TRACE_LEVEL_DEBUG,
-                                  "client.rdpecam.control.skipped",
-                                  "dvc_channel_id=%u message_id=%u payload_len=%u",
-                                  channel_id,
-                                  header.message_id,
-                                  (unsigned)data_len);
-            break;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.rdpecam.control.invalid_message",
+                            "dvc_channel_id=%u message_id=%u payload_len=%u",
+                            channel_id,
+                            header.message_id,
+                            (unsigned)data_len);
+            return rdp_session_send_video_capture_error(session,
+                                                        1,
+                                                        RDP_VIDEO_CAPTURE_ERROR_INVALID_MESSAGE,
+                                                        "client.rdpecam.control.error");
     }
     return LIBRDP_STATUS_OK;
 }
@@ -23490,14 +23492,16 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
             break;
         }
         default:
-            rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                  RDP_TRACE_LEVEL_DEBUG,
-                                  "client.rdpecam.data.skipped",
-                                  "dvc_channel_id=%u message_id=%u payload_len=%u",
-                                  channel_id,
-                                  header.message_id,
-                                  (unsigned)data_len);
-            break;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.rdpecam.data.invalid_message",
+                            "dvc_channel_id=%u message_id=%u payload_len=%u",
+                            channel_id,
+                            header.message_id,
+                            (unsigned)data_len);
+            return rdp_session_send_video_capture_error(session,
+                                                        0,
+                                                        RDP_VIDEO_CAPTURE_ERROR_INVALID_MESSAGE,
+                                                        "client.rdpecam.data.error");
     }
     return LIBRDP_STATUS_OK;
 }
