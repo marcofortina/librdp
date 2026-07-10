@@ -606,6 +606,49 @@ librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_hea
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_order_header* header,
+                                                    rdp_gdi_cache_color_table_order* order)
+{
+    rdp_stream stream;
+    uint8_t cache_index = 0;
+    uint16_t number_colors = 0;
+    uint32_t i = 0;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_SECONDARY_CACHE_COLOR_TABLE)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (header->payload_len != 3u + (RDP_BITMAP_PALETTE_MAX_ENTRIES * 4u))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u8(&stream, &cache_index) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &number_colors) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (number_colors != RDP_BITMAP_PALETTE_MAX_ENTRIES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->cache_index = cache_index;
+    order->palette.count = number_colors;
+    for (i = 0; i < number_colors; i++)
+    {
+        uint8_t blue = 0;
+        uint8_t green = 0;
+        uint8_t red = 0;
+        uint8_t pad = 0;
+
+        if (rdp_stream_read_u8(&stream, &blue) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &green) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &red) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &pad) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        order->palette.entries[i].red = red;
+        order->palette.entries[i].green = green;
+        order->palette.entries[i].blue = blue;
+        (void)pad;
+    }
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header)

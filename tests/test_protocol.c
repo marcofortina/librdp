@@ -11204,6 +11204,7 @@ static int test_gdi_orders(void)
     rdp_gdi_primary_order_header primary;
     rdp_gdi_secondary_order_header secondary_header;
     rdp_gdi_cache_bitmap_order cache_bitmap;
+    rdp_gdi_cache_color_table_order cache_color_table;
     rdp_gdi_altsec_order_header altsec;
     rdp_gdi_bitmap_cache_error bitmap_error;
     rdp_gdi_bitmap_cache_error parsed_error;
@@ -11317,6 +11318,34 @@ static int test_gdi_orders(void)
            !cache_bitmap.has_compression_header &&
            !cache_bitmap.bitmap_data_includes_compression_header &&
            cache_bitmap.bitmap_data_len == 4);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    PCHECK(rdp_buffer_append_u8(&payload, 9u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&payload, RDP_BITMAP_PALETTE_MAX_ENTRIES) == LIBRDP_STATUS_OK);
+    for (i = 0; i < RDP_BITMAP_PALETTE_MAX_ENTRIES; i++)
+    {
+        PCHECK(rdp_buffer_append_u8(&payload, (uint8_t)i) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u8(&payload, (uint8_t)(255u - i)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u8(&payload, (uint8_t)(i ^ 0x55u)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u8(&payload, 0u) == LIBRDP_STATUS_OK);
+    }
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         0,
+                                         RDP_GDI_SECONDARY_CACHE_COLOR_TABLE,
+                                         payload.data,
+                                         payload.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_color_table_order(&secondary_header, &cache_color_table) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(cache_color_table.cache_index == 9 &&
+           cache_color_table.palette.count == RDP_BITMAP_PALETTE_MAX_ENTRIES &&
+           cache_color_table.palette.entries[3].blue == 3u &&
+           cache_color_table.palette.entries[3].green == 252u &&
+           cache_color_table.palette.entries[3].red == 0x56u);
 
     PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
                                                     1,
@@ -11354,6 +11383,7 @@ static int test_gdi_orders(void)
            primary.field_flags == 0x0cu &&
            primary.payload_len == 2u &&
            primary.payload[0] == 0xaau);
+    payload.length = 0;
     PCHECK(rdp_gdi_write_primary_order(&payload,
                                        RDP_GDI_ORDER_PATBLT,
                                        RDP_GDI_ORDER_DSTBLT,

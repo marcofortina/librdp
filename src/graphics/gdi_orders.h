@@ -7,6 +7,7 @@
 #include <librdp/error.h>
 
 #include "common/buffer.h"
+#include "graphics/bitmap.h"
 
 #define RDP_GDI_UPDATE_TYPE_ORDERS 0x0000u
 
@@ -168,6 +169,12 @@ typedef struct rdp_gdi_cache_bitmap_order
     uint32_t bitmap_data_len;
 } rdp_gdi_cache_bitmap_order;
 
+typedef struct rdp_gdi_cache_color_table_order
+{
+    uint32_t cache_index;
+    rdp_palette_update palette;
+} rdp_gdi_cache_color_table_order;
+
 typedef struct rdp_gdi_altsec_order_header
 {
     uint8_t control_flags;
@@ -253,6 +260,8 @@ librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
                                             size_t payload_len);
 librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_header* header,
                                                rdp_gdi_cache_bitmap_order* order);
+librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_order_header* header,
+                                                    rdp_gdi_cache_color_table_order* order);
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header);
