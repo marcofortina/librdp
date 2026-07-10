@@ -41,7 +41,7 @@ static int rdp_slowpath_valid_share_control_type(uint16_t pdu_type)
            type == RDP_SLOWPATH_PDU_TYPE_DATA;
 }
 
-#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 17u
+#define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 18u
 
 static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
 {
@@ -447,6 +447,17 @@ static librdp_status rdp_slowpath_write_color_cache_capability(rdp_buffer* buffe
     return status;
 }
 
+static librdp_status rdp_slowpath_write_ninegrid_capability(rdp_buffer* buffer)
+{
+    const rdp_gdi_ninegrid_capability capability = {
+        RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2,
+        2560,
+        256
+    };
+
+    return rdp_gdi_write_ninegrid_capability(buffer, &capability);
+}
+
 static librdp_status rdp_slowpath_write_activation_capability(rdp_buffer* buffer)
 {
     const uint16_t fields[] = {0, 0, 0, 0};
@@ -599,6 +610,8 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
         status = rdp_slowpath_write_control_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_color_cache_capability(&capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_ninegrid_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_write_activation_capability(&capabilities);
     if (status == LIBRDP_STATUS_OK)

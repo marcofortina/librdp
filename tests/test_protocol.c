@@ -3239,11 +3239,12 @@ static int test_path_security_license_channels(void)
         RDP_CAPABILITY_TYPE_FONT,
         RDP_CAPABILITY_TYPE_CONTROL,
         RDP_CAPABILITY_TYPE_COLOR_CACHE,
+        RDP_GDI_CAPSTYPE_DRAW_NINEGRID_CACHE,
         RDP_CAPABILITY_TYPE_ACTIVATION,
         RDP_CAPABILITY_TYPE_BITMAP_CODECS
     };
     const uint16_t expected_confirm_lengths[] = {
-        24, 28, 88, 40, 10, 6, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12, 27
+        24, 28, 88, 40, 10, 6, 88, 8, 52, 12, 8, 8, 8, 12, 8, 12, 12, 27
     };
     const uint8_t virtual_channel_minimal_data[] = {1, 0, 0, 0};
     const uint8_t font_map_payload[] = {1, 0, 2, 0, 3, 0, 4, 0};
@@ -4630,7 +4631,7 @@ static int test_path_security_license_channels(void)
                                   confirm_caps_len,
                                   &confirm_caps) == LIBRDP_STATUS_OK);
     PCHECK(confirm_caps.count == sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]));
-    PCHECK(confirm_caps_len == 443);
+    PCHECK(confirm_caps_len == 455);
     for (i = 0; i < sizeof(expected_confirm_types) / sizeof(expected_confirm_types[0]); i++)
     {
         PCHECK(confirm_caps.sets[i].type == expected_confirm_types[i]);
@@ -4772,6 +4773,12 @@ static int test_path_security_license_channels(void)
     PCHECK(confirm_set != NULL);
     PCHECK(rdp_capability_parse_color_cache(confirm_set, &confirm_color_cache) == LIBRDP_STATUS_OK);
     PCHECK(confirm_color_cache.cache_size == 6);
+    confirm_set = rdp_capabilities_find(&confirm_caps, RDP_GDI_CAPSTYPE_DRAW_NINEGRID_CACHE);
+    PCHECK(confirm_set != NULL);
+    PCHECK(confirm_set->data_len == 8 &&
+           test_read_u32_le(confirm_set->data) == RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 &&
+           test_read_u16_le(confirm_set->data + 4u) == 2560 &&
+           test_read_u16_le(confirm_set->data + 6u) == 256);
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_ACTIVATION);
     PCHECK(confirm_set != NULL);
     PCHECK(rdp_capability_parse_activation(confirm_set, &confirm_activation) == LIBRDP_STATUS_OK);
