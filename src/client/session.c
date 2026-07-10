@@ -9824,6 +9824,10 @@ static librdp_status rdp_session_handle_port_control(librdp_session* session,
         status = rdp_session_port_control_parallel(port, &request, &output, &io_status);
     else
         io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    if (status == LIBRDP_STATUS_OK &&
+        io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+        output.length > request.output_buffer_length)
+        io_status = RDP_SESSION_DEVICE_BUFFER_TOO_SMALL;
     if (status == LIBRDP_STATUS_OK)
         status = rdp_port_redirection_write_control_response(&response,
                                                              request.io.device_id,
@@ -9842,14 +9846,15 @@ static librdp_status rdp_session_handle_port_control(librdp_session* session,
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.port.control",
-                        "device_id=%u file_id=%u completion_id=%u type=%u ioctl=%u status=%u output_len=%u",
+                        "device_id=%u file_id=%u completion_id=%u type=%u ioctl=%u status=%u output_len=%u requested_output=%u",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         port_type,
                         request.io_control_code,
                         io_status,
-                        (unsigned)output.length);
+                        (unsigned)output.length,
+                        request.output_buffer_length);
     rdp_buffer_free(&response);
     rdp_buffer_free(&output);
     return status;
