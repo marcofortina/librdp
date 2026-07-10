@@ -114,6 +114,9 @@
 #define RDP_GDI_GLYPH_SO_ZERO_BEARINGS 0x10u
 #define RDP_GDI_GLYPH_SO_CHAR_INC_EQUAL_BM_BASE 0x20u
 #define RDP_GDI_GLYPH_SO_MAXEXT_EQUAL_BM_SIDE 0x40u
+#define RDP_GDI_STREAM_BITMAP_END 0x01u
+#define RDP_GDI_STREAM_BITMAP_COMPRESSED 0x02u
+#define RDP_GDI_STREAM_BITMAP_V2 0x04u
 
 #define RDP_GDI_MAX_ORDERS 256u
 #define RDP_GDI_MAX_BITMAP_CACHE_ERROR_INFO 16u
@@ -313,6 +316,26 @@ typedef struct rdp_gdi_frame_marker_order
     uint32_t action;
 } rdp_gdi_frame_marker_order;
 
+typedef struct rdp_gdi_stream_bitmap_first_order
+{
+    uint32_t flags;
+    uint32_t bits_per_pixel;
+    uint32_t bitmap_type;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bitmap_size;
+    const uint8_t* bitmap_block;
+    uint32_t bitmap_block_len;
+} rdp_gdi_stream_bitmap_first_order;
+
+typedef struct rdp_gdi_stream_bitmap_next_order
+{
+    uint32_t flags;
+    uint32_t bitmap_type;
+    const uint8_t* bitmap_block;
+    uint32_t bitmap_block_len;
+} rdp_gdi_stream_bitmap_next_order;
+
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update);
@@ -386,6 +409,18 @@ librdp_status rdp_gdi_parse_frame_marker_order(const rdp_gdi_altsec_order_header
                                                rdp_gdi_frame_marker_order* order);
 librdp_status rdp_gdi_write_frame_marker_order(rdp_buffer* buffer,
                                                const rdp_gdi_frame_marker_order* order);
+librdp_status rdp_gdi_parse_stream_bitmap_first_order(
+    const rdp_gdi_altsec_order_header* header,
+    rdp_gdi_stream_bitmap_first_order* order);
+librdp_status rdp_gdi_write_stream_bitmap_first_order(
+    rdp_buffer* buffer,
+    const rdp_gdi_stream_bitmap_first_order* order);
+librdp_status rdp_gdi_parse_stream_bitmap_next_order(
+    const rdp_gdi_altsec_order_header* header,
+    rdp_gdi_stream_bitmap_next_order* order);
+librdp_status rdp_gdi_write_stream_bitmap_next_order(
+    rdp_buffer* buffer,
+    const rdp_gdi_stream_bitmap_next_order* order);
 librdp_status rdp_gdi_parse_bitmap_cache_error_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_bitmap_cache_error* error);

@@ -12122,6 +12122,32 @@ static int test_gdi_orders(void)
     const uint8_t frame_marker_payload[] = {
         0x01u, 0x00u, 0x00u, 0x00u
     };
+    const uint8_t stream_first_payload[] = {
+        0x00u,
+        32u,
+        0x02u, 0x00u,
+        0x02u, 0x00u,
+        0x01u, 0x00u,
+        0x08u, 0x00u,
+        0x04u, 0x00u,
+        0x10u, 0x20u, 0x30u, 0xffu
+    };
+    const uint8_t stream_next_payload[] = {
+        RDP_GDI_STREAM_BITMAP_END,
+        0x02u, 0x00u,
+        0x04u, 0x00u,
+        0x11u, 0x21u, 0x31u, 0xffu
+    };
+    const uint8_t stream_first_v2_payload[] = {
+        RDP_GDI_STREAM_BITMAP_END | RDP_GDI_STREAM_BITMAP_V2,
+        24u,
+        0x03u, 0x00u,
+        0x01u, 0x00u,
+        0x01u, 0x00u,
+        0x03u, 0x00u, 0x00u, 0x00u,
+        0x03u, 0x00u,
+        0x01u, 0x02u, 0x03u
+    };
     rdp_buffer secondary;
     rdp_buffer slow;
     rdp_buffer fast;
@@ -12145,6 +12171,8 @@ static int test_gdi_orders(void)
     rdp_gdi_create_offscreen_bitmap_order create_offscreen;
     rdp_gdi_switch_surface_order switch_surface;
     rdp_gdi_frame_marker_order frame_marker;
+    rdp_gdi_stream_bitmap_first_order stream_first;
+    rdp_gdi_stream_bitmap_next_order stream_next;
     rdp_gdi_gdiplus_capability gdiplus;
     rdp_gdi_render_state render_state;
     rdp_gdi_render_op render_op;
@@ -12968,6 +12996,78 @@ static int test_gdi_orders(void)
     altsec.payload_len = 3u;
     PCHECK(rdp_gdi_parse_frame_marker_order(&altsec, &frame_marker) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_altsec_order(&payload,
+                                      RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST,
+                                      stream_first_payload,
+                                      sizeof(stream_first_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_altsec_order(payload.data,
+                                      payload.length,
+                                      &altsec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_stream_bitmap_first_order(&altsec, &stream_first) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(stream_first.flags == 0u &&
+           stream_first.bits_per_pixel == 32u &&
+           stream_first.bitmap_type == 2u &&
+           stream_first.width == 2u &&
+           stream_first.height == 1u &&
+           stream_first.bitmap_size == 8u &&
+           stream_first.bitmap_block_len == 4u &&
+           memcmp(stream_first.bitmap_block, stream_first_payload + 12u, 4u) == 0);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_stream_bitmap_first_order(&payload, &stream_first) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(payload.length == sizeof(stream_first_payload) &&
+           memcmp(payload.data, stream_first_payload, sizeof(stream_first_payload)) == 0);
+    payload.data[8] = 0;
+    payload.data[9] = 0;
+    altsec.payload = payload.data;
+    altsec.payload_len = payload.length;
+    altsec.order_type = RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST;
+    PCHECK(rdp_gdi_parse_stream_bitmap_first_order(&altsec, &stream_first) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_altsec_order(&payload,
+                                      RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT,
+                                      stream_next_payload,
+                                      sizeof(stream_next_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_altsec_order(payload.data,
+                                      payload.length,
+                                      &altsec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_stream_bitmap_next_order(&altsec, &stream_next) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(stream_next.flags == RDP_GDI_STREAM_BITMAP_END &&
+           stream_next.bitmap_type == 2u &&
+           stream_next.bitmap_block_len == 4u &&
+           memcmp(stream_next.bitmap_block, stream_next_payload + 5u, 4u) == 0);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_stream_bitmap_next_order(&payload, &stream_next) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(payload.length == sizeof(stream_next_payload) &&
+           memcmp(payload.data, stream_next_payload, sizeof(stream_next_payload)) == 0);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_altsec_order(&payload,
+                                      RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST,
+                                      stream_first_v2_payload,
+                                      sizeof(stream_first_v2_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_altsec_order(payload.data,
+                                      payload.length,
+                                      &altsec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_stream_bitmap_first_order(&altsec, &stream_first) ==
+           LIBRDP_STATUS_OK);
+    PCHECK((stream_first.flags & RDP_GDI_STREAM_BITMAP_V2) != 0 &&
+           (stream_first.flags & RDP_GDI_STREAM_BITMAP_END) != 0 &&
+           stream_first.bits_per_pixel == 24u &&
+           stream_first.bitmap_type == 3u &&
+           stream_first.width == 1u &&
+           stream_first.height == 1u &&
+           stream_first.bitmap_size == 3u &&
+           stream_first.bitmap_block_len == 3u);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_stream_bitmap_first_order(&payload, &stream_first) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(payload.length == sizeof(stream_first_v2_payload) &&
+           memcmp(payload.data, stream_first_v2_payload, sizeof(stream_first_v2_payload)) == 0);
     payload.length = 0;
     PCHECK(rdp_gdi_write_altsec_order(&payload,
                                       RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP,

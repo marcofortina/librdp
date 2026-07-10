@@ -345,6 +345,18 @@ typedef struct rdp_session_gdi_offscreen_bitmap
     librdp_surface* surface;
 } rdp_session_gdi_offscreen_bitmap;
 
+typedef struct rdp_session_gdi_stream_bitmap
+{
+    uint8_t active;
+    uint32_t flags;
+    uint32_t bits_per_pixel;
+    uint32_t bitmap_type;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bitmap_size;
+    rdp_buffer bitmap_data;
+} rdp_session_gdi_stream_bitmap;
+
 typedef struct rdp_session_gdi_bitmap_cache_entry
 {
     uint8_t active;
@@ -622,6 +634,7 @@ struct librdp_session
     size_t gdi_saved_bitmap_bytes;
     uint32_t gdi_current_surface_id;
     uint8_t gdi_drawing_to_offscreen;
+    rdp_session_gdi_stream_bitmap gdi_stream_bitmap;
     uint32_t graphics_current_frame_id;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     rdp_standard_security_context standard_security;
@@ -13033,6 +13046,198 @@ static librdp_surface* rdp_session_gdi_target_surface(librdp_session* session)
     return entry ? entry->surface : NULL;
 }
 
+static void rdp_session_gdi_stream_bitmap_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_buffer_free(&session->gdi_stream_bitmap.bitmap_data);
+    memset(&session->gdi_stream_bitmap, 0, sizeof(session->gdi_stream_bitmap));
+}
+
+static librdp_status rdp_session_gdi_stream_bitmap_blit(librdp_session* session)
+{
+    rdp_bitmap_rect rect;
+    rdp_buffer pixels;
+    librdp_surface* target = NULL;
+    size_t stride = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t to_offscreen = 0;
+
+    if (!session || !session->gdi_stream_bitmap.bitmap_data.data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->gdi_stream_bitmap.bitmap_data.length != session->gdi_stream_bitmap.bitmap_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    target = rdp_session_gdi_target_surface(session);
+    if (!target ||
+        session->gdi_stream_bitmap.width > librdp_surface_width(target) ||
+        session->gdi_stream_bitmap.height > librdp_surface_height(target))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(&rect, 0, sizeof(rect));
+    rect.dest_left = 0;
+    rect.dest_top = 0;
+    rect.dest_right = (uint16_t)(session->gdi_stream_bitmap.width - 1u);
+    rect.dest_bottom = (uint16_t)(session->gdi_stream_bitmap.height - 1u);
+    rect.width = (uint16_t)session->gdi_stream_bitmap.width;
+    rect.height = (uint16_t)session->gdi_stream_bitmap.height;
+    rect.bits_per_pixel = (uint16_t)session->gdi_stream_bitmap.bits_per_pixel;
+    rect.flags = (session->gdi_stream_bitmap.flags & RDP_GDI_STREAM_BITMAP_COMPRESSED) != 0 ?
+                 RDP_SESSION_BITMAP_FLAG_COMPRESSED : 0;
+    rect.data = session->gdi_stream_bitmap.bitmap_data.data;
+    rect.data_len = (uint32_t)session->gdi_stream_bitmap.bitmap_data.length;
+
+    rdp_buffer_init(&pixels);
+    status = rdp_bitmap_decode_rect_bgra32_with_palette(&rect,
+                                                        session->palette_valid ? &session->palette : NULL,
+                                                        &pixels,
+                                                        &stride);
+    if (status == LIBRDP_STATUS_OK)
+        status = librdp_surface_blit_bgra32(target,
+                                            0,
+                                            0,
+                                            session->gdi_stream_bitmap.width,
+                                            session->gdi_stream_bitmap.height,
+                                            pixels.data,
+                                            stride);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        to_offscreen = target != session->surface;
+        if (to_offscreen)
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_TRACE,
+                                  "client.gdi.stream_bitmap.offscreen_blit",
+                                  "surface_id=%u width=%u height=%u bpp=%u compressed=%u",
+                                  session->gdi_current_surface_id,
+                                  session->gdi_stream_bitmap.width,
+                                  session->gdi_stream_bitmap.height,
+                                  session->gdi_stream_bitmap.bits_per_pixel,
+                                  (session->gdi_stream_bitmap.flags & RDP_GDI_STREAM_BITMAP_COMPRESSED) != 0 ? 1u : 0u);
+        }
+        else
+        {
+            rdp_session_emit_surface_invalidated(session,
+                                                 0,
+                                                 0,
+                                                 session->gdi_stream_bitmap.width,
+                                                 session->gdi_stream_bitmap.height);
+        }
+    }
+    rdp_buffer_free(&pixels);
+    return status;
+}
+
+static librdp_status rdp_session_gdi_stream_bitmap_finish_if_needed(librdp_session* session, uint32_t flags)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((flags & RDP_GDI_STREAM_BITMAP_END) == 0)
+        return LIBRDP_STATUS_OK;
+    status = rdp_session_gdi_stream_bitmap_blit(session);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
+                          status == LIBRDP_STATUS_OK ? "client.gdi.stream_bitmap.done" :
+                                                        "client.gdi.stream_bitmap.failed",
+                          "status=%d surface_id=%u width=%u height=%u bpp=%u received=%u expected=%u flags=%u type=%u",
+                          (int)status,
+                          session->gdi_current_surface_id,
+                          session->gdi_stream_bitmap.width,
+                          session->gdi_stream_bitmap.height,
+                          session->gdi_stream_bitmap.bits_per_pixel,
+                          (unsigned)session->gdi_stream_bitmap.bitmap_data.length,
+                          session->gdi_stream_bitmap.bitmap_size,
+                          session->gdi_stream_bitmap.flags,
+                          session->gdi_stream_bitmap.bitmap_type);
+    rdp_session_gdi_stream_bitmap_reset(session);
+    return status;
+}
+
+static librdp_status rdp_session_gdi_stream_bitmap_first(
+    librdp_session* session,
+    const rdp_gdi_stream_bitmap_first_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order || !order->bitmap_block)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->width == 0 || order->height == 0 ||
+        order->width > UINT16_MAX || order->height > UINT16_MAX ||
+        order->bits_per_pixel == 0 || order->bits_per_pixel > UINT16_MAX ||
+        order->bitmap_size == 0 || order->bitmap_block_len > order->bitmap_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_session_gdi_stream_bitmap_reset(session);
+    session->gdi_stream_bitmap.active = 1;
+    session->gdi_stream_bitmap.flags = order->flags;
+    session->gdi_stream_bitmap.bits_per_pixel = order->bits_per_pixel;
+    session->gdi_stream_bitmap.bitmap_type = order->bitmap_type;
+    session->gdi_stream_bitmap.width = order->width;
+    session->gdi_stream_bitmap.height = order->height;
+    session->gdi_stream_bitmap.bitmap_size = order->bitmap_size;
+    status = rdp_buffer_reserve(&session->gdi_stream_bitmap.bitmap_data, order->bitmap_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&session->gdi_stream_bitmap.bitmap_data,
+                                   order->bitmap_block,
+                                   order->bitmap_block_len);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_gdi_stream_bitmap_reset(session);
+        return status;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.stream_bitmap.first",
+                          "surface_id=%u width=%u height=%u bpp=%u received=%u expected=%u flags=%u type=%u",
+                          session->gdi_current_surface_id,
+                          order->width,
+                          order->height,
+                          order->bits_per_pixel,
+                          order->bitmap_block_len,
+                          order->bitmap_size,
+                          order->flags,
+                          order->bitmap_type);
+    return rdp_session_gdi_stream_bitmap_finish_if_needed(session, order->flags);
+}
+
+static librdp_status rdp_session_gdi_stream_bitmap_next(
+    librdp_session* session,
+    const rdp_gdi_stream_bitmap_next_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order || (!order->bitmap_block && order->bitmap_block_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->gdi_stream_bitmap.active ||
+        order->bitmap_type != session->gdi_stream_bitmap.bitmap_type ||
+        order->bitmap_block_len > session->gdi_stream_bitmap.bitmap_size ||
+        session->gdi_stream_bitmap.bitmap_data.length >
+            session->gdi_stream_bitmap.bitmap_size - order->bitmap_block_len)
+    {
+        rdp_session_gdi_stream_bitmap_reset(session);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    status = rdp_buffer_append(&session->gdi_stream_bitmap.bitmap_data,
+                               order->bitmap_block,
+                               order->bitmap_block_len);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_gdi_stream_bitmap_reset(session);
+        return status;
+    }
+    session->gdi_stream_bitmap.flags = order->flags;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_TRACE,
+                          "client.gdi.stream_bitmap.next",
+                          "surface_id=%u received=%u expected=%u block_len=%u flags=%u type=%u",
+                          session->gdi_current_surface_id,
+                          (unsigned)session->gdi_stream_bitmap.bitmap_data.length,
+                          session->gdi_stream_bitmap.bitmap_size,
+                          order->bitmap_block_len,
+                          order->flags,
+                          order->bitmap_type);
+    return rdp_session_gdi_stream_bitmap_finish_if_needed(session, order->flags);
+}
+
 static rdp_session_graphics_cache_entry* rdp_session_graphics_cache_find(librdp_session* session, uint16_t cache_slot)
 {
     if (!session || cache_slot >= RDP_SESSION_GRAPHICS_CACHE_SLOTS || !session->graphics_cache[cache_slot].active)
@@ -22422,6 +22627,8 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
     rdp_gdi_create_offscreen_bitmap_order offscreen;
     rdp_gdi_switch_surface_order switch_surface;
     rdp_gdi_frame_marker_order frame_marker;
+    rdp_gdi_stream_bitmap_first_order stream_first;
+    rdp_gdi_stream_bitmap_next_order stream_next;
     rdp_session_gdi_ninegrid_cache_entry* entry = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -22494,6 +22701,20 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                               session->graphics_current_frame_id,
                               session->graphics_frame_active ? 1u : 0u);
         return LIBRDP_STATUS_OK;
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST)
+    {
+        status = rdp_gdi_parse_stream_bitmap_first_order(header, &stream_first);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_stream_bitmap_first(session, &stream_first);
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT)
+    {
+        status = rdp_gdi_parse_stream_bitmap_next_order(header, &stream_next);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_stream_bitmap_next(session, &stream_next);
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -22937,6 +23158,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_buffer_init(&session->fastpath_fragment);
+    rdp_buffer_init(&session->gdi_stream_bitmap.bitmap_data);
     rdp_gdi_render_state_init(&session->gdi_render);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
@@ -22993,6 +23215,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
+    rdp_session_gdi_stream_bitmap_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_avc_decoder_free(session->avc);
     rdp_nscodec_context_free(&session->surface_nscodec);
@@ -23170,6 +23393,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
+    rdp_session_gdi_stream_bitmap_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_gdi_render_state_init(&session->gdi_render);
     rdp_session_palette_reset(session);
@@ -24960,6 +25184,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
+    rdp_session_gdi_stream_bitmap_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);

@@ -1261,6 +1261,162 @@ librdp_status rdp_gdi_write_frame_marker_order(rdp_buffer* buffer,
     return rdp_buffer_append_u32_le(buffer, order->action);
 }
 
+librdp_status rdp_gdi_parse_stream_bitmap_first_order(
+    const rdp_gdi_altsec_order_header* header,
+    rdp_gdi_stream_bitmap_first_order* order)
+{
+    rdp_stream stream;
+    uint8_t flags = 0;
+    uint8_t bpp = 0;
+    uint16_t value16 = 0;
+    uint32_t bitmap_size = 0;
+    uint16_t block_len = 0;
+    const uint8_t* block = NULL;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (header->payload_len < 10u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u8(&stream, &flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &bpp) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->bitmap_type = value16;
+    if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->width = value16;
+    if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->height = value16;
+    if ((flags & RDP_GDI_STREAM_BITMAP_V2) != 0)
+    {
+        if (rdp_stream_read_u32_le(&stream, &bitmap_size) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    else
+    {
+        if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        bitmap_size = value16;
+    }
+    if (rdp_stream_read_u16_le(&stream, &block_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) < block_len ||
+        rdp_stream_read_bytes(&stream, &block, block_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) != 0 ||
+        bpp == 0 || bpp > 32u ||
+        order->width == 0 || order->height == 0 ||
+        bitmap_size == 0 || block_len > bitmap_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->flags = flags;
+    order->bits_per_pixel = bpp;
+    order->bitmap_size = bitmap_size;
+    order->bitmap_block = block;
+    order->bitmap_block_len = block_len;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_gdi_write_stream_bitmap_first_order(
+    rdp_buffer* buffer,
+    const rdp_gdi_stream_bitmap_first_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !order || (!order->bitmap_block && order->bitmap_block_len > 0) ||
+        order->flags > UINT8_MAX || order->bits_per_pixel == 0 || order->bits_per_pixel > 32u ||
+        order->bitmap_type > UINT16_MAX || order->width == 0 || order->width > UINT16_MAX ||
+        order->height == 0 || order->height > UINT16_MAX ||
+        order->bitmap_size == 0 || order->bitmap_block_len > order->bitmap_size ||
+        order->bitmap_block_len > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((order->flags & RDP_GDI_STREAM_BITMAP_V2) == 0 && order->bitmap_size > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)order->flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)order->bits_per_pixel);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->width);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((order->flags & RDP_GDI_STREAM_BITMAP_V2) != 0)
+        status = rdp_buffer_append_u32_le(buffer, order->bitmap_size);
+    else
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_block_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+}
+
+librdp_status rdp_gdi_parse_stream_bitmap_next_order(
+    const rdp_gdi_altsec_order_header* header,
+    rdp_gdi_stream_bitmap_next_order* order)
+{
+    rdp_stream stream;
+    uint8_t flags = 0;
+    uint16_t value16 = 0;
+    uint16_t block_len = 0;
+    const uint8_t* block = NULL;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (header->payload_len < 5u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u8(&stream, &flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &block_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) < block_len ||
+        rdp_stream_read_bytes(&stream, &block, block_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->flags = flags;
+    order->bitmap_type = value16;
+    order->bitmap_block = block;
+    order->bitmap_block_len = block_len;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_gdi_write_stream_bitmap_next_order(
+    rdp_buffer* buffer,
+    const rdp_gdi_stream_bitmap_next_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !order || (!order->bitmap_block && order->bitmap_block_len > 0) ||
+        order->flags > UINT8_MAX || order->bitmap_type > UINT16_MAX ||
+        order->bitmap_block_len > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, (uint8_t)order->flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_type);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_block_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+}
+
 librdp_status rdp_gdi_parse_order_list(const void* data,
                                        size_t length,
                                        uint16_t number_orders,
