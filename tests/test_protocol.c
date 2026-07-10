@@ -366,6 +366,12 @@ static int test_port_redirection_channel(void)
     PCHECK(rdp_port_redirection_ioctl_serial(RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BAUD_RATE));
     PCHECK(rdp_port_redirection_ioctl_parallel(RDP_PORT_REDIRECTION_IOCTL_PAR_QUERY_DEVICE_ID));
     PCHECK(!rdp_port_redirection_ioctl_known(0xffffffffu));
+    PCHECK(rdp_port_redirection_serial_wait_result(RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR |
+                                                       RDP_PORT_REDIRECTION_SERIAL_EV_CTS,
+                                                   RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR |
+                                                       RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY) ==
+           RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR);
+    PCHECK(rdp_port_redirection_serial_wait_result(0, RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR) == 0);
 
     PCHECK(rdp_port_redirection_make_announce(&devices[0],
                                               RDP_PORT_REDIRECTION_SERIAL,

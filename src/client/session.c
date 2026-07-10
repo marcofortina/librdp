@@ -9467,6 +9467,37 @@ static uint32_t rdp_session_port_queue_depth(rdp_session_redirected_file* port, 
     return 0;
 }
 
+static uint32_t rdp_session_port_serial_wait_events(rdp_session_redirected_file* port)
+{
+    uint32_t events = RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY;
+    uint32_t modem_flags = 0;
+
+    if (!port)
+        return 0;
+    if (rdp_session_port_queue_depth(port, 0) > 0)
+        events |= RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR;
+    if (rdp_session_port_queue_depth(port, 1) > 0)
+        events &= ~RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY;
+    modem_flags = rdp_session_port_modem_flags(port);
+#ifdef TIOCM_CTS
+    if ((modem_flags & TIOCM_CTS) != 0)
+        events |= RDP_PORT_REDIRECTION_SERIAL_EV_CTS;
+#endif
+#ifdef TIOCM_DSR
+    if ((modem_flags & TIOCM_DSR) != 0)
+        events |= RDP_PORT_REDIRECTION_SERIAL_EV_DSR;
+#endif
+#ifdef TIOCM_CAR
+    if ((modem_flags & TIOCM_CAR) != 0)
+        events |= RDP_PORT_REDIRECTION_SERIAL_EV_RLSD;
+#endif
+#ifdef TIOCM_RNG
+    if ((modem_flags & TIOCM_RNG) != 0)
+        events |= RDP_PORT_REDIRECTION_SERIAL_EV_RING;
+#endif
+    return events;
+}
+
 static librdp_status rdp_session_port_write_comm_status(rdp_session_redirected_file* port,
                                                         rdp_buffer* output)
 {
@@ -9646,7 +9677,10 @@ static librdp_status rdp_session_port_control_serial(rdp_session_redirected_file
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_GET_WAIT_MASK:
             return rdp_buffer_append_u32_le(output, port->serial_wait_mask);
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_WAIT_ON_MASK:
-            return rdp_buffer_append_u32_le(output, 0);
+            return rdp_buffer_append_u32_le(
+                output,
+                rdp_port_redirection_serial_wait_result(port->serial_wait_mask,
+                                                        rdp_session_port_serial_wait_events(port)));
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_DTR:
 #ifdef TIOCM_DTR
             *io_status = rdp_session_port_set_modem_flag(port, TIOCM_DTR, 1);

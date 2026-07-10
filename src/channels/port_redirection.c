@@ -83,6 +83,11 @@ int rdp_port_redirection_ioctl_known(uint32_t io_control_code)
            rdp_port_redirection_ioctl_parallel(io_control_code);
 }
 
+uint32_t rdp_port_redirection_serial_wait_result(uint32_t wait_mask, uint32_t available_events)
+{
+    return wait_mask & available_events;
+}
+
 librdp_status rdp_port_redirection_make_announce(rdp_device_redirection_device_announce* device,
                                                  rdp_port_redirection_type type,
                                                  uint32_t device_id,

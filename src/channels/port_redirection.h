@@ -47,6 +47,15 @@
 #define RDP_PORT_REDIRECTION_IOCTL_SERIAL_GET_MODEM_CONTROL 0x001b0094u
 #define RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_MODEM_CONTROL 0x001b0098u
 #define RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_FIFO_CONTROL 0x001b009cu
+#define RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR 0x00000001u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY 0x00000004u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_CTS 0x00000008u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_DSR 0x00000010u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_RLSD 0x00000020u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_BREAK 0x00000040u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_ERR 0x00000080u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_RING 0x00000100u
+#define RDP_PORT_REDIRECTION_SERIAL_EV_RX80FULL 0x00000400u
 #define RDP_PORT_REDIRECTION_IOCTL_PAR_QUERY_INFORMATION 0x00160004u
 #define RDP_PORT_REDIRECTION_IOCTL_PAR_SET_INFORMATION 0x00160008u
 #define RDP_PORT_REDIRECTION_IOCTL_PAR_QUERY_DEVICE_ID 0x0016000cu
@@ -70,6 +79,7 @@ int rdp_port_redirection_device_type_valid(uint32_t device_type);
 int rdp_port_redirection_ioctl_serial(uint32_t io_control_code);
 int rdp_port_redirection_ioctl_parallel(uint32_t io_control_code);
 int rdp_port_redirection_ioctl_known(uint32_t io_control_code);
+uint32_t rdp_port_redirection_serial_wait_result(uint32_t wait_mask, uint32_t available_events);
 librdp_status rdp_port_redirection_make_announce(rdp_device_redirection_device_announce* device,
                                                  rdp_port_redirection_type type,
                                                  uint32_t device_id,
