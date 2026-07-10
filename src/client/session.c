@@ -18103,7 +18103,8 @@ static librdp_status rdp_session_gdi_patblt(librdp_session* session,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (op->brush_style == 1u)
         return LIBRDP_STATUS_OK;
-    if (op->brush_style != 0u && op->brush_style != 2u && op->brush_style != 3u)
+    if (op->brush_style != 0u && op->brush_style != 2u &&
+        op->brush_style != 3u && op->brush_style != 7u)
         return LIBRDP_STATUS_UNSUPPORTED;
     pixels = librdp_surface_pixels_mut(session->surface);
     stride = librdp_surface_stride(session->surface);
@@ -18131,7 +18132,7 @@ static librdp_status rdp_session_gdi_patblt(librdp_session* session,
 
             if (op->brush_style == 2u)
                 foreground = rdp_session_gdi_hatch_bit(op->brush_hatch, absolute_x, absolute_y);
-            else if (op->brush_style == 3u)
+            else if (op->brush_style == 3u || op->brush_style == 7u)
                 foreground = rdp_session_gdi_pattern_bit(op, absolute_x, absolute_y);
             if (!foreground)
             {
