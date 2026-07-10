@@ -8207,6 +8207,53 @@ static int test_filesystem_redirection_channel(void)
                                                          request.length,
                                                          &lock_request) == LIBRDP_STATUS_OK);
     PCHECK(lock_request.lock_count == 2u && lock_request.locks[1].offset == 40u);
+    memset(request.data + 56u, 0, 8u);
+    PCHECK(rdp_filesystem_redirection_parse_lock_request(request.data,
+                                                         request.length,
+                                                         &lock_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[56] = 10u;
+    request.data[64] = 0xffu;
+    request.data[65] = 0xffu;
+    request.data[66] = 0xffu;
+    request.data[67] = 0xffu;
+    request.data[68] = 0xffu;
+    request.data[69] = 0xffu;
+    request.data[70] = 0xffu;
+    request.data[71] = 0xffu;
+    PCHECK(rdp_filesystem_redirection_parse_lock_request(request.data,
+                                                         request.length,
+                                                         &lock_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[64] = 20u;
+    request.data[65] = 0u;
+    request.data[66] = 0u;
+    request.data[67] = 0u;
+    request.data[68] = 0u;
+    request.data[69] = 0u;
+    request.data[70] = 0u;
+    request.data[71] = 0u;
+    {
+        const rdp_filesystem_redirection_lock_info invalid_locks[2] = {
+            {0u, 20u},
+            {10u, UINT64_MAX}
+        };
+
+        PCHECK(rdp_filesystem_redirection_write_lock_request(&response,
+                                                             1,
+                                                             2,
+                                                             3,
+                                                             RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK,
+                                                             0,
+                                                             invalid_locks,
+                                                             1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(rdp_filesystem_redirection_write_lock_request(&response,
+                                                             1,
+                                                             2,
+                                                             3,
+                                                             RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK,
+                                                             0,
+                                                             invalid_locks + 1,
+                                                             1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
     PCHECK(rdp_filesystem_redirection_write_lock_request(&response,
                                                          1,
                                                          2,

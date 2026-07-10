@@ -80,6 +80,11 @@ static int rdp_filesystem_notify_filter_valid(uint32_t completion_filter)
            (completion_filter & ~RDP_FILESYSTEM_REDIRECTION_NOTIFY_VALID_MASK) == 0;
 }
 
+static int rdp_filesystem_lock_range_valid(uint64_t offset, uint64_t length)
+{
+    return length != 0 && offset <= UINT64_MAX - length;
+}
+
 static librdp_status rdp_filesystem_parse_io_request(const void* data,
                                                      size_t length,
                                                      uint32_t major,
@@ -462,6 +467,8 @@ librdp_status rdp_filesystem_redirection_parse_lock_request(
         if (rdp_filesystem_read_u64_le(&stream, &request->locks[i].length) != LIBRDP_STATUS_OK ||
             rdp_filesystem_read_u64_le(&stream, &request->locks[i].offset) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (!rdp_filesystem_lock_range_valid(request->locks[i].offset, request->locks[i].length))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     return LIBRDP_STATUS_OK;
 }
@@ -807,6 +814,11 @@ librdp_status rdp_filesystem_redirection_write_lock_request(
          operation != RDP_FILESYSTEM_REDIRECTION_LOWIO_UNLOCK &&
          operation != RDP_FILESYSTEM_REDIRECTION_LOWIO_UNLOCK_MULTIPLE))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < lock_count; i++)
+    {
+        if (!rdp_filesystem_lock_range_valid(locks[i].offset, locks[i].length))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
     status = rdp_filesystem_write_request_header(buffer,
                                                  device_id,
                                                  file_id,
