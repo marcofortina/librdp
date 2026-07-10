@@ -3039,6 +3039,19 @@ static librdp_status rdp_session_write_file_attribute_tag_information(rdp_buffer
     return status;
 }
 
+static librdp_status rdp_session_write_file_size_information(rdp_buffer* buffer,
+                                                             uint64_t size)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, 8);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_append_u64_le(buffer, size);
+    return status;
+}
+
 static librdp_status rdp_session_write_file_internal_information(rdp_buffer* buffer,
                                                                  const struct stat* st)
 {
@@ -3335,6 +3348,11 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
             return rdp_session_write_file_id_information(buffer, st);
         case RDP_SESSION_FILE_ALTERNATE_NAME_INFORMATION:
             return rdp_session_write_file_alternate_name_information(buffer);
+        case RDP_SESSION_FILE_ALLOCATION_INFORMATION:
+            return rdp_session_write_file_size_information(buffer, rdp_session_stat_allocation_size(st));
+        case RDP_SESSION_FILE_END_OF_FILE_INFORMATION:
+        case RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION:
+            return rdp_session_write_file_size_information(buffer, rdp_session_stat_size(st));
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }
