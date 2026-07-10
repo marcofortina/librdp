@@ -18420,8 +18420,20 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     }
     else if (!rdp_session_webauthn_feature_enabled(session))
     {
-        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_NOTIMPL, NULL, 0);
-        hresult = RDP_SESSION_HRESULT_NOTIMPL;
+        if (request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN)
+        {
+            status = rdp_webauthn_write_authenticator_response(&response,
+                                                               RDP_SESSION_HRESULT_OK,
+                                                               RDP_SESSION_CTAP2_ERR_OPERATION_DENIED,
+                                                               NULL,
+                                                               0);
+            hresult = RDP_SESSION_HRESULT_OK;
+        }
+        else
+        {
+            status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_FAIL, NULL, 0);
+            hresult = RDP_SESSION_HRESULT_FAIL;
+        }
     }
     else if (request.command == RDP_WEBAUTHN_COMMAND_API_VERSION)
     {
@@ -18537,8 +18549,12 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     }
     else
     {
-        status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_NOTIMPL, NULL, 0);
-        hresult = RDP_SESSION_HRESULT_NOTIMPL;
+        status = rdp_webauthn_write_authenticator_response(&response,
+                                                           RDP_SESSION_HRESULT_OK,
+                                                           RDP_SESSION_CTAP2_ERR_OPERATION_DENIED,
+                                                           NULL,
+                                                           0);
+        hresult = RDP_SESSION_HRESULT_OK;
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_dynamic_channel_data(session,
@@ -18632,7 +18648,7 @@ static librdp_status rdp_session_handle_auth_redirection_message(librdp_session*
     rdp_buffer plain;
     rdp_buffer response_payload;
     librdp_status status = LIBRDP_STATUS_OK;
-    uint32_t response_status = RDP_SESSION_HRESULT_NOTIMPL;
+    uint32_t response_status = RDP_SESSION_HRESULT_FAIL;
 
     if (!session || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
