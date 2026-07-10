@@ -152,25 +152,54 @@ int rdp_auth_redirection_call_id_valid(uint32_t call_id)
 {
     if (call_id <= RDP_AUTH_REDIRECTION_CALL_GENERIC_MAXIMUM)
         return 1;
-    if (call_id >= RDP_AUTH_REDIRECTION_CALL_KERB_MINIMUM &&
-        call_id <= RDP_AUTH_REDIRECTION_CALL_KERB_MAXIMUM)
+    if (rdp_auth_redirection_kerb_call_id_valid(call_id))
         return 1;
-    if (call_id >= RDP_AUTH_REDIRECTION_CALL_NTLM_MINIMUM &&
-        call_id <= RDP_AUTH_REDIRECTION_CALL_NTLM_MAXIMUM)
+    if (rdp_auth_redirection_ntlm_call_id_valid(call_id))
         return 1;
     return call_id == RDP_AUTH_REDIRECTION_CALL_INVALID;
 }
 
 int rdp_auth_redirection_kerb_call_id_valid(uint32_t call_id)
 {
-    return call_id >= RDP_AUTH_REDIRECTION_CALL_KERB_MINIMUM &&
-           call_id <= RDP_AUTH_REDIRECTION_CALL_KERB_MAXIMUM;
+    switch (call_id)
+    {
+        case RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_BUILD_AS_REQ_AUTHENTICATOR:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_VERIFY_SERVICE_TICKET:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_AP_REQ_AUTHENTICATOR:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DECRYPT_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_UNPACK_KDC_REPLY_BODY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_COMPUTE_TGS_CHECKSUM:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_BUILD_ENCRYPTED_AUTH_DATA:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_HASH_S4U_PREAUTH:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_SIGN_S4U_PREAUTH_DATA:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_VERIFY_CHECKSUM:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DECRYPT_PAC_CREDENTIALS:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_ECDH_KEY_AGREEMENT:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_CREATE_DH_KEY_AGREEMENT:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DESTROY_KEY_AGREEMENT:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_FINALIZE_KEY_AGREEMENT:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 int rdp_auth_redirection_ntlm_call_id_valid(uint32_t call_id)
 {
-    return call_id >= RDP_AUTH_REDIRECTION_CALL_NTLM_MINIMUM &&
-           call_id <= RDP_AUTH_REDIRECTION_CALL_NTLM_MAXIMUM;
+    switch (call_id)
+    {
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_LM20_GET_NTLM3_CHALLENGE_RESPONSE:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_NT_RESPONSE:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 int rdp_auth_redirection_negotiate_call_id_valid(uint32_t call_id)
