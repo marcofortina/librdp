@@ -33,6 +33,7 @@ typedef struct rdp_rfx_stream_state
     uint8_t quant_count;
     uint8_t frame_active;
     uint8_t region_active;
+    uint16_t regions_completed;
 } rdp_rfx_stream_state;
 
 static librdp_status rdp_rfx_stream_require_consumed(const rdp_stream* stream)
@@ -167,6 +168,7 @@ static librdp_status rdp_rfx_stream_parse_frame_begin(rdp_rfx_stream_state* stat
     state->summary.frame_end_seen = 0;
     state->frame_active = 1;
     state->region_active = 0;
+    state->regions_completed = 0;
     return rdp_rfx_stream_require_consumed(stream);
 }
 
@@ -182,13 +184,17 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!state->frame_active || state->region_active)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (state->regions_completed >= state->summary.region_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u8(stream, &flags) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &rect_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)flags;
     if (rect_count == 0)
     {
-        state->summary.rect_count = 1;
+        if (state->summary.rect_count == UINT16_MAX)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->summary.rect_count++;
         if (rdp_stream_remaining(stream) == 0)
         {
             state->region_active = 1;
@@ -217,7 +223,9 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
                 height > (uint16_t)(state->summary.height - y))
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        state->summary.rect_count = rect_count;
+        if (rect_count > UINT16_MAX - state->summary.rect_count)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->summary.rect_count = (uint16_t)(state->summary.rect_count + rect_count);
     }
     if (rdp_stream_read_u16_le(stream, &region_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &tile_set_count) != LIBRDP_STATUS_OK)
@@ -368,6 +376,7 @@ static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
     if (rdp_stream_remaining(&tile_data_stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->region_active = 0;
+    state->regions_completed++;
     return rdp_rfx_stream_require_consumed(stream);
 }
 
@@ -375,7 +384,8 @@ static librdp_status rdp_rfx_stream_parse_frame_end(rdp_rfx_stream_state* state,
 {
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!state->frame_active || state->region_active)
+    if (!state->frame_active || state->region_active ||
+        state->regions_completed != state->summary.region_count)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->frame_active = 0;
     state->summary.frame_end_seen = 1;

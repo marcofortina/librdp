@@ -137,7 +137,10 @@ static librdp_status test_rfx_stream_tile(const rdp_rfx_stream_tile* tile, void*
     return LIBRDP_STATUS_OK;
 }
 
-static int test_build_rfx_stream_ex(rdp_buffer* out, uint8_t bad_quant_index, uint8_t channel_variant)
+static int test_build_rfx_stream_counted(rdp_buffer* out,
+                                         uint8_t bad_quant_index,
+                                         uint8_t channel_variant,
+                                         uint16_t declared_regions)
 {
     rdp_buffer payload;
     rdp_buffer tile;
@@ -181,7 +184,7 @@ static int test_build_rfx_stream_ex(rdp_buffer* out, uint8_t bad_quant_index, ui
     payload.length = 0;
     ok = ok &&
          rdp_buffer_append_u32_le(&payload, 7) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u16_le(&payload, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, declared_regions) == LIBRDP_STATUS_OK &&
          test_append_rfx_channel_block(out, 0xCCC4u, 0, &payload);
     payload.length = 0;
     ok = ok &&
@@ -234,6 +237,11 @@ static int test_build_rfx_stream_ex(rdp_buffer* out, uint8_t bad_quant_index, ui
     rdp_buffer_free(&tile);
     rdp_buffer_free(&payload);
     return ok;
+}
+
+static int test_build_rfx_stream_ex(rdp_buffer* out, uint8_t bad_quant_index, uint8_t channel_variant)
+{
+    return test_build_rfx_stream_counted(out, bad_quant_index, channel_variant, 1);
 }
 
 static int test_build_rfx_stream(rdp_buffer* out, uint8_t bad_quant_index)
@@ -4047,6 +4055,15 @@ static int test_path_security_license_channels(void)
            rfx_stream_capture.first_g == 128 &&
            rfx_stream_capture.first_r == 128 &&
            rfx_stream_capture.first_a == 0xff);
+    rdp_buffer_free(&rfx_bad_stream);
+    rdp_buffer_init(&rfx_bad_stream);
+    memset(&rfx_stream_capture, 0, sizeof(rfx_stream_capture));
+    PCHECK(test_build_rfx_stream_counted(&rfx_bad_stream, 0, 0, 2));
+    PCHECK(rdp_rfx_stream_decode(rfx_bad_stream.data,
+                                 rfx_bad_stream.length,
+                                 test_rfx_stream_tile,
+                                 &rfx_stream_capture,
+                                 &rfx_stream_summary) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&rfx_bad_stream);
     rdp_buffer_init(&rfx_bad_stream);
     memset(&rfx_stream_capture, 0, sizeof(rfx_stream_capture));
