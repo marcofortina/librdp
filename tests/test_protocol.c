@@ -14762,6 +14762,10 @@ static int test_pnp_redirection_channel(void)
     rdp_pnp_redirection_control_request control_request;
     rdp_pnp_redirection_cancel_request cancel_request;
     rdp_pnp_redirection_custom_event event;
+    rdp_pnp_redirection_status_reply status_reply;
+    rdp_pnp_redirection_read_reply read_reply;
+    rdp_pnp_redirection_write_reply write_reply;
+    rdp_pnp_redirection_control_reply control_reply;
 
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&packet);
@@ -14874,7 +14878,9 @@ static int test_pnp_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(create_request.device_id == 0x44 && create_request.desired_access == 0xc0000000u);
     PCHECK(rdp_pnp_redirection_write_status_reply(&packet, 1, 0) == LIBRDP_STATUS_OK);
-    PCHECK(packet.length == 8u);
+    PCHECK(rdp_pnp_redirection_parse_status_reply(packet.data, packet.length, &status_reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(status_reply.header.request_id == 1 && status_reply.result == 0);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&buffer);
@@ -14885,7 +14891,16 @@ static int test_pnp_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(read_request.bytes_to_read == 32 && read_request.offset_low == 4);
     PCHECK(rdp_pnp_redirection_write_read_reply(&packet, 2, 0, data, sizeof(data)) == LIBRDP_STATUS_OK);
-    PCHECK(packet.length == 17u);
+    PCHECK(rdp_pnp_redirection_parse_read_reply(packet.data, packet.length, &read_reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(read_reply.header.request_id == 2 && read_reply.result == 0 &&
+           read_reply.data_len == sizeof(data) && memcmp(read_reply.data, data, sizeof(data)) == 0);
+    packet.data[packet.length - 1u] = 0xffu;
+    PCHECK(rdp_pnp_redirection_parse_read_reply(packet.data, packet.length, &read_reply) ==
+           LIBRDP_STATUS_OK);
+    packet.length--;
+    PCHECK(rdp_pnp_redirection_parse_read_reply(packet.data, packet.length, &read_reply) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&buffer);
@@ -14900,7 +14915,10 @@ static int test_pnp_redirection_channel(void)
     PCHECK(rdp_pnp_redirection_write_write_request(&packet, 3, 0, 0, 8, NULL, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_pnp_redirection_write_write_reply(&packet, 3, 0, sizeof(data)) == LIBRDP_STATUS_OK);
-    PCHECK(packet.length == 12u);
+    PCHECK(rdp_pnp_redirection_parse_write_reply(packet.data, packet.length, &write_reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(write_reply.header.request_id == 3 && write_reply.result == 0 &&
+           write_reply.bytes_written == sizeof(data));
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&buffer);
@@ -14915,7 +14933,14 @@ static int test_pnp_redirection_channel(void)
     PCHECK(rdp_pnp_redirection_write_control_request(&packet, 4, 0, 0x1020, data, 2, 1, data, 2) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_pnp_redirection_write_control_reply(&packet, 4, 0, data, sizeof(data)) == LIBRDP_STATUS_OK);
-    PCHECK(packet.length == 17u);
+    PCHECK(rdp_pnp_redirection_parse_control_reply(packet.data, packet.length, &control_reply) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(control_reply.header.request_id == 4 && control_reply.result == 0 &&
+           control_reply.data_len == sizeof(data) &&
+           memcmp(control_reply.data, data, sizeof(data)) == 0);
+    packet.data[8] = 0xffu;
+    PCHECK(rdp_pnp_redirection_parse_control_reply(packet.data, packet.length, &control_reply) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&buffer);

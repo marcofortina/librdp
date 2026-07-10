@@ -978,3 +978,103 @@ librdp_status rdp_pnp_redirection_parse_custom_event(const void* data,
     memcpy(event->event_guid, guid, sizeof(event->event_guid));
     return LIBRDP_STATUS_OK;
 }
+
+static librdp_status rdp_pnp_redirection_parse_response_payload(
+    const void* data,
+    size_t length,
+    rdp_pnp_redirection_client_io_header* header,
+    rdp_stream* stream)
+{
+    if (!data || !header || !stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_pnp_redirection_parse_client_io_header(data, length, header) != LIBRDP_STATUS_OK ||
+        header->packet_type != RDP_PNP_REDIRECTION_PACKET_RESPONSE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(stream, header->payload, header->payload_len);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_parse_status_reply(const void* data,
+                                                     size_t length,
+                                                     rdp_pnp_redirection_status_reply* reply)
+{
+    rdp_stream stream;
+
+    if (!data || !reply)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(reply, 0, sizeof(*reply));
+    if (rdp_pnp_redirection_parse_response_payload(data,
+                                                   length,
+                                                   &reply->header,
+                                                   &stream) != LIBRDP_STATUS_OK ||
+        reply->header.payload_len != 4u ||
+        rdp_stream_read_u32_le(&stream, &reply->result) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_parse_read_reply(const void* data,
+                                                   size_t length,
+                                                   rdp_pnp_redirection_read_reply* reply)
+{
+    rdp_stream stream;
+
+    if (!data || !reply)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(reply, 0, sizeof(*reply));
+    if (rdp_pnp_redirection_parse_response_payload(data,
+                                                   length,
+                                                   &reply->header,
+                                                   &stream) != LIBRDP_STATUS_OK ||
+        reply->header.payload_len < 9u ||
+        rdp_stream_read_u32_le(&stream, &reply->result) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &reply->data_len) != LIBRDP_STATUS_OK ||
+        reply->data_len > rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &reply->data, reply->data_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_parse_write_reply(const void* data,
+                                                    size_t length,
+                                                    rdp_pnp_redirection_write_reply* reply)
+{
+    rdp_stream stream;
+
+    if (!data || !reply)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(reply, 0, sizeof(*reply));
+    if (rdp_pnp_redirection_parse_response_payload(data,
+                                                   length,
+                                                   &reply->header,
+                                                   &stream) != LIBRDP_STATUS_OK ||
+        reply->header.payload_len != 8u ||
+        rdp_stream_read_u32_le(&stream, &reply->result) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &reply->bytes_written) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_pnp_redirection_parse_control_reply(const void* data,
+                                                      size_t length,
+                                                      rdp_pnp_redirection_control_reply* reply)
+{
+    rdp_stream stream;
+
+    if (!data || !reply)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(reply, 0, sizeof(*reply));
+    if (rdp_pnp_redirection_parse_response_payload(data,
+                                                   length,
+                                                   &reply->header,
+                                                   &stream) != LIBRDP_STATUS_OK ||
+        reply->header.payload_len < 9u ||
+        rdp_stream_read_u32_le(&stream, &reply->result) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &reply->data_len) != LIBRDP_STATUS_OK ||
+        reply->data_len > rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &reply->data, reply->data_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}

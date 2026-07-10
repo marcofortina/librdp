@@ -163,6 +163,35 @@ typedef struct rdp_pnp_redirection_custom_event
     uint32_t data_len;
 } rdp_pnp_redirection_custom_event;
 
+typedef struct rdp_pnp_redirection_status_reply
+{
+    rdp_pnp_redirection_client_io_header header;
+    uint32_t result;
+} rdp_pnp_redirection_status_reply;
+
+typedef struct rdp_pnp_redirection_read_reply
+{
+    rdp_pnp_redirection_client_io_header header;
+    uint32_t result;
+    uint32_t data_len;
+    const uint8_t* data;
+} rdp_pnp_redirection_read_reply;
+
+typedef struct rdp_pnp_redirection_write_reply
+{
+    rdp_pnp_redirection_client_io_header header;
+    uint32_t result;
+    uint32_t bytes_written;
+} rdp_pnp_redirection_write_reply;
+
+typedef struct rdp_pnp_redirection_control_reply
+{
+    rdp_pnp_redirection_client_io_header header;
+    uint32_t result;
+    uint32_t data_len;
+    const uint8_t* data;
+} rdp_pnp_redirection_control_reply;
+
 librdp_status rdp_pnp_redirection_parse_info_header(const void* data,
                                                     size_t length,
                                                     rdp_pnp_redirection_info_header* header);
@@ -300,5 +329,17 @@ librdp_status rdp_pnp_redirection_write_custom_event(rdp_buffer* buffer,
 librdp_status rdp_pnp_redirection_parse_custom_event(const void* data,
                                                      size_t length,
                                                      rdp_pnp_redirection_custom_event* event);
+librdp_status rdp_pnp_redirection_parse_status_reply(const void* data,
+                                                     size_t length,
+                                                     rdp_pnp_redirection_status_reply* reply);
+librdp_status rdp_pnp_redirection_parse_read_reply(const void* data,
+                                                   size_t length,
+                                                   rdp_pnp_redirection_read_reply* reply);
+librdp_status rdp_pnp_redirection_parse_write_reply(const void* data,
+                                                    size_t length,
+                                                    rdp_pnp_redirection_write_reply* reply);
+librdp_status rdp_pnp_redirection_parse_control_reply(const void* data,
+                                                      size_t length,
+                                                      rdp_pnp_redirection_control_reply* reply);
 
 #endif
