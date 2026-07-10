@@ -128,6 +128,15 @@ static librdp_status rdp_license_append_version_info(rdp_buffer* buffer,
     return rdp_buffer_append_u32_le(buffer, info->flags);
 }
 
+static librdp_status rdp_license_restore_on_error(rdp_buffer* buffer,
+                                                  size_t length,
+                                                  librdp_status status)
+{
+    if (status != LIBRDP_STATUS_OK && buffer)
+        buffer->length = length;
+    return status;
+}
+
 void rdp_license_client_state_init(rdp_license_client_state* state)
 {
     if (!state)
@@ -256,18 +265,21 @@ librdp_status rdp_license_write_preamble(rdp_buffer* buffer,
                                          uint16_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_license_valid_message_type(message_type) ||
         !rdp_license_valid_version(version) ||
         payload_len > UINT16_MAX - 4u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, message_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u8(buffer, version);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len + 4u));
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len + 4u));
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_binary_blob(const void* data,
@@ -292,16 +304,19 @@ librdp_status rdp_license_write_binary_blob(rdp_buffer* buffer,
                                             uint16_t length)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_license_valid_blob_type(type) || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, length);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, data, length);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, data, length);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_product_info(const void* data,
@@ -486,6 +501,7 @@ librdp_status rdp_license_write_product_certificate_info(
     uint32_t requested_offset = 28u;
     uint32_t adjusted_offset = 0;
     uint32_t version_info_offset = 0;
+    size_t start = 0;
 
     if (!buffer || !info ||
         !info->requested_product_id || !info->adjusted_product_id ||
@@ -496,47 +512,49 @@ librdp_status rdp_license_write_product_certificate_info(
     version_info_offset = adjusted_offset + info->adjusted_product_id_len;
     if (version_info_offset > UINT16_MAX - 8u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, info->version);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, info->license_count);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, info->platform_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, info->language_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)requested_offset);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, info->requested_product_id_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)adjusted_offset);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, info->adjusted_product_id_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)version_info_offset);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, 1);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer,
                                info->requested_product_id,
                                info->requested_product_id_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer,
                                info->adjusted_product_id,
                                info->adjusted_product_id_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_license_append_version_info(buffer, &info->version_info);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_license_append_version_info(buffer, &info->version_info);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_server_info(const void* data,
@@ -613,11 +631,13 @@ librdp_status rdp_license_write_server_info(rdp_buffer* buffer,
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t issuer_id_offset = 0;
     uint32_t scope_offset = 0;
+    size_t start = 0;
 
     if (!buffer || !info ||
         !rdp_license_utf16z_valid(info->issuer_name, info->issuer_name_len) ||
         !rdp_license_utf16z_valid(info->scope, info->scope_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     if (info->has_issuer_id)
     {
         if (!rdp_license_utf16z_valid(info->issuer_id, info->issuer_id_len))
@@ -628,40 +648,42 @@ librdp_status rdp_license_write_server_info(rdp_buffer* buffer,
             return LIBRDP_STATUS_INVALID_ARGUMENT;
         status = rdp_buffer_append_u32_le(buffer, RDP_LICENSE_SERVER_INFO_VERSION_2);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_license_restore_on_error(buffer, start, status);
         status = rdp_buffer_append_u16_le(buffer, 0);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_license_restore_on_error(buffer, start, status);
         status = rdp_buffer_append_u16_le(buffer, (uint16_t)issuer_id_offset);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_license_restore_on_error(buffer, start, status);
         status = rdp_buffer_append_u16_le(buffer, (uint16_t)scope_offset);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_license_restore_on_error(buffer, start, status);
         status = rdp_buffer_append(buffer, info->issuer_name, info->issuer_name_len);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_license_restore_on_error(buffer, start, status);
         status = rdp_buffer_append(buffer, info->issuer_id, info->issuer_id_len);
         if (status != LIBRDP_STATUS_OK)
-            return status;
-        return rdp_buffer_append(buffer, info->scope, info->scope_len);
+            return rdp_license_restore_on_error(buffer, start, status);
+        status = rdp_buffer_append(buffer, info->scope, info->scope_len);
+        return rdp_license_restore_on_error(buffer, start, status);
     }
     scope_offset = info->issuer_name_len;
     if (scope_offset > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, RDP_LICENSE_SERVER_INFO_VERSION_1);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, 0);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)scope_offset);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer, info->issuer_name, info->issuer_name_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, info->scope, info->scope_len);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, info->scope, info->scope_len);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_hardware_id(const void* data,
@@ -689,22 +711,25 @@ librdp_status rdp_license_write_hardware_id(rdp_buffer* buffer,
                                             const rdp_license_hardware_id* hardware_id)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !hardware_id)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, hardware_id->platform_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, hardware_id->data1);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, hardware_id->data2);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, hardware_id->data3);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, hardware_id->data4);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, hardware_id->data4);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_platform_challenge_response_data(
@@ -740,6 +765,7 @@ librdp_status rdp_license_write_platform_challenge_response_data(
     const rdp_license_platform_challenge_response_data* response)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !response ||
         response->version != 0x0100u ||
@@ -747,19 +773,21 @@ librdp_status rdp_license_write_platform_challenge_response_data(
         response->license_detail_level > 3u ||
         (!response->challenge && response->challenge_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, response->version);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, response->client_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, response->license_detail_level);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, response->challenge_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, response->challenge, response->challenge_len);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, response->challenge, response->challenge_len);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_error_alert(const void* data, size_t length, rdp_license_error_alert* alert)
@@ -801,22 +829,25 @@ librdp_status rdp_license_write_error_alert(rdp_buffer* buffer,
                                             uint16_t blob_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_license_valid_blob_type(blob_type) || (!blob && blob_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_license_write_preamble(buffer,
                                         RDP_LICENSE_MESSAGE_ERROR_ALERT,
                                         version,
                                         (uint16_t)(12u + blob_len));
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, error_code);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, state_transition);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_license_write_binary_blob(buffer, blob_type, blob, blob_len);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_license_write_binary_blob(buffer, blob_type, blob, blob_len);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_client_new_license_request(
@@ -862,6 +893,7 @@ librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t total = 0;
+    size_t start = 0;
 
     if (!buffer || !client_random ||
         preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
@@ -873,34 +905,36 @@ librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
             4u + machine_name->length;
     if (total > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_license_write_preamble(buffer,
                                         RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST,
                                         version,
                                         (uint16_t)total);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, preferred_key_exchange_alg);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, platform_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer, client_random, 32u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             encrypted_pre_master,
                                             RDP_LICENSE_BLOB_RANDOM);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             user_name,
                                             RDP_LICENSE_BLOB_CLIENT_USER_NAME);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_license_write_blob_checked(buffer,
-                                          machine_name,
-                                          RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_license_write_blob_checked(buffer,
+                                            machine_name,
+                                            RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_client_info(const void* data,
@@ -949,6 +983,7 @@ librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t total = 0;
+    size_t start = 0;
 
     if (!buffer || !client_random || !mac ||
         preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
@@ -960,35 +995,37 @@ librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
             4u + encrypted_hardware_id->length + 16u;
     if (total > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_license_write_preamble(buffer,
                                         RDP_LICENSE_MESSAGE_INFO,
                                         version,
                                         (uint16_t)total);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, preferred_key_exchange_alg);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, platform_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer, client_random, 32u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             encrypted_pre_master,
                                             RDP_LICENSE_BLOB_RANDOM);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer, license_info, RDP_LICENSE_BLOB_DATA);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             encrypted_hardware_id,
                                             RDP_LICENSE_BLOB_ENCRYPTED_DATA);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, mac, 16u);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, mac, 16u);
+    return rdp_license_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_license_parse_platform_challenge_response(
@@ -1027,6 +1064,7 @@ librdp_status rdp_license_write_platform_challenge_response(
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t total = 0;
+    size_t start = 0;
 
     if (!buffer || !mac ||
         !rdp_license_blob_writeable(encrypted_response, RDP_LICENSE_BLOB_ENCRYPTED_DATA) ||
@@ -1035,21 +1073,23 @@ librdp_status rdp_license_write_platform_challenge_response(
     total = 4u + encrypted_response->length + 4u + encrypted_hardware_id->length + 16u;
     if (total > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_license_write_preamble(buffer,
                                         RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE,
                                         version,
                                         (uint16_t)total);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             encrypted_response,
                                             RDP_LICENSE_BLOB_ENCRYPTED_DATA);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_license_write_blob_checked(buffer,
                                             encrypted_hardware_id,
                                             RDP_LICENSE_BLOB_ENCRYPTED_DATA);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, mac, 16u);
+        return rdp_license_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, mac, 16u);
+    return rdp_license_restore_on_error(buffer, start, status);
 }

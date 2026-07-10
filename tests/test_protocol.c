@@ -5428,6 +5428,20 @@ static int test_path_security_license_channels(void)
            license_blob.length == 4 &&
            license_blob.data[0] == 1);
     license_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&license_packet, 0xa5) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_license_write_preamble(&license_packet,
+                                      0x00u,
+                                      RDP_LICENSE_VERSION_3,
+                                      0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
+    PCHECK(rdp_license_write_binary_blob(&license_packet,
+                                         0xffffu,
+                                         NULL,
+                                         0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
+    PCHECK(rdp_license_write_hardware_id(&license_packet, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
+    license_packet.length = 0;
     PCHECK(test_append_zeroes(&license_payload, 32u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u32_le(&license_payload, 0x00060002u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u32_le(&license_payload, (uint32_t)sizeof(license_company)) == LIBRDP_STATUS_OK);
