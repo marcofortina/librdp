@@ -106,13 +106,25 @@ librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, 
 {
     rdp_stream stream;
     uint16_t count = 0;
+    uint16_t first = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     memset(update, 0, sizeof(*update));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &count) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    count = first;
+    status = rdp_bitmap_parse_rectangles(&stream, count, update);
+    if (status == LIBRDP_STATUS_OK || first != RDP_UPDATE_TYPE_BITMAP)
+        return status;
+
+    memset(update, 0, sizeof(*update));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 2) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return rdp_bitmap_parse_rectangles(&stream, count, update);
 }

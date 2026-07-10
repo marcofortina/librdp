@@ -3041,6 +3041,12 @@ static int test_path_security_license_channels(void)
            bitmap_update.rects[0].width == 2 &&
            bitmap_update.rects[0].height == 2 &&
            bitmap_update.rects[0].data_len == 16);
+    PCHECK(rdp_bitmap_parse_fastpath_update(decoded_bitmap.data,
+                                            decoded_bitmap.length,
+                                            &bitmap_update) == LIBRDP_STATUS_OK);
+    PCHECK(bitmap_update.count == 1 &&
+           bitmap_update.rects[0].bits_per_pixel == 32 &&
+           bitmap_update.rects[0].data_len == 16);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_init(&client_refresh_rect);
     PCHECK(rdp_slowpath_write_data_pdu(&client_refresh_rect,
