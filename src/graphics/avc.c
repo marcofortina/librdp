@@ -606,6 +606,7 @@ static librdp_status rdp_avc_apply_chroma_v1(rdp_avc_decoder* decoder,
     for (y = 0; y < padded_height; y++)
     {
         uint32_t dest_row = 0;
+        uint32_t src_row = 0;
         uint8_t* dest = NULL;
         const uint8_t* src = NULL;
 
@@ -625,9 +626,12 @@ static librdp_status rdp_avc_apply_chroma_v1(rdp_avc_decoder* decoder,
                 continue;
             dest = decoder->yuv444[2].data + ((size_t)dest_row * decoder->yuv444_stride[2]) + rect->left;
         }
-        if (rect->top + y >= yuv->height || rect->left + width > yuv->stride[0])
+        src_row = rect->top + y;
+        if (src_row >= yuv->height)
+            src_row = yuv->height - 1u;
+        if (rect->left + width > yuv->stride[0])
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        src = yuv->planes[0].data + ((size_t)(rect->top + y) * yuv->stride[0]) + rect->left;
+        src = yuv->planes[0].data + ((size_t)src_row * yuv->stride[0]) + rect->left;
         memcpy(dest, src, width);
     }
 
@@ -732,6 +736,8 @@ static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
     uint32_t height = 0;
     uint32_t half_width = 0;
     uint32_t half_height = 0;
+    size_t half_source_width = 0;
+    size_t quarter_source_width = 0;
     uint32_t quarter_width = 0;
     uint32_t y = 0;
 
@@ -741,6 +747,8 @@ static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
     height = (uint32_t)(rect->bottom - rect->top);
     half_width = (width + 1u) / 2u;
     half_height = (height + 1u) / 2u;
+    half_source_width = ((size_t)yuv->width + 1u) / 2u;
+    quarter_source_width = ((size_t)yuv->width + 3u) / 4u;
     quarter_width = (width + 3u) / 4u;
 
     for (y = 0; y < height; y++)
@@ -752,10 +760,10 @@ static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
         uint32_t x = 0;
 
         if (rect->top + y >= yuv->height ||
-            (size_t)(rect->left / 2u) + (size_t)yuv->width / 2u + half_width > yuv->stride[0])
+            (size_t)(rect->left / 2u) + half_source_width + half_width > yuv->stride[0])
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         src_u = yuv->planes[0].data + ((size_t)(rect->top + y) * yuv->stride[0]) + rect->left / 2u;
-        src_v = src_u + yuv->width / 2u;
+        src_v = src_u + half_source_width;
         dest_u = decoder->yuv444[1].data + ((size_t)(rect->top + y) * decoder->yuv444_stride[1]) +
                  rect->left;
         dest_v = decoder->yuv444[2].data + ((size_t)(rect->top + y) * decoder->yuv444_stride[2]) +
@@ -787,13 +795,13 @@ static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (dest_row >= rect->bottom)
             break;
-        if ((size_t)(rect->left / 4u) + (size_t)yuv->width / 4u + quarter_width > yuv->stride[1] ||
-            (size_t)(rect->left / 4u) + (size_t)yuv->width / 4u + quarter_width > yuv->stride[2])
+        if ((size_t)(rect->left / 4u) + quarter_source_width + quarter_width > yuv->stride[1] ||
+            (size_t)(rect->left / 4u) + quarter_source_width + quarter_width > yuv->stride[2])
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         src_uu = yuv->planes[1].data + src_row * yuv->stride[1] + rect->left / 4u;
-        src_uv = src_uu + yuv->width / 4u;
+        src_uv = src_uu + quarter_source_width;
         src_vu = yuv->planes[2].data + src_row * yuv->stride[2] + rect->left / 4u;
-        src_vv = src_vu + yuv->width / 4u;
+        src_vv = src_vu + quarter_source_width;
         dest_u = decoder->yuv444[1].data + ((size_t)dest_row * decoder->yuv444_stride[1]) +
                  rect->left;
         dest_v = decoder->yuv444[2].data + ((size_t)dest_row * decoder->yuv444_stride[2]) +
