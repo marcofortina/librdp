@@ -179,6 +179,9 @@ librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
         (direction == RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER &&
          !rdp_license_message_from_client(message_type)))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (state->state == RDP_LICENSE_CLIENT_STATE_COMPLETED ||
+        state->state == RDP_LICENSE_CLIENT_STATE_FAILED)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if (direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
         message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT)

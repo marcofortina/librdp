@@ -5601,6 +5601,10 @@ static int test_path_security_license_channels(void)
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                          RDP_LICENSE_MESSAGE_ERROR_ALERT) == LIBRDP_STATUS_OK);
     PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_FAILED);
+    PCHECK(rdp_license_client_state_step(&license_state,
+                                         RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                         RDP_LICENSE_MESSAGE_ERROR_ALERT) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     hardware_id.platform_id = 0x01020304u;
     hardware_id.data1 = 1;
     hardware_id.data2 = 2;
@@ -5773,6 +5777,10 @@ static int test_path_security_license_channels(void)
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                          RDP_LICENSE_MESSAGE_NEW_LICENSE) == LIBRDP_STATUS_OK);
     PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_COMPLETED);
+    PCHECK(rdp_license_client_state_step(&license_state,
+                                         RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                         RDP_LICENSE_MESSAGE_ERROR_ALERT) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     license_packet.data[4] = 0;
     PCHECK(rdp_license_parse_platform_challenge_response(license_packet.data,
                                                          license_packet.length,
