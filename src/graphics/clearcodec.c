@@ -854,10 +854,7 @@ librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
     if (status != LIBRDP_STATUS_OK)
         return status;
     if ((stream.flags & RDP_CLEARCODEC_FLAG_CACHE_RESET) != 0)
-    {
-        context->vbar_cursor = 0;
-        context->short_vbar_cursor = 0;
-    }
+        rdp_clearcodec_context_reset(context);
     if ((stream.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0)
         return rdp_clearcodec_copy_glyph(&context->glyphs[stream.glyph_index], width, height, pixels, stride);
     if (stream.payload_len == 0)

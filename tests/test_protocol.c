@@ -2432,6 +2432,10 @@ static int test_path_security_license_channels(void)
         0x03, 0x03,
         0x02, 0x00
     };
+    const uint8_t clear_glyph_hit_after_reset[] = {
+        0x07, 0x0d,
+        0x02, 0x00
+    };
     const uint8_t clear_missing_glyph_hit[] = {
         0x03, 0x0a,
         0x03, 0x00
@@ -6792,6 +6796,13 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[0] == 9 &&
            clear_pixels.data[2] == 7 &&
            clear_pixels.data[7] == 0xff);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_glyph_hit_after_reset,
+                                        sizeof(clear_glyph_hit_after_reset),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_missing_glyph_hit,
                                         sizeof(clear_missing_glyph_hit),
