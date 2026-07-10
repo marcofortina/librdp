@@ -1653,6 +1653,14 @@ static int test_path_security_license_channels(void)
         7, 8, 9,
         10, 11, 12
     };
+    const uint8_t bitmap_24_rle_bg_run_cross_row[] = {
+        0x82,
+        0, 0, 255,
+        0, 255, 0,
+        0x06
+    };
+    const uint8_t bitmap_24_rle_fg_run_cross_row[] = {0x26, 0x02};
+    const uint8_t bitmap_24_rle_fgbg_cross_row[] = {0x41, 0xff};
     const uint8_t bitmap_16_rle_with_header[] = {
         0x00, 0x00, 0x03, 0x00,
         0x04, 0x00, 0x08, 0x00,
@@ -3554,6 +3562,38 @@ static int test_path_security_license_channels(void)
     PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 1 &&
            decoded_bitmap.data[1] == 2 && decoded_bitmap.data[2] == 3 && decoded_bitmap.data[12] == 10 &&
            decoded_bitmap.data[13] == 11 && decoded_bitmap.data[14] == 12);
+    memset(&bitmap_rect, 0, sizeof(bitmap_rect));
+    bitmap_rect.width = 4;
+    bitmap_rect.height = 2;
+    bitmap_rect.dest_right = 3;
+    bitmap_rect.dest_bottom = 1;
+    bitmap_rect.bits_per_pixel = 24;
+    bitmap_rect.flags = 0x0401;
+    bitmap_rect.data = bitmap_24_rle_bg_run_cross_row;
+    bitmap_rect.data_len = sizeof(bitmap_24_rle_bg_run_cross_row);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 16 && decoded_bitmap.length == 32 &&
+           decoded_bitmap.data[16] == 0 && decoded_bitmap.data[17] == 0 &&
+           decoded_bitmap.data[18] == 255 && decoded_bitmap.data[20] == 0 &&
+           decoded_bitmap.data[21] == 255 && decoded_bitmap.data[22] == 0 &&
+           decoded_bitmap.data[24] == 0 && decoded_bitmap.data[25] == 0 &&
+           decoded_bitmap.data[26] == 0);
+    bitmap_rect.data = bitmap_24_rle_fg_run_cross_row;
+    bitmap_rect.data_len = sizeof(bitmap_24_rle_fg_run_cross_row);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 16 && decoded_bitmap.length == 32 &&
+           decoded_bitmap.data[0] == 255 && decoded_bitmap.data[1] == 255 &&
+           decoded_bitmap.data[2] == 255 && decoded_bitmap.data[16] == 0 &&
+           decoded_bitmap.data[17] == 0 && decoded_bitmap.data[18] == 0 &&
+           decoded_bitmap.data[24] == 255 && decoded_bitmap.data[25] == 255 &&
+           decoded_bitmap.data[26] == 255);
+    bitmap_rect.data = bitmap_24_rle_fgbg_cross_row;
+    bitmap_rect.data_len = sizeof(bitmap_24_rle_fgbg_cross_row);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 16 && decoded_bitmap.length == 32 &&
+           decoded_bitmap.data[0] == 255 && decoded_bitmap.data[1] == 255 &&
+           decoded_bitmap.data[2] == 255 && decoded_bitmap.data[16] == 0 &&
+           decoded_bitmap.data[17] == 0 && decoded_bitmap.data[18] == 0);
     memset(&bitmap_rect, 0, sizeof(bitmap_rect));
     bitmap_rect.width = 4;
     bitmap_rect.height = 1;
