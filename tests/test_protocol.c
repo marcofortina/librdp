@@ -7065,6 +7065,41 @@ static int test_filesystem_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(information_request.information_class == 5u &&
            information_request.length == sizeof(data));
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+    PCHECK(rdp_filesystem_redirection_write_information_request(
+               &request,
+               1,
+               2,
+               3,
+               RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION,
+               18u,
+               NULL,
+               0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_query_information_request(request.data,
+                                                                      request.length,
+                                                                      &information_request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(information_request.information_class == 18u &&
+           information_request.length == 0);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+    PCHECK(rdp_filesystem_redirection_write_information_request(
+               &request,
+               1,
+               2,
+               3,
+               RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION,
+               39u,
+               data,
+               sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_set_information_request(request.data,
+                                                                    request.length,
+                                                                    &information_request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(information_request.information_class == 39u &&
+           information_request.length == sizeof(data) &&
+           memcmp(information_request.buffer, data, sizeof(data)) == 0);
     PCHECK(rdp_filesystem_redirection_write_information_request(&response,
                                                                1,
                                                                2,
