@@ -6203,6 +6203,8 @@ static int test_path_security_license_channels(void)
                                           &input_header) == LIBRDP_STATUS_OK);
     PCHECK(input_header.event_id == RDP_INPUT_CHANNEL_EVENT_SC_READY &&
            input_header.pdu_length == sizeof(input_sc_ready_v300));
+    PCHECK(rdp_input_channel_write_header(&dyn_response, 0xffffu, 6) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_input_channel_parse_sc_ready(input_sc_ready_v300,
                                             sizeof(input_sc_ready_v300),
                                             &input_sc_ready) == LIBRDP_STATUS_OK);
@@ -6281,6 +6283,29 @@ static int test_path_security_license_channels(void)
                                             RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN,
                                             RDP_INPUT_CHANNEL_PROTOCOL_V101,
                                             1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    dyn_response.length = 0;
+    PCHECK(rdp_input_channel_write_header(&dyn_response, RDP_INPUT_CHANNEL_EVENT_CS_READY, 16) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&dyn_response,
+                                    RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&dyn_response, RDP_INPUT_CHANNEL_PROTOCOL_V100) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&dyn_response, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_parse_cs_ready(dyn_response.data,
+                                            dyn_response.length,
+                                            &input_cs_ready) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    dyn_response.length = 0;
+    PCHECK(rdp_input_channel_write_header(&dyn_response, RDP_INPUT_CHANNEL_EVENT_CS_READY, 16) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&dyn_response, RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&dyn_response, RDP_INPUT_CHANNEL_PROTOCOL_V101) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&dyn_response, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_parse_cs_ready(dyn_response.data,
+                                            dyn_response.length,
+                                            &input_cs_ready) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_input_channel_write_suspend(&dyn_response) == LIBRDP_STATUS_OK);

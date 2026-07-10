@@ -79,6 +79,17 @@ static int rdp_input_channel_valid_protocol(uint32_t version)
            version == RDP_INPUT_CHANNEL_PROTOCOL_V300;
 }
 
+static int rdp_input_channel_valid_event_id(uint16_t event_id)
+{
+    return event_id == RDP_INPUT_CHANNEL_EVENT_SC_READY ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_CS_READY ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_TOUCH ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_RESUME_INPUT ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_DISMISS_HOVERING_TOUCH_CONTACT ||
+           event_id == RDP_INPUT_CHANNEL_EVENT_PEN;
+}
+
 librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rdp_input_channel_header* header)
 {
     rdp_stream stream;
@@ -95,13 +106,7 @@ librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rd
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (header->pdu_length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->event_id != RDP_INPUT_CHANNEL_EVENT_SC_READY &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_CS_READY &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_TOUCH &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_RESUME_INPUT &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_DISMISS_HOVERING_TOUCH_CONTACT &&
-        header->event_id != RDP_INPUT_CHANNEL_EVENT_PEN)
+    if (!rdp_input_channel_valid_event_id(header->event_id))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -110,7 +115,7 @@ librdp_status rdp_input_channel_write_header(rdp_buffer* buffer, uint16_t event_
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || pdu_length < 6u)
+    if (!buffer || pdu_length < 6u || !rdp_input_channel_valid_event_id(event_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u16_le(buffer, event_id);
     if (status == LIBRDP_STATUS_OK)
@@ -223,6 +228,12 @@ librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, 
         (ready->flags & ~(RDP_INPUT_CHANNEL_CS_SHOW_TOUCH_VISUALS |
                           RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION |
                           RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN)) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (ready->protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V100 &&
+        (ready->flags & RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (ready->protocol_version < RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
+        (ready->flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
