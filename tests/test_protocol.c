@@ -11972,6 +11972,42 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    before_invalidations = tree.invalidation_count;
+    PCHECK(rdp_composited_write_resource_order(&buffer,
+                                               RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                               0x16u,
+                                               RDP_COMPOSITED_RESOURCE_RENDERDATA) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x16u);
+    PCHECK(render_resource &&
+           render_resource->resource_type == RDP_COMPOSITED_RESOURCE_RENDERDATA &&
+           render_resource->sprite_dirty_count == 0u &&
+           render_resource->sprite_unmapped == 0u &&
+           render_resource->sprite_id == 0u &&
+           render_resource->logical_surface_id == 0u);
+    PCHECK(rdp_composited_render_tree_resolve_view(&tree, 0x40u, &view) ==
+           LIBRDP_STATUS_OK);
+    PCHECK((view.flags & RDP_COMPOSITED_VIEW_SOURCE_PRESENT) != 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_SOURCE_DIRTY) == 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_SOURCE_UNMAPPED) == 0 &&
+           view.source_resource == 0x16u &&
+           view.source_type == RDP_COMPOSITED_RESOURCE_RENDERDATA);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x40u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation && invalidation->generation > before_invalidations);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_resource_order(&buffer,
                                                RDP_COMPOSITED_CMD_DELETE_RESOURCE,
                                                0x10u,

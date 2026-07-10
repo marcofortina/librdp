@@ -441,6 +441,26 @@ static void rdp_composited_render_tree_invalidate_graph(
                                                      &visited_count);
 }
 
+static rdp_composited_render_resource* rdp_composited_render_tree_create_resource(
+    rdp_composited_render_tree* tree,
+    uint32_t resource,
+    uint32_t resource_type)
+{
+    rdp_composited_render_resource* entry =
+        rdp_composited_render_tree_find_mutable(tree, resource);
+
+    if (!tree)
+        return NULL;
+    if (!entry)
+        return rdp_composited_render_tree_upsert(tree, resource, resource_type);
+    rdp_composited_render_tree_invalidate_graph(tree, entry);
+    memset(entry, 0, sizeof(*entry));
+    entry->active = 1;
+    entry->resource = resource;
+    entry->resource_type = resource_type;
+    return entry;
+}
+
 static void rdp_composited_render_tree_delete(rdp_composited_render_tree* tree, uint32_t resource)
 {
     rdp_composited_render_resource* entry = rdp_composited_render_tree_find_mutable(tree, resource);
@@ -869,7 +889,9 @@ librdp_status rdp_composited_render_tree_apply_message(
                                                          &order);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            entry = rdp_composited_render_tree_upsert(tree, order.resource, order.resource_type);
+            entry = rdp_composited_render_tree_create_resource(tree,
+                                                               order.resource,
+                                                               order.resource_type);
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             break;
