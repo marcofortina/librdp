@@ -20989,8 +20989,8 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
     {
         rdp_usb_redirection_io_control control;
         rdp_buffer output;
-        uint32_t result = RDP_SESSION_HRESULT_NOTIMPL;
-        uint32_t usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
+        uint32_t result = RDP_SESSION_HRESULT_FAIL;
+        uint32_t usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
 
         rdp_buffer_init(&output);
         status = rdp_usb_redirection_parse_io_control(data, data_len, header.function_id, &control);
@@ -21018,7 +21018,7 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
                              RDP_SESSION_HRESULT_FAIL;
 #else
                 usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
-                result = RDP_SESSION_HRESULT_NOTIMPL;
+                result = RDP_SESSION_HRESULT_FAIL;
 #endif
             }
             else if (control.io_control_code ==
