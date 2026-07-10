@@ -121,7 +121,9 @@ librdp_status rdp_video_optimized_parse_presentation_request(
         rdp_stream_read_bytes(&stream, &request->extra, request->extra_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     memcpy(request->video_subtype_id, guid, 16u);
-    if (request->scaled_width > RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH ||
+    if (request->source_width == 0 || request->source_height == 0 ||
+        request->scaled_width == 0 || request->scaled_height == 0 ||
+        request->scaled_width > RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH ||
         request->scaled_height > RDP_VIDEO_OPTIMIZED_MAX_SCALED_HEIGHT ||
         memcmp(request->video_subtype_id, rdp_video_optimized_h264_guid, 16u) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -147,6 +149,8 @@ librdp_status rdp_video_optimized_write_presentation_start_request(
     uint32_t size = 0;
 
     if (!buffer || !video_subtype_id || (!extra && extra_len > 0) ||
+        source_width == 0 || source_height == 0 ||
+        scaled_width == 0 || scaled_height == 0 ||
         scaled_width > RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH ||
         scaled_height > RDP_VIDEO_OPTIMIZED_MAX_SCALED_HEIGHT ||
         memcmp(video_subtype_id, rdp_video_optimized_h264_guid, 16u) != 0 ||

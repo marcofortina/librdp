@@ -12427,6 +12427,17 @@ static int test_video_optimized_channel(void)
            request.command == RDP_VIDEO_OPTIMIZED_COMMAND_START &&
            request.extra_len == sizeof(extra) &&
            request.geometry_mapping_id == 0x80007aba00040222u);
+    buffer.data[16] = 0;
+    buffer.data[17] = 0;
+    buffer.data[18] = 0;
+    buffer.data[19] = 0;
+    PCHECK(rdp_video_optimized_parse_presentation_request(buffer.data,
+                                                          buffer.length,
+                                                          &request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[16] = 0xc0u;
+    buffer.data[17] = 0x12u;
+    buffer.data[18] = 0;
+    buffer.data[19] = 0;
     buffer.data[28] = 0x81;
     buffer.data[29] = 0x07;
     PCHECK(rdp_video_optimized_parse_presentation_request(buffer.data,
@@ -12440,6 +12451,20 @@ static int test_video_optimized_channel(void)
                480,
                244,
                RDP_VIDEO_OPTIMIZED_MAX_SCALED_WIDTH + 1u,
+               244,
+               0,
+               0,
+               h264,
+               NULL,
+               0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_video_optimized_write_presentation_start_request(
+               &payload,
+               3,
+               29,
+               4800,
+               0,
+               244,
+               480,
                244,
                0,
                0,
