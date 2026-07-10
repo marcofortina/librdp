@@ -3223,6 +3223,21 @@ static int test_path_security_license_channels(void)
            surface_commands.commands[1].frame_marker.frame_id == 0x01020304u);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
+    {
+        size_t command_index = 0;
+
+        for (command_index = 0; command_index < RDP_SURFACE_COMMAND_MAX_COMMANDS + 1u; command_index++)
+        {
+            PCHECK(rdp_surface_commands_write_frame_marker(&dyn_response,
+                                                           1,
+                                                           (uint32_t)command_index) == LIBRDP_STATUS_OK);
+        }
+        PCHECK(rdp_surface_commands_parse(dyn_response.data,
+                                          dyn_response.length,
+                                          &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
     PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NULL, NULL, 0, &pointer_update) ==
            LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_NULL);

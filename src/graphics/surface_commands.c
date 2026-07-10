@@ -104,7 +104,7 @@ librdp_status rdp_surface_commands_parse(const void* data,
         rdp_surface_command* command = NULL;
 
         if (list->count >= RDP_SURFACE_COMMAND_MAX_COMMANDS)
-            return LIBRDP_STATUS_UNSUPPORTED;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_read_u16_le(&stream, &command_type) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
 
