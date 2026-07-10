@@ -10503,6 +10503,7 @@ static int test_composited_remoting_channel(void)
     rdp_composited_channel_message message;
     rdp_composited_render_tree tree;
     rdp_composited_resolved_view view;
+    rdp_composited_render_invalidation collected_invalidations[4];
     const rdp_composited_render_resource* render_resource = NULL;
     const rdp_composited_render_invalidation* invalidation = NULL;
     const rdp_composited_rect_i rect = {1, 2, 301, 402};
@@ -10516,6 +10517,8 @@ static int test_composited_remoting_channel(void)
     rdp_buffer wrapped;
     uint32_t i = 0;
     uint32_t before_invalidations = 0;
+    uint32_t collected_count = 0;
+    uint32_t latest_invalidation = 0;
 
     rdp_composited_render_tree_init(&tree);
     rdp_buffer_init(&buffer);
@@ -11344,6 +11347,22 @@ static int test_composited_remoting_channel(void)
            invalidation->generation > before_invalidations &&
            invalidation->rect.left == 0 &&
            invalidation->rect.right == 640);
+    collected_count = rdp_composited_render_tree_collect_invalidations(&tree,
+                                                                       before_invalidations,
+                                                                       collected_invalidations,
+                                                                       4u,
+                                                                       &latest_invalidation);
+    PCHECK(collected_count >= 2u &&
+           latest_invalidation == tree.invalidation_count &&
+           collected_invalidations[0].generation > before_invalidations);
+    for (i = 1; i < collected_count; i++)
+        PCHECK(collected_invalidations[i].generation > collected_invalidations[i - 1u].generation);
+    PCHECK(rdp_composited_render_tree_collect_invalidations(&tree,
+                                                           latest_invalidation,
+                                                           collected_invalidations,
+                                                           4u,
+                                                           &latest_invalidation) == 0u);
+    PCHECK(latest_invalidation == tree.invalidation_count);
     PCHECK(rdp_composited_render_tree_resolve_view(&tree, 0x40u, &view) ==
            LIBRDP_STATUS_OK);
     PCHECK((view.flags & RDP_COMPOSITED_VIEW_TARGET_PRESENT) != 0 &&

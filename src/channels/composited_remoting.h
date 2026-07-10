@@ -498,6 +498,12 @@ void rdp_composited_render_tree_reset(rdp_composited_render_tree* tree);
 const rdp_composited_render_resource* rdp_composited_render_tree_find(
     const rdp_composited_render_tree* tree,
     uint32_t resource);
+uint32_t rdp_composited_render_tree_collect_invalidations(
+    const rdp_composited_render_tree* tree,
+    uint32_t after_generation,
+    rdp_composited_render_invalidation* invalidations,
+    uint32_t max_invalidations,
+    uint32_t* latest_generation);
 librdp_status rdp_composited_render_tree_resolve_view(
     const rdp_composited_render_tree* tree,
     uint32_t target_resource,

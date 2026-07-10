@@ -540,6 +540,43 @@ const rdp_composited_render_resource* rdp_composited_render_tree_find(
     return NULL;
 }
 
+uint32_t rdp_composited_render_tree_collect_invalidations(
+    const rdp_composited_render_tree* tree,
+    uint32_t after_generation,
+    rdp_composited_render_invalidation* invalidations,
+    uint32_t max_invalidations,
+    uint32_t* latest_generation)
+{
+    uint32_t copied = 0;
+    uint32_t cursor = after_generation;
+
+    if (latest_generation)
+        *latest_generation = tree ? tree->invalidation_count : 0;
+    if (!tree || !invalidations || max_invalidations == 0)
+        return 0;
+
+    while (copied < max_invalidations)
+    {
+        uint32_t i = 0;
+        const rdp_composited_render_invalidation* best = NULL;
+
+        for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+        {
+            const rdp_composited_render_invalidation* current = &tree->invalidations[i];
+
+            if (!current->active || current->generation <= cursor)
+                continue;
+            if (!best || current->generation < best->generation)
+                best = current;
+        }
+        if (!best)
+            break;
+        invalidations[copied++] = *best;
+        cursor = best->generation;
+    }
+    return copied;
+}
+
 static const rdp_composited_render_resource* rdp_composited_render_tree_resolve_resource(
     const rdp_composited_render_tree* tree,
     uint32_t resource,
