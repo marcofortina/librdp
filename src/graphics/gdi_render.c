@@ -752,8 +752,8 @@ static librdp_status rdp_gdi_render_decode_line(rdp_stream* stream,
         status = rdp_gdi_render_read_color(stream, &state->line_pen_color);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (state->line_pen_style != 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
+    if (state->line_pen_style > 6u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     op->kind = RDP_GDI_RENDER_OP_LINE;
     op->rop = state->line_rop2;

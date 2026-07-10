@@ -10064,6 +10064,21 @@ static int test_gdi_orders(void)
         0x01u,
         0x31u, 0x32u, 0x33u
     };
+    const uint8_t render_lineto_dash[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_LINETO,
+        0xffu, 0x03u,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x0cu, 0x00u,
+        0x02u, 0x00u,
+        0x06u, 0x07u, 0x08u,
+        13u,
+        0x01u,
+        0x01u,
+        0x31u, 0x32u, 0x33u
+    };
     const uint8_t render_polyline[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_POLYLINE,
@@ -10433,6 +10448,17 @@ static int test_gdi_orders(void)
            render_op.end_x == 4 &&
            render_op.end_y == 5 &&
            render_op.pen_width == 1);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_lineto_dash,
+                                               sizeof(render_lineto_dash),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_lineto_dash) &&
+           render_op.kind == RDP_GDI_RENDER_OP_LINE &&
+           render_op.pen_style == 1u &&
+           render_op.pen_width == 1u &&
+           render_op.rect.x == 2 &&
+           render_op.end_x == 12);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_polyline,
                                                sizeof(render_polyline),

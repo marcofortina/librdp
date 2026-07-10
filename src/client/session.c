@@ -186,6 +186,13 @@
 #define RDP_SESSION_PORT_TYPE_PARALLEL 2u
 #define RDP_SESSION_PRINTER_BACKEND_FILE 0u
 #define RDP_SESSION_PRINTER_BACKEND_CUPS 1u
+#define RDP_SESSION_GDI_PEN_SOLID 0u
+#define RDP_SESSION_GDI_PEN_DASH 1u
+#define RDP_SESSION_GDI_PEN_DOT 2u
+#define RDP_SESSION_GDI_PEN_DASHDOT 3u
+#define RDP_SESSION_GDI_PEN_DASHDOTDOT 4u
+#define RDP_SESSION_GDI_PEN_NULL 5u
+#define RDP_SESSION_GDI_PEN_INSIDEFRAME 6u
 #define RDP_SESSION_USB_URB_HEADER_LENGTH 8u
 
 typedef struct rdp_session_redirected_file
@@ -18030,10 +18037,38 @@ static int rdp_session_gdi_line_point_visible(const rdp_gdi_render_op* op,
     return 1;
 }
 
+static int rdp_session_gdi_pen_style_visible(uint32_t style, uint32_t step)
+{
+    uint32_t phase = 0;
+
+    switch (style)
+    {
+        case RDP_SESSION_GDI_PEN_SOLID:
+        case RDP_SESSION_GDI_PEN_INSIDEFRAME:
+            return 1;
+        case RDP_SESSION_GDI_PEN_DASH:
+            phase = step % 24u;
+            return phase < 18u;
+        case RDP_SESSION_GDI_PEN_DOT:
+            phase = step % 6u;
+            return phase < 2u;
+        case RDP_SESSION_GDI_PEN_DASHDOT:
+            phase = step % 22u;
+            return phase < 12u || (phase >= 16u && phase < 18u);
+        case RDP_SESSION_GDI_PEN_DASHDOTDOT:
+            phase = step % 28u;
+            return phase < 12u || (phase >= 16u && phase < 18u) || (phase >= 22u && phase < 24u);
+        case RDP_SESSION_GDI_PEN_NULL:
+        default:
+            return 0;
+    }
+}
+
 static void rdp_session_gdi_line_plot(librdp_session* session,
                                       const rdp_gdi_render_op* op,
                                       int32_t x,
                                       int32_t y,
+                                      uint32_t step,
                                       uint32_t surface_width,
                                       uint32_t surface_height,
                                       uint32_t* dirty_left,
@@ -18052,6 +18087,8 @@ static void rdp_session_gdi_line_plot(librdp_session* session,
     uint8_t r = (uint8_t)((op->color >> 16u) & 0xffu);
 
     if (!pixels || stride == 0)
+        return;
+    if (!rdp_session_gdi_pen_style_visible(op->pen_style, step))
         return;
     for (dy = start; dy < end; dy++)
     {
@@ -18111,9 +18148,12 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
     uint32_t dirty_top = UINT32_MAX;
     uint32_t dirty_right = 0;
     uint32_t dirty_bottom = 0;
+    uint32_t step = 0;
 
     if (!session || !op)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (op->pen_style > RDP_SESSION_GDI_PEN_INSIDEFRAME)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     surface_width = librdp_surface_width(session->surface);
     surface_height = librdp_surface_height(session->surface);
     x0 = op->rect.x;
@@ -18133,6 +18173,7 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
                                   op,
                                   x0,
                                   y0,
+                                  step,
                                   surface_width,
                                   surface_height,
                                   &dirty_left,
@@ -18141,6 +18182,7 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
                                   &dirty_bottom);
         if (x0 == x1 && y0 == y1)
             break;
+        step++;
         e2 = 2 * err;
         if (e2 >= dy)
         {
@@ -18163,7 +18205,7 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "client.gdi.order.apply",
-                              "type=%u kind=%u x0=%d y0=%d x1=%d y1=%d width=%u rop2=%u dirty_x=%u dirty_y=%u dirty_width=%u dirty_height=%u",
+                              "type=%u kind=%u x0=%d y0=%d x1=%d y1=%d width=%u style=%u rop2=%u dirty_x=%u dirty_y=%u dirty_width=%u dirty_height=%u",
                               op->order_type,
                               op->kind,
                               op->rect.x,
@@ -18171,6 +18213,7 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
                               op->end_x,
                               op->end_y,
                               op->pen_width,
+                              op->pen_style,
                               op->rop,
                               dirty_left,
                               dirty_top,
