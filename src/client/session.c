@@ -193,6 +193,7 @@
 #define RDP_SESSION_FILE_ALL_INFORMATION 18u
 #define RDP_SESSION_FILE_ALLOCATION_INFORMATION 19u
 #define RDP_SESSION_FILE_END_OF_FILE_INFORMATION 20u
+#define RDP_SESSION_FILE_ALTERNATE_NAME_INFORMATION 21u
 #define RDP_SESSION_FILE_STREAM_INFORMATION 22u
 #define RDP_SESSION_FILE_COMPRESSION_INFORMATION 28u
 #define RDP_SESSION_FILE_NETWORK_OPEN_INFORMATION 34u
@@ -3008,6 +3009,18 @@ static librdp_status rdp_session_write_file_id_information(rdp_buffer* buffer,
     return status;
 }
 
+static librdp_status rdp_session_write_file_alternate_name_information(rdp_buffer* buffer)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, 4);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    return status;
+}
+
 static librdp_status rdp_session_write_file_stream_information(rdp_buffer* buffer,
                                                                const struct stat* st)
 {
@@ -3202,6 +3215,8 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
             return rdp_session_write_file_attribute_tag_information(buffer, st);
         case RDP_SESSION_FILE_ID_INFORMATION:
             return rdp_session_write_file_id_information(buffer, st);
+        case RDP_SESSION_FILE_ALTERNATE_NAME_INFORMATION:
+            return rdp_session_write_file_alternate_name_information(buffer);
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }
