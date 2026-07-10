@@ -47,7 +47,8 @@ typedef enum librdp_feature
     LIBRDP_FEATURE_RAIL = 0x00000100u,
     LIBRDP_FEATURE_CR2 = 0x00000200u,
     LIBRDP_FEATURE_ECHO = 0x00000400u,
-    LIBRDP_FEATURE_TELEMETRY = 0x00000800u
+    LIBRDP_FEATURE_TELEMETRY = 0x00000800u,
+    LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u
 } librdp_feature;
 
 librdp_settings* librdp_settings_new(void);

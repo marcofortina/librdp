@@ -380,6 +380,30 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
     return status;
 }
 
+static librdp_status rdp_gcc_write_client_multitransport(rdp_buffer* buffer,
+                                                         const rdp_gcc_client_config* config)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t flags = RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                     RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
+
+    if (!buffer || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->multitransport_flags != 0)
+        flags = config->multitransport_flags;
+    if ((flags & ~RDP_GCC_MULTITRANSPORT_CLIENT_KNOWN_FLAGS) != 0 ||
+        (flags & (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(buffer, RDP_GCC_CS_MULTITRANSPORT, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -392,6 +416,8 @@ librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc
         status = rdp_gcc_write_client_security(buffer);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_client_network(buffer, config);
+    if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
+        status = rdp_gcc_write_client_multitransport(buffer, config);
     return status;
 }
 
@@ -562,6 +588,16 @@ librdp_status rdp_gcc_parse_server_data_blocks(const void* data, size_t length, 
             }
             server_data->has_network = 1;
         }
+        else if (block.type == RDP_GCC_SC_MULTITRANSPORT)
+        {
+            if (rdp_stream_read_u32_le(&payload, &server_data->multitransport_flags) != LIBRDP_STATUS_OK ||
+                rdp_stream_remaining(&payload) != 0 ||
+                (server_data->multitransport_flags & ~RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS) != 0 ||
+                (server_data->multitransport_flags &
+                 (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            server_data->has_multitransport = 1;
+        }
     }
 
     return server_data->has_core && server_data->has_security ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -636,6 +672,16 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
                 rdp_stream_read_u16_le(&payload, &ignored16) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             summary->has_network = 1;
+        }
+        else if (block.type == RDP_GCC_CS_MULTITRANSPORT)
+        {
+            if (rdp_stream_read_u32_le(&payload, &summary->multitransport_flags) != LIBRDP_STATUS_OK ||
+                rdp_stream_remaining(&payload) != 0 ||
+                (summary->multitransport_flags & ~RDP_GCC_MULTITRANSPORT_CLIENT_KNOWN_FLAGS) != 0 ||
+                (summary->multitransport_flags &
+                 (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            summary->has_multitransport = 1;
         }
     }
 

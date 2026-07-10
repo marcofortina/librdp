@@ -12,9 +12,11 @@
 #define RDP_GCC_CS_CORE 0xc001u
 #define RDP_GCC_CS_SECURITY 0xc002u
 #define RDP_GCC_CS_NETWORK 0xc003u
+#define RDP_GCC_CS_MULTITRANSPORT 0xc00au
 #define RDP_GCC_SC_CORE 0x0c01u
 #define RDP_GCC_SC_SECURITY 0x0c02u
 #define RDP_GCC_SC_NETWORK 0x0c03u
+#define RDP_GCC_SC_MULTITRANSPORT 0x0c08u
 #define RDP_GCC_MAX_SERVER_CHANNELS 64u
 #define RDP_GCC_CLIENT_VERSION_5 0x00080004u
 #define RDP_GCC_CLIENT_VERSION_10_12 0x00080011u
@@ -27,6 +29,12 @@
 #define RDP_GCC_CONNECTION_TYPE_LAN 0x06u
 #define RDP_GCC_SUPPORTED_COLOR_DEPTHS_LEGACY 0x0007u
 #define RDP_GCC_SUPPORTED_COLOR_DEPTHS_32BPP 0x000fu
+#define RDP_GCC_MULTITRANSPORT_UDP_FECR 0x00000001u
+#define RDP_GCC_MULTITRANSPORT_UDP_FECL 0x00000004u
+#define RDP_GCC_MULTITRANSPORT_UDP_PREFERRED 0x00000100u
+#define RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP 0x00000200u
+#define RDP_GCC_MULTITRANSPORT_CLIENT_KNOWN_FLAGS 0x00000305u
+#define RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS 0x00000305u
 
 typedef struct rdp_gcc_user_data_block
 {
@@ -57,6 +65,8 @@ typedef struct rdp_gcc_client_config
     uint8_t enable_device_redirection;
     uint8_t enable_pnp_redirection;
     uint8_t enable_remote_programs;
+    uint8_t enable_multitransport;
+    uint32_t multitransport_flags;
 } rdp_gcc_client_config;
 
 typedef struct rdp_gcc_client_data_summary
@@ -74,6 +84,8 @@ typedef struct rdp_gcc_client_data_summary
     uint32_t desktop_physical_width;
     uint32_t desktop_physical_height;
     uint16_t channel_count;
+    uint8_t has_multitransport;
+    uint32_t multitransport_flags;
 } rdp_gcc_client_data_summary;
 
 typedef struct rdp_gcc_conference_response
@@ -102,6 +114,8 @@ typedef struct rdp_gcc_server_data
     uint16_t mcs_channel_id;
     uint16_t channel_count;
     uint16_t channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint8_t has_multitransport;
+    uint32_t multitransport_flags;
 } rdp_gcc_server_data;
 
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config);

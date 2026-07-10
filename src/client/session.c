@@ -28419,10 +28419,15 @@ librdp_status librdp_session_connect(librdp_session* session)
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP) ? 1u : 0u;
         config.enable_remote_programs =
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
+        config.enable_multitransport =
+            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u;
+        config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                      RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                                      RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
 
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "mcs.connect.initial",
-                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u audio_output=%u device_redirection=%u pnp=%u remote_programs=%u early_capability_flags=%u",
+                        "width=%u height=%u selected_protocol=%u dynamic_channels=%u audio_output=%u device_redirection=%u pnp=%u remote_programs=%u multitransport=%u multitransport_flags=%u early_capability_flags=%u",
                         (unsigned)config.desktop_width,
                         (unsigned)config.desktop_height,
                         config.requested_protocols,
@@ -28431,6 +28436,8 @@ librdp_status librdp_session_connect(librdp_session* session)
                         (unsigned)config.enable_device_redirection,
                         (unsigned)config.enable_pnp_redirection,
                         (unsigned)config.enable_remote_programs,
+                        (unsigned)config.enable_multitransport,
+                        config.multitransport_flags,
                         (unsigned)config.early_capability_flags);
         status = rdp_gcc_write_client_data_blocks(&gcc_blocks, &config);
         if (status != LIBRDP_STATUS_OK)
@@ -28515,6 +28522,17 @@ librdp_status librdp_session_connect(librdp_session* session)
                         server_data.encryption_level,
                         server_data.server_random_len,
                         server_data.server_certificate_len);
+        if (server_data.has_multitransport)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "gcc.server.multitransport",
+                            "flags=%u udp_fecr=%u udp_fecl=%u udp_preferred=%u softsync=%u",
+                            server_data.multitransport_flags,
+                            (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_UDP_FECR) ? 1u : 0u,
+                            (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_UDP_FECL) ? 1u : 0u,
+                            (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_UDP_PREFERRED) ? 1u : 0u,
+                            (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP) ? 1u : 0u);
+        }
         if (server_data.has_network)
         {
             uint16_t channel_index = 0;

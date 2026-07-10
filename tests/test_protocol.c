@@ -1383,9 +1383,15 @@ static int test_mcs_gcc_capabilities(void)
     config.enable_device_redirection = 1;
     config.enable_pnp_redirection = 1;
     config.enable_remote_programs = 1;
+    config.enable_multitransport = 1;
+    config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                  RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                                  RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) == LIBRDP_STATUS_OK);
     PCHECK(summary.channel_count == 6);
+    PCHECK(summary.has_multitransport &&
+           summary.multitransport_flags == config.multitransport_flags);
     PCHECK(summary.version == RDP_GCC_CLIENT_VERSION_10_12);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_DYNVC_GFX) != 0);
     PCHECK((summary.early_capability_flags & RDP_GCC_EARLY_SUPPORT_NETCHAR_AUTODETECT) != 0);
@@ -1398,6 +1404,16 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rdpdr", 5));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "PNPDR", 5));
     PCHECK(test_contains_bytes(client_blocks.data, client_blocks.length, "rail", 4));
+    config.multitransport_flags = 0x80000000u;
+    rdp_buffer_free(&client_blocks);
+    rdp_buffer_init(&client_blocks);
+    PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                  RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                                  RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
+    rdp_buffer_free(&client_blocks);
+    rdp_buffer_init(&client_blocks);
+    PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_write_conference_create_request(&gcc_request, client_blocks.data, client_blocks.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(gcc_request.length > client_blocks.length);

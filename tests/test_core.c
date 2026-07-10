@@ -1039,6 +1039,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CR2, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT));
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 0) == LIBRDP_STATUS_OK);
     CHECK(!librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT));
@@ -1158,6 +1159,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_feature_enabled(copy, LIBRDP_FEATURE_AUDIO_INPUT));
     CHECK(librdp_settings_feature_enabled(copy, LIBRDP_FEATURE_CAMERA));
     CHECK(librdp_settings_feature_enabled(copy, LIBRDP_FEATURE_TELEMETRY));
+    CHECK(librdp_settings_feature_enabled(copy, LIBRDP_FEATURE_MULTITRANSPORT));
     CHECK(!librdp_settings_feature_enabled(copy, LIBRDP_FEATURE_AUDIO_OUTPUT));
     CHECK(strcmp(librdp_settings_audio_output_device(copy), "pipewire") == 0);
     CHECK(strcmp(librdp_settings_audio_input_device(copy), "pipewire") == 0);

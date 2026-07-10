@@ -1438,7 +1438,7 @@ static void trace_viewer_settings(const librdp_settings* settings)
 
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.viewer.features",
-                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u drives=%u printers=%u pnp_devices=%u",
+                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u drives=%u printers=%u pnp_devices=%u",
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u,
@@ -1451,6 +1451,7 @@ static void trace_viewer_settings(const librdp_settings* settings)
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CR2) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u,
                     librdp_settings_drive_count(settings),
                     librdp_settings_printer_count(settings),
                     librdp_settings_pnp_device_count(settings));
@@ -2507,6 +2508,11 @@ static int configure_settings(librdp_settings* settings, x11_app* app, int argc,
             if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1) != LIBRDP_STATUS_OK)
                 return 0;
         }
+        else if (strcmp(argv[i], "--multitransport") == 0)
+        {
+            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) != LIBRDP_STATUS_OK)
+                return 0;
+        }
         else
         {
             return 0;
@@ -2538,7 +2544,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, &app, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry] [--multitransport]\n",
                 argv[0]);
         x11_clipboard_free(&app);
         librdp_settings_free(settings);
