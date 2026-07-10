@@ -1989,6 +1989,20 @@ static int test_path_security_license_channels(void)
         0x45, 0x64,
         0x00, 0x00, 0x01, 0x66
     };
+    const uint8_t graphics_avc_red_h264[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a,
+        0xdd, 0xec, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00,
+        0x40, 0x00, 0x00, 0x03, 0x00, 0xa3, 0xc4, 0x89,
+        0xe0, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x0f,
+        0xc8, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x3a,
+        0x11, 0x8a, 0x00, 0x02, 0x18, 0xf1, 0xc0, 0x00,
+        0x40, 0xf6, 0x38, 0x00, 0x08, 0x79, 0x60
+    };
+    const uint8_t graphics_avc_rect_full_16[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00
+    };
+    const uint8_t graphics_avc_quant_quality[] = {0x45, 0x64};
     const uint8_t graphics_progressive_stream[] = {
         0xc3, 0xcc, 0x0a, 0x00, 0x00, 0x00,
         0x00, 0x40, 0x00, 0x01,
@@ -2587,6 +2601,8 @@ static int test_path_security_license_channels(void)
     rdp_graphics_avc420_stream graphics_avc420;
     rdp_graphics_avc444_stream graphics_avc444;
     rdp_graphics_avc444_stream graphics_avc444_edge;
+    rdp_graphics_avc444_stream graphics_avc444_valid;
+    librdp_status graphics_avc_status;
     rdp_avc_decoder* avc_decoder;
     rdp_avc_frame avc_frame;
     rdp_clearcodec_stream clear_stream;
@@ -5720,6 +5736,38 @@ static int test_path_security_license_channels(void)
                               16,
                               16,
                               &avc_frame) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    memset(&graphics_avc444_valid, 0, sizeof(graphics_avc444_valid));
+    graphics_avc444_valid.lc = RDP_GRAPHICS_AVC444_LC_LUMA;
+    graphics_avc444_valid.has_stream1 = 1;
+    graphics_avc444_valid.stream1.meta.rect_count = 1;
+    graphics_avc444_valid.stream1.meta.rects = graphics_avc_rect_full_16;
+    graphics_avc444_valid.stream1.meta.rects_len = sizeof(graphics_avc_rect_full_16);
+    graphics_avc444_valid.stream1.meta.quant_quality = graphics_avc_quant_quality;
+    graphics_avc444_valid.stream1.meta.quant_quality_len = sizeof(graphics_avc_quant_quality);
+    graphics_avc444_valid.stream1.bitstream = graphics_avc_red_h264;
+    graphics_avc444_valid.stream1.bitstream_len = sizeof(graphics_avc_red_h264);
+    graphics_avc_status = rdp_avc_decode_444(avc_decoder,
+                                             RDP_GRAPHICS_CODECID_AVC444,
+                                             &graphics_avc444_valid,
+                                             16,
+                                             16,
+                                             &avc_frame);
+    PCHECK(graphics_avc_status == LIBRDP_STATUS_OK ||
+           graphics_avc_status == LIBRDP_STATUS_UNSUPPORTED ||
+           graphics_avc_status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    if (graphics_avc_status == LIBRDP_STATUS_OK)
+    {
+        const uint8_t* pixel = avc_frame.pixels.data;
+        int bg = (int)pixel[0] - (int)pixel[1];
+        int gr = (int)pixel[1] - (int)pixel[2];
+
+        if (bg < 0)
+            bg = -bg;
+        if (gr < 0)
+            gr = -gr;
+        PCHECK(avc_frame.width == 16 && avc_frame.height == 16 && avc_frame.stride >= 64u);
+        PCHECK(bg <= 4 && gr <= 4 && pixel[3] == 0xffu);
+    }
     rdp_avc_frame_free(&avc_frame);
     rdp_avc_decoder_free(avc_decoder);
     PCHECK(rdp_graphics_progressive_parse_block(graphics_progressive_stream,

@@ -554,9 +554,9 @@ static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* m
     return rdp_graphics_parse_rect16(meta->rects + ((size_t)index * 8u), 8u, rect);
 }
 
-static librdp_status rdp_avc_copy_luma420(rdp_avc_decoder* decoder,
-                                          const rdp_avc_yuv420* yuv,
-                                          const rdp_graphics_rect16* rect)
+static librdp_status rdp_avc_copy_luma(rdp_avc_decoder* decoder,
+                                       const rdp_avc_yuv420* yuv,
+                                       const rdp_graphics_rect16* rect)
 {
     uint32_t y = 0;
 
@@ -566,21 +566,20 @@ static librdp_status rdp_avc_copy_luma420(rdp_avc_decoder* decoder,
     {
         uint8_t* dst_y = decoder->yuv444[0].data + ((size_t)y * decoder->yuv444_stride[0]) + rect->left;
         const uint8_t* src_y = yuv->planes[0].data + ((size_t)y * yuv->stride[0]) + rect->left;
-        uint8_t* dst_u = decoder->yuv444[1].data + ((size_t)y * decoder->yuv444_stride[1]) + rect->left;
-        uint8_t* dst_v = decoder->yuv444[2].data + ((size_t)y * decoder->yuv444_stride[2]) + rect->left;
-        uint32_t x = 0;
 
         memcpy(dst_y, src_y, (size_t)(rect->right - rect->left));
-        for (x = rect->left; x < rect->right; x++)
-        {
-            size_t src_offset = ((size_t)y / 2u) * yuv->stride[1] + ((size_t)x / 2u);
-
-            dst_u[x - rect->left] = yuv->planes[1].data[src_offset];
-            dst_v[x - rect->left] = yuv->planes[2].data[src_offset];
-        }
     }
     decoder->yuv444_luma_valid = 1;
     return LIBRDP_STATUS_OK;
+}
+
+static void rdp_avc_ensure_neutral_chroma(rdp_avc_decoder* decoder)
+{
+    if (!decoder || decoder->yuv444_chroma_valid)
+        return;
+    memset(decoder->yuv444[1].data, 128, decoder->yuv444[1].length);
+    memset(decoder->yuv444[2].data, 128, decoder->yuv444[2].length);
+    decoder->yuv444_chroma_valid = 1;
 }
 
 static librdp_status rdp_avc_apply_chroma_v1(rdp_avc_decoder* decoder,
@@ -758,11 +757,11 @@ static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_avc_apply_regions_420(rdp_avc_decoder* decoder,
-                                               const rdp_avc_yuv420* yuv,
-                                               uint32_t surface_width,
-                                               uint32_t surface_height,
-                                               const rdp_graphics_avc420_metablock* meta)
+static librdp_status rdp_avc_apply_regions_luma(rdp_avc_decoder* decoder,
+                                                const rdp_avc_yuv420* yuv,
+                                                uint32_t surface_width,
+                                                uint32_t surface_height,
+                                                const rdp_graphics_avc420_metablock* meta)
 {
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -775,11 +774,11 @@ static librdp_status rdp_avc_apply_regions_420(rdp_avc_decoder* decoder,
         if (status == LIBRDP_STATUS_OK)
             status = rdp_avc_validate_rect(yuv, surface_width, surface_height, &rect);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_avc_copy_luma420(decoder, yuv, &rect);
+            status = rdp_avc_copy_luma(decoder, yuv, &rect);
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
-    decoder->yuv444_chroma_valid = 1;
+    rdp_avc_ensure_neutral_chroma(decoder);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1114,11 +1113,11 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
                                                surface_height,
                                                &decoder->main_yuv);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_avc_apply_regions_420(decoder,
-                                               &decoder->main_yuv,
-                                               surface_width,
-                                               surface_height,
-                                               &stream->stream1.meta);
+            status = rdp_avc_apply_regions_luma(decoder,
+                                                &decoder->main_yuv,
+                                                surface_width,
+                                                surface_height,
+                                                &stream->stream1.meta);
     }
     if (status == LIBRDP_STATUS_OK && stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH)
     {
