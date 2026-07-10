@@ -22,6 +22,22 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_CBOR QUIET IMPORTED_TARGET libcbor)
     pkg_check_modules(LIBRDP_CUPS QUIET IMPORTED_TARGET cups)
 endif()
+if(NOT LIBRDP_CUPS_FOUND)
+    find_path(LIBRDP_CUPS_INCLUDE_DIR NAMES cups/cups.h PATHS
+        /usr/local/include
+        /usr/include
+        /opt/local/include
+    )
+    find_library(LIBRDP_CUPS_LIBRARY NAMES cups PATHS
+        /usr/local/lib
+        /usr/lib
+        /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+        /opt/local/lib
+    )
+    if(LIBRDP_CUPS_INCLUDE_DIR AND LIBRDP_CUPS_LIBRARY)
+        set(LIBRDP_CUPS_FOUND 1)
+    endif()
+endif()
 
 add_library(librdp
     src/client/error.c
@@ -128,7 +144,12 @@ if(LIBRDP_CBOR_FOUND)
 endif()
 if(LIBRDP_CUPS_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_CUPS=1)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CUPS)
+    if(TARGET PkgConfig::LIBRDP_CUPS)
+        target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CUPS)
+    else()
+        target_include_directories(librdp PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
+        target_link_libraries(librdp PRIVATE ${LIBRDP_CUPS_LIBRARY})
+    endif()
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
