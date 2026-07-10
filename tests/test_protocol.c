@@ -14296,6 +14296,17 @@ static int test_gdi_orders(void)
         0x03u, 0x00u,
         0x01u, 0x02u, 0x03u
     };
+    const uint8_t slow_zero_with_data[] = {
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0xffu
+    };
+    const uint8_t fast_zero_with_data[] = {
+        0x00u, 0x00u,
+        0xffu
+    };
     rdp_buffer secondary;
     rdp_buffer slow;
     rdp_buffer fast;
@@ -14663,12 +14674,26 @@ static int test_gdi_orders(void)
         PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast_too_many,
                                                         sizeof(fast_too_many),
                                                         &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(rdp_gdi_parse_slow_orders_update_payload(slow_zero_with_data,
+                                                        sizeof(slow_zero_with_data),
+                                                        &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast_zero_with_data,
+                                                        sizeof(fast_zero_with_data),
+                                                        &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
                                                         too_many,
                                                         secondary.data,
                                                         secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
         PCHECK(rdp_gdi_write_fast_orders_update_payload(&fast,
                                                         too_many,
+                                                        secondary.data,
+                                                        secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
+                                                        0,
+                                                        secondary.data,
+                                                        secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(rdp_gdi_write_fast_orders_update_payload(&fast,
+                                                        0,
                                                         secondary.data,
                                                         secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
     }

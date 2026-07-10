@@ -411,6 +411,8 @@ librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
     if (update->number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     update->order_data_len = rdp_stream_remaining(&stream);
+    if (update->number_orders == 0 && update->order_data_len != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &update->order_data, update->order_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
@@ -426,6 +428,8 @@ librdp_status rdp_gdi_write_slow_orders_update_payload(rdp_buffer* buffer,
     if (!buffer || (!order_data && order_data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (number_orders > RDP_GDI_MAX_ORDERS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (number_orders == 0 && order_data_len != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u16_le(buffer, RDP_GDI_UPDATE_TYPE_ORDERS);
     if (status != LIBRDP_STATUS_OK)
@@ -460,6 +464,8 @@ librdp_status rdp_gdi_parse_fast_orders_update_payload(const void* data,
     if (update->number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     update->order_data_len = rdp_stream_remaining(&stream);
+    if (update->number_orders == 0 && update->order_data_len != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &update->order_data, update->order_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
@@ -475,6 +481,8 @@ librdp_status rdp_gdi_write_fast_orders_update_payload(rdp_buffer* buffer,
     if (!buffer || (!order_data && order_data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (number_orders > RDP_GDI_MAX_ORDERS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (number_orders == 0 && order_data_len != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u16_le(buffer, number_orders);
     if (status != LIBRDP_STATUS_OK)
