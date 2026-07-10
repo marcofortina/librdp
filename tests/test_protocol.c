@@ -7970,18 +7970,47 @@ static int test_filesystem_redirection_channel(void)
                                                                   2,
                                                                   3,
                                                                   1u,
-                                                                  0x11223344u) == LIBRDP_STATUS_OK);
+                                                                  RDP_FILESYSTEM_REDIRECTION_NOTIFY_FILE_NAME |
+                                                                      RDP_FILESYSTEM_REDIRECTION_NOTIFY_LAST_WRITE) ==
+           LIBRDP_STATUS_OK);
     PCHECK(rdp_filesystem_redirection_parse_notify_change_request(request.data,
                                                                   request.length,
                                                                   &notify_request) == LIBRDP_STATUS_OK);
     PCHECK(notify_request.watch_tree == 1u);
+    PCHECK(notify_request.completion_filter ==
+           (RDP_FILESYSTEM_REDIRECTION_NOTIFY_FILE_NAME |
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_LAST_WRITE));
     request.data[24] = 2u;
     PCHECK(rdp_filesystem_redirection_parse_notify_change_request(request.data,
                                                                   request.length,
                                                                   &notify_request) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[24] = 1u;
+    request.data[25] = 0u;
+    request.data[26] = 0u;
+    request.data[27] = 0u;
+    request.data[28] = 0u;
+    PCHECK(rdp_filesystem_redirection_parse_notify_change_request(request.data,
+                                                                  request.length,
+                                                                  &notify_request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_filesystem_redirection_write_notify_change_request(&response,
+                                                                  1,
+                                                                  2,
+                                                                  3,
+                                                                  1u,
+                                                                  0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_filesystem_redirection_write_notify_change_request(&response,
+                                                                  1,
+                                                                  2,
+                                                                  3,
+                                                                  1u,
+                                                                  0x10000000u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&request);
+    rdp_buffer_free(&response);
     rdp_buffer_init(&request);
+    rdp_buffer_init(&response);
     PCHECK(rdp_filesystem_redirection_write_lock_request(&request,
                                                          1,
                                                          2,
@@ -8476,12 +8505,18 @@ static int test_filesystem_redirection_channel(void)
                                          RDP_FILESYSTEM_REDIRECTION_MINOR_NOTIFY_CHANGE_DIRECTORY) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u8(&request, 1u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_buffer_append_u32_le(&request, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request,
+                                    RDP_FILESYSTEM_REDIRECTION_NOTIFY_FILE_NAME |
+                                        RDP_FILESYSTEM_REDIRECTION_NOTIFY_LAST_WRITE) ==
+           LIBRDP_STATUS_OK);
     PCHECK(test_append_zeroes(&request, 27u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_filesystem_redirection_parse_notify_change_request(request.data,
                                                                   request.length,
                                                                   &notify_request) == LIBRDP_STATUS_OK);
-    PCHECK(notify_request.watch_tree == 1u && notify_request.completion_filter == 0x11223344u);
+    PCHECK(notify_request.watch_tree == 1u);
+    PCHECK(notify_request.completion_filter ==
+           (RDP_FILESYSTEM_REDIRECTION_NOTIFY_FILE_NAME |
+            RDP_FILESYSTEM_REDIRECTION_NOTIFY_LAST_WRITE));
     rdp_buffer_free(&request);
     rdp_buffer_init(&request);
 

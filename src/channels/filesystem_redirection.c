@@ -74,6 +74,12 @@ static int rdp_filesystem_major_security(uint32_t major_function)
            major_function == RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY;
 }
 
+static int rdp_filesystem_notify_filter_valid(uint32_t completion_filter)
+{
+    return completion_filter != 0 &&
+           (completion_filter & ~RDP_FILESYSTEM_REDIRECTION_NOTIFY_VALID_MASK) == 0;
+}
+
 static librdp_status rdp_filesystem_parse_io_request(const void* data,
                                                      size_t length,
                                                      uint32_t major,
@@ -414,6 +420,8 @@ librdp_status rdp_filesystem_redirection_parse_notify_change_request(
         rdp_stream_skip(&stream, 27u) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (request->watch_tree > 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_filesystem_notify_filter_valid(request->completion_filter))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -761,7 +769,7 @@ librdp_status rdp_filesystem_redirection_write_notify_change_request(
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || watch_tree > 1u)
+    if (!buffer || watch_tree > 1u || !rdp_filesystem_notify_filter_valid(completion_filter))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_filesystem_write_request_header(buffer,
                                                  device_id,
