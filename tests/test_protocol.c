@@ -3462,6 +3462,15 @@ static int test_path_security_license_channels(void)
                                      0,
                                      NULL,
                                      0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_fastpath_write_header(&decoded_fastpath,
+                                     RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+                                     0,
+                                     3) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&decoded_fastpath, 0x0fu) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&decoded_fastpath, 0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_fastpath_parse_updates(decoded_fastpath.data,
+                                      decoded_fastpath.length,
+                                      &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&decoded_fastpath);
     rdp_buffer_init(&decoded_fastpath);
     {
