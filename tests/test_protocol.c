@@ -12743,6 +12743,20 @@ static int test_gdi_orders(void)
         0x06u, 0x00u,
         0x34u, 0x12u
     };
+    const uint8_t render_memblt_bad_width[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x03u, 0x02u,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0xffu, 0xffu,
+        0x04u, 0x00u,
+        0xccu,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x34u, 0x12u
+    };
     const uint8_t render_mem3blt[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_MEM3BLT,
@@ -12752,6 +12766,27 @@ static int test_gdi_orders(void)
         0x12u, 0x00u,
         0x13u, 0x00u,
         0x14u, 0x00u,
+        0xb8u,
+        0x15u, 0x00u,
+        0x16u, 0x00u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x03u,
+        0xaau,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u,
+        0x78u, 0x56u
+    };
+    const uint8_t render_mem3blt_bad_height[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEM3BLT,
+        0xffu, 0xffu, 0x00u,
+        0x04u, 0x03u,
+        0x11u, 0x00u,
+        0x12u, 0x00u,
+        0x13u, 0x00u,
+        0xffu, 0xffu,
         0xb8u,
         0x15u, 0x00u,
         0x16u, 0x00u,
@@ -13636,6 +13671,11 @@ static int test_gdi_orders(void)
            render_op.src_x == 5 &&
            render_op.src_y == 6);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_memblt_bad_width,
+                                               sizeof(render_memblt_bad_width),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_mem3blt,
                                                sizeof(render_mem3blt),
                                                &render_op,
@@ -13657,6 +13697,11 @@ static int test_gdi_orders(void)
            render_op.brush_style == 3 &&
            render_op.brush_hatch == 0xaau &&
            render_op.brush_extra[6] == 0x55u);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_mem3blt_bad_height,
+                                               sizeof(render_mem3blt_bad_height),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_lineto,
                                                sizeof(render_lineto),

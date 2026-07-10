@@ -1841,6 +1841,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
          op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT || op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
+         op->kind == RDP_GDI_RENDER_OP_MEMBLT || op->kind == RDP_GDI_RENDER_OP_MEM3BLT ||
          op->kind == RDP_GDI_RENDER_OP_SAVE_BITMAP) &&
         (op->rect.width < 0 || op->rect.height < 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
