@@ -6686,6 +6686,8 @@ static int test_device_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(general.protocol_minor_version == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13);
     PCHECK((general.io_code1 & RDP_DEVICE_REDIRECTION_IRP_MASK_READ) != 0);
+    PCHECK((general.io_code1 & RDP_DEVICE_REDIRECTION_IRP_MASK_QUERY_SECURITY) != 0);
+    PCHECK((general.io_code1 & RDP_DEVICE_REDIRECTION_IRP_MASK_SET_SECURITY) != 0);
     PCHECK((general.extended_pdu & RDP_DEVICE_REDIRECTION_EXT_USER_LOGGEDON) != 0);
     PCHECK(caps.capabilities[1].type == RDP_DEVICE_REDIRECTION_CAP_DRIVE);
     PCHECK(caps.capabilities[1].version == RDP_DEVICE_REDIRECTION_CAP_VERSION_2);
@@ -6898,6 +6900,7 @@ static int test_filesystem_redirection_channel(void)
     rdp_filesystem_redirection_query_directory_request directory_request;
     rdp_filesystem_redirection_notify_change_request notify_request;
     rdp_filesystem_redirection_lock_request lock_request;
+    rdp_filesystem_redirection_security_request security_request;
     rdp_filesystem_redirection_create_response create_response;
     rdp_filesystem_redirection_length_response length_response;
     rdp_device_redirection_io_completion completion_response;
@@ -7070,6 +7073,50 @@ static int test_filesystem_redirection_channel(void)
                                                          0,
                                                          NULL,
                                                          0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&request);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_security_request(&request,
+                                                             1,
+                                                             2,
+                                                             3,
+                                                             RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY,
+                                                             0x07u,
+                                                             NULL,
+                                                             128u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_query_security_request(request.data,
+                                                                   request.length,
+                                                                   &security_request) == LIBRDP_STATUS_OK);
+    PCHECK(security_request.io.major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY &&
+           security_request.security_information == 0x07u &&
+           security_request.length == 128u &&
+           security_request.buffer == NULL);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+    PCHECK(rdp_filesystem_redirection_write_security_request(&request,
+                                                             1,
+                                                             2,
+                                                             3,
+                                                             RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY,
+                                                             0x04u,
+                                                             data,
+                                                             sizeof(data)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_set_security_request(request.data,
+                                                                 request.length,
+                                                                 &security_request) == LIBRDP_STATUS_OK);
+    PCHECK(security_request.io.major_function == RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY &&
+           security_request.security_information == 0x04u &&
+           security_request.length == sizeof(data) &&
+           memcmp(security_request.buffer, data, sizeof(data)) == 0);
+    PCHECK(rdp_filesystem_redirection_write_security_request(&response,
+                                                             1,
+                                                             2,
+                                                             3,
+                                                             RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION,
+                                                             0,
+                                                             NULL,
+                                                             0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&request);
     rdp_buffer_free(&response);
     rdp_buffer_init(&request);
@@ -7263,6 +7310,28 @@ static int test_filesystem_redirection_channel(void)
     PCHECK(rdp_filesystem_redirection_parse_lock_request(request.data,
                                                          request.length,
                                                          &lock_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    PCHECK(test_append_device_io_request(&request,
+                                         1,
+                                         2,
+                                         3,
+                                         RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY,
+                                         0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 64u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&request, 0x07u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_zeroes(&request, 24u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_query_security_request(request.data,
+                                                                   request.length,
+                                                                   &security_request) == LIBRDP_STATUS_OK);
+    PCHECK(security_request.length == 64u && security_request.security_information == 0x07u);
+    request.data[16] = 0x05u;
+    PCHECK(rdp_filesystem_redirection_parse_query_security_request(request.data,
+                                                                   request.length,
+                                                                   &security_request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.data[16] = (uint8_t)RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY;
     rdp_buffer_free(&request);
     rdp_buffer_init(&request);
 

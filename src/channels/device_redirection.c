@@ -25,7 +25,9 @@ static uint32_t rdp_device_redirection_default_io_code1(void)
            RDP_DEVICE_REDIRECTION_IRP_MASK_QUERY_INFORMATION |
            RDP_DEVICE_REDIRECTION_IRP_MASK_SET_INFORMATION |
            RDP_DEVICE_REDIRECTION_IRP_MASK_DIRECTORY_CONTROL |
-           RDP_DEVICE_REDIRECTION_IRP_MASK_LOCK_CONTROL;
+           RDP_DEVICE_REDIRECTION_IRP_MASK_LOCK_CONTROL |
+           RDP_DEVICE_REDIRECTION_IRP_MASK_QUERY_SECURITY |
+           RDP_DEVICE_REDIRECTION_IRP_MASK_SET_SECURITY;
 }
 
 static int rdp_device_redirection_valid_version_minor(uint16_t version_minor)

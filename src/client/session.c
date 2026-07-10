@@ -4273,6 +4273,64 @@ static librdp_status rdp_session_handle_filesystem_set_volume(librdp_session* se
     return status;
 }
 
+static librdp_status rdp_session_handle_filesystem_security(librdp_session* session,
+                                                            const uint8_t* data,
+                                                            size_t data_len,
+                                                            uint32_t major_function)
+{
+    rdp_filesystem_redirection_security_request request;
+    rdp_buffer response;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY)
+        status = rdp_filesystem_redirection_parse_query_security_request(data, data_len, &request);
+    else if (major_function == RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY)
+        status = rdp_filesystem_redirection_parse_set_security_request(data, data_len, &request);
+    else
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
+        io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    else
+        io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
+
+    rdp_buffer_init(&response);
+    if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY)
+        status = rdp_filesystem_redirection_write_buffer_response(&response,
+                                                                  request.io.device_id,
+                                                                  request.io.completion_id,
+                                                                  io_status,
+                                                                  NULL,
+                                                                  0);
+    else
+        status = rdp_filesystem_redirection_write_length_response(&response,
+                                                                  request.io.device_id,
+                                                                  request.io.completion_id,
+                                                                  io_status,
+                                                                  0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_device_redirection_packet(session,
+                                                            &response,
+                                                            "client.rdpdr.file.security.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.file.security",
+                        "device_id=%u file_id=%u completion_id=%u major=%u security_information=%u length=%u status=%u",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        request.io.major_function,
+                        request.security_information,
+                        request.length,
+                        io_status);
+    return status;
+}
+
 static librdp_status rdp_session_write_filesystem_unsupported_response(
     rdp_buffer* response,
     const rdp_device_redirection_io_request* request,
@@ -4286,6 +4344,7 @@ static librdp_status rdp_session_write_filesystem_unsupported_response(
         case RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION:
         case RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL:
         case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY:
             return rdp_filesystem_redirection_write_buffer_response(response,
                                                                     request->device_id,
                                                                     request->completion_id,
@@ -4294,6 +4353,7 @@ static librdp_status rdp_session_write_filesystem_unsupported_response(
                                                                     0);
         case RDP_DEVICE_REDIRECTION_IRP_SET_VOLUME_INFORMATION:
         case RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION:
+        case RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY:
             return rdp_filesystem_redirection_write_length_response(response,
                                                                     request->device_id,
                                                                     request->completion_id,
@@ -4363,6 +4423,16 @@ static librdp_status rdp_session_validate_filesystem_unsupported_request(const u
         {
             rdp_filesystem_redirection_lock_request typed;
             return rdp_filesystem_redirection_parse_lock_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY:
+        {
+            rdp_filesystem_redirection_security_request typed;
+            return rdp_filesystem_redirection_parse_query_security_request(data, data_len, &typed);
+        }
+        case RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY:
+        {
+            rdp_filesystem_redirection_security_request typed;
+            return rdp_filesystem_redirection_parse_set_security_request(data, data_len, &typed);
         }
         default:
             return LIBRDP_STATUS_OK;
@@ -4455,6 +4525,12 @@ static librdp_status rdp_session_handle_filesystem_io_request(librdp_session* se
                                                              io_status);
         case RDP_DEVICE_REDIRECTION_IRP_LOCK_CONTROL:
             return rdp_session_handle_filesystem_lock(session, data, data_len);
+        case RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY:
+        case RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY:
+            return rdp_session_handle_filesystem_security(session,
+                                                          data,
+                                                          data_len,
+                                                          request.major_function);
         case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
             return rdp_session_handle_filesystem_unsupported(session,
                                                              data,

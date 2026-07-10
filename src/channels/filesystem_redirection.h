@@ -99,6 +99,14 @@ typedef struct rdp_filesystem_redirection_lock_request
     rdp_filesystem_redirection_lock_info locks[RDP_FILESYSTEM_REDIRECTION_MAX_LOCKS];
 } rdp_filesystem_redirection_lock_request;
 
+typedef struct rdp_filesystem_redirection_security_request
+{
+    rdp_device_redirection_io_request io;
+    uint32_t security_information;
+    uint32_t length;
+    const uint8_t* buffer;
+} rdp_filesystem_redirection_security_request;
+
 typedef struct rdp_filesystem_redirection_create_response
 {
     rdp_device_redirection_io_completion io;
@@ -162,6 +170,14 @@ librdp_status rdp_filesystem_redirection_parse_lock_request(
     const void* data,
     size_t length,
     rdp_filesystem_redirection_lock_request* request);
+librdp_status rdp_filesystem_redirection_parse_query_security_request(
+    const void* data,
+    size_t length,
+    rdp_filesystem_redirection_security_request* request);
+librdp_status rdp_filesystem_redirection_parse_set_security_request(
+    const void* data,
+    size_t length,
+    rdp_filesystem_redirection_security_request* request);
 librdp_status rdp_filesystem_redirection_write_create_request(
     rdp_buffer* buffer,
     uint32_t device_id,
@@ -238,6 +254,14 @@ librdp_status rdp_filesystem_redirection_write_lock_request(
     uint32_t flags,
     const rdp_filesystem_redirection_lock_info* locks,
     uint32_t lock_count);
+librdp_status rdp_filesystem_redirection_write_security_request(rdp_buffer* buffer,
+                                                                uint32_t device_id,
+                                                                uint32_t file_id,
+                                                                uint32_t completion_id,
+                                                                uint32_t major_function,
+                                                                uint32_t security_information,
+                                                                const void* data,
+                                                                uint32_t data_len);
 
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
