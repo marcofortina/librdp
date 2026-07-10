@@ -173,6 +173,7 @@
 #define RDP_SESSION_SCARD_E_NO_MEMORY 0x80100006u
 #define RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE 0x8010001fu
 #define RDP_SESSION_SCARD_E_FILE_NOT_FOUND 0x80100024u
+#define RDP_SESSION_SCARD_READER_TYPE_USB 0x00000020u
 #define RDP_SESSION_MAX_SMARTCARD_CONTEXTS 8u
 #define RDP_SESSION_MAX_SMARTCARD_HANDLES 32u
 #ifndef RDP_HAVE_WINPR_SMARTCARD
@@ -9128,6 +9129,33 @@ static librdp_status rdp_session_smartcard_handle_reader_name(
                 pcsc_status = SCardGetReaderIconA(context->context, reader_name, data, &data_len);
             else
                 pcsc_status = SCardGetDeviceTypeIdA(context->context, reader_name, &device_type);
+        }
+        else
+        {
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+        }
+        free(reader_name);
+    }
+#elif defined(RDP_HAVE_PCSC)
+    {
+        rdp_session_smartcard_context* context = NULL;
+        char* reader_name = NULL;
+        int wide = 0;
+
+        context = rdp_session_smartcard_context_find(session,
+                                                     message->body.reader_name.context.data,
+                                                     message->body.reader_name.context.length);
+        if (context)
+        {
+            reader_name = rdp_session_smartcard_string_to_utf8(&message->body.reader_name.reader_name,
+                                                               wide);
+            if (!reader_name)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+            else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_GETDEVICETYPEID)
+            {
+                device_type = RDP_SESSION_SCARD_READER_TYPE_USB;
+                pcsc_status = SCARD_S_SUCCESS;
+            }
         }
         else
         {
