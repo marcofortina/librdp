@@ -10386,6 +10386,7 @@ static int test_composited_remoting_channel(void)
     rdp_buffer batch;
     rdp_buffer wrapped;
     uint32_t i = 0;
+    uint32_t before_invalidations = 0;
 
     rdp_composited_render_tree_init(&tree);
     rdp_buffer_init(&buffer);
@@ -11137,6 +11138,30 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_composited_write_u32_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_TARGET_SET_ROOT,
+                                                 0x40u,
+                                                 0x44u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource && render_resource->root_resource == 0x44u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_u32_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE,
+                                                 0x44u,
+                                                 0x16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource && render_resource->logical_surface_image_resource == 0x16u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_margins_order(&buffer,
                                               RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_MARGINS,
                                               0x16u,
@@ -11151,6 +11176,7 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    before_invalidations = tree.invalidation_count;
     PCHECK(rdp_composited_write_gdi_dirty(&buffer,
                                           0x16u,
                                           -1,
@@ -11163,6 +11189,32 @@ static int test_composited_remoting_channel(void)
            render_resource->sprite_dirty_count == 1u &&
            render_resource->sprite_dirty_flags == UINT32_MAX &&
            render_resource->sprite_dirty_cookie == 0x0102030405060708ull);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x44u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation &&
+           invalidation->generation > before_invalidations &&
+           invalidation->rect.left == rect.left &&
+           invalidation->rect.right == rect.right);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x40u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation &&
+           invalidation->generation > before_invalidations &&
+           invalidation->rect.left == 0 &&
+           invalidation->rect.right == 640);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

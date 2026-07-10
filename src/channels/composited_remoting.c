@@ -362,6 +362,85 @@ static void rdp_composited_render_tree_invalidate_resource(
         rdp_composited_render_tree_invalidate_rect(tree, entry->resource, &rect);
 }
 
+static int rdp_composited_render_resource_references(
+    const rdp_composited_render_resource* entry,
+    uint32_t resource)
+{
+    if (!entry || !entry->active)
+        return 0;
+    return entry->duplicate_source == resource ||
+           entry->root_resource == resource ||
+           entry->sprite_image_resource == resource ||
+           entry->logical_surface_image_resource == resource ||
+           entry->sprite_clip_resource == resource ||
+           entry->dx_clip_resource == resource ||
+           entry->transform_resource == resource ||
+           entry->color_transform_resource == resource ||
+           entry->filter_list_resource == resource;
+}
+
+static int rdp_composited_render_tree_visited(const uint32_t* visited,
+                                              uint32_t visited_count,
+                                              uint32_t resource)
+{
+    uint32_t i = 0;
+
+    if (!visited)
+        return 1;
+    for (i = 0; i < visited_count; i++)
+    {
+        if (visited[i] == resource)
+            return 1;
+    }
+    return 0;
+}
+
+static void rdp_composited_render_tree_invalidate_dependents(
+    rdp_composited_render_tree* tree,
+    uint32_t resource,
+    uint32_t* visited,
+    uint32_t* visited_count)
+{
+    uint32_t i = 0;
+
+    if (!tree || !visited || !visited_count ||
+        *visited_count >= RDP_COMPOSITED_RENDER_RESOURCE_LIMIT)
+        return;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        rdp_composited_render_resource* current = &tree->resources[i];
+
+        if (!current->active ||
+            !rdp_composited_render_resource_references(current, resource) ||
+            rdp_composited_render_tree_visited(visited, *visited_count, current->resource))
+            continue;
+        visited[*visited_count] = current->resource;
+        (*visited_count)++;
+        rdp_composited_render_tree_invalidate_resource(tree, current);
+        rdp_composited_render_tree_invalidate_dependents(tree,
+                                                         current->resource,
+                                                         visited,
+                                                         visited_count);
+    }
+}
+
+static void rdp_composited_render_tree_invalidate_graph(
+    rdp_composited_render_tree* tree,
+    const rdp_composited_render_resource* entry)
+{
+    uint32_t visited[RDP_COMPOSITED_RENDER_RESOURCE_LIMIT];
+    uint32_t visited_count = 1;
+
+    if (!tree || !entry || !entry->active)
+        return;
+    visited[0] = entry->resource;
+    rdp_composited_render_tree_invalidate_resource(tree, entry);
+    rdp_composited_render_tree_invalidate_dependents(tree,
+                                                     entry->resource,
+                                                     visited,
+                                                     &visited_count);
+}
+
 static void rdp_composited_render_tree_delete(rdp_composited_render_tree* tree, uint32_t resource)
 {
     rdp_composited_render_resource* entry = rdp_composited_render_tree_find_mutable(tree, resource);
@@ -429,7 +508,7 @@ static void rdp_composited_render_tree_delete(rdp_composited_render_tree* tree, 
             changed = 1;
         }
         if (changed)
-            rdp_composited_render_tree_invalidate_resource(tree, current);
+            rdp_composited_render_tree_invalidate_graph(tree, current);
     }
 }
 
@@ -481,39 +560,39 @@ static librdp_status rdp_composited_render_apply_u32(rdp_composited_render_tree*
     {
         case RDP_COMPOSITED_CMD_TARGET_SET_ROOT:
             target->root_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_LOGICAL_SURFACE_IMAGE:
             target->logical_surface_image_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_IMAGE:
             target->sprite_image_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_DX_CLIP:
             target->dx_clip_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_COMPOSE_ONCE:
             target->compose_once = order.value ? 1u : 0u;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_WINDOW_NODE_PROTECT_CONTENT:
             target->protected_content = order.value ? 1u : 0u;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_META_TARGET_SET_TRANSFORM:
             target->transform_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_META_TARGET_SET_COLOR_TRANSFORM:
             target->color_transform_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         case RDP_COMPOSITED_CMD_META_TARGET_SET_FILTER_LIST:
             target->filter_list_resource = order.value;
-            rdp_composited_render_tree_invalidate_resource(tree, target);
+            rdp_composited_render_tree_invalidate_graph(tree, target);
             break;
         default:
             break;
@@ -651,7 +730,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->sprite_clip_resource = 0;
             entry->sprite_clip_for_dirty_accum = 0;
             entry->dx_clip_resource = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_BOUNDS:
@@ -673,7 +752,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->content_rect = bounds.content;
             entry->bounds_valid = 1;
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE:
@@ -693,7 +772,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_id = sprite_handle.value;
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_CLIP:
@@ -713,7 +792,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->sprite_clip_for_dirty_accum = clip.for_dirty_accum ? 1u : 0u;
             entry->sprite_clip_resource = clip.clip_resource;
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SOURCE_MODIFICATIONS:
@@ -734,7 +813,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->low_color_key = source.low_color_key;
             entry->high_color_key = source.high_color_key;
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS:
@@ -764,7 +843,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 entry->maximized_clip_margins_valid = 1;
             }
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_COPY_OWNED_RESOURCES:
@@ -786,7 +865,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             source = rdp_composited_render_tree_find(tree, copy.value);
             rdp_composited_render_copy_owned(entry, source);
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION:
@@ -806,7 +885,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->visible_region_updates++;
             entry->detached = 0;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_HWND_TARGET_CREATE:
@@ -824,7 +903,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->width = target.width;
             entry->height = target.height;
             memcpy(entry->clear_color, target.clear_color, sizeof(entry->clear_color));
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_TARGET_UPDATE_WINDOW_SETTINGS:
@@ -848,7 +927,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->rendering_enabled = settings.rendering_enabled ? 1u : 0u;
             entry->disable_cookie = settings.disable_cookie;
             memcpy(entry->color_key, settings.color_key, sizeof(entry->color_key));
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR:
@@ -865,7 +944,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             memcpy(entry->clear_color, color.color, sizeof(entry->clear_color));
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_TARGET_INVALIDATE:
@@ -905,7 +984,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->capture_width = capture.width;
             entry->capture_height = capture.height;
             entry->dxgi_format = capture.dxgi_format;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_META_TARGET_CAPTURE_BITS:
@@ -926,7 +1005,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->capture_width = capture.width;
             entry->capture_height = capture.height;
             entry->meta_capture_update_id = capture.update_id;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_GLYPH_RUN_CREATE:
@@ -958,7 +1037,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_id = sprite.sprite_id;
             entry->logical_surface_id = sprite.logical_surface_id;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_SURFACE:
@@ -976,7 +1055,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->dxgi_format = surface_update.dxgi_format;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_MARGINS:
@@ -996,7 +1075,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_margins = margins.margins;
             entry->sprite_margins_valid = 1;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UNMAP_SECTION:
@@ -1015,7 +1094,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_unmapped = 1;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_NOTIFY_DIRTY:
@@ -1033,7 +1112,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->sprite_dirty_count++;
             entry->sprite_dirty_flags = (uint32_t)dirty.dirty_flags;
             entry->sprite_dirty_cookie = dirty.notification_cookie;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_META_TARGET_CREATE:
@@ -1056,7 +1135,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->dxgi_format = meta.textures.dxgi_format;
             entry->texture_width = meta.textures.width;
             entry->texture_height = meta.textures.height;
-            rdp_composited_render_tree_invalidate_resource(tree, entry);
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_TARGET_SET_ROOT:
