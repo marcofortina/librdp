@@ -1827,10 +1827,22 @@ static librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* 
                 rdp_pnp_redirection_device_removal removal;
                 status = rdp_pnp_redirection_parse_device_removal(data, data_len, &removal);
                 if (status == LIBRDP_STATUS_OK)
+                {
+                    uint8_t open_cleared = 0;
+
+                    if (session->pnp_redirection_open_device_active &&
+                        session->pnp_redirection_open_device_id == removal.client_device_id)
+                    {
+                        session->pnp_redirection_open_device_active = 0;
+                        session->pnp_redirection_open_device_id = 0;
+                        open_cleared = 1;
+                    }
                     rdp_trace_event(RDP_TRACE_CLIENT,
                                     "client.pnp.device_removal",
-                                    "device_id=%u",
-                                    removal.client_device_id);
+                                    "device_id=%u open_cleared=%u",
+                                    removal.client_device_id,
+                                    open_cleared);
+                }
                 break;
             }
             default:
