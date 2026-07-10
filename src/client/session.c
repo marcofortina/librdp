@@ -17846,16 +17846,40 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
         header.function_id == RDP_USB_REDIRECTION_FN_RETRACT_DEVICE)
     {
         rdp_usb_redirection_retract_device retract;
+        uint8_t released = 0;
+#ifdef RDP_HAVE_LIBUSB
+        rdp_session_usb_device* device = NULL;
+        size_t interface_index = 0;
+#endif
 
         status = rdp_usb_redirection_parse_retract_device(data, data_len, &retract);
         if (status != LIBRDP_STATUS_OK)
             return status;
+#ifdef RDP_HAVE_LIBUSB
+        device = rdp_session_usb_device_by_interface_mut(session, retract.header.interface_id);
+        if (device && device->active)
+        {
+            if (device->handle)
+            {
+                for (interface_index = 0; interface_index < sizeof(device->claimed_interfaces);
+                     interface_index++)
+                {
+                    if (device->claimed_interfaces[interface_index])
+                        (void)libusb_release_interface(device->handle, (int)interface_index);
+                }
+                libusb_close(device->handle);
+            }
+            memset(device, 0, sizeof(*device));
+            released = 1;
+        }
+#endif
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.urbdrc.retract",
-                        "dvc_channel_id=%u interface_id=%u reason=%u",
+                        "dvc_channel_id=%u interface_id=%u reason=%u released=%u",
                         session->usb_redirection_channel_id,
                         retract.header.interface_id,
-                        retract.reason);
+                        retract.reason,
+                        released);
         return LIBRDP_STATUS_OK;
     }
 
