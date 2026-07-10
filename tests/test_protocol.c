@@ -16617,12 +16617,28 @@ static int test_udp_transport(void)
     PCHECK(buffer.length == 4u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    syn_ex.has_cookie_hash = 1u;
+    memcpy(syn_ex.cookie_hash, cookie_hash, sizeof(cookie_hash));
+    PCHECK(rdp_udp_write_syn_data_ex(&buffer, &syn_ex) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     memset(&udp2_header, 0, sizeof(udp2_header));
     udp2_header.flags = RDP_UDP2_FLAG_ACK | RDP_UDP2_FLAG_ACKVEC;
     udp2_header.log_window_size = 2u;
     PCHECK(rdp_udp2_write_header(&buffer, &udp2_header) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_udp2_parse_prefix(0x01u, &prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_write_data_packet(&buffer,
+                                      16u,
+                                      0x1234u,
+                                      data_payload,
+                                      sizeof(data_payload)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     PCHECK(rdp_udp2_write_data_packet(&buffer,
                                       3u,
@@ -16701,6 +16717,11 @@ static int test_udp_transport(void)
            prefix.short_packet_length == sizeof(tiny_payload) &&
            unwrapped.length == sizeof(tiny_payload) &&
            memcmp(unwrapped.data, tiny_payload, sizeof(tiny_payload)) == 0);
+    buffer.data[5] = 1u;
+    rdp_buffer_free(&unwrapped);
+    rdp_buffer_init(&unwrapped);
+    PCHECK(rdp_udp2_unwrap_packet(&unwrapped, buffer.data, buffer.length, &prefix) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&unwrapped);
     rdp_buffer_free(&buffer);
