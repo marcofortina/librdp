@@ -102,6 +102,9 @@ librdp_status rdp_fastpath_write_update(rdp_buffer* buffer,
         (compression != 0 && compression != RDP_FASTPATH_OUTPUT_COMPRESSION_USED) ||
         (!data && data_len > 0) || data_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (update_code == RDP_FASTPATH_UPDATE_SYNCHRONIZE &&
+        (fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE || compression != 0 || data_len != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     update_header = (uint8_t)(update_code |
                               (uint8_t)(fragmentation << 4) |
                               (uint8_t)(compression << 6));
@@ -197,6 +200,11 @@ librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fa
         if (rdp_stream_read_u16_le(&stream, &size) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (size > rdp_stream_remaining(&stream))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (update->update_code == RDP_FASTPATH_UPDATE_SYNCHRONIZE &&
+            (update->fragmentation != RDP_FASTPATH_FRAGMENT_SINGLE ||
+             update->compression != 0 ||
+             size != 0))
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         update->data_len = size;
         if (size > 0 && rdp_stream_read_bytes(&stream, &update->data, size) != LIBRDP_STATUS_OK)

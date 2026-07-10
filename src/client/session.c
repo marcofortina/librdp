@@ -24769,6 +24769,16 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                                 (unsigned)update_len);
             }
         }
+        else if (update->update_code == RDP_FASTPATH_UPDATE_SYNCHRONIZE)
+        {
+            rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "rdp.fastpath.synchronize",
+                                  "fragmentation=%u compression=%u payload_len=%u",
+                                  update->fragmentation,
+                                  update->compression,
+                                  (unsigned)update->data_len);
+        }
         else if (update->update_code == RDP_FASTPATH_UPDATE_POINTER_NULL ||
                  update->update_code == RDP_FASTPATH_UPDATE_POINTER_DEFAULT ||
                  update->update_code == RDP_FASTPATH_UPDATE_POINTER_POSITION ||
