@@ -1,6 +1,7 @@
 #include "protocol/slowpath.h"
 
 #include "common/stream.h"
+#include "graphics/gdi_orders.h"
 #include "graphics/nscodec.h"
 
 #include <stdlib.h>
@@ -208,10 +209,33 @@ static librdp_status rdp_slowpath_write_order_capability(rdp_buffer* buffer)
 {
     const uint16_t first_fields[] = {1, 20, 0, 1, 0, 0x002au};
     const uint16_t last_fields[] = {0, 0, 65001u, 0};
+    uint8_t order_support[32] = {0};
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    order_support[RDP_GDI_ORDER_DSTBLT] = 1;
+    order_support[RDP_GDI_ORDER_PATBLT] = 1;
+    order_support[RDP_GDI_ORDER_SCRBLT] = 1;
+    order_support[RDP_GDI_ORDER_DRAWNINEGRID] = 1;
+    order_support[RDP_GDI_ORDER_MULTI_DRAWNINEGRID] = 1;
+    order_support[RDP_GDI_ORDER_LINETO] = 1;
+    order_support[RDP_GDI_ORDER_OPAQUERECT] = 1;
+    order_support[RDP_GDI_ORDER_SAVEBITMAP] = 1;
+    order_support[RDP_GDI_ORDER_MEMBLT] = 1;
+    order_support[RDP_GDI_ORDER_MEM3BLT] = 1;
+    order_support[RDP_GDI_ORDER_MULTIDSTBLT] = 1;
+    order_support[RDP_GDI_ORDER_MULTIPATBLT] = 1;
+    order_support[RDP_GDI_ORDER_MULTISCRBLT] = 1;
+    order_support[RDP_GDI_ORDER_MULTIOPAQUERECT] = 1;
+    order_support[RDP_GDI_ORDER_FAST_INDEX] = 1;
+    order_support[RDP_GDI_ORDER_POLYGON_SC] = 1;
+    order_support[RDP_GDI_ORDER_POLYGON_CB] = 1;
+    order_support[RDP_GDI_ORDER_POLYLINE] = 1;
+    order_support[RDP_GDI_ORDER_FAST_GLYPH] = 1;
+    order_support[RDP_GDI_ORDER_ELLIPSE_SC] = 1;
+    order_support[RDP_GDI_ORDER_ELLIPSE_CB] = 1;
+    order_support[RDP_GDI_ORDER_GLYPH_INDEX] = 1;
     status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_ORDER, 88);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_append_zeros(buffer, 16);
@@ -220,7 +244,7 @@ static librdp_status rdp_slowpath_write_order_capability(rdp_buffer* buffer)
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_append_u16s(buffer, first_fields, sizeof(first_fields) / sizeof(first_fields[0]));
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_slowpath_append_zeros(buffer, 32);
+        status = rdp_buffer_append(buffer, order_support, sizeof(order_support));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
