@@ -82,7 +82,7 @@ static librdp_status rdp_webauthn_cbor_read_item(const uint8_t* data,
         item->header_len = 9;
         return LIBRDP_STATUS_OK;
     }
-    return LIBRDP_STATUS_UNSUPPORTED;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static int rdp_webauthn_cbor_is_break(const uint8_t* data, size_t length)
@@ -235,7 +235,22 @@ static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
         *consumed = offset;
         return LIBRDP_STATUS_OK;
     }
-    return LIBRDP_STATUS_UNSUPPORTED;
+    if (item.major == 6)
+    {
+        size_t child = 0;
+
+        if (item.value == RDP_WEBAUTHN_CBOR_INDEFINITE ||
+            item.header_len > length ||
+            rdp_webauthn_cbor_skip(data + item.header_len,
+                                   length - item.header_len,
+                                   &child,
+                                   depth + 1u) != LIBRDP_STATUS_OK ||
+            child > length - item.header_len)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        *consumed = item.header_len + child;
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static librdp_status rdp_webauthn_cbor_read_uint(const uint8_t* data,

@@ -732,6 +732,20 @@ static int test_webauthn_channel(void)
         0xffu,
         0xffu
     };
+    const uint8_t request_with_tagged_cbor[] = {
+        0xa2u,
+        0x67u, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
+        RDP_WEBAUTHN_COMMAND_API_VERSION,
+        0x67u, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
+        0xc1u, 0x63u, 'a', 'b', 'c'
+    };
+    const uint8_t request_with_float_cbor[] = {
+        0xa2u,
+        0x67u, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
+        RDP_WEBAUTHN_COMMAND_API_VERSION,
+        0x67u, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
+        0xf9u, 0x3c, 0x00
+    };
     const uint8_t unterminated_indefinite_cbor[] = {
         0xbfu,
         0x67u, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
@@ -739,6 +753,7 @@ static int test_webauthn_channel(void)
     };
     const uint8_t truncated_cbor[] = {0xa1, 0x63, 'k', 'e', 'y'};
     const uint8_t trailing_cbor[] = {0x01, 0x02};
+    const uint8_t reserved_cbor[] = {0xfcu};
     uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
         0x10, 0x11, 0x12, 0x13,
         0x14, 0x15, 0x16, 0x17,
@@ -818,12 +833,20 @@ static int test_webauthn_channel(void)
     PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
     PCHECK(rdp_webauthn_validate_cbor(request_with_indefinite_cbor,
                                       sizeof(request_with_indefinite_cbor)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_request(request_with_tagged_cbor,
+                                      sizeof(request_with_tagged_cbor),
+                                      &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
+    PCHECK(rdp_webauthn_validate_cbor(request_with_float_cbor,
+                                      sizeof(request_with_float_cbor)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_webauthn_parse_request(unterminated_indefinite_cbor,
                                       sizeof(unterminated_indefinite_cbor),
                                       &request) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_webauthn_validate_cbor(truncated_cbor, sizeof(truncated_cbor)) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_webauthn_validate_cbor(trailing_cbor, sizeof(trailing_cbor)) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_webauthn_validate_cbor(reserved_cbor, sizeof(reserved_cbor)) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_webauthn_write_response(&buffer, 0, response_payload, sizeof(response_payload)) ==
