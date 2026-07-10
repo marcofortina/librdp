@@ -642,6 +642,45 @@ librdp_status rdp_printer_redirection_parse_write_response(
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_printer_redirection_write_buffer_response(rdp_buffer* buffer,
+                                                            uint32_t device_id,
+                                                            uint32_t completion_id,
+                                                            uint32_t io_status,
+                                                            const void* data,
+                                                            uint32_t data_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_write_io_completion(buffer,
+                                                        device_id,
+                                                        completion_id,
+                                                        io_status,
+                                                        NULL,
+                                                        0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_buffer_append(buffer, data, data_len);
+}
+
+librdp_status rdp_printer_redirection_parse_buffer_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response,
+    const uint8_t** payload,
+    uint32_t* payload_len)
+{
+    return rdp_printer_redirection_parse_read_response(data,
+                                                       length,
+                                                       response,
+                                                       payload,
+                                                       payload_len);
+}
+
 librdp_status rdp_printer_redirection_write_length_response(rdp_buffer* buffer,
                                                             uint32_t device_id,
                                                             uint32_t completion_id,

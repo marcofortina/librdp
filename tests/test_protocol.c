@@ -8451,6 +8451,17 @@ static int test_printer_redirection_channel(void)
     PCHECK(printer_value == 4u);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
+    PCHECK(rdp_printer_redirection_write_buffer_response(&packet, 1, 2, 0, cache, sizeof(cache)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_parse_buffer_response(packet.data,
+                                                         packet.length,
+                                                         &printer_completion,
+                                                         &printer_payload,
+                                                         &printer_payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(printer_payload_len == sizeof(cache) &&
+           memcmp(printer_payload, cache, sizeof(cache)) == 0);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
     PCHECK(rdp_printer_redirection_write_length_response(&packet, 1, 2, 0, 9) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_length_response(packet.data,
                                                          packet.length,

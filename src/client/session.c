@@ -6514,14 +6514,35 @@ static librdp_status rdp_session_handle_printer_read(librdp_session* session,
     return status;
 }
 
+static uint32_t rdp_session_apply_printer_set_information(rdp_session_redirected_file* job,
+                                                          const rdp_filesystem_redirection_information_request* request)
+{
+    if (!job || !request || job->fd < 0)
+        return RDP_SESSION_DEVICE_UNSUCCESSFUL;
+    switch (request->information_class)
+    {
+        case RDP_SESSION_FILE_POSITION_INFORMATION:
+            return rdp_session_apply_position_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_END_OF_FILE_INFORMATION:
+        case RDP_SESSION_FILE_ALLOCATION_INFORMATION:
+        case RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION:
+            return rdp_session_apply_size_information(job, request->buffer, request->length);
+        default:
+            return RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    }
+}
+
 static librdp_status rdp_session_handle_printer_length_irp(librdp_session* session,
                                                            const uint8_t* data,
                                                            size_t data_len,
                                                            uint32_t major_function)
 {
     rdp_filesystem_redirection_information_request request;
+    rdp_session_redirected_file* job = NULL;
+    rdp_buffer payload;
     rdp_buffer response;
-    uint32_t io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    struct stat st;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
@@ -6545,32 +6566,88 @@ static librdp_status rdp_session_handle_printer_length_irp(librdp_session* sessi
     }
     if (status != LIBRDP_STATUS_OK)
         return status;
+    rdp_buffer_init(&payload);
+    memset(&st, 0, sizeof(st));
     if (rdp_session_printer_index_from_device_id(session, request.io.device_id) == UINT32_MAX)
         io_status = RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
-    else if (request.io.file_id != 0 &&
-             !rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
+    else if (request.io.file_id == 0)
         io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+    else if (!(job = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id)))
+        io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+    else if (job->fd < 0)
+        io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    else if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION)
+    {
+        if (fstat(job->fd, &st) != 0)
+        {
+            io_status = rdp_session_errno_to_device_status(errno);
+        }
+        else
+        {
+            status = rdp_session_write_file_information(&payload, request.information_class, &st, job);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
+            {
+                io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+                status = LIBRDP_STATUS_OK;
+            }
+            else if (status != LIBRDP_STATUS_OK)
+            {
+                io_status = rdp_session_filesystem_error_from_status(status);
+                status = LIBRDP_STATUS_OK;
+            }
+            else if (payload.length > request.length && request.length > 0)
+            {
+                io_status = RDP_SESSION_DEVICE_BUFFER_TOO_SMALL;
+            }
+        }
+    }
+    else if (major_function == RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION)
+    {
+        io_status = rdp_session_apply_printer_set_information(job, &request);
+    }
+    else
+    {
+        io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+    }
     rdp_buffer_init(&response);
-    status = rdp_printer_redirection_write_length_response(&response,
-                                                           request.io.device_id,
-                                                           request.io.completion_id,
-                                                           io_status,
-                                                           0);
+    if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION)
+    {
+        status = rdp_printer_redirection_write_buffer_response(&response,
+                                                               request.io.device_id,
+                                                               request.io.completion_id,
+                                                               io_status,
+                                                               io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS ?
+                                                                   payload.data :
+                                                                   NULL,
+                                                               io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS ?
+                                                                   (uint32_t)payload.length :
+                                                                   0);
+    }
+    else
+    {
+        status = rdp_printer_redirection_write_length_response(&response,
+                                                               request.io.device_id,
+                                                               request.io.completion_id,
+                                                               io_status,
+                                                               0);
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_printer_response(session,
                                                    &response,
                                                    "client.rdpdr.printer.length.response");
     rdp_buffer_free(&response);
+    rdp_buffer_free(&payload);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.printer.length",
-                        "device_id=%u file_id=%u completion_id=%u major=%u class=%u status=%u",
+                        "device_id=%u file_id=%u completion_id=%u major=%u class=%u status=%u payload_len=%zu",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         major_function,
                         request.information_class,
-                        io_status);
+                        io_status,
+                        payload.length);
     return status;
 }
 
