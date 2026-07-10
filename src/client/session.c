@@ -251,6 +251,8 @@ typedef struct rdp_session_redirected_file
     uint32_t serial_baud_rate;
     uint32_t serial_wait_mask;
     uint32_t serial_timeouts[5];
+    uint64_t serial_rx_count;
+    uint64_t serial_tx_count;
     uint8_t serial_line_control[3];
     uint8_t serial_chars[6];
     uint8_t serial_handflow[16];
@@ -9390,6 +9392,154 @@ static uint32_t rdp_session_port_modem_flags(rdp_session_redirected_file* port)
 #endif
 }
 
+static uint32_t rdp_session_port_set_modem_flags(rdp_session_redirected_file* port, uint32_t flags)
+{
+#ifdef TIOCMSET
+    int native_flags = (int)flags;
+
+    if (!port || port->fd < 0)
+        return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    if (!isatty(port->fd))
+        return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    if (ioctl(port->fd, TIOCMSET, &native_flags) != 0)
+        return rdp_session_errno_to_device_status(errno);
+#else
+    (void)port;
+    (void)flags;
+#endif
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static uint32_t rdp_session_port_queue_depth(rdp_session_redirected_file* port, int output_queue)
+{
+    int count = 0;
+
+    if (!port || port->fd < 0 || !isatty(port->fd))
+        return 0;
+    if (!output_queue)
+    {
+#ifdef FIONREAD
+        if (ioctl(port->fd, FIONREAD, &count) == 0 && count > 0)
+            return (uint32_t)count;
+#endif
+    }
+    else
+    {
+#ifdef TIOCOUTQ
+        if (ioctl(port->fd, TIOCOUTQ, &count) == 0 && count > 0)
+            return (uint32_t)count;
+#endif
+    }
+    return 0;
+}
+
+static librdp_status rdp_session_port_write_comm_status(rdp_session_redirected_file* port,
+                                                        rdp_buffer* output)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!port || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, rdp_session_port_queue_depth(port, 0));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, rdp_session_port_queue_depth(port, 1));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(output, 0);
+    return status;
+}
+
+static librdp_status rdp_session_port_write_properties(rdp_session_redirected_file* port,
+                                                       rdp_buffer* output)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t baud = rdp_session_port_refresh_baud(port);
+
+    if (!port || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(output, 64u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(output, 2u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0x00000001u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 4096u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 4096u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0x10000000u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0x000000ffu);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0x0000007fu);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0x1fffffffU);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(output, 0x001eu);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(output, 0x1f1fu);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, baud);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, rdp_session_port_queue_depth(port, 0));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(output, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(output, 0);
+    return status;
+}
+
+static librdp_status rdp_session_port_write_stats(rdp_session_redirected_file* port,
+                                                  rdp_buffer* output)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!port || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(output, (uint32_t)(port->serial_rx_count & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(output, (uint32_t)(port->serial_tx_count & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_append_zeroes(output, 40u);
+    return status;
+}
+
+static uint32_t rdp_session_port_purge(rdp_session_redirected_file* port,
+                                       const uint8_t* data,
+                                       uint32_t length)
+{
+    uint32_t flags = 0;
+    int queue = 0;
+
+    if (!port || port->fd < 0)
+        return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    if (!data || length < 4u)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    flags = rdp_session_read_u32_le_unaligned(data);
+    if (!isatty(port->fd))
+        return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    if ((flags & 0x00000008u) != 0)
+        queue = TCIFLUSH;
+    if ((flags & 0x00000004u) != 0)
+        queue = queue == TCIFLUSH ? TCIOFLUSH : TCOFLUSH;
+    if (queue != 0 && tcflush(port->fd, queue) != 0)
+        return rdp_session_errno_to_device_status(errno);
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
 static librdp_status rdp_session_port_control_serial(rdp_session_redirected_file* port,
                                                      const rdp_filesystem_redirection_control_request* request,
                                                      rdp_buffer* output,
@@ -9492,30 +9642,80 @@ static librdp_status rdp_session_port_control_serial(rdp_session_redirected_file
                 *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
             else if (write(port->fd, request->input_buffer, 1u) < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
                 *io_status = rdp_session_errno_to_device_status(errno);
+            else
+                port->serial_tx_count++;
             return LIBRDP_STATUS_OK;
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BREAK_ON:
-            if (isatty(port->fd) && tcsendbreak(port->fd, 0) != 0)
+            if (isatty(port->fd) &&
+#ifdef TIOCSBRK
+                ioctl(port->fd, TIOCSBRK, 0) != 0
+#else
+                tcsendbreak(port->fd, 0) != 0
+#endif
+            )
                 *io_status = rdp_session_errno_to_device_status(errno);
             return LIBRDP_STATUS_OK;
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_GET_COMMSTATUS:
-            return rdp_session_append_zeroes(output, 18u);
+            return rdp_session_port_write_comm_status(port, output);
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_GET_PROPERTIES:
-            return rdp_session_append_zeroes(output, 64u);
+            return rdp_session_port_write_properties(port, output);
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_CONFIG_SIZE:
             return rdp_buffer_append_u32_le(output, 0);
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_GET_STATS:
-            return rdp_session_append_zeroes(output, 48u);
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_QUEUE_SIZE:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_XOFF:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_XON:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BREAK_OFF:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_PURGE:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_RESET_DEVICE:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_XOFF_COUNTER:
-        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_LSRMST_INSERT:
+            return rdp_session_port_write_stats(port, output);
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_CLEAR_STATS:
+            port->serial_rx_count = 0;
+            port->serial_tx_count = 0;
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_PURGE:
+            *io_status = rdp_session_port_purge(port,
+                                                request->input_buffer,
+                                                request->input_buffer_length);
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_QUEUE_SIZE:
+            if (request->input_buffer_length < 8u)
+                *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_XOFF:
+            if (isatty(port->fd) && tcflow(port->fd, TCOOFF) != 0)
+                *io_status = rdp_session_errno_to_device_status(errno);
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_XON:
+            if (isatty(port->fd) && tcflow(port->fd, TCOON) != 0)
+                *io_status = rdp_session_errno_to_device_status(errno);
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_BREAK_OFF:
+            if (isatty(port->fd))
+            {
+#ifdef TIOCCBRK
+                if (ioctl(port->fd, TIOCCBRK, 0) != 0)
+                    *io_status = rdp_session_errno_to_device_status(errno);
+#endif
+            }
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_RESET_DEVICE:
+            if (isatty(port->fd) && tcflush(port->fd, TCIOFLUSH) != 0)
+                *io_status = rdp_session_errno_to_device_status(errno);
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_XOFF_COUNTER:
+            if (request->input_buffer_length < 8u)
+                *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            return LIBRDP_STATUS_OK;
+        case RDP_PORT_REDIRECTION_IOCTL_SERIAL_LSRMST_INSERT:
+            if (request->input_buffer_length < 1u)
+                *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            return LIBRDP_STATUS_OK;
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_MODEM_CONTROL:
+            if (request->input_buffer_length < 4u)
+                *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+            else
+                *io_status = rdp_session_port_set_modem_flags(port,
+                                                              rdp_session_read_u32_le_unaligned(
+                                                                  request->input_buffer));
+            return LIBRDP_STATUS_OK;
         case RDP_PORT_REDIRECTION_IOCTL_SERIAL_SET_FIFO_CONTROL:
+            if (request->input_buffer_length < 4u)
+                *io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
             return LIBRDP_STATUS_OK;
         default:
             *io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
@@ -9716,7 +9916,10 @@ static librdp_status rdp_session_handle_port_read(librdp_session* session,
                 if (got < 0)
                     io_status = rdp_session_errno_to_device_status(errno);
                 else
+                {
                     payload_len = (uint32_t)got;
+                    port->serial_rx_count += (uint64_t)payload_len;
+                }
                 break;
             }
         }
@@ -9786,6 +9989,7 @@ static librdp_status rdp_session_handle_port_write(librdp_session* session,
                 cursor += (size_t)count;
                 remaining -= (uint32_t)count;
                 written += (uint32_t)count;
+                port->serial_tx_count += (uint64_t)count;
             }
         }
     }
