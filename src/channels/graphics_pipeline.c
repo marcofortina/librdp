@@ -133,6 +133,30 @@ static int rdp_graphics_capversion_supported(uint32_t version)
            version == RDP_GRAPHICS_CAPVERSION_107;
 }
 
+static int rdp_graphics_capflags_supported(uint32_t flags)
+{
+    const uint32_t known_flags = RDP_GRAPHICS_CAPS_FLAG_THINCLIENT |
+                                 RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE |
+                                 RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED |
+                                 RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED |
+                                 RDP_GRAPHICS_CAPS_FLAG_AVC_THINCLIENT |
+                                 RDP_GRAPHICS_CAPS_FLAG_SCALEDMAP_DISABLE;
+
+    if ((flags & ~known_flags) != 0)
+        return 0;
+    if ((flags & RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED) != 0 &&
+        (flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0)
+        return 0;
+    return 1;
+}
+
+static int rdp_graphics_capset_valid(const rdp_graphics_capset* capset)
+{
+    return capset &&
+           rdp_graphics_capversion_supported(capset->version) &&
+           rdp_graphics_capflags_supported(capset->flags);
+}
+
 static int rdp_graphics_pixel_format_supported(uint8_t pixel_format)
 {
     return pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888 ||
@@ -442,7 +466,7 @@ librdp_status rdp_graphics_parse_capset(const void* data, size_t length, rdp_gra
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u32_le(&stream, &capset->flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_graphics_capversion_supported(capset->version))
+    if (!rdp_graphics_capset_valid(capset))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -457,6 +481,11 @@ librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
 
     if (!buffer || !capsets || capset_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < capset_count; i++)
+    {
+        if (!rdp_graphics_capset_valid(&capsets[i]))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
 
     pdu_length = 10u + (uint32_t)capset_count * 12u;
     status = rdp_graphics_write_header(buffer, RDP_GRAPHICS_CMDID_CAPS_ADVERTISE, pdu_length);
