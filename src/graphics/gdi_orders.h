@@ -118,6 +118,7 @@
 #define RDP_GDI_MAX_ORDERS 256u
 #define RDP_GDI_MAX_BITMAP_CACHE_ERROR_INFO 16u
 #define RDP_GDI_MAX_CACHE_GLYPHS 256u
+#define RDP_GDI_MAX_OFFSCREEN_DELETE_INDICES 512u
 
 typedef enum rdp_gdi_order_kind
 {
@@ -293,6 +294,25 @@ typedef struct rdp_gdi_create_ninegrid_bitmap_order
     rdp_gdi_ninegrid_bitmap_info info;
 } rdp_gdi_create_ninegrid_bitmap_order;
 
+typedef struct rdp_gdi_create_offscreen_bitmap_order
+{
+    uint32_t bitmap_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t delete_count;
+    uint16_t delete_indices[RDP_GDI_MAX_OFFSCREEN_DELETE_INDICES];
+} rdp_gdi_create_offscreen_bitmap_order;
+
+typedef struct rdp_gdi_switch_surface_order
+{
+    uint32_t bitmap_id;
+} rdp_gdi_switch_surface_order;
+
+typedef struct rdp_gdi_frame_marker_order
+{
+    uint32_t action;
+} rdp_gdi_frame_marker_order;
+
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update);
@@ -352,6 +372,20 @@ librdp_status rdp_gdi_parse_create_ninegrid_bitmap_order(const rdp_gdi_altsec_or
                                                          rdp_gdi_create_ninegrid_bitmap_order* order);
 librdp_status rdp_gdi_write_create_ninegrid_bitmap_order(rdp_buffer* buffer,
                                                          const rdp_gdi_create_ninegrid_bitmap_order* order);
+librdp_status rdp_gdi_parse_create_offscreen_bitmap_order(
+    const rdp_gdi_altsec_order_header* header,
+    rdp_gdi_create_offscreen_bitmap_order* order);
+librdp_status rdp_gdi_write_create_offscreen_bitmap_order(
+    rdp_buffer* buffer,
+    const rdp_gdi_create_offscreen_bitmap_order* order);
+librdp_status rdp_gdi_parse_switch_surface_order(const rdp_gdi_altsec_order_header* header,
+                                                 rdp_gdi_switch_surface_order* order);
+librdp_status rdp_gdi_write_switch_surface_order(rdp_buffer* buffer,
+                                                 const rdp_gdi_switch_surface_order* order);
+librdp_status rdp_gdi_parse_frame_marker_order(const rdp_gdi_altsec_order_header* header,
+                                               rdp_gdi_frame_marker_order* order);
+librdp_status rdp_gdi_write_frame_marker_order(rdp_buffer* buffer,
+                                               const rdp_gdi_frame_marker_order* order);
 librdp_status rdp_gdi_parse_bitmap_cache_error_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_bitmap_cache_error* error);

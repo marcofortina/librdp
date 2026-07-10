@@ -108,6 +108,8 @@
 #define RDP_SESSION_BITMAP_FLAG_COMPRESSED 0x0001u
 #define RDP_SESSION_GDI_SAVE_BITMAP_SLOTS 64u
 #define RDP_SESSION_GDI_SAVE_BITMAP_MAX_BYTES (8u * 1024u * 1024u)
+#define RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS 256u
+#define RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE 0xffffu
 #define RDP_SESSION_PROGRESSIVE_TILE_STATES 2048u
 #define RDP_SESSION_POINTER_CACHE_SLOTS 128u
 #define RDP_SESSION_VIDEO_STREAMS 32u
@@ -333,6 +335,13 @@ typedef struct rdp_session_gdi_saved_bitmap
     uint32_t origin_y;
     rdp_buffer pixels;
 } rdp_session_gdi_saved_bitmap;
+
+typedef struct rdp_session_gdi_offscreen_bitmap
+{
+    uint8_t active;
+    uint32_t bitmap_id;
+    librdp_surface* surface;
+} rdp_session_gdi_offscreen_bitmap;
 
 typedef struct rdp_session_gdi_bitmap_cache_entry
 {
@@ -578,6 +587,7 @@ struct librdp_session
     rdp_session_gdi_glyph_cache_entry gdi_glyph_cache[RDP_SESSION_GDI_GLYPH_CACHE_IDS][RDP_SESSION_GDI_GLYPH_CACHE_SLOTS];
     rdp_session_gdi_glyph_fragment gdi_glyph_fragments[RDP_SESSION_GDI_GLYPH_FRAGMENT_SLOTS];
     rdp_session_gdi_saved_bitmap gdi_saved_bitmaps[RDP_SESSION_GDI_SAVE_BITMAP_SLOTS];
+    rdp_session_gdi_offscreen_bitmap gdi_offscreen_cache[RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
     rdp_composited_render_tree composited_tree;
@@ -608,6 +618,8 @@ struct librdp_session
     size_t gdi_bitmap_cache_bytes;
     size_t gdi_glyph_cache_bytes;
     size_t gdi_saved_bitmap_bytes;
+    uint32_t gdi_current_surface_id;
+    uint8_t gdi_drawing_to_offscreen;
     uint32_t graphics_current_frame_id;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     rdp_standard_security_context standard_security;
@@ -773,6 +785,19 @@ static void rdp_session_emit_surface_invalidated(librdp_session* session,
 
     if (!session || width == 0 || height == 0)
         return;
+    if (session->gdi_drawing_to_offscreen)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_TRACE,
+                              "client.gdi.offscreen.invalidated",
+                              "surface_id=%u x=%u y=%u width=%u height=%u",
+                              session->gdi_current_surface_id,
+                              x,
+                              y,
+                              width,
+                              height);
+        return;
+    }
     event.type = LIBRDP_EVENT_SURFACE_INVALIDATED;
     event.data.surface.x = x;
     event.data.surface.y = y;
@@ -12830,6 +12855,146 @@ static rdp_session_gdi_saved_bitmap* rdp_session_gdi_saved_bitmap_slot(librdp_se
     return &session->gdi_saved_bitmaps[i];
 }
 
+static rdp_session_gdi_offscreen_bitmap* rdp_session_gdi_offscreen_find(librdp_session* session,
+                                                                        uint32_t bitmap_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_offscreen_bitmap* entry = &session->gdi_offscreen_cache[i];
+
+        if (entry->active && entry->bitmap_id == bitmap_id)
+            return entry;
+    }
+    return NULL;
+}
+
+static void rdp_session_gdi_offscreen_delete(librdp_session* session, uint32_t bitmap_id)
+{
+    rdp_session_gdi_offscreen_bitmap* entry = rdp_session_gdi_offscreen_find(session, bitmap_id);
+
+    if (!session || !entry)
+        return;
+    librdp_surface_free(entry->surface);
+    memset(entry, 0, sizeof(*entry));
+    if (session->gdi_current_surface_id == bitmap_id)
+        session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.offscreen.delete",
+                          "surface_id=%u",
+                          bitmap_id);
+}
+
+static void rdp_session_gdi_offscreen_cache_clear(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    for (i = 0; i < RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS; i++)
+        librdp_surface_free(session->gdi_offscreen_cache[i].surface);
+    memset(session->gdi_offscreen_cache, 0, sizeof(session->gdi_offscreen_cache));
+    session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
+    session->gdi_drawing_to_offscreen = 0;
+}
+
+static rdp_session_gdi_offscreen_bitmap* rdp_session_gdi_offscreen_slot(librdp_session* session,
+                                                                       uint32_t bitmap_id)
+{
+    size_t i = 0;
+    rdp_session_gdi_offscreen_bitmap* entry = rdp_session_gdi_offscreen_find(session, bitmap_id);
+
+    if (entry)
+        return entry;
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS; i++)
+    {
+        if (!session->gdi_offscreen_cache[i].active)
+            return &session->gdi_offscreen_cache[i];
+    }
+    i = (size_t)(bitmap_id % RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS);
+    librdp_surface_free(session->gdi_offscreen_cache[i].surface);
+    memset(&session->gdi_offscreen_cache[i], 0, sizeof(session->gdi_offscreen_cache[i]));
+    return &session->gdi_offscreen_cache[i];
+}
+
+static librdp_status rdp_session_gdi_create_offscreen_bitmap(
+    librdp_session* session,
+    const rdp_gdi_create_offscreen_bitmap_order* order)
+{
+    rdp_session_gdi_offscreen_bitmap* entry = NULL;
+    librdp_surface* surface = NULL;
+    uint32_t i = 0;
+
+    if (!session || !order || order->bitmap_id > 0x7fffu ||
+        order->width == 0 || order->height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    entry = rdp_session_gdi_offscreen_slot(session, order->bitmap_id);
+    if (!entry)
+        return LIBRDP_STATUS_NO_MEMORY;
+    surface = librdp_surface_new(order->width, order->height, LIBRDP_PIXEL_FORMAT_BGRA32);
+    if (!surface)
+        return LIBRDP_STATUS_NO_MEMORY;
+    librdp_surface_free(entry->surface);
+    memset(entry, 0, sizeof(*entry));
+    entry->active = 1;
+    entry->bitmap_id = order->bitmap_id;
+    entry->surface = surface;
+    for (i = 0; i < order->delete_count; i++)
+        rdp_session_gdi_offscreen_delete(session, order->delete_indices[i]);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.offscreen.create",
+                          "surface_id=%u width=%u height=%u delete_count=%u",
+                          order->bitmap_id,
+                          order->width,
+                          order->height,
+                          order->delete_count);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_switch_surface(librdp_session* session, uint32_t bitmap_id)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (bitmap_id == RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE)
+    {
+        session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.surface.switch",
+                              "surface_id=%u primary=1",
+                              bitmap_id);
+        return LIBRDP_STATUS_OK;
+    }
+    if (!rdp_session_gdi_offscreen_find(session, bitmap_id))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    session->gdi_current_surface_id = bitmap_id;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.surface.switch",
+                          "surface_id=%u primary=0",
+                          bitmap_id);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_surface* rdp_session_gdi_target_surface(librdp_session* session)
+{
+    rdp_session_gdi_offscreen_bitmap* entry = NULL;
+
+    if (!session)
+        return NULL;
+    if (session->gdi_current_surface_id == RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE)
+        return session->surface;
+    entry = rdp_session_gdi_offscreen_find(session, session->gdi_current_surface_id);
+    return entry ? entry->surface : NULL;
+}
+
 static rdp_session_graphics_cache_entry* rdp_session_graphics_cache_find(librdp_session* session, uint16_t cache_slot)
 {
     if (!session || cache_slot >= RDP_SESSION_GRAPHICS_CACHE_SLOTS || !session->graphics_cache[cache_slot].active)
@@ -21840,7 +22005,9 @@ static librdp_status rdp_session_gdi_fill_ellipse(librdp_session* session, const
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
+static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op);
+
+static librdp_status rdp_session_apply_gdi_render_op_core(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_session_gdi_region region;
     uint32_t surface_width = 0;
@@ -21976,6 +22143,31 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
         return LIBRDP_STATUS_OK;
     }
     return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    librdp_surface* primary = NULL;
+    librdp_surface* target = NULL;
+    uint8_t previous_offscreen = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    primary = session->surface;
+    target = rdp_session_gdi_target_surface(session);
+    if (!primary || !target)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    previous_offscreen = session->gdi_drawing_to_offscreen;
+    if (target != primary)
+    {
+        session->surface = target;
+        session->gdi_drawing_to_offscreen = 1;
+    }
+    status = rdp_session_apply_gdi_render_op_core(session, op);
+    session->surface = primary;
+    session->gdi_drawing_to_offscreen = previous_offscreen;
+    return status;
 }
 
 static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
@@ -22189,11 +22381,28 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                                                         const rdp_gdi_altsec_order_header* header)
 {
     rdp_gdi_create_ninegrid_bitmap_order order;
+    rdp_gdi_create_offscreen_bitmap_order offscreen;
+    rdp_gdi_switch_surface_order switch_surface;
+    rdp_gdi_frame_marker_order frame_marker;
     rdp_session_gdi_ninegrid_cache_entry* entry = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type == RDP_GDI_ALTSEC_CREATE_OFFSCREEN_BITMAP)
+    {
+        status = rdp_gdi_parse_create_offscreen_bitmap_order(header, &offscreen);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_create_offscreen_bitmap(session, &offscreen);
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_SWITCH_SURFACE)
+    {
+        status = rdp_gdi_parse_switch_surface_order(header, &switch_surface);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_switch_surface(session, switch_surface.bitmap_id);
+    }
     if (header->order_type == RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP)
     {
         status = rdp_gdi_parse_create_ninegrid_bitmap_order(header, &order);
@@ -22218,6 +22427,34 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                               entry->info.top_height,
                               entry->info.bottom_height,
                               entry->info.flags);
+        return LIBRDP_STATUS_OK;
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_FRAME_MARKER)
+    {
+        status = rdp_gdi_parse_frame_marker_order(header, &frame_marker);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (frame_marker.action == 0u)
+        {
+            if (session->graphics_frame_active)
+                rdp_session_graphics_dirty_flush(session);
+            session->graphics_frame_active = 1;
+            session->graphics_dirty_pending = 0;
+            session->graphics_current_frame_id++;
+        }
+        else if (frame_marker.action == 1u)
+        {
+            session->graphics_frame_active = 0;
+            rdp_session_graphics_dirty_flush(session);
+            session->graphics_frames_decoded++;
+        }
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.frame_marker",
+                              "action=%u frame_id=%u active=%u",
+                              frame_marker.action,
+                              session->graphics_current_frame_id,
+                              session->graphics_frame_active ? 1u : 0u);
         return LIBRDP_STATUS_OK;
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
@@ -22653,6 +22890,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     }
 
     session->state = LIBRDP_SESSION_IDLE;
+    session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
     rdp_transport_init(&session->transport);
@@ -22716,6 +22954,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
+    rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
     rdp_avc_decoder_free(session->avc);
     rdp_nscodec_context_free(&session->surface_nscodec);
@@ -22892,6 +23131,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
+    rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
     rdp_gdi_render_state_init(&session->gdi_render);
     rdp_session_palette_reset(session);
@@ -24681,6 +24921,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
+    rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
     rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);
