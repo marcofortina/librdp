@@ -165,7 +165,8 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
         stream->green_chroma_len == 0 ||
         stream->color_loss_level < 1u ||
         stream->color_loss_level > 7u ||
-        stream->chroma_subsampling_level > 1u)
+        stream->chroma_subsampling_level > 1u ||
+        reserved != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     rounded_width = rdp_nscodec_round_up((size_t)width, 8u);

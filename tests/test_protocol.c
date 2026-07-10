@@ -2077,6 +2077,14 @@ static int test_path_security_license_channels(void)
         0x01, 0x00, 0x00, 0x00,
         1, 0, 0
     };
+    const uint8_t nscodec_bad_reserved[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00,
+        100, 10, 20, 0x7f
+    };
     const uint8_t planar_reserved[] = {0x80, 0, 0, 0};
     const uint8_t planar_subsample_without_loss[] = {RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING, 0, 0, 0};
     const uint8_t fast_bitmap_update[] = {
@@ -4664,6 +4672,11 @@ static int test_path_security_license_channels(void)
            nscodec_pixels.data[35] == 0xff);
     PCHECK(rdp_nscodec_parse_stream(nscodec_invalid_stream,
                                     sizeof(nscodec_invalid_stream),
+                                    1,
+                                    1,
+                                    &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_nscodec_parse_stream(nscodec_bad_reserved,
+                                    sizeof(nscodec_bad_reserved),
                                     1,
                                     1,
                                     &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
