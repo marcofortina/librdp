@@ -161,6 +161,8 @@
 #define RDP_SESSION_FILE_END_OF_FILE_INFORMATION 20u
 #define RDP_SESSION_FILE_NETWORK_OPEN_INFORMATION 34u
 #define RDP_SESSION_FILE_ATTRIBUTE_TAG_INFORMATION 35u
+#define RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION 37u
+#define RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION 38u
 #define RDP_SESSION_FILE_FS_VOLUME_INFORMATION 1u
 #define RDP_SESSION_FILE_FS_SIZE_INFORMATION 3u
 #define RDP_SESSION_FILE_FS_DEVICE_INFORMATION 4u
@@ -2347,6 +2349,13 @@ static uint64_t rdp_session_stat_allocation_size(const struct stat* st)
     return rdp_session_stat_size(st);
 }
 
+static uint64_t rdp_session_stat_file_id(const struct stat* st)
+{
+    if (!st)
+        return 0;
+    return (uint64_t)st->st_ino;
+}
+
 static uint32_t rdp_session_stat_attributes(const struct stat* st)
 {
     uint32_t attributes = 0;
@@ -2853,6 +2862,8 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_FULL_DIRECTORY_INFORMATION:
         case RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION:
         case RDP_SESSION_FILE_NAMES_INFORMATION:
+        case RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION:
+        case RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION:
             break;
         default:
             rdp_buffer_free(&utf16);
@@ -2888,12 +2899,20 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)utf16.length);
     if (information_class == RDP_SESSION_FILE_FULL_DIRECTORY_INFORMATION ||
-        information_class == RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION)
+        information_class == RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION)
     {
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u32_le(buffer, 0);
     }
-    if (information_class == RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION)
+    if (information_class == RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION)
+    {
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_append_u64_le(buffer, rdp_session_stat_file_id(st));
+    }
+    if (information_class == RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION)
     {
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u8(buffer, 0);
@@ -2901,6 +2920,11 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
             status = rdp_buffer_append_u8(buffer, 0);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_append_zero(buffer, 24);
+    }
+    if (information_class == RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION)
+    {
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_append_u64_le(buffer, rdp_session_stat_file_id(st));
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, utf16.data, utf16.length);
