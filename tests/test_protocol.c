@@ -6375,6 +6375,12 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_input_channel_parse_touch_event(channel_packet.data,
                                                channel_packet.length,
                                                &input_touch_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    input_touch_contact.contact_rect_left = 5;
+    input_touch_contact.contact_rect_right = 2;
+    PCHECK(rdp_input_channel_write_touch_contact(&dyn_response, &input_touch_contact) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    input_touch_contact.contact_rect_left = -2;
+    input_touch_contact.contact_rect_right = 2;
     input_touch_contact.pressure = 1025;
     PCHECK(rdp_input_channel_write_touch_contact(&dyn_response, &input_touch_contact) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);

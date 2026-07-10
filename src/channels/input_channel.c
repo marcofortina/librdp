@@ -330,6 +330,10 @@ static librdp_status rdp_input_channel_validate_touch_contact(const rdp_input_ch
     if ((contact->fields_present & RDP_INPUT_CHANNEL_TOUCH_PRESSURE_PRESENT) != 0 &&
         contact->pressure > 1024u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((contact->fields_present & RDP_INPUT_CHANNEL_TOUCH_CONTACTRECT_PRESENT) != 0 &&
+        (contact->contact_rect_left > contact->contact_rect_right ||
+         contact->contact_rect_top > contact->contact_rect_bottom))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
 }
 
