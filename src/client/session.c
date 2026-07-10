@@ -8282,8 +8282,10 @@ static librdp_status rdp_session_smartcard_handle_status(
     const rdp_smartcard_redirection_request_message* message)
 {
     rdp_session_smartcard_handle* handle = NULL;
-    char reader_names[1024];
-    DWORD reader_names_len = sizeof(reader_names);
+    char reader_names_stack[1024];
+    char* reader_names = NULL;
+    DWORD reader_names_len = 0;
+    uint8_t reader_names_allocated = 0;
     DWORD state = 0;
     DWORD protocol = 0;
     DWORD atr_len = RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH;
@@ -8292,19 +8294,41 @@ static librdp_status rdp_session_smartcard_handle_status(
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    memset(reader_names, 0, sizeof(reader_names));
+    memset(reader_names_stack, 0, sizeof(reader_names_stack));
     memset(atr, 0, sizeof(atr));
     rdp_buffer_init(&payload);
+    if (!message->body.status.reader_names_is_null && message->body.status.reader_len > 0)
+    {
+        uint32_t requested_len = message->body.status.reader_len;
+
+        if (requested_len > RDP_SESSION_SMARTCARD_MAX_IO_BYTES)
+            requested_len = RDP_SESSION_SMARTCARD_MAX_IO_BYTES;
+        reader_names_len = requested_len;
+        if (requested_len <= sizeof(reader_names_stack))
+        {
+            reader_names = reader_names_stack;
+        }
+        else
+        {
+            reader_names = (char*)calloc(1, requested_len);
+            if (!reader_names)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+            else
+                reader_names_allocated = 1;
+        }
+    }
     handle = rdp_session_smartcard_handle_find(session,
                                                message->body.status.handle.data,
                                                message->body.status.handle.length);
-    if (handle)
+    if (handle && pcsc_status != (LONG)RDP_SESSION_SCARD_E_NO_MEMORY)
         pcsc_status = SCardStatus(handle->handle, reader_names, &reader_names_len, &state, &protocol, atr, &atr_len);
     status = rdp_smartcard_redirection_write_status_return(
         &payload,
         (uint32_t)pcsc_status,
-        pcsc_status == SCARD_S_SUCCESS ? reader_names : NULL,
-        pcsc_status == SCARD_S_SUCCESS ? rdp_session_smartcard_u32_from_dword(reader_names_len) : 0,
+        pcsc_status == SCARD_S_SUCCESS && reader_names ? reader_names : NULL,
+        pcsc_status == SCARD_S_SUCCESS && reader_names ?
+            rdp_session_smartcard_u32_from_dword(reader_names_len) :
+            0,
         rdp_session_smartcard_u32_from_dword(state),
         pcsc_status == SCARD_S_SUCCESS ?
             rdp_session_smartcard_protocol_from_pcsc(protocol) :
@@ -8327,6 +8351,8 @@ static librdp_status rdp_session_smartcard_handle_status(
                     (unsigned)reader_names_len,
                     (unsigned)atr_len);
     rdp_buffer_free(&payload);
+    if (reader_names_allocated)
+        free(reader_names);
     return status;
 }
 
