@@ -43,6 +43,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_udp2_parse_packet(data, size, &udp2_packet);
     if (rdp_udp2_parse_packet(data, size, &udp2_packet) == LIBRDP_STATUS_OK)
     {
+        (void)rdp_udp2_validate_packet(&udp2_packet);
         (void)rdp_udp2_classify_packet(&udp2_packet, &udp2_kind);
         if (udp2_packet.has_ack_vector)
             (void)rdp_udp2_ack_vector_count(&udp2_packet.ack_vector, &received, &other);

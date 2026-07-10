@@ -16255,6 +16255,7 @@ static int test_udp_transport(void)
                                       data_payload,
                                       sizeof(data_payload)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_OK);
     PCHECK(packet.header.flags == RDP_UDP2_FLAG_DATA &&
            packet.header.log_window_size == 3u &&
            packet.data_sequence_number == 0x1234u &&
@@ -16266,6 +16267,7 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp2_write_ack_packet(&buffer, 1u, 0x2345u, 0x00aabbccu, 9u, ack_payload, 2u, 3u) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_OK);
     PCHECK(packet.has_ack &&
            packet.ack.sequence_number == 0x2345u &&
            packet.ack.received_timestamp == 0x00aabbccu &&
@@ -16283,6 +16285,7 @@ static int test_udp_transport(void)
                                             ack_payload,
                                             sizeof(ack_payload)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_OK);
     PCHECK(packet.has_ack_vector &&
            packet.ack_vector.base_sequence_number == 0x3456u &&
            packet.ack_vector.timestamp_present &&
@@ -16293,7 +16296,10 @@ static int test_udp_transport(void)
 
     PCHECK(rdp_udp2_write_ack_of_acks_packet(&buffer, 5u, 0x4567u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_OK);
     PCHECK(packet.has_ack_of_acks && packet.ack_of_acks_sequence_number == 0x4567u);
+    packet.has_ack_of_acks = 0;
+    PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

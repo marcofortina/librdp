@@ -219,6 +219,7 @@ librdp_status rdp_udp_write_syn_data_ex(rdp_buffer* buffer, const rdp_udp_syn_da
 librdp_status rdp_udp2_parse_header(const void* data, size_t length, rdp_udp2_header* header);
 librdp_status rdp_udp2_write_header(rdp_buffer* buffer, const rdp_udp2_header* header);
 librdp_status rdp_udp2_parse_packet(const void* data, size_t length, rdp_udp2_packet* packet);
+librdp_status rdp_udp2_validate_packet(const rdp_udp2_packet* packet);
 librdp_status rdp_udp2_write_packet(rdp_buffer* buffer, const rdp_udp2_packet* packet);
 librdp_status rdp_udp2_classify_packet(const rdp_udp2_packet* packet, rdp_udp2_packet_kind* kind);
 librdp_status rdp_udp2_ack_vector_decode_entry(uint8_t value, rdp_udp2_ack_vector_entry* entry);
