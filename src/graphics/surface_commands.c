@@ -119,18 +119,10 @@ librdp_status rdp_surface_commands_parse(const void* data,
         else if (command_type == RDP_SURFACE_COMMAND_FRAME_MARKER)
         {
             command->kind = RDP_SURFACE_COMMAND_KIND_FRAME_MARKER;
-            if (rdp_stream_read_u16_le(&stream, &command->frame_marker.action) != LIBRDP_STATUS_OK)
+            if (rdp_stream_read_u16_le(&stream, &command->frame_marker.action) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(&stream, &command->frame_marker.frame_id) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            if (rdp_stream_remaining(&stream) >= 4u)
-            {
-                if (rdp_stream_read_u32_le(&stream, &command->frame_marker.frame_id) != LIBRDP_STATUS_OK)
-                    return LIBRDP_STATUS_PROTOCOL_ERROR;
-                command->frame_marker.has_frame_id = 1;
-            }
-            else if (rdp_stream_remaining(&stream) != 0)
-            {
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            }
+            command->frame_marker.has_frame_id = 1;
         }
         else
         {

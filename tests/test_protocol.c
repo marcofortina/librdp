@@ -2108,6 +2108,10 @@ static int test_path_security_license_channels(void)
         0x01, 0x00,
         0x44, 0x33, 0x22, 0x11
     };
+    const uint8_t surface_command_short_frame_marker[] = {
+        0x04, 0x00,
+        0x01, 0x00
+    };
     const uint8_t surface_command_extended[] = {
         0x06, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
@@ -3532,6 +3536,9 @@ static int test_path_security_license_channels(void)
            surface_commands.commands[1].frame_marker.frame_id == 0x11223344u);
     PCHECK(rdp_surface_commands_parse(surface_command_payload,
                                       sizeof(surface_command_payload) - 1u,
+                                      &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_surface_commands_parse(surface_command_short_frame_marker,
+                                      sizeof(surface_command_short_frame_marker),
                                       &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_surface_commands_parse(surface_command_extended,
                                       sizeof(surface_command_extended),
