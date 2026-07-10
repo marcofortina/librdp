@@ -90,6 +90,13 @@ static int rdp_input_channel_valid_event_id(uint16_t event_id)
            event_id == RDP_INPUT_CHANNEL_EVENT_PEN;
 }
 
+static librdp_status rdp_input_channel_validate_touch_contact_blob(const uint8_t* data,
+                                                                   size_t length,
+                                                                   uint16_t contact_count);
+static librdp_status rdp_input_channel_validate_pen_contact_blob(const uint8_t* data,
+                                                                 size_t length,
+                                                                 uint16_t contact_count);
+
 librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rdp_input_channel_header* header)
 {
     rdp_stream stream;
@@ -412,6 +419,13 @@ librdp_status rdp_input_channel_write_touch_event(rdp_buffer* buffer,
             status = LIBRDP_STATUS_INVALID_ARGUMENT;
             break;
         }
+        if (rdp_input_channel_validate_touch_contact_blob(frames[i].contacts,
+                                                          frames[i].contacts_len,
+                                                          frames[i].contact_count) != LIBRDP_STATUS_OK)
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        }
         status = rdp_buffer_append_u16_le(&body, frames[i].contact_count);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_input_channel_append_u64_le(&body, frames[i].frame_offset);
@@ -479,6 +493,21 @@ static librdp_status rdp_input_channel_skip_touch_contacts(rdp_stream* stream,
     }
     if (bytes_read)
         *bytes_read = stream->position - start;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_input_channel_validate_touch_contact_blob(const uint8_t* data,
+                                                                   size_t length,
+                                                                   uint16_t contact_count)
+{
+    rdp_stream stream;
+
+    if (!data || length == 0 || contact_count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_input_channel_skip_touch_contacts(&stream, contact_count, NULL) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
 }
 
@@ -690,6 +719,13 @@ librdp_status rdp_input_channel_write_pen_event(rdp_buffer* buffer,
             status = LIBRDP_STATUS_INVALID_ARGUMENT;
             break;
         }
+        if (rdp_input_channel_validate_pen_contact_blob(frames[i].contacts,
+                                                        frames[i].contacts_len,
+                                                        frames[i].contact_count) != LIBRDP_STATUS_OK)
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        }
         status = rdp_buffer_append_u16_le(&body, frames[i].contact_count);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_input_channel_append_u64_le(&body, frames[i].frame_offset);
@@ -758,6 +794,21 @@ static librdp_status rdp_input_channel_skip_pen_contacts(rdp_stream* stream,
     }
     if (bytes_read)
         *bytes_read = stream->position - start;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_input_channel_validate_pen_contact_blob(const uint8_t* data,
+                                                                 size_t length,
+                                                                 uint16_t contact_count)
+{
+    rdp_stream stream;
+
+    if (!data || length == 0 || contact_count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_input_channel_skip_pen_contacts(&stream, contact_count, NULL) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
 }
 

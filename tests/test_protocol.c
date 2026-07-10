@@ -6410,6 +6410,12 @@ static int test_path_security_license_channels(void)
            input_touch_contact.contact_rect_top == -3 &&
            input_touch_contact.orientation == 90 &&
            input_touch_contact.pressure == 512);
+    input_touch_frame.contact_count = 2;
+    dyn_response.length = 0;
+    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_write_touch_event(&dyn_response, 0, &input_touch_frame, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
     PCHECK(rdp_buffer_append_u8(&channel_packet, 0xaa) == LIBRDP_STATUS_OK);
     channel_packet.data[2] = (uint8_t)(channel_packet.length & 0xffu);
     channel_packet.data[3] = (uint8_t)((channel_packet.length >> 8) & 0xffu);
@@ -6493,6 +6499,12 @@ static int test_path_security_license_channels(void)
            input_pen_contact.rotation == 45 &&
            input_pen_contact.tilt_x == -10 &&
            input_pen_contact.tilt_y == 20);
+    input_pen_frame.contact_count = 2;
+    dyn_response.length = 0;
+    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_write_pen_event(&dyn_response, 0, &input_pen_frame, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
     PCHECK(rdp_buffer_append_u8(&channel_packet, 0xbb) == LIBRDP_STATUS_OK);
     channel_packet.data[2] = (uint8_t)(channel_packet.length & 0xffu);
     channel_packet.data[3] = (uint8_t)((channel_packet.length >> 8) & 0xffu);
