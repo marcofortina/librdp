@@ -16,8 +16,6 @@ static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_OPAQUERECT:
         case RDP_GDI_ORDER_SAVEBITMAP:
         case RDP_GDI_ORDER_MULTIDSTBLT:
-        case RDP_GDI_ORDER_MULTISCRBLT:
-        case RDP_GDI_ORDER_MULTIOPAQUERECT:
         case RDP_GDI_ORDER_POLYGON_SC:
         case RDP_GDI_ORDER_POLYLINE:
         case RDP_GDI_ORDER_ELLIPSE_SC:
@@ -28,6 +26,8 @@ static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_MEMBLT:
         case RDP_GDI_ORDER_MEM3BLT:
         case RDP_GDI_ORDER_MULTIPATBLT:
+        case RDP_GDI_ORDER_MULTISCRBLT:
+        case RDP_GDI_ORDER_MULTIOPAQUERECT:
         case RDP_GDI_ORDER_FAST_INDEX:
         case RDP_GDI_ORDER_POLYGON_CB:
         case RDP_GDI_ORDER_FAST_GLYPH:

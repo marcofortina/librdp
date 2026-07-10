@@ -10005,6 +10005,53 @@ static int test_gdi_orders(void)
         1u,
         0x88u, 0x99u, 0xaau
     };
+    const uint8_t render_multi_dstblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MULTIDSTBLT,
+        0x7fu,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0xffu,
+        2u,
+        7u, 0x00u,
+        0x06u,
+        0x02u, 0x03u, 0x04u, 0x05u,
+        0x0au, 0x06u
+    };
+    const uint8_t render_multi_scrblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MULTISCRBLT,
+        0xffu, 0x01u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0xccu,
+        0x14u, 0x00u,
+        0x1eu, 0x00u,
+        2u,
+        7u, 0x00u,
+        0x06u,
+        0x02u, 0x03u, 0x04u, 0x05u,
+        0x0au, 0x06u
+    };
+    const uint8_t render_multi_opaque[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MULTIOPAQUERECT,
+        0xffu, 0x01u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x11u, 0x22u, 0x33u,
+        2u,
+        7u, 0x00u,
+        0x06u,
+        0x02u, 0x03u, 0x04u, 0x05u,
+        0x0au, 0x06u
+    };
     const uint8_t render_unsupported[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_DRAWNINEGRID
@@ -10296,6 +10343,47 @@ static int test_gdi_orders(void)
            render_op.rect.y == 6 &&
            render_op.rect.width == 6 &&
            render_op.rect.height == 7);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_multi_dstblt,
+                                               sizeof(render_multi_dstblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_multi_dstblt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MULTIDSTBLT &&
+           render_op.rop == 0xffu &&
+           render_op.rect_count == 2 &&
+           render_op.rects[0].x == 2 &&
+           render_op.rects[0].y == 3 &&
+           render_op.rects[0].width == 4 &&
+           render_op.rects[0].height == 5 &&
+           render_op.rects[1].x == 12 &&
+           render_op.rects[1].y == 3 &&
+           render_op.rects[1].width == 4 &&
+           render_op.rects[1].height == 6);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_multi_scrblt,
+                                               sizeof(render_multi_scrblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_multi_scrblt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MULTISCRBLT &&
+           render_op.rop == 0xccu &&
+           render_op.src_x == 20 &&
+           render_op.src_y == 30 &&
+           render_op.rect_count == 2 &&
+           render_op.rects[1].x == 12 &&
+           render_op.rects[1].height == 6);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_multi_opaque,
+                                               sizeof(render_multi_opaque),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_multi_opaque) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT &&
+           render_op.color == 0x00332211u &&
+           render_op.rect_count == 2 &&
+           render_op.rects[1].x == 12 &&
+           render_op.rects[1].height == 6);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_unsupported,
                                                sizeof(render_unsupported),

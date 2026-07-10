@@ -17808,6 +17808,46 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
         return rdp_session_gdi_fill_polygon(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC)
         return rdp_session_gdi_fill_ellipse(session, op);
+    if (op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
+        op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
+        op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
+    {
+        uint32_t i = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (op->rect_count > RDP_GDI_RENDER_MAX_RECTS)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (i = 0; i < op->rect_count; i++)
+        {
+            rdp_gdi_render_op single = *op;
+
+            single.rect = op->rects[i];
+            single.rect_count = 0;
+            if (op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT)
+                single.kind = RDP_GDI_RENDER_OP_DSTBLT;
+            else if (op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
+                single.kind = RDP_GDI_RENDER_OP_OPAQUE_RECT;
+            else
+            {
+                single.kind = RDP_GDI_RENDER_OP_SCRBLT;
+                single.src_x = op->src_x + (op->rects[i].x - op->rect.x);
+                single.src_y = op->src_y + (op->rects[i].y - op->rect.y);
+            }
+            status = rdp_session_apply_gdi_render_op(session, &single);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.order.apply",
+                              "type=%u kind=%u rects=%u rop=%u color=%06x",
+                              op->order_type,
+                              op->kind,
+                              op->rect_count,
+                              op->rop,
+                              op->color & 0x00ffffffu);
+        return LIBRDP_STATUS_OK;
+    }
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 
