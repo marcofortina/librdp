@@ -236,6 +236,41 @@ typedef struct rdp_video_redirection_volume
     uint32_t second_value;
 } rdp_video_redirection_volume;
 
+typedef struct rdp_video_redirection_format_support_request
+{
+    rdp_video_redirection_header header;
+    uint32_t platform_cookie;
+    uint32_t no_rollover_flags;
+    uint32_t media_type_count;
+    const uint8_t* media_types;
+    size_t media_types_len;
+} rdp_video_redirection_format_support_request;
+
+typedef struct rdp_video_redirection_format_support_response
+{
+    rdp_video_redirection_header header;
+    uint32_t format_supported;
+    uint32_t platform_cookie;
+    uint32_t result;
+} rdp_video_redirection_format_support_response;
+
+typedef struct rdp_video_redirection_topology_response
+{
+    rdp_video_redirection_header header;
+    uint32_t topology_ready;
+    uint32_t result;
+} rdp_video_redirection_topology_response;
+
+typedef struct rdp_video_redirection_source_video_rect
+{
+    rdp_video_redirection_header header;
+    uint8_t presentation_id[16];
+    uint32_t left_bits;
+    uint32_t top_bits;
+    uint32_t right_bits;
+    uint32_t bottom_bits;
+} rdp_video_redirection_source_video_rect;
+
 librdp_status rdp_video_redirection_parse_header(
     const void* data,
     size_t length,
@@ -288,6 +323,29 @@ librdp_status rdp_video_redirection_write_u32_capability(
     rdp_buffer* buffer,
     uint32_t capability_type,
     uint32_t value);
+librdp_status rdp_video_redirection_parse_check_format_support_request(
+    const void* data,
+    size_t length,
+    rdp_video_redirection_format_support_request* request);
+librdp_status rdp_video_redirection_write_check_format_support_response(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    uint32_t format_supported,
+    uint32_t platform_cookie,
+    uint32_t result);
+librdp_status rdp_video_redirection_parse_check_format_support_response(
+    const void* data,
+    size_t length,
+    rdp_video_redirection_format_support_response* response);
+librdp_status rdp_video_redirection_write_set_topology_response(
+    rdp_buffer* buffer,
+    uint32_t message_id,
+    uint32_t topology_ready,
+    uint32_t result);
+librdp_status rdp_video_redirection_parse_set_topology_response(
+    const void* data,
+    size_t length,
+    rdp_video_redirection_topology_response* response);
 librdp_status rdp_video_redirection_parse_media_type(
     const void* data,
     size_t length,
@@ -475,5 +533,9 @@ librdp_status rdp_video_redirection_write_channel_volume(
     const uint8_t* presentation_id,
     uint32_t value,
     uint32_t second_value);
+librdp_status rdp_video_redirection_parse_source_video_rect(
+    const void* data,
+    size_t length,
+    rdp_video_redirection_source_video_rect* rect);
 
 #endif
