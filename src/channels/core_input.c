@@ -43,6 +43,33 @@ static uint8_t rdp_core_input_event_payload_len(uint8_t type)
     return 0xffu;
 }
 
+static librdp_status rdp_core_input_validate_event(const rdp_core_input_event* event)
+{
+    if (!event || rdp_core_input_event_payload_len(event->type) == 0xffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (event->type == RDP_CORE_INPUT_EVENT_SCANCODE &&
+        (event->flags & ~(RDP_CORE_INPUT_KBDFLAGS_RELEASE |
+                          RDP_CORE_INPUT_KBDFLAGS_EXTENDED |
+                          RDP_CORE_INPUT_KBDFLAGS_EXTENDED1)) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (event->type == RDP_CORE_INPUT_EVENT_UNICODE &&
+        (event->flags & ~RDP_CORE_INPUT_KBDFLAGS_RELEASE) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (event->type == RDP_CORE_INPUT_EVENT_SYNC &&
+        (event->flags & ~(RDP_CORE_INPUT_SYNC_SCROLL_LOCK |
+                          RDP_CORE_INPUT_SYNC_NUM_LOCK |
+                          RDP_CORE_INPUT_SYNC_CAPS_LOCK |
+                          RDP_CORE_INPUT_SYNC_KANA_LOCK)) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((event->type == RDP_CORE_INPUT_EVENT_MOUSE ||
+         event->type == RDP_CORE_INPUT_EVENT_MOUSEX ||
+         event->type == RDP_CORE_INPUT_EVENT_RELMOUSE ||
+         event->type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP) &&
+        event->flags != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_core_input_parse_header(const void* data,
                                           size_t length,
                                           rdp_core_input_header* header)
@@ -234,34 +261,16 @@ librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
 
     if (!buffer || (!events && event_count > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < event_count; i++)
+    {
+        status = rdp_core_input_validate_event(&events[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+
     status = rdp_core_input_write_header(buffer, RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE, event_count);
     for (i = 0; status == LIBRDP_STATUS_OK && i < event_count; i++)
     {
-        uint8_t payload_len = rdp_core_input_event_payload_len(events[i].type);
-
-        if (payload_len == 0xffu)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        if (events[i].type == RDP_CORE_INPUT_EVENT_SCANCODE &&
-            (events[i].flags & ~(RDP_CORE_INPUT_KBDFLAGS_RELEASE |
-                                 RDP_CORE_INPUT_KBDFLAGS_EXTENDED |
-                                 RDP_CORE_INPUT_KBDFLAGS_EXTENDED1)) != 0)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        if (events[i].type == RDP_CORE_INPUT_EVENT_UNICODE &&
-            (events[i].flags & ~RDP_CORE_INPUT_KBDFLAGS_RELEASE) != 0)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        if (events[i].type == RDP_CORE_INPUT_EVENT_SYNC &&
-            (events[i].flags & ~(RDP_CORE_INPUT_SYNC_SCROLL_LOCK |
-                                 RDP_CORE_INPUT_SYNC_NUM_LOCK |
-                                 RDP_CORE_INPUT_SYNC_CAPS_LOCK |
-                                 RDP_CORE_INPUT_SYNC_KANA_LOCK)) != 0)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        if ((events[i].type == RDP_CORE_INPUT_EVENT_MOUSE ||
-             events[i].type == RDP_CORE_INPUT_EVENT_MOUSEX ||
-             events[i].type == RDP_CORE_INPUT_EVENT_RELMOUSE ||
-             events[i].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP) &&
-            events[i].flags != 0)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-
         status = rdp_buffer_append_u8(buffer, rdp_core_input_pack_event(events[i].type, events[i].flags));
         if (status != LIBRDP_STATUS_OK)
             return status;

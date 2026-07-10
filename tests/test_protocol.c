@@ -6090,6 +6090,19 @@ static int test_path_security_license_channels(void)
            core_events[0].scancode == 0x1e &&
            core_events[1].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP &&
            core_events[1].timestamp == 0x12345678u);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
+    core_events[0].type = RDP_CORE_INPUT_EVENT_SCANCODE;
+    core_events[0].flags = 0;
+    core_events[0].scancode = 0x1e;
+    core_events[1].type = RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP;
+    core_events[1].flags = 1;
+    core_events[1].timestamp = 0x12345678u;
+    PCHECK(rdp_core_input_write_events(&dyn_response,
+                                       core_events,
+                                       2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
     PCHECK(rdp_input_channel_parse_header(input_sc_ready_v300,
                                           sizeof(input_sc_ready_v300),
                                           &input_header) == LIBRDP_STATUS_OK);
