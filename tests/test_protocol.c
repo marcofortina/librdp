@@ -7173,6 +7173,9 @@ static int test_path_security_license_channels(void)
         PCHECK(dst_u[4u * 8u + 1u] == aux_u[8] && dst_v[4u * 8u + 1u] == aux_v[8]);
         chroma_view.aux_v_stride = 1;
         PCHECK(rdp_avc_reconstruct_444_chroma(&chroma_view) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        chroma_view.aux_v_stride = 4;
+        chroma_view.aux_u_stride = 1;
+        PCHECK(rdp_avc_reconstruct_444_chroma(&chroma_view) == LIBRDP_STATUS_PROTOCOL_ERROR);
     }
     {
         uint8_t aux_y[6u * 3u];
@@ -7263,6 +7266,9 @@ static int test_path_security_license_channels(void)
         PCHECK(dst_u[16u + 6u] == aux_v[1] && dst_v[16u + 6u] == aux_v[5]);
         PCHECK(dst_u[0] == 0xeeu && dst_v[0] == 0xddu);
         chroma_view.aux_u_stride = 4;
+        PCHECK(rdp_avc_reconstruct_444v2_chroma(&chroma_view) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        chroma_view.aux_u_stride = 8;
+        chroma_view.aux_v_stride = 4;
         PCHECK(rdp_avc_reconstruct_444v2_chroma(&chroma_view) == LIBRDP_STATUS_PROTOCOL_ERROR);
     }
     {

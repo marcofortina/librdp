@@ -198,6 +198,9 @@ librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* 
 
     half_source_width = ((size_t)view->aux_width + 1u) / 2u;
     quarter_source_width = ((size_t)view->aux_width + 3u) / 4u;
+    if (view->aux_u_stride < quarter_source_width * 2u ||
+        view->aux_v_stride < quarter_source_width * 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     for (y = view->rect.top; y < view->rect.bottom; y++)
     {
@@ -718,6 +721,9 @@ librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view
     odd_column_count = (uint32_t)(view->rect.right / 2u - view->rect.left / 2u);
     first_odd_column = (view->rect.left & 1u) ? 0u : 1u;
     even_row_count = (height + 1u) / 2u;
+    if (view->aux_u_stride < ((size_t)view->aux_width + 1u) / 2u ||
+        view->aux_v_stride < ((size_t)view->aux_width + 1u) / 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     for (y = 0; y < padded_height; y++)
     {
