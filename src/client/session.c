@@ -13778,6 +13778,8 @@ static librdp_status rdp_session_gdi_create_offscreen_bitmap(
     if (!session || !order || order->bitmap_id > 0x7fffu ||
         order->width == 0 || order->height == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < order->delete_count; i++)
+        rdp_session_gdi_offscreen_delete(session, order->delete_indices[i]);
     entry = rdp_session_gdi_offscreen_slot(session, order->bitmap_id);
     if (!entry)
         return LIBRDP_STATUS_NO_MEMORY;
@@ -13789,8 +13791,6 @@ static librdp_status rdp_session_gdi_create_offscreen_bitmap(
     entry->active = 1;
     entry->bitmap_id = order->bitmap_id;
     entry->surface = surface;
-    for (i = 0; i < order->delete_count; i++)
-        rdp_session_gdi_offscreen_delete(session, order->delete_indices[i]);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
                           "client.gdi.offscreen.create",
