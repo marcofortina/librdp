@@ -762,6 +762,8 @@ librdp_status rdp_usb_redirection_parse_transfer(const void* data,
                                              transfer->cb_ts_urb,
                                              &transfer->urb) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (transfer->urb.size != transfer->cb_ts_urb)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) > 0)
     {
         if (rdp_stream_read_u32_le(&stream, &transfer->output_buffer_size) != LIBRDP_STATUS_OK)
