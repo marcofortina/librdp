@@ -72,7 +72,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifdef RDP_HAVE_PCSC
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+#include <winpr/smartcard.h>
+#elif defined(RDP_HAVE_PCSC)
 #include <winscard.h>
 #endif
 #ifdef RDP_HAVE_LIBUSB
@@ -6542,6 +6544,54 @@ static char* rdp_session_smartcard_connect_reader_name(
     return reader_name;
 }
 
+static char* rdp_session_smartcard_string_to_utf8(const rdp_smartcard_redirection_string* value,
+                                                  int wide)
+{
+    char* text = NULL;
+
+    if (!value || value->is_null || value->length == 0 || !value->data)
+        return NULL;
+    if (wide)
+        return rdp_session_smartcard_utf16le_to_utf8_multisz(value->data, value->length);
+    text = (char*)calloc((size_t)value->length + 1u, 1u);
+    if (!text)
+        return NULL;
+    memcpy(text, value->data, value->length);
+    return text;
+}
+
+static char* rdp_session_smartcard_reader_state_name_to_utf8(
+    const rdp_smartcard_redirection_reader_state_call* reader,
+    int wide)
+{
+    rdp_smartcard_redirection_string value;
+
+    if (!reader)
+        return NULL;
+    memset(&value, 0, sizeof(value));
+    value.is_null = reader->reader_name_is_null;
+    value.length = reader->reader_name_len;
+    value.data = reader->reader_name;
+    return rdp_session_smartcard_string_to_utf8(&value, wide);
+}
+
+static void rdp_session_smartcard_reader_common_from_pcsc(
+    rdp_smartcard_redirection_reader_state_common* out,
+    uint32_t current_state,
+    uint32_t event_state,
+    uint32_t atr_len,
+    const uint8_t* atr)
+{
+    if (!out)
+        return;
+    memset(out, 0, sizeof(*out));
+    out->current_state = current_state;
+    out->event_state = event_state;
+    out->atr_len = atr_len <= RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH ? atr_len : 0;
+    if (out->atr_len > 0 && atr)
+        memcpy(out->atr, atr, out->atr_len);
+}
+
 static void rdp_session_smartcard_reset(librdp_session* session)
 {
     if (!session)
@@ -7475,6 +7525,535 @@ static librdp_status rdp_session_smartcard_handle_attrib(
     rdp_buffer_free(&payload);
     return status;
 }
+
+static librdp_status rdp_session_smartcard_handle_context_string(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_session_smartcard_context* context = NULL;
+    char* value = NULL;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+    int wide = 0;
+
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERGROUPW ||
+           message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_FORGETREADERGROUPW ||
+           message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_FORGETREADERW;
+    context = rdp_session_smartcard_context_find(session,
+                                                 message->body.context_string.context.data,
+                                                 message->body.context_string.context.length);
+    if (context)
+    {
+        value = rdp_session_smartcard_string_to_utf8(&message->body.context_string.value, wide);
+        if (!value)
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+        else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERGROUPA ||
+                 message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERGROUPW)
+            pcsc_status = SCardIntroduceReaderGroupA(context->context, value);
+        else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_FORGETREADERGROUPA ||
+                 message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_FORGETREADERGROUPW)
+            pcsc_status = SCardForgetReaderGroupA(context->context, value);
+        else
+            pcsc_status = SCardForgetReaderA(context->context, value);
+    }
+#else
+    (void)context;
+    (void)value;
+    (void)wide;
+    pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+#endif
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.context_string",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status);
+    free(value);
+    return rdp_session_send_smartcard_long_result(session,
+                                                  request,
+                                                  (uint32_t)pcsc_status,
+                                                  "client.rdpdr.smartcard.context_string.response");
+}
+
+static librdp_status rdp_session_smartcard_handle_context_two_strings(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_session_smartcard_context* context = NULL;
+    char* first = NULL;
+    char* second = NULL;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+    int wide = 0;
+
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERW ||
+           message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_ADDREADERTOGROUPW ||
+           message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_REMOVEREADERFROMGROUPW;
+    context = rdp_session_smartcard_context_find(session,
+                                                 message->body.context_two_strings.context.data,
+                                                 message->body.context_two_strings.context.length);
+    if (context)
+    {
+        first = rdp_session_smartcard_string_to_utf8(&message->body.context_two_strings.first, wide);
+        second = rdp_session_smartcard_string_to_utf8(&message->body.context_two_strings.second, wide);
+        if (!first || !second)
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+        else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERA ||
+                 message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_INTRODUCEREADERW)
+            pcsc_status = SCardIntroduceReaderA(context->context, first, second);
+        else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_ADDREADERTOGROUPA ||
+                 message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_ADDREADERTOGROUPW)
+            pcsc_status = SCardAddReaderToGroupA(context->context, first, second);
+        else
+            pcsc_status = SCardRemoveReaderFromGroupA(context->context, first, second);
+    }
+#else
+    (void)context;
+    (void)first;
+    (void)second;
+    (void)wide;
+    pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+#endif
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.context_two_strings",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status);
+    free(second);
+    free(first);
+    return rdp_session_send_smartcard_long_result(session,
+                                                  request,
+                                                  (uint32_t)pcsc_status,
+                                                  "client.rdpdr.smartcard.context_two_strings.response");
+}
+
+static librdp_status rdp_session_smartcard_handle_access_started_event(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request)
+{
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    HANDLE handle = SCardAccessStartedEvent();
+
+    pcsc_status = handle ? SCARD_S_SUCCESS : (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+    if (handle)
+        SCardReleaseStartedEvent();
+#endif
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.access_started_event",
+                    "device_id=%u completion_id=%u status=%ld",
+                    request->device_id,
+                    request->completion_id,
+                    pcsc_status);
+    return rdp_session_send_smartcard_long_result(
+        session,
+        request,
+        (uint32_t)pcsc_status,
+        "client.rdpdr.smartcard.access_started_event.response");
+}
+
+static librdp_status rdp_session_smartcard_send_reader_states(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    LONG pcsc_status,
+    const rdp_smartcard_redirection_reader_state_common* states,
+    uint32_t state_count,
+    const char* event)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_smartcard_redirection_write_get_status_change_return(
+        &payload,
+        (uint32_t)pcsc_status,
+        pcsc_status == SCARD_S_SUCCESS ? states : NULL,
+        pcsc_status == SCARD_S_SUCCESS ? state_count : 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_smartcard_io_completion(session, request, &payload, event);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status rdp_session_smartcard_handle_locate_cards(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+    rdp_smartcard_redirection_reader_state_common out[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+    uint32_t reader_count = message->body.locate_cards.reader_count;
+
+    memset(out, 0, sizeof(out));
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    {
+        rdp_session_smartcard_context* context = NULL;
+        SCARD_READERSTATEA states[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+        char* reader_names[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+        char* card_names = NULL;
+        uint32_t i = 0;
+        int wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_LOCATECARDSW;
+
+        memset(states, 0, sizeof(states));
+        memset(reader_names, 0, sizeof(reader_names));
+        context = rdp_session_smartcard_context_find(session,
+                                                     message->body.locate_cards.context.data,
+                                                     message->body.locate_cards.context.length);
+        if (context)
+        {
+            card_names = rdp_session_smartcard_string_to_utf8(&message->body.locate_cards.card_names,
+                                                              wide);
+            if (!card_names)
+            {
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+            }
+            else
+            {
+                pcsc_status = SCARD_S_SUCCESS;
+                for (i = 0; i < reader_count; i++)
+                {
+                    const rdp_smartcard_redirection_reader_state_call* in =
+                        &message->body.locate_cards.readers[i];
+
+                    reader_names[i] = rdp_session_smartcard_reader_state_name_to_utf8(in, wide);
+                    if (!reader_names[i] && !in->reader_name_is_null)
+                    {
+                        pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+                        break;
+                    }
+                    states[i].szReader = reader_names[i];
+                    states[i].dwCurrentState = in->state.current_state;
+                    states[i].dwEventState = in->state.event_state;
+                    states[i].cbAtr = in->state.atr_len;
+                    if (in->state.atr_len > 0)
+                        memcpy(states[i].rgbAtr, in->state.atr, in->state.atr_len);
+                }
+                if (pcsc_status == SCARD_S_SUCCESS)
+                    pcsc_status = SCardLocateCardsA(context->context, card_names, states, reader_count);
+            }
+        }
+        else
+        {
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+        }
+        if (pcsc_status == SCARD_S_SUCCESS)
+        {
+            for (i = 0; i < reader_count; i++)
+                rdp_session_smartcard_reader_common_from_pcsc(&out[i],
+                                                              states[i].dwCurrentState,
+                                                              states[i].dwEventState,
+                                                              states[i].cbAtr,
+                                                              states[i].rgbAtr);
+        }
+        for (i = 0; i < reader_count; i++)
+            free(reader_names[i]);
+        free(card_names);
+    }
+#endif
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.locate_cards",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld readers=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    reader_count);
+    return rdp_session_smartcard_send_reader_states(
+        session,
+        request,
+        pcsc_status,
+        out,
+        reader_count,
+        "client.rdpdr.smartcard.locate_cards.response");
+}
+
+static librdp_status rdp_session_smartcard_handle_locate_cards_by_atr(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+    rdp_smartcard_redirection_reader_state_common out[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+    uint32_t reader_count = message->body.locate_cards_by_atr.reader_count;
+
+    memset(out, 0, sizeof(out));
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    {
+        rdp_session_smartcard_context* context = NULL;
+        SCARD_ATRMASK masks[RDP_SMARTCARD_REDIRECTION_MAX_ATR_MASKS];
+        SCARD_READERSTATEA states[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+        char* reader_names[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+        uint32_t i = 0;
+        int wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_LOCATECARDSBYATRW;
+
+        (void)wide;
+        memset(masks, 0, sizeof(masks));
+        memset(states, 0, sizeof(states));
+        memset(reader_names, 0, sizeof(reader_names));
+        context = rdp_session_smartcard_context_find(session,
+                                                     message->body.locate_cards_by_atr.context.data,
+                                                     message->body.locate_cards_by_atr.context.length);
+        if (context)
+        {
+            pcsc_status = SCARD_S_SUCCESS;
+            for (i = 0; i < message->body.locate_cards_by_atr.atr_count; i++)
+            {
+                masks[i].cbAtr = message->body.locate_cards_by_atr.atr_masks[i].atr_len;
+                memcpy(masks[i].rgbAtr,
+                       message->body.locate_cards_by_atr.atr_masks[i].atr,
+                       sizeof(masks[i].rgbAtr));
+                memcpy(masks[i].rgbMask,
+                       message->body.locate_cards_by_atr.atr_masks[i].mask,
+                       sizeof(masks[i].rgbMask));
+            }
+            for (i = 0; i < reader_count; i++)
+            {
+                const rdp_smartcard_redirection_reader_state_call* in =
+                    &message->body.locate_cards_by_atr.readers[i];
+
+                reader_names[i] = rdp_session_smartcard_reader_state_name_to_utf8(in, wide);
+                if (!reader_names[i] && !in->reader_name_is_null)
+                {
+                    pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+                    break;
+                }
+                states[i].szReader = reader_names[i];
+                states[i].dwCurrentState = in->state.current_state;
+                states[i].dwEventState = in->state.event_state;
+                states[i].cbAtr = in->state.atr_len;
+                if (in->state.atr_len > 0)
+                    memcpy(states[i].rgbAtr, in->state.atr, in->state.atr_len);
+            }
+            if (pcsc_status == SCARD_S_SUCCESS)
+                pcsc_status = SCardLocateCardsByATRA(context->context,
+                                                     masks,
+                                                     message->body.locate_cards_by_atr.atr_count,
+                                                     states,
+                                                     reader_count);
+        }
+        else
+        {
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+        }
+        if (pcsc_status == SCARD_S_SUCCESS)
+        {
+            for (i = 0; i < reader_count; i++)
+                rdp_session_smartcard_reader_common_from_pcsc(&out[i],
+                                                              states[i].dwCurrentState,
+                                                              states[i].dwEventState,
+                                                              states[i].cbAtr,
+                                                              states[i].rgbAtr);
+        }
+        for (i = 0; i < reader_count; i++)
+            free(reader_names[i]);
+    }
+#endif
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.locate_cards_by_atr",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld atrs=%u readers=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    message->body.locate_cards_by_atr.atr_count,
+                    reader_count);
+    return rdp_session_smartcard_send_reader_states(
+        session,
+        request,
+        pcsc_status,
+        out,
+        reader_count,
+        "client.rdpdr.smartcard.locate_cards_by_atr.response");
+}
+
+static librdp_status rdp_session_smartcard_handle_cache(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_buffer payload;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+    uint8_t data[RDP_SESSION_SMARTCARD_MAX_IO_BYTES];
+    DWORD data_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    memset(data, 0, sizeof(data));
+    rdp_buffer_init(&payload);
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    {
+        rdp_session_smartcard_context* context = NULL;
+        char* lookup_name = NULL;
+        UUID card_identifier;
+        int wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_READCACHEW ||
+                   message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_WRITECACHEW;
+
+        if (message->kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_READ_CACHE)
+        {
+            context = rdp_session_smartcard_context_find(session,
+                                                         message->body.read_cache.context.data,
+                                                         message->body.read_cache.context.length);
+            if (context)
+            {
+                memcpy(&card_identifier,
+                       message->body.read_cache.card_identifier,
+                       sizeof(card_identifier));
+                lookup_name =
+                    rdp_session_smartcard_string_to_utf8(&message->body.read_cache.lookup_name,
+                                                         wide);
+                data_len = message->body.read_cache.data_len;
+                if (data_len > sizeof(data))
+                    data_len = sizeof(data);
+                if (!lookup_name)
+                    pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+                else
+                    pcsc_status = SCardReadCacheA(context->context,
+                                                  &card_identifier,
+                                                  message->body.read_cache.freshness_counter,
+                                                  lookup_name,
+                                                  data,
+                                                  &data_len);
+            }
+            else
+            {
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+            }
+        }
+        else
+        {
+            context = rdp_session_smartcard_context_find(session,
+                                                         message->body.write_cache.context.data,
+                                                         message->body.write_cache.context.length);
+            if (context)
+            {
+                memcpy(&card_identifier,
+                       message->body.write_cache.card_identifier,
+                       sizeof(card_identifier));
+                lookup_name =
+                    rdp_session_smartcard_string_to_utf8(&message->body.write_cache.lookup_name,
+                                                         wide);
+                if (!lookup_name)
+                    pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+                else
+                    pcsc_status = SCardWriteCacheA(context->context,
+                                                   &card_identifier,
+                                                   message->body.write_cache.freshness_counter,
+                                                   lookup_name,
+                                                   (PBYTE)message->body.write_cache.data,
+                                                   message->body.write_cache.data_len);
+            }
+            else
+            {
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+            }
+        }
+        free(lookup_name);
+    }
+#endif
+    if (message->kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_READ_CACHE)
+        status = rdp_smartcard_redirection_write_buffer_return(&payload,
+                                                               (uint32_t)pcsc_status,
+                                                               data,
+                                                               pcsc_status == SCARD_S_SUCCESS ?
+                                                                   rdp_session_smartcard_u32_from_dword(data_len) :
+                                                                   0);
+    else
+        status = rdp_smartcard_redirection_write_long_return(&payload, (uint32_t)pcsc_status);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_smartcard_io_completion(
+            session,
+            request,
+            &payload,
+            "client.rdpdr.smartcard.cache.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.cache",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld data_len=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    (unsigned)data_len);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status rdp_session_smartcard_handle_reader_name(
+    librdp_session* session,
+    const rdp_device_redirection_io_request* request,
+    const rdp_smartcard_redirection_request_message* message)
+{
+    rdp_buffer payload;
+    uint8_t data[RDP_SESSION_SMARTCARD_MAX_IO_BYTES];
+    DWORD data_len = message->body.reader_name.output_len;
+    DWORD device_type = 0;
+    LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (data_len > sizeof(data))
+        data_len = sizeof(data);
+    memset(data, 0, sizeof(data));
+    rdp_buffer_init(&payload);
+#ifdef RDP_HAVE_WINPR_SMARTCARD
+    {
+        rdp_session_smartcard_context* context = NULL;
+        char* reader_name = NULL;
+        int wide = 0;
+
+        context = rdp_session_smartcard_context_find(session,
+                                                     message->body.reader_name.context.data,
+                                                     message->body.reader_name.context.length);
+        if (context)
+        {
+            reader_name = rdp_session_smartcard_string_to_utf8(&message->body.reader_name.reader_name,
+                                                               wide);
+            if (!reader_name)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+            else if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_GETREADERICON)
+                pcsc_status = SCardGetReaderIconA(context->context, reader_name, data, &data_len);
+            else
+                pcsc_status = SCardGetDeviceTypeIdA(context->context, reader_name, &device_type);
+        }
+        else
+        {
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+        }
+        free(reader_name);
+    }
+#endif
+    if (message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_GETDEVICETYPEID)
+        status = rdp_smartcard_redirection_write_count_return(&payload,
+                                                              (uint32_t)pcsc_status,
+                                                              rdp_session_smartcard_u32_from_dword(device_type));
+    else
+        status = rdp_smartcard_redirection_write_buffer_return(&payload,
+                                                               (uint32_t)pcsc_status,
+                                                               data,
+                                                               pcsc_status == SCARD_S_SUCCESS ?
+                                                                   rdp_session_smartcard_u32_from_dword(data_len) :
+                                                                   0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_smartcard_io_completion(
+            session,
+            request,
+            &payload,
+            "client.rdpdr.smartcard.reader_name.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.smartcard.reader_name",
+                    "device_id=%u completion_id=%u ioctl=%u status=%ld data_len=%u device_type=%u",
+                    request->device_id,
+                    request->completion_id,
+                    message->request.io_control_code,
+                    pcsc_status,
+                    (unsigned)data_len,
+                    (unsigned)device_type);
+    rdp_buffer_free(&payload);
+    return status;
+}
 #else
 static void rdp_session_smartcard_reset(librdp_session* session)
 {
@@ -7538,6 +8117,12 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
             return rdp_session_smartcard_handle_list_readers(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_GET_STATUS_CHANGE:
             return rdp_session_smartcard_handle_get_status_change(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT_STRING:
+            return rdp_session_smartcard_handle_context_string(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT_TWO_STRINGS:
+            return rdp_session_smartcard_handle_context_two_strings(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_LOCATE_CARDS:
+            return rdp_session_smartcard_handle_locate_cards(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_HANDLE:
             return rdp_session_smartcard_handle_handle_only(session, &request, &message);
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT:
@@ -7557,6 +8142,15 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_ATTRIB:
         case RDP_SMARTCARD_REDIRECTION_MESSAGE_SET_ATTRIB:
             return rdp_session_smartcard_handle_attrib(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_ACCESS_STARTED_EVENT:
+            return rdp_session_smartcard_handle_access_started_event(session, &request);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_LOCATE_CARDS_BY_ATR:
+            return rdp_session_smartcard_handle_locate_cards_by_atr(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_READ_CACHE:
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_WRITE_CACHE:
+            return rdp_session_smartcard_handle_cache(session, &request, &message);
+        case RDP_SMARTCARD_REDIRECTION_MESSAGE_READER_NAME:
+            return rdp_session_smartcard_handle_reader_name(session, &request, &message);
         default:
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.rdpdr.smartcard.unsupported_ioctl",

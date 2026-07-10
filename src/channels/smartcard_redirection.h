@@ -76,6 +76,14 @@
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READER_GROUPS 13u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_LIST_READERS 14u
 #define RDP_SMARTCARD_REDIRECTION_MESSAGE_GET_STATUS_CHANGE 15u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT_STRING 16u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_CONTEXT_TWO_STRINGS 17u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_LOCATE_CARDS 18u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_LOCATE_CARDS_BY_ATR 19u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_READ_CACHE 20u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_WRITE_CACHE 21u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_READER_NAME 22u
+#define RDP_SMARTCARD_REDIRECTION_MESSAGE_ACCESS_STARTED_EVENT 23u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_USER 0x00000000u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_TERMINAL 0x00000001u
 #define RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM 0x00000002u
@@ -96,6 +104,8 @@
 #define RDP_SMARTCARD_REDIRECTION_TRANSMIT_MAX_LENGTH 66560u
 #define RDP_SMARTCARD_REDIRECTION_ATTRIB_MAX_LENGTH 65536u
 #define RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES 32u
+#define RDP_SMARTCARD_REDIRECTION_MAX_ATR_MASKS 32u
+#define RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH 16u
 
 typedef struct rdp_smartcard_redirection_device_control_request
 {
@@ -190,6 +200,26 @@ typedef struct rdp_smartcard_redirection_reader_state_call
     rdp_smartcard_redirection_reader_state_common state;
 } rdp_smartcard_redirection_reader_state_call;
 
+typedef struct rdp_smartcard_redirection_string
+{
+    uint32_t is_null;
+    uint32_t length;
+    const uint8_t* data;
+} rdp_smartcard_redirection_string;
+
+typedef struct rdp_smartcard_redirection_context_string_call
+{
+    rdp_smartcard_redirection_context context;
+    rdp_smartcard_redirection_string value;
+} rdp_smartcard_redirection_context_string_call;
+
+typedef struct rdp_smartcard_redirection_context_two_strings_call
+{
+    rdp_smartcard_redirection_context context;
+    rdp_smartcard_redirection_string first;
+    rdp_smartcard_redirection_string second;
+} rdp_smartcard_redirection_context_two_strings_call;
+
 typedef struct rdp_smartcard_redirection_get_status_change_call
 {
     rdp_smartcard_redirection_context context;
@@ -197,6 +227,23 @@ typedef struct rdp_smartcard_redirection_get_status_change_call
     uint32_t reader_count;
     rdp_smartcard_redirection_reader_state_call readers[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
 } rdp_smartcard_redirection_get_status_change_call;
+
+typedef struct rdp_smartcard_redirection_locate_cards_call
+{
+    rdp_smartcard_redirection_context context;
+    rdp_smartcard_redirection_string card_names;
+    uint32_t reader_count;
+    rdp_smartcard_redirection_reader_state_call readers[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+} rdp_smartcard_redirection_locate_cards_call;
+
+typedef struct rdp_smartcard_redirection_locate_cards_by_atr_call
+{
+    rdp_smartcard_redirection_context context;
+    uint32_t atr_count;
+    rdp_smartcard_redirection_atr_mask atr_masks[RDP_SMARTCARD_REDIRECTION_MAX_ATR_MASKS];
+    uint32_t reader_count;
+    rdp_smartcard_redirection_reader_state_call readers[RDP_SMARTCARD_REDIRECTION_MAX_READER_STATES];
+} rdp_smartcard_redirection_locate_cards_by_atr_call;
 
 typedef struct rdp_smartcard_redirection_get_status_change_return
 {
@@ -272,6 +319,34 @@ typedef struct rdp_smartcard_redirection_set_attrib_call
     const uint8_t* attr;
 } rdp_smartcard_redirection_set_attrib_call;
 
+typedef struct rdp_smartcard_redirection_read_cache_call
+{
+    rdp_smartcard_redirection_context context;
+    const uint8_t* card_identifier;
+    uint32_t freshness_counter;
+    rdp_smartcard_redirection_string lookup_name;
+    uint32_t data_is_null;
+    uint32_t data_len;
+} rdp_smartcard_redirection_read_cache_call;
+
+typedef struct rdp_smartcard_redirection_write_cache_call
+{
+    rdp_smartcard_redirection_context context;
+    const uint8_t* card_identifier;
+    uint32_t freshness_counter;
+    rdp_smartcard_redirection_string lookup_name;
+    uint32_t data_len;
+    const uint8_t* data;
+} rdp_smartcard_redirection_write_cache_call;
+
+typedef struct rdp_smartcard_redirection_reader_name_call
+{
+    rdp_smartcard_redirection_context context;
+    rdp_smartcard_redirection_string reader_name;
+    uint32_t output_is_null;
+    uint32_t output_len;
+} rdp_smartcard_redirection_reader_name_call;
+
 typedef struct rdp_smartcard_redirection_long_return
 {
     uint32_t return_code;
@@ -345,6 +420,13 @@ typedef struct rdp_smartcard_redirection_request_message
         rdp_smartcard_redirection_list_reader_groups_call list_reader_groups;
         rdp_smartcard_redirection_list_readers_call list_readers;
         rdp_smartcard_redirection_get_status_change_call get_status_change;
+        rdp_smartcard_redirection_context_string_call context_string;
+        rdp_smartcard_redirection_context_two_strings_call context_two_strings;
+        rdp_smartcard_redirection_locate_cards_call locate_cards;
+        rdp_smartcard_redirection_locate_cards_by_atr_call locate_cards_by_atr;
+        rdp_smartcard_redirection_read_cache_call read_cache;
+        rdp_smartcard_redirection_write_cache_call write_cache;
+        rdp_smartcard_redirection_reader_name_call reader_name;
     } body;
 } rdp_smartcard_redirection_request_message;
 
@@ -373,6 +455,15 @@ librdp_status rdp_smartcard_redirection_write_reader_state_common(
     uint32_t event_state,
     const uint8_t* atr,
     uint32_t atr_len);
+librdp_status rdp_smartcard_redirection_parse_string(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_string* value);
+librdp_status rdp_smartcard_redirection_write_string(
+    rdp_buffer* buffer,
+    uint32_t is_null,
+    const void* data,
+    uint32_t length);
 librdp_status rdp_smartcard_redirection_parse_device_control_request(
     const void* data,
     size_t length,
@@ -471,6 +562,56 @@ librdp_status rdp_smartcard_redirection_write_get_status_change_call(
     const void* context,
     uint32_t context_len,
     uint32_t timeout,
+    const rdp_smartcard_redirection_reader_state_call* readers,
+    uint32_t reader_count);
+librdp_status rdp_smartcard_redirection_parse_context_string_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_context_string_call* call);
+librdp_status rdp_smartcard_redirection_write_context_string_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t is_null,
+    const void* value,
+    uint32_t value_len);
+librdp_status rdp_smartcard_redirection_parse_context_two_strings_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_context_two_strings_call* call);
+librdp_status rdp_smartcard_redirection_write_context_two_strings_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t first_is_null,
+    const void* first,
+    uint32_t first_len,
+    uint32_t second_is_null,
+    const void* second,
+    uint32_t second_len);
+librdp_status rdp_smartcard_redirection_parse_locate_cards_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_locate_cards_call* call);
+librdp_status rdp_smartcard_redirection_write_locate_cards_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t card_names_is_null,
+    const void* card_names,
+    uint32_t card_names_len,
+    const rdp_smartcard_redirection_reader_state_call* readers,
+    uint32_t reader_count);
+librdp_status rdp_smartcard_redirection_parse_locate_cards_by_atr_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_locate_cards_by_atr_call* call);
+librdp_status rdp_smartcard_redirection_write_locate_cards_by_atr_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const rdp_smartcard_redirection_atr_mask* atr_masks,
+    uint32_t atr_count,
     const rdp_smartcard_redirection_reader_state_call* readers,
     uint32_t reader_count);
 librdp_status rdp_smartcard_redirection_parse_reconnect_call(
@@ -584,6 +725,49 @@ librdp_status rdp_smartcard_redirection_write_set_attrib_call(
     uint32_t attr_id,
     const void* attr,
     uint32_t attr_len);
+librdp_status rdp_smartcard_redirection_parse_read_cache_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_read_cache_call* call);
+librdp_status rdp_smartcard_redirection_write_read_cache_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    uint32_t freshness_counter,
+    uint32_t lookup_name_is_null,
+    const void* lookup_name,
+    uint32_t lookup_name_len,
+    uint32_t data_is_null,
+    uint32_t data_len);
+librdp_status rdp_smartcard_redirection_parse_write_cache_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_write_cache_call* call);
+librdp_status rdp_smartcard_redirection_write_write_cache_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    uint32_t freshness_counter,
+    uint32_t lookup_name_is_null,
+    const void* lookup_name,
+    uint32_t lookup_name_len,
+    const void* data,
+    uint32_t data_len);
+librdp_status rdp_smartcard_redirection_parse_reader_name_call(
+    const void* data,
+    size_t length,
+    rdp_smartcard_redirection_reader_name_call* call);
+librdp_status rdp_smartcard_redirection_write_reader_name_call(
+    rdp_buffer* buffer,
+    const void* context,
+    uint32_t context_len,
+    uint32_t reader_name_is_null,
+    const void* reader_name,
+    uint32_t reader_name_len,
+    uint32_t output_is_null,
+    uint32_t output_len);
 librdp_status rdp_smartcard_redirection_parse_long_return(
     const void* data,
     size_t length,
