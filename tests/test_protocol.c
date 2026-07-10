@@ -8688,7 +8688,9 @@ static int test_printer_redirection_channel(void)
         const char* format = NULL;
         const uint8_t pdf[] = {'%', 'P', 'D', 'F', '-'};
         const uint8_t ps[] = {'%', '!', 'P', 'S'};
-        const uint8_t xps[] = {'P', 'K', 3, 4, 20, 0};
+        const uint8_t xps[] = {'P', 'K', 3, 4, '[', 'C', 'o', 'n', 't', 'e', 'n', 't',
+                               '_', 'T', 'y', 'p', 'e', 's', ']', '.', 'x', 'm', 'l'};
+        const uint8_t zip[] = {'P', 'K', 3, 4, 'd', 'a', 't', 'a'};
         const uint8_t png[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
         const uint8_t jpg[] = {0xff, 0xd8, 0xff, 0xe0};
         const uint8_t pcl[] = {0x1b, '%', '-', '1', '2', '3', '4', '5', 'X'};
@@ -8708,6 +8710,9 @@ static int test_printer_redirection_channel(void)
         PCHECK(rdp_printer_redirection_detect_document_format(xps, sizeof(xps), &format) ==
                LIBRDP_STATUS_OK);
         PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_XPS) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(zip, sizeof(zip), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_RAW) == 0);
         PCHECK(rdp_printer_redirection_detect_document_format(png, sizeof(png), &format) ==
                LIBRDP_STATUS_OK);
         PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PNG) == 0);

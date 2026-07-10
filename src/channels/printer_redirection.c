@@ -31,6 +31,41 @@ static librdp_status rdp_printer_redirection_read_blob(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static int rdp_printer_redirection_contains_bytes(const uint8_t* data,
+                                                  size_t length,
+                                                  const char* needle,
+                                                  size_t needle_len)
+{
+    size_t i = 0;
+
+    if (!data || !needle || needle_len == 0 || length < needle_len)
+        return 0;
+    for (i = 0; i <= length - needle_len; i++)
+    {
+        if (memcmp(data + i, needle, needle_len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int rdp_printer_redirection_zip_is_xps(const uint8_t* data, size_t length)
+{
+    return length >= 4u &&
+           memcmp(data, "PK\003\004", 4u) == 0 &&
+           (rdp_printer_redirection_contains_bytes(data,
+                                                   length,
+                                                   "[Content_Types].xml",
+                                                   sizeof("[Content_Types].xml") - 1u) ||
+            rdp_printer_redirection_contains_bytes(data,
+                                                   length,
+                                                   "FixedDocumentSequence",
+                                                   sizeof("FixedDocumentSequence") - 1u) ||
+            rdp_printer_redirection_contains_bytes(data,
+                                                   length,
+                                                   "application/vnd.ms-package.xps",
+                                                   sizeof("application/vnd.ms-package.xps") - 1u));
+}
+
 static librdp_status rdp_printer_redirection_expect_header(const void* data,
                                                            size_t length,
                                                            uint16_t expected_packet_id,
@@ -168,7 +203,7 @@ librdp_status rdp_printer_redirection_detect_document_format(
         *format = RDP_PRINTER_REDIRECTION_FORMAT_PDF;
     else if (text_len >= 2u && memcmp(text, "%!", 2u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_POSTSCRIPT;
-    else if (length >= 4u && memcmp(bytes, "PK\003\004", 4u) == 0)
+    else if (rdp_printer_redirection_zip_is_xps(bytes, length))
         *format = RDP_PRINTER_REDIRECTION_FORMAT_XPS;
     else if (length >= 8u && memcmp(bytes, "\211PNG\r\n\032\n", 8u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_PNG;
