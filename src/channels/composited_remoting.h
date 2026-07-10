@@ -82,10 +82,10 @@
 #define RDP_COMPOSITED_MSG_PARTITION_ZOMBIE 0x00000006u
 #define RDP_COMPOSITED_MSG_COMPOSITION_TIME_EXCEEDED 0x00000007u
 #define RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY 0x00000009u
-#define RDP_COMPOSITED_MSG_CONNECTION_LOST 0x0000000au
-#define RDP_COMPOSITED_MSG_ASYNC_FLUSH_REPLY 0x0000000bu
-#define RDP_COMPOSITED_MSG_RENDER_STATUS 0x0000000du
-#define RDP_COMPOSITED_MSG_DISABLE_COMPOSITION 0x0000000eu
+#define RDP_COMPOSITED_MSG_CONNECTION_LOST 0x0000000bu
+#define RDP_COMPOSITED_MSG_ASYNC_FLUSH_REPLY 0x0000000du
+#define RDP_COMPOSITED_MSG_RENDER_STATUS 0x0000000eu
+#define RDP_COMPOSITED_MSG_DISABLE_COMPOSITION 0x0000000fu
 #define RDP_COMPOSITED_MSG_META_CAPTURE_BITS_REPLY 0x00000010u
 #define RDP_COMPOSITED_RESOURCE_VISUAL 0x00000012u
 #define RDP_COMPOSITED_RESOURCE_WINDOW_NODE 0x00000013u
@@ -457,6 +457,20 @@ librdp_status rdp_composited_write_notification(rdp_buffer* buffer,
 librdp_status rdp_composited_write_version_reply(rdp_buffer* buffer,
                                                  const uint32_t* versions,
                                                  uint32_t version_count);
+librdp_status rdp_composited_write_sync_flush_reply(rdp_buffer* buffer,
+                                                    uint32_t channel,
+                                                    uint32_t hr);
+librdp_status rdp_composited_write_roundtrip_reply(rdp_buffer* buffer,
+                                                   uint32_t channel,
+                                                   uint32_t request_id);
+librdp_status rdp_composited_write_async_flush_reply(rdp_buffer* buffer,
+                                                     uint32_t channel,
+                                                     uint32_t response_token,
+                                                     uint32_t hr);
+librdp_status rdp_composited_write_hardware_tier(rdp_buffer* buffer,
+                                                 uint32_t channel,
+                                                 uint32_t common_minimum_caps,
+                                                 uint32_t display_uniqueness);
 librdp_status rdp_composited_parse_version_reply(const void* data,
                                                  size_t length,
                                                  rdp_composited_version_reply* reply);

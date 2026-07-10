@@ -10321,6 +10321,52 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_composited_write_sync_flush_reply(&buffer, 7u, 0x80004005u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION &&
+           control.word0 == 7u &&
+           control.payload_len == 60u &&
+           test_read_u32_le(control.payload) == RDP_COMPOSITED_MSG_SYNC_FLUSH_REPLY &&
+           test_read_u32_le(control.payload + 8u) == 0x80004005u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_roundtrip_reply(&buffer, 8u, 0x11223344u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION &&
+           control.word0 == 8u &&
+           control.payload_len == 60u &&
+           test_read_u32_le(control.payload) == RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY &&
+           test_read_u32_le(control.payload + 8u) == 0x11223344u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_async_flush_reply(&buffer,
+                                                  9u,
+                                                  0x55667788u,
+                                                  0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION &&
+           control.word0 == 9u &&
+           control.payload_len == 60u &&
+           test_read_u32_le(control.payload) == RDP_COMPOSITED_MSG_ASYNC_FLUSH_REPLY &&
+           test_read_u32_le(control.payload + 8u) == 0x55667788u &&
+           test_read_u32_le(control.payload + 12u) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_hardware_tier(&buffer, 10u, 1u, 0x10203040u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
+    PCHECK(control.control_code == RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION &&
+           control.word0 == 10u &&
+           control.payload_len == 60u &&
+           test_read_u32_le(control.payload) == RDP_COMPOSITED_MSG_HARDWARE_TIER &&
+           test_read_u32_le(control.payload + 8u) == 1u &&
+           test_read_u32_le(control.payload + 12u) == 0x10203040u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_resource_order(&buffer,
                                                RDP_COMPOSITED_CMD_CREATE_RESOURCE,
                                                0x10u,

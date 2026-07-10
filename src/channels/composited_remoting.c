@@ -1046,6 +1046,114 @@ librdp_status rdp_composited_write_version_reply(rdp_buffer* buffer,
     return status;
 }
 
+static librdp_status rdp_composited_write_channel_u32_reply(rdp_buffer* buffer,
+                                                            uint32_t channel,
+                                                            uint32_t notification_code,
+                                                            uint32_t value)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_composited_notification_code_valid(notification_code))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, notification_code);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, value);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_zeroes(&payload, 48u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_notification(buffer,
+                                                   RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                                                   channel,
+                                                   payload.data,
+                                                   payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_composited_write_sync_flush_reply(rdp_buffer* buffer,
+                                                    uint32_t channel,
+                                                    uint32_t hr)
+{
+    return rdp_composited_write_channel_u32_reply(buffer,
+                                                 channel,
+                                                 RDP_COMPOSITED_MSG_SYNC_FLUSH_REPLY,
+                                                 hr);
+}
+
+librdp_status rdp_composited_write_roundtrip_reply(rdp_buffer* buffer,
+                                                   uint32_t channel,
+                                                   uint32_t request_id)
+{
+    return rdp_composited_write_channel_u32_reply(buffer,
+                                                 channel,
+                                                 RDP_COMPOSITED_MSG_ROUNDTRIP_REPLY,
+                                                 request_id);
+}
+
+librdp_status rdp_composited_write_async_flush_reply(rdp_buffer* buffer,
+                                                     uint32_t channel,
+                                                     uint32_t response_token,
+                                                     uint32_t hr)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, RDP_COMPOSITED_MSG_ASYNC_FLUSH_REPLY);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, response_token);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, hr);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_zeroes(&payload, 44u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_notification(buffer,
+                                                   RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                                                   channel,
+                                                   payload.data,
+                                                   payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_composited_write_hardware_tier(rdp_buffer* buffer,
+                                                 uint32_t channel,
+                                                 uint32_t common_minimum_caps,
+                                                 uint32_t display_uniqueness)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, RDP_COMPOSITED_MSG_HARDWARE_TIER);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, common_minimum_caps ? 1u : 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, display_uniqueness);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_zeroes(&payload, 44u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_notification(buffer,
+                                                   RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION,
+                                                   channel,
+                                                   payload.data,
+                                                   payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status rdp_composited_parse_version_reply(const void* data,
                                                  size_t length,
                                                  rdp_composited_version_reply* reply)

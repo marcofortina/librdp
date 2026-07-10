@@ -16678,6 +16678,92 @@ static uint32_t rdp_session_composited_payload_code(const rdp_composited_control
            ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
 }
 
+static librdp_status rdp_session_send_composited_batch_reply(
+    librdp_session* session,
+    uint32_t channel,
+    const rdp_composited_channel_message* message)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t value = 0;
+    const char* event = NULL;
+
+    if (!session || !message)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&response);
+    switch (message->control_code)
+    {
+        case RDP_COMPOSITED_CMD_SYNC_FLUSH:
+            if (message->payload_len != 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_composited_write_sync_flush_reply(&response,
+                                                           channel,
+                                                           RDP_SESSION_HRESULT_OK);
+            event = "client.cr2.sync_flush.reply";
+            break;
+        case RDP_COMPOSITED_CMD_ROUNDTRIP_REQUEST:
+            if (message->payload_len != 4u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            value = rdp_session_read_u32_le_unaligned(message->payload);
+            status = rdp_composited_write_roundtrip_reply(&response, channel, value);
+            event = "client.cr2.roundtrip.reply";
+            break;
+        case RDP_COMPOSITED_CMD_ASYNC_FLUSH:
+            if (message->payload_len != 8u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            value = rdp_session_read_u32_le_unaligned(message->payload);
+            status = rdp_composited_write_async_flush_reply(&response,
+                                                            channel,
+                                                            value,
+                                                            RDP_SESSION_HRESULT_OK);
+            event = "client.cr2.async_flush.reply";
+            break;
+        case RDP_COMPOSITED_CMD_REQUEST_TIER:
+            if (message->payload_len != 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_composited_write_hardware_tier(&response, channel, 1u, 0u);
+            event = "client.cr2.hardware_tier";
+            break;
+        default:
+            rdp_buffer_free(&response);
+            return LIBRDP_STATUS_OK;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_composited_packet(session, &response, event);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        event,
+                        "channel=%u command=%u value=%u",
+                        channel,
+                        message->control_code,
+                        value);
+    rdp_buffer_free(&response);
+    return status;
+}
+
+static librdp_status rdp_session_send_composited_batch_replies(librdp_session* session,
+                                                               uint32_t channel,
+                                                               const void* data,
+                                                               size_t data_len)
+{
+    rdp_composited_batch_reader reader;
+    rdp_composited_channel_message message;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_composited_batch_init(&reader, data, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    while ((status = rdp_composited_batch_next(&reader, &message)) == LIBRDP_STATUS_OK)
+    {
+        status = rdp_session_send_composited_batch_reply(session, channel, &message);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return status == LIBRDP_STATUS_AGAIN ? LIBRDP_STATUS_OK : status;
+}
+
 static librdp_status rdp_session_handle_composited_message(librdp_session* session,
                                                            uint32_t channel_id,
                                                            const uint8_t* data,
@@ -16805,6 +16891,11 @@ static librdp_status rdp_session_handle_composited_message(librdp_session* sessi
             status = rdp_composited_render_tree_apply_batch(&session->composited_tree,
                                                             control.payload,
                                                             control.payload_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_send_composited_batch_replies(session,
+                                                                   control.word0,
+                                                                   control.payload,
+                                                                   control.payload_len);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.cr2.render.batch",
                             "dvc_channel_id=%u channel=%u payload_len=%u status=%s commands=%u resources=%u resource_delta=%d invalidations=%u skipped=%u",
