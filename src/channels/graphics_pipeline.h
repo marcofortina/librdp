@@ -29,9 +29,21 @@
 #define RDP_GRAPHICS_CAPVERSION_8 0x00080004u
 #define RDP_GRAPHICS_CAPVERSION_81 0x00080105u
 #define RDP_GRAPHICS_CAPVERSION_10 0x000a0002u
+#define RDP_GRAPHICS_CAPVERSION_101 0x000a0100u
+#define RDP_GRAPHICS_CAPVERSION_102 0x000a0200u
+#define RDP_GRAPHICS_CAPVERSION_103 0x000a0301u
+#define RDP_GRAPHICS_CAPVERSION_104 0x000a0400u
+#define RDP_GRAPHICS_CAPVERSION_105 0x000a0502u
+#define RDP_GRAPHICS_CAPVERSION_106 0x000a0600u
+#define RDP_GRAPHICS_CAPVERSION_106_ERR 0x000a0601u
+#define RDP_GRAPHICS_CAPVERSION_107 0x000a0701u
+#define RDP_GRAPHICS_CAPS_FLAG_THINCLIENT 0x00000001u
 #define RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE 0x00000002u
 #define RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED 0x00000010u
 #define RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED 0x00000020u
+#define RDP_GRAPHICS_CAPS_FLAG_AVC_THINCLIENT 0x00000040u
+#define RDP_GRAPHICS_CAPS_FLAG_SCALEDMAP_DISABLE 0x00000080u
+#define RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT 3u
 #define RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888 0x20u
 #define RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888 0x21u
 #define RDP_GRAPHICS_CODECID_UNCOMPRESSED 0x0000u
@@ -384,6 +396,10 @@ void rdp_graphics_decompressor_reset(rdp_graphics_decompressor* decompressor);
 void rdp_graphics_decompressor_free(rdp_graphics_decompressor* decompressor);
 librdp_status rdp_graphics_parse_header(const void* data, size_t length, rdp_graphics_header* header);
 librdp_status rdp_graphics_parse_capset(const void* data, size_t length, rdp_graphics_capset* capset);
+librdp_status rdp_graphics_default_capsets(rdp_graphics_capset* capsets,
+                                           uint16_t capset_capacity,
+                                           uint16_t* capset_count);
+int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset);
 librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
                                                 const rdp_graphics_capset* capsets,
                                                 uint16_t capset_count);

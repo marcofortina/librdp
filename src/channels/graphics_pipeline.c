@@ -122,7 +122,15 @@ static int rdp_graphics_capversion_supported(uint32_t version)
 {
     return version == RDP_GRAPHICS_CAPVERSION_8 ||
            version == RDP_GRAPHICS_CAPVERSION_81 ||
-           version == RDP_GRAPHICS_CAPVERSION_10;
+           version == RDP_GRAPHICS_CAPVERSION_10 ||
+           version == RDP_GRAPHICS_CAPVERSION_101 ||
+           version == RDP_GRAPHICS_CAPVERSION_102 ||
+           version == RDP_GRAPHICS_CAPVERSION_103 ||
+           version == RDP_GRAPHICS_CAPVERSION_104 ||
+           version == RDP_GRAPHICS_CAPVERSION_105 ||
+           version == RDP_GRAPHICS_CAPVERSION_106 ||
+           version == RDP_GRAPHICS_CAPVERSION_106_ERR ||
+           version == RDP_GRAPHICS_CAPVERSION_107;
 }
 
 static int rdp_graphics_pixel_format_supported(uint8_t pixel_format)
@@ -465,9 +473,11 @@ librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
     return status;
 }
 
-librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
+librdp_status rdp_graphics_default_capsets(rdp_graphics_capset* capsets,
+                                           uint16_t capset_capacity,
+                                           uint16_t* capset_count)
 {
-    const rdp_graphics_capset capsets[] = {
+    const rdp_graphics_capset defaults[] = {
 #if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
         {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
         {RDP_GRAPHICS_CAPVERSION_81, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED},
@@ -477,8 +487,47 @@ librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
         {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED},
 #endif
     };
+    uint16_t count = (uint16_t)(sizeof(defaults) / sizeof(defaults[0]));
 
-    return rdp_graphics_write_caps_advertise(buffer, capsets, (uint16_t)(sizeof(capsets) / sizeof(capsets[0])));
+    if (!capsets || !capset_count || capset_capacity < count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memcpy(capsets, defaults, sizeof(defaults));
+    *capset_count = count;
+    return LIBRDP_STATUS_OK;
+}
+
+int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset)
+{
+    rdp_graphics_capset capsets[RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
+    uint16_t count = 0;
+    uint16_t i = 0;
+
+    if (!capset)
+        return 0;
+    if (rdp_graphics_default_capsets(capsets,
+                                     (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
+                                     &count) != LIBRDP_STATUS_OK)
+        return 0;
+    for (i = 0; i < count; i++)
+    {
+        if (capsets[i].version == capset->version && capsets[i].flags == capset->flags)
+            return 1;
+    }
+    return 0;
+}
+
+librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
+{
+    rdp_graphics_capset capsets[RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
+    uint16_t count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_graphics_default_capsets(capsets,
+                                          (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
+                                          &count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_graphics_write_caps_advertise(buffer, capsets, count);
 }
 
 librdp_status rdp_graphics_parse_caps_confirm(const void* data,

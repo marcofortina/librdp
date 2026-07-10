@@ -16655,6 +16655,17 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             status = rdp_graphics_parse_caps_confirm(pdu, header.pdu_length, &confirm);
             if (status != LIBRDP_STATUS_OK)
                 break;
+            if (!rdp_graphics_capset_is_default_supported(&confirm.selected))
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.graphics.caps_confirm.invalid",
+                                "dvc_channel_id=%u version=%u flags=%u",
+                                channel_id,
+                                confirm.selected.version,
+                                confirm.selected.flags);
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
             session->graphics_selected_version = confirm.selected.version;
             session->graphics_selected_flags = confirm.selected.flags;
             session->graphics_ready = 1;
