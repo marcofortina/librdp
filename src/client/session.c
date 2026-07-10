@@ -17809,6 +17809,7 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
     if (op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC)
         return rdp_session_gdi_fill_ellipse(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
+        op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT ||
         op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
         op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
     {
@@ -17825,6 +17826,8 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
             single.rect_count = 0;
             if (op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT)
                 single.kind = RDP_GDI_RENDER_OP_DSTBLT;
+            else if (op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT)
+                single.kind = RDP_GDI_RENDER_OP_PATBLT;
             else if (op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
                 single.kind = RDP_GDI_RENDER_OP_OPAQUE_RECT;
             else

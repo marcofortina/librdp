@@ -19,7 +19,8 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_ELLIPSE_SC = 8,
     RDP_GDI_RENDER_OP_MULTIDSTBLT = 9,
     RDP_GDI_RENDER_OP_MULTISCRBLT = 10,
-    RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT = 11
+    RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT = 11,
+    RDP_GDI_RENDER_OP_MULTIPATBLT = 12
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -165,6 +166,20 @@ typedef struct rdp_gdi_render_state
     uint32_t multi_opaque_color;
     uint32_t multi_opaque_rect_count;
     rdp_gdi_render_rect multi_opaque_rects[RDP_GDI_RENDER_MAX_RECTS];
+    int32_t multi_pat_left;
+    int32_t multi_pat_top;
+    int32_t multi_pat_width;
+    int32_t multi_pat_height;
+    uint8_t multi_pat_rop;
+    uint32_t multi_pat_back_color;
+    uint32_t multi_pat_fore_color;
+    int32_t multi_pat_brush_x;
+    int32_t multi_pat_brush_y;
+    uint8_t multi_pat_brush_style;
+    uint8_t multi_pat_brush_hatch;
+    uint8_t multi_pat_brush_extra[7];
+    uint32_t multi_pat_rect_count;
+    rdp_gdi_render_rect multi_pat_rects[RDP_GDI_RENDER_MAX_RECTS];
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);

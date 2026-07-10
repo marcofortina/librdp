@@ -20,6 +20,7 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
             return 1;
         case RDP_GDI_ORDER_PATBLT:
         case RDP_GDI_ORDER_LINETO:
+        case RDP_GDI_ORDER_MULTIPATBLT:
         case RDP_GDI_ORDER_MULTISCRBLT:
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
             *bytes = 2;
@@ -554,6 +555,88 @@ static librdp_status rdp_gdi_render_decode_multi_scrblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_render_decode_multi_patblt(rdp_stream* stream,
+                                                        uint32_t flags,
+                                                        int delta,
+                                                        rdp_gdi_render_state* state,
+                                                        rdp_gdi_render_op* op)
+{
+    const uint8_t* extra = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_width);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_height);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u) &&
+        rdp_stream_read_u8(stream, &state->multi_pat_rop) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u))
+        status = rdp_gdi_render_read_color(stream, &state->multi_pat_back_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u))
+        status = rdp_gdi_render_read_color(stream, &state->multi_pat_fore_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_brush_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_pat_brush_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0200u) &&
+        rdp_stream_read_u8(stream, &state->multi_pat_brush_style) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0400u) &&
+        rdp_stream_read_u8(stream, &state->multi_pat_brush_hatch) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0800u))
+    {
+        if (rdp_stream_read_bytes(stream, &extra, sizeof(state->multi_pat_brush_extra)) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            memcpy(state->multi_pat_brush_extra, extra, sizeof(state->multi_pat_brush_extra));
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x1000u))
+    {
+        uint8_t count = 0;
+
+        if (rdp_stream_read_u8(stream, &count) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            state->multi_pat_rect_count = count;
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x2000u))
+    {
+        if (state->multi_pat_rect_count == 0 ||
+            state->multi_pat_rect_count > RDP_GDI_RENDER_MAX_RECTS)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            status = rdp_gdi_render_read_rect_blob(stream,
+                                                   state->multi_pat_rect_count,
+                                                   state->multi_pat_rects);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (state->multi_pat_rect_count > RDP_GDI_RENDER_MAX_RECTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->kind = RDP_GDI_RENDER_OP_MULTIPATBLT;
+    op->rop = state->multi_pat_rop;
+    op->color = state->multi_pat_fore_color;
+    op->back_color = state->multi_pat_back_color;
+    op->rect.x = state->multi_pat_left;
+    op->rect.y = state->multi_pat_top;
+    op->rect.width = state->multi_pat_width;
+    op->rect.height = state->multi_pat_height;
+    op->brush_x = state->multi_pat_brush_x;
+    op->brush_y = state->multi_pat_brush_y;
+    op->brush_style = state->multi_pat_brush_style;
+    op->brush_hatch = state->multi_pat_brush_hatch;
+    op->rect_count = state->multi_pat_rect_count;
+    memcpy(op->brush_extra, state->multi_pat_brush_extra, sizeof(op->brush_extra));
+    memcpy(op->rects, state->multi_pat_rects, sizeof(op->rects[0]) * op->rect_count);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_render_decode_multi_opaque_rect(rdp_stream* stream,
                                                              uint32_t flags,
                                                              int delta,
@@ -913,6 +996,9 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
         case RDP_GDI_ORDER_MULTISCRBLT:
             status = rdp_gdi_render_decode_multi_scrblt(&stream, field_flags, delta, state, op);
             break;
+        case RDP_GDI_ORDER_MULTIPATBLT:
+            status = rdp_gdi_render_decode_multi_patblt(&stream, field_flags, delta, state, op);
+            break;
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
             status = rdp_gdi_render_decode_multi_opaque_rect(&stream, field_flags, delta, state, op);
             break;
@@ -943,7 +1029,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
     if ((op->kind == RDP_GDI_RENDER_OP_DSTBLT || op->kind == RDP_GDI_RENDER_OP_SCRBLT ||
          op->kind == RDP_GDI_RENDER_OP_PATBLT || op->kind == RDP_GDI_RENDER_OP_OPAQUE_RECT ||
          op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
-         op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
+         op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT || op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT) &&
         (op->rect.width < 0 || op->rect.height < 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;

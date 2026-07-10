@@ -10037,6 +10037,28 @@ static int test_gdi_orders(void)
         0x02u, 0x03u, 0x04u, 0x05u,
         0x0au, 0x06u
     };
+    const uint8_t render_multi_patblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MULTIPATBLT,
+        0xffu, 0x3fu,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0xf0u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x03u,
+        0xaau,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u,
+        2u,
+        7u, 0x00u,
+        0x06u,
+        0x02u, 0x03u, 0x04u, 0x05u,
+        0x0au, 0x06u
+    };
     const uint8_t render_multi_opaque[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_MULTIOPAQUERECT,
@@ -10371,6 +10393,25 @@ static int test_gdi_orders(void)
            render_op.src_x == 20 &&
            render_op.src_y == 30 &&
            render_op.rect_count == 2 &&
+           render_op.rects[1].x == 12 &&
+           render_op.rects[1].height == 6);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_multi_patblt,
+                                               sizeof(render_multi_patblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_multi_patblt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MULTIPATBLT &&
+           render_op.rop == 0xf0u &&
+           render_op.back_color == 0x00302010u &&
+           render_op.color == 0x00605040u &&
+           render_op.brush_x == 5 &&
+           render_op.brush_y == 6 &&
+           render_op.brush_style == 3 &&
+           render_op.brush_hatch == 0xaau &&
+           render_op.brush_extra[6] == 0x55u &&
+           render_op.rect_count == 2 &&
+           render_op.rects[0].x == 2 &&
            render_op.rects[1].x == 12 &&
            render_op.rects[1].height == 6);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
