@@ -133,6 +133,73 @@ static librdp_status rdp_gdi_write_capability_header(rdp_buffer* buffer,
     return rdp_buffer_append_u16_le(buffer, length);
 }
 
+static librdp_status rdp_gdi_read_2byte_unsigned(rdp_stream* stream, uint32_t* value)
+{
+    uint8_t first = 0;
+    uint8_t second = 0;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((first & 0x80u) == 0)
+    {
+        *value = first & 0x7fu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = (((uint32_t)first & 0x7fu) << 8u) | second;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_read_4byte_unsigned(rdp_stream* stream, uint32_t* value)
+{
+    uint8_t first = 0;
+    uint8_t byte = 0;
+    uint8_t count = 0;
+    uint32_t out = 0;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    count = (uint8_t)((first & 0xc0u) >> 6u);
+    out = (uint32_t)(first & 0x3fu);
+    while (count > 0)
+    {
+        if (rdp_stream_read_u8(stream, &byte) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        out = (out << 8u) | byte;
+        count--;
+    }
+    *value = out;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_cbr2_bpp(uint32_t encoded, uint32_t* bits_per_pixel)
+{
+    if (!bits_per_pixel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (encoded)
+    {
+        case 3u:
+            *bits_per_pixel = 8;
+            return LIBRDP_STATUS_OK;
+        case 4u:
+            *bits_per_pixel = 16;
+            return LIBRDP_STATUS_OK;
+        case 5u:
+            *bits_per_pixel = 24;
+            return LIBRDP_STATUS_OK;
+        case 6u:
+            *bits_per_pixel = 32;
+            return LIBRDP_STATUS_OK;
+        default:
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+}
+
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update)
@@ -405,59 +472,128 @@ librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_hea
                                                rdp_gdi_cache_bitmap_order* order)
 {
     rdp_stream stream;
-    uint8_t pad = 0;
-    uint8_t cache_id = 0;
-    uint8_t width = 0;
-    uint8_t height = 0;
-    uint8_t bits_per_pixel = 0;
-    uint16_t bitmap_length = 0;
-    uint16_t cache_index = 0;
     const uint8_t* bitmap = NULL;
 
     if (!header || !order || !header->payload)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (header->order_type != RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED &&
-        header->order_type != RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED)
+        header->order_type != RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED &&
+        header->order_type != RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2 &&
+        header->order_type != RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2)
         return LIBRDP_STATUS_UNSUPPORTED;
-    if (header->payload_len < 9u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
     memset(order, 0, sizeof(*order));
-    order->compressed = header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED;
     rdp_stream_init(&stream, header->payload, header->payload_len);
-    if (rdp_stream_read_u8(&stream, &cache_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &pad) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &bits_per_pixel) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &bitmap_length) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &cache_index) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    order->cache_id = cache_id;
-    order->width = width;
-    order->height = height;
-    order->bits_per_pixel = bits_per_pixel;
-    order->cache_index = cache_index;
-    if (pad != 0 ||
-        order->cache_id > 4u ||
-        order->width == 0 ||
-        order->height == 0 ||
-        order->bits_per_pixel == 0 ||
-        order->bits_per_pixel > 32u ||
-        bitmap_length == 0)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (order->compressed && (header->extra_flags & RDP_GDI_NO_BITMAP_COMPRESSION_HEADER) == 0)
+    if (header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED ||
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED)
     {
-        if (bitmap_length < 8u ||
-            rdp_stream_remaining(&stream) < bitmap_length ||
-            rdp_stream_read_bytes(&stream, &bitmap, bitmap_length) != LIBRDP_STATUS_OK)
+        uint8_t pad = 0;
+        uint8_t cache_id = 0;
+        uint8_t width = 0;
+        uint8_t height = 0;
+        uint8_t bits_per_pixel = 0;
+        uint16_t bitmap_length = 0;
+        uint16_t cache_index = 0;
+
+        if (header->payload_len < 9u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        memcpy(order->compression_header, bitmap, sizeof(order->compression_header));
-        order->has_compression_header = 1;
-        order->bitmap_data = bitmap;
-        order->bitmap_data_len = bitmap_length;
+        order->compressed = header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED;
+        if (rdp_stream_read_u8(&stream, &cache_id) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &pad) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &width) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &height) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(&stream, &bits_per_pixel) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(&stream, &bitmap_length) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(&stream, &cache_index) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        order->cache_id = cache_id;
+        order->width = width;
+        order->height = height;
+        order->bits_per_pixel = bits_per_pixel;
+        order->cache_index = cache_index;
+        if (pad != 0 ||
+            order->cache_id > 4u ||
+            order->width == 0 ||
+            order->height == 0 ||
+            order->bits_per_pixel == 0 ||
+            order->bits_per_pixel > 32u ||
+            bitmap_length == 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (order->compressed && (header->extra_flags & RDP_GDI_NO_BITMAP_COMPRESSION_HEADER) == 0)
+        {
+            if (bitmap_length < 8u ||
+                rdp_stream_remaining(&stream) < bitmap_length ||
+                rdp_stream_read_bytes(&stream, &bitmap, bitmap_length) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            memcpy(order->compression_header, bitmap, sizeof(order->compression_header));
+            order->has_compression_header = 1;
+            order->bitmap_data_includes_compression_header = 1;
+            order->bitmap_data = bitmap;
+            order->bitmap_data_len = bitmap_length;
+        }
+        else
+        {
+            if (rdp_stream_remaining(&stream) < bitmap_length ||
+                rdp_stream_read_bytes(&stream, &bitmap, bitmap_length) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            order->bitmap_data = bitmap;
+            order->bitmap_data_len = bitmap_length;
+        }
     }
     else
     {
+        uint32_t flags = (header->extra_flags & 0xff80u) >> 7u;
+        uint32_t bpp_id = (header->extra_flags & 0x0078u) >> 3u;
+        uint32_t bitmap_length = 0;
+
+        order->compressed = header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2;
+        order->cache_id = header->extra_flags & 0x0007u;
+        if (rdp_gdi_cbr2_bpp(bpp_id, &order->bits_per_pixel) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (flags & RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT)
+        {
+            if (rdp_stream_read_u32_le(&stream, &order->key1) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(&stream, &order->key2) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (rdp_gdi_read_2byte_unsigned(&stream, &order->width) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (flags & RDP_GDI_CBR2_HEIGHT_SAME_AS_WIDTH)
+            order->height = order->width;
+        else if (rdp_gdi_read_2byte_unsigned(&stream, &order->height) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (rdp_gdi_read_4byte_unsigned(&stream, &bitmap_length) != LIBRDP_STATUS_OK ||
+            rdp_gdi_read_2byte_unsigned(&stream, &order->cache_index) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (flags & RDP_GDI_CBR2_DO_NOT_CACHE)
+        {
+            order->do_not_cache = 1;
+            order->cache_index = RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX;
+        }
+        if (order->compressed && (flags & RDP_GDI_CBR2_NO_BITMAP_COMPRESSION_HEADER) == 0)
+        {
+            uint16_t first_row = 0;
+            uint16_t main_body = 0;
+            uint16_t scan_width = 0;
+            uint16_t uncompressed = 0;
+
+            if (rdp_stream_read_u16_le(&stream, &first_row) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &main_body) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &scan_width) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &uncompressed) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            order->compression_header[0] = (uint8_t)(first_row & 0xffu);
+            order->compression_header[1] = (uint8_t)(first_row >> 8u);
+            order->compression_header[2] = (uint8_t)(main_body & 0xffu);
+            order->compression_header[3] = (uint8_t)(main_body >> 8u);
+            order->compression_header[4] = (uint8_t)(scan_width & 0xffu);
+            order->compression_header[5] = (uint8_t)(scan_width >> 8u);
+            order->compression_header[6] = (uint8_t)(uncompressed & 0xffu);
+            order->compression_header[7] = (uint8_t)(uncompressed >> 8u);
+            order->has_compression_header = 1;
+            bitmap_length = main_body;
+        }
+        if (order->width == 0 || order->height == 0 || bitmap_length == 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_remaining(&stream) < bitmap_length ||
             rdp_stream_read_bytes(&stream, &bitmap, bitmap_length) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;

@@ -19531,6 +19531,19 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
 
     if (!session || !order || !order->bitmap_data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->do_not_cache)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.bitmap_cache.skip",
+                              "cache_id=%u cache_index=%u width=%u height=%u bpp=%u",
+                              order->cache_id,
+                              order->cache_index,
+                              order->width,
+                              order->height,
+                              order->bits_per_pixel);
+        return LIBRDP_STATUS_OK;
+    }
     if (order->width == 0 || order->height == 0 ||
         order->width > UINT16_MAX || order->height > UINT16_MAX ||
         order->bits_per_pixel > UINT16_MAX || order->bitmap_data_len > UINT32_MAX)
@@ -19545,7 +19558,7 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
     rect.height = (uint16_t)order->height;
     rect.bits_per_pixel = (uint16_t)order->bits_per_pixel;
     rect.flags = order->compressed ? RDP_SESSION_BITMAP_FLAG_COMPRESSED : 0;
-    if (order->compressed && !order->has_compression_header)
+    if (order->compressed && !order->bitmap_data_includes_compression_header)
         rect.flags |= RDP_GDI_NO_BITMAP_COMPRESSION_HEADER;
     rect.data = order->bitmap_data;
     rect.data_len = order->bitmap_data_len;
@@ -19624,7 +19637,9 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     if (!session || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED ||
-        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED)
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED ||
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2 ||
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2)
     {
         status = rdp_gdi_parse_cache_bitmap_order(header, &bitmap);
         if (status == LIBRDP_STATUS_OK)

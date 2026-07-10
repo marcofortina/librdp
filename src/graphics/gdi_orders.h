@@ -85,6 +85,11 @@
 #define RDP_GDI_BITMAP_CACHE_ERROR_FLUSH_CACHE 0x01u
 #define RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID 0x02u
 #define RDP_GDI_NO_BITMAP_COMPRESSION_HEADER 0x0400u
+#define RDP_GDI_CBR2_HEIGHT_SAME_AS_WIDTH 0x01u
+#define RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT 0x02u
+#define RDP_GDI_CBR2_NO_BITMAP_COMPRESSION_HEADER 0x08u
+#define RDP_GDI_CBR2_DO_NOT_CACHE 0x10u
+#define RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX 0x7fffu
 #define RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_NINEGRID_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_GDIPLUS_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
@@ -148,12 +153,16 @@ typedef struct rdp_gdi_secondary_order_header
 typedef struct rdp_gdi_cache_bitmap_order
 {
     uint32_t cache_id;
+    uint32_t key1;
+    uint32_t key2;
     uint32_t bits_per_pixel;
     uint32_t width;
     uint32_t height;
     uint32_t cache_index;
     uint8_t compressed;
+    uint8_t do_not_cache;
     uint8_t has_compression_header;
+    uint8_t bitmap_data_includes_compression_header;
     uint8_t compression_header[8];
     const uint8_t* bitmap_data;
     uint32_t bitmap_data_len;
