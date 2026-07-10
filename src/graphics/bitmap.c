@@ -902,6 +902,24 @@ out:
     return status;
 }
 
+static int rdp_bitmap_stride_aligned(size_t stride, size_t alignment, size_t* aligned)
+{
+    size_t rem = 0;
+
+    if (!aligned || alignment == 0)
+        return 0;
+    rem = stride % alignment;
+    if (rem == 0)
+    {
+        *aligned = stride;
+        return 1;
+    }
+    if (stride > SIZE_MAX - (alignment - rem))
+        return 0;
+    *aligned = stride + alignment - rem;
+    return 1;
+}
+
 librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* rect,
                                                          const rdp_palette_update* palette,
                                                          rdp_buffer* output,
@@ -910,6 +928,7 @@ librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* 
     uint16_t row = 0;
     uint16_t column = 0;
     size_t src_stride = 0;
+    size_t aligned_src_stride = 0;
     size_t dst_stride = 0;
     size_t dst_size = 0;
     uint16_t bytes_per_pixel = 0;
@@ -945,8 +964,16 @@ librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* 
             return LIBRDP_STATUS_INVALID_ARGUMENT;
         src_stride = (size_t)rect->width * bytes_per_pixel;
     }
-    if ((size_t)rect->height > SIZE_MAX / src_stride || rect->data_len < src_stride * rect->height)
+    if (!rdp_bitmap_stride_aligned(src_stride, 4u, &aligned_src_stride))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((size_t)rect->height > SIZE_MAX / src_stride)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rect->data_len < src_stride * rect->height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (aligned_src_stride > src_stride &&
+        (size_t)rect->height <= SIZE_MAX / aligned_src_stride &&
+        rect->data_len >= aligned_src_stride * rect->height)
+        src_stride = aligned_src_stride;
     dst_stride = (size_t)rect->width * 4u;
     if ((size_t)rect->height > SIZE_MAX / dst_stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
