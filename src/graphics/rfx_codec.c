@@ -364,7 +364,8 @@ librdp_status rdp_rfx_parse_progressive_quant(const void* data,
         rdp_rfx_parse_component_quant(bytes + 6u, 5u, &quant->cb) != LIBRDP_STATUS_OK ||
         rdp_rfx_parse_component_quant(bytes + 11u, 5u, &quant->cr) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_rfx_component_quant_in_range(&quant->y, 8) ||
+    if (quant->quality > 100u ||
+        !rdp_rfx_component_quant_in_range(&quant->y, 8) ||
         !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
         !rdp_rfx_component_quant_in_range(&quant->cr, 8))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -377,7 +378,8 @@ librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_
 
     if (!buffer || !quant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!rdp_rfx_component_quant_in_range(&quant->y, 8) ||
+    if (quant->quality > 100u ||
+        !rdp_rfx_component_quant_in_range(&quant->y, 8) ||
         !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
         !rdp_rfx_component_quant_in_range(&quant->cr, 8))
         return LIBRDP_STATUS_INVALID_ARGUMENT;

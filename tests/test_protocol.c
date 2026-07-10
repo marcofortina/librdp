@@ -1992,6 +1992,12 @@ static int test_path_security_license_channels(void)
         0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t rfx_bad_progressive_quality_values[] = {
+        0x65,
+        0x11, 0x11, 0x11, 0x11, 0x11,
+        0x22, 0x22, 0x22, 0x22, 0x22,
+        0x33, 0x33, 0x33, 0x33, 0x33
+    };
     const uint8_t planar_no_alpha[] = {
         RDP_PLANAR_FORMAT_NO_ALPHA,
         0x10, 0x20,
@@ -4161,6 +4167,13 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_rfx_parse_progressive_quant(rfx_bad_progressive_quant_values,
                                            sizeof(rfx_bad_progressive_quant_values),
                                            &rfx_progressive_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_rfx_parse_progressive_quant(rfx_bad_progressive_quality_values,
+                                           sizeof(rfx_bad_progressive_quality_values),
+                                           &rfx_progressive_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rfx_progressive_quant.quality = 101u;
+    PCHECK(rdp_rfx_write_progressive_quant(&graphics_decoded,
+                                           &rfx_progressive_quant) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rfx_progressive_quant.quality = 100u;
     PCHECK(rdp_rfx_parse_component_quant(rfx_quant_values,
                                          sizeof(rfx_quant_values) - 1u,
                                          &rfx_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
