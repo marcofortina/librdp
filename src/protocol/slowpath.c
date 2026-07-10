@@ -505,7 +505,9 @@ librdp_status rdp_slowpath_write_share_data_header(rdp_buffer* buffer,
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (stream_id == 0 || (compressed_type == 0 && compressed_length != 0))
+    if (stream_id == 0 ||
+        (compressed_type == 0 && compressed_length != 0) ||
+        (compressed_type != 0 && compressed_length == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, share_id);
     if (status == LIBRDP_STATUS_OK)
@@ -902,7 +904,10 @@ librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_s
         rdp_stream_read_u8(&stream, &pdu->compressed_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &pdu->compressed_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    (void)pad;
+    if (pad != 0 || pdu->stream_id == 0 ||
+        (pdu->compressed_type == 0 && pdu->compressed_length != 0) ||
+        (pdu->compressed_type != 0 && pdu->compressed_length == 0))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     pdu->payload_len = rdp_stream_remaining(&stream);
     if (pdu->payload_len > 0 &&
