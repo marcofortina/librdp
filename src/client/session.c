@@ -21504,14 +21504,30 @@ static const char* rdp_session_video_capture_source(const librdp_session* sessio
     return librdp_settings_camera_source(session->settings, 0);
 }
 
+static const char* rdp_session_video_capture_source_value(const char* source)
+{
+    if (!source)
+        return NULL;
+    if (strncmp(source, "device=", 7u) == 0 && source[7] != '\0')
+        return source + 7u;
+    if (strncmp(source, "file=", 5u) == 0 && source[5] != '\0')
+        return source + 5u;
+    return source;
+}
+
 static const char* rdp_session_video_capture_source_kind(const char* source)
 {
     struct stat st;
+    const char* value = rdp_session_video_capture_source_value(source);
 
-    if (!source || source[0] == '\0')
+    if (!source || source[0] == '\0' || !value || value[0] == '\0')
         return "none";
+    if (strncmp(source, "file=", 5u) == 0)
+        return "file";
+    if (strncmp(source, "device=", 7u) == 0)
+        return "device";
     memset(&st, 0, sizeof(st));
-    if (stat(source, &st) == 0 && S_ISREG(st.st_mode))
+    if (stat(value, &st) == 0 && S_ISREG(st.st_mode))
         return "file";
     return "device";
 }
@@ -21519,17 +21535,21 @@ static const char* rdp_session_video_capture_source_kind(const char* source)
 static int rdp_session_video_capture_source_is_file(const char* source)
 {
     struct stat st;
+    const char* value = rdp_session_video_capture_source_value(source);
 
-    if (!source || source[0] == '\0')
+    if (!source || source[0] == '\0' || !value || value[0] == '\0')
         return 0;
+    if (strncmp(source, "file=", 5u) == 0)
+        return 1;
     memset(&st, 0, sizeof(st));
-    return stat(source, &st) == 0 && S_ISREG(st.st_mode);
+    return stat(value, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static void rdp_session_video_capture_media_from_source(const char* source,
                                                         rdp_video_capture_media_type* media)
 {
-    const char* ext = source ? strrchr(source, '.') : NULL;
+    const char* value = rdp_session_video_capture_source_value(source);
+    const char* ext = value ? strrchr(value, '.') : NULL;
 
     memset(media, 0, sizeof(*media));
     media->format = RDP_VIDEO_CAPTURE_MEDIA_NV12;
@@ -21540,12 +21560,13 @@ static void rdp_session_video_capture_media_from_source(const char* source,
     media->pixel_aspect_ratio_numerator = 1;
     media->pixel_aspect_ratio_denominator = 1;
     media->flags = 0;
-    if (source && strncmp(source, "/dev/video", 10u) == 0)
+    if ((source && strncmp(source, "device=", 7u) == 0) ||
+        (value && strncmp(value, "/dev/video", 10u) == 0))
     {
         media->format = RDP_VIDEO_CAPTURE_MEDIA_MJPG;
         media->flags = RDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED;
     }
-    if (!source || !ext)
+    if (!value || !ext)
         return;
     if (strcasecmp(ext, ".h264") == 0 || strcasecmp(ext, ".avc") == 0)
     {
@@ -21644,6 +21665,7 @@ static librdp_status rdp_session_video_capture_read_sample(const char* source,
                                                            uint32_t* error_code)
 {
     struct stat st;
+    const char* value = rdp_session_video_capture_source_value(source);
     int fd = -1;
     int flags = O_RDONLY;
     uint8_t chunk[8192];
@@ -21654,7 +21676,12 @@ static librdp_status rdp_session_video_capture_read_sample(const char* source,
     if (!source || !sample || !error_code)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(&st, 0, sizeof(st));
-    if (stat(source, &st) < 0)
+    if (!value || value[0] == '\0')
+    {
+        *error_code = RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND;
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    if (stat(value, &st) < 0)
     {
         *error_code = errno == EACCES ? RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
                                         RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND;
@@ -21673,7 +21700,7 @@ static librdp_status rdp_session_video_capture_read_sample(const char* source,
 #ifdef O_CLOEXEC
     flags |= O_CLOEXEC;
 #endif
-    fd = open(source, flags);
+    fd = open(value, flags);
     if (fd < 0)
     {
         *error_code = errno == EACCES ? RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :

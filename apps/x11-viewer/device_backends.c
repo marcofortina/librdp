@@ -49,6 +49,19 @@ static const char* x11_text_after(const char* text, const char* prefix)
     return text + strlen(prefix);
 }
 
+static const char* x11_device_source_path(const char* source)
+{
+    const char* value = NULL;
+
+    value = x11_text_after(source, "device=");
+    if (value)
+        return value;
+    value = x11_text_after(source, "file=");
+    if (value)
+        return value;
+    return source;
+}
+
 static int x11_probe_file_readable(const char* path, const char* event_name)
 {
     int fd = -1;
@@ -126,21 +139,22 @@ static int x11_probe_parallel_port(const char* path)
 static int x11_probe_camera(const char* source)
 {
 #ifdef __linux__
+    const char* path = x11_device_source_path(source);
     int fd = -1;
     struct v4l2_capability capability;
 
-    if (!source || source[0] == '\0')
+    if (!path || path[0] == '\0')
         return 0;
-    if (!x11_text_starts_with(source, "/dev/video"))
-        return x11_probe_file_readable(source, "x11.camera.file.probe");
+    if (!x11_text_starts_with(path, "/dev/video"))
+        return x11_probe_file_readable(path, "x11.camera.file.probe");
 
-    fd = open(source, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
     {
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "x11.camera.v4l2.probe",
                         "ok=0 source=\"%s\" errno=%d",
-                        source,
+                        path,
                         errno);
         return 0;
     }
@@ -150,7 +164,7 @@ static int x11_probe_camera(const char* source)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "x11.camera.v4l2.probe",
                         "ok=0 source=\"%s\" errno=%d",
-                        source,
+                        path,
                         errno);
         close(fd);
         return 0;
@@ -159,7 +173,7 @@ static int x11_probe_camera(const char* source)
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.camera.v4l2.probe",
                     "ok=1 source=\"%s\" driver=\"%s\" card=\"%s\" bus=\"%s\" caps=%u device_caps=%u",
-                    source,
+                    path,
                     capability.driver,
                     capability.card,
                     capability.bus_info,

@@ -96,16 +96,28 @@ static int x11_camera_ioctl(int fd, unsigned long request, void* arg)
     return rc;
 }
 
+static const char* x11_camera_source_path(const char* source)
+{
+    if (!source)
+        return NULL;
+    if (strncmp(source, "device=", 7u) == 0 && source[7] != '\0')
+        return source + 7u;
+    if (strncmp(source, "file=", 5u) == 0 && source[5] != '\0')
+        return source + 5u;
+    return source;
+}
+
 static int x11_camera_open_source(const char* source)
 {
+    const char* path = x11_camera_source_path(source);
     int flags = O_RDWR | O_NONBLOCK;
 
-    if (!source || strncmp(source, "/dev/video", 10u) != 0)
+    if (!path || strncmp(path, "/dev/video", 10u) != 0)
         return -1;
 #ifdef O_CLOEXEC
     flags |= O_CLOEXEC;
 #endif
-    return open(source, flags);
+    return open(path, flags);
 }
 
 static void x11_camera_clear_buffers(x11_camera_capture* capture)
