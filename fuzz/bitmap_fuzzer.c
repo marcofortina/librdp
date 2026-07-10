@@ -2,11 +2,13 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_bitmap_update update;
     rdp_bitmap_update_header header;
+    rdp_palette_update palette;
     rdp_buffer decoded;
     rdp_buffer encoded;
     rdp_bitmap_rect rect;
@@ -16,7 +18,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     rdp_buffer_init(&decoded);
     rdp_buffer_init(&encoded);
+    memset(&palette, 0, sizeof(palette));
     (void)rdp_bitmap_parse_update_header(data, size, &header);
+    if (rdp_bitmap_parse_palette_update(data, size, &palette) == LIBRDP_STATUS_OK)
+    {
+        (void)rdp_bitmap_write_palette_update(&encoded, &palette);
+        encoded.length = 0;
+    }
+    if (rdp_bitmap_parse_fastpath_palette_update(data, size, &palette) == LIBRDP_STATUS_OK)
+    {
+        (void)rdp_bitmap_write_fastpath_palette_update(&encoded, &palette);
+        encoded.length = 0;
+    }
     if (rdp_bitmap_parse_update(data, size, &update) == LIBRDP_STATUS_OK)
     {
         (void)rdp_bitmap_write_update(&encoded, update.rects, update.count);
@@ -27,13 +40,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
             (void)rdp_bitmap_write_rect(&encoded, &update.rects[0]);
         encoded.length = 0;
         for (i = 0; i < update.count; i++)
+        {
             (void)rdp_bitmap_decode_rect_bgra32(&update.rects[i], &decoded, &stride);
+            (void)rdp_bitmap_decode_rect_bgra32_with_palette(&update.rects[i], &palette, &decoded, &stride);
+        }
     }
     if (rdp_bitmap_parse_fastpath_update(data, size, &update) == LIBRDP_STATUS_OK)
     {
         for (i = 0; i < update.count; i++)
+        {
             (void)rdp_bitmap_decode_rect_bgra32(&update.rects[i], &decoded, &stride);
+            (void)rdp_bitmap_decode_rect_bgra32_with_palette(&update.rects[i], &palette, &decoded, &stride);
+        }
     }
+    palette.count = 1;
+    palette.entries[0].red = 1;
+    palette.entries[0].green = 2;
+    palette.entries[0].blue = 3;
     rect.dest_left = 0;
     rect.dest_top = 0;
     rect.dest_right = 0;
@@ -48,6 +71,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     encoded.length = 0;
     (void)rdp_bitmap_write_fastpath_update(&encoded, &rect, 1);
     encoded.length = 0;
+    rect.bits_per_pixel = 8;
+    (void)rdp_bitmap_decode_rect_bgra32_with_palette(&rect, &palette, &decoded, &stride);
     rdp_buffer_free(&decoded);
     rdp_buffer_free(&encoded);
     return 0;
