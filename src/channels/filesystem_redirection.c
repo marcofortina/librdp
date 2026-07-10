@@ -1255,6 +1255,35 @@ static int rdp_filesystem_security_sid_world(const rdp_filesystem_security_sid* 
            sid->first_sub_authority == 0u;
 }
 
+static int rdp_filesystem_security_sid_authenticated_users(const rdp_filesystem_security_sid* sid)
+{
+    return sid && sid->authority == 5u && sid->sub_authority_count == 1u &&
+           sid->first_sub_authority == 11u;
+}
+
+static int rdp_filesystem_security_sid_builtin_users(const rdp_filesystem_security_sid* sid)
+{
+    return sid && sid->authority == 5u && sid->sub_authority_count == 2u &&
+           sid->first_sub_authority == 32u && sid->second_sub_authority == 545u;
+}
+
+static int rdp_filesystem_security_sid_dacl_owner(const rdp_filesystem_security_sid* sid)
+{
+    return rdp_filesystem_security_sid_owner(sid, NULL);
+}
+
+static int rdp_filesystem_security_sid_dacl_group(const rdp_filesystem_security_sid* sid)
+{
+    return rdp_filesystem_security_sid_group(sid, NULL) ||
+           rdp_filesystem_security_sid_builtin_users(sid);
+}
+
+static int rdp_filesystem_security_sid_dacl_world(const rdp_filesystem_security_sid* sid)
+{
+    return rdp_filesystem_security_sid_world(sid) ||
+           rdp_filesystem_security_sid_authenticated_users(sid);
+}
+
 static uint32_t rdp_filesystem_security_mask_to_mode_bits(uint32_t mask)
 {
     uint32_t bits = 0;
@@ -1281,7 +1310,13 @@ static librdp_status rdp_filesystem_security_parse_dacl(
     uint16_t acl_size = 0;
     uint16_t ace_count = 0;
     uint16_t i = 0;
-    uint32_t mode = 0;
+    uint32_t owner_allow = 0;
+    uint32_t owner_deny = 0;
+    uint32_t group_allow = 0;
+    uint32_t group_deny = 0;
+    uint32_t world_allow = 0;
+    uint32_t world_deny = 0;
+    uint16_t recognized_aces = 0;
 
     if (!data || !security || offset > length || length - offset < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -1299,17 +1334,21 @@ static librdp_status rdp_filesystem_security_parse_dacl(
         size_t sid_size = 0;
         uint16_t ace_size = 0;
         uint32_t access_mask = 0;
-        uint32_t id = 0;
         uint32_t bits = 0;
+        uint8_t ace_type = 0;
         librdp_status status = LIBRDP_STATUS_OK;
 
         if (cursor > end || end - cursor < 12u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (data[cursor] != 0u)
-            return LIBRDP_STATUS_UNSUPPORTED;
+        ace_type = data[cursor];
         ace_size = rdp_filesystem_security_read_u16_le(data, cursor + 2u);
         if (ace_size < 12u || ace_size > end - cursor)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (ace_type != 0u && ace_type != 1u)
+        {
+            cursor += ace_size;
+            continue;
+        }
         access_mask = rdp_filesystem_security_read_u32_le(data, cursor + 4u);
         status = rdp_filesystem_security_parse_sid(data, cursor + ace_size, cursor + 8u, &sid, &sid_size);
         if (status != LIBRDP_STATUS_OK)
@@ -1317,18 +1356,40 @@ static librdp_status rdp_filesystem_security_parse_dacl(
         if (sid_size != (size_t)ace_size - 8u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         bits = rdp_filesystem_security_mask_to_mode_bits(access_mask);
-        if (rdp_filesystem_security_sid_owner(&sid, &id))
-            mode |= bits << 6u;
-        else if (rdp_filesystem_security_sid_group(&sid, &id))
-            mode |= bits << 3u;
-        else if (rdp_filesystem_security_sid_world(&sid))
-            mode |= bits;
+        if (rdp_filesystem_security_sid_dacl_owner(&sid))
+        {
+            if (ace_type == 0u)
+                owner_allow |= bits;
+            else
+                owner_deny |= bits;
+            recognized_aces++;
+        }
+        else if (rdp_filesystem_security_sid_dacl_group(&sid))
+        {
+            if (ace_type == 0u)
+                group_allow |= bits;
+            else
+                group_deny |= bits;
+            recognized_aces++;
+        }
+        else if (rdp_filesystem_security_sid_dacl_world(&sid))
+        {
+            if (ace_type == 0u)
+                world_allow |= bits;
+            else
+                world_deny |= bits;
+            recognized_aces++;
+        }
         cursor += ace_size;
     }
     if (cursor > end)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (ace_count > 0 && recognized_aces == 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
     security->mode_present = 1u;
-    security->mode = mode & 0777u;
+    security->mode = (((owner_allow & ~owner_deny) & 7u) << 6u) |
+                     (((group_allow & ~group_deny) & 7u) << 3u) |
+                     ((world_allow & ~world_deny) & 7u);
     return LIBRDP_STATUS_OK;
 }
 

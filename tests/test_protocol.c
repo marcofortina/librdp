@@ -8203,6 +8203,40 @@ static int test_filesystem_redirection_channel(void)
         PCHECK(parsed_security.owner_present == 1u && parsed_security.owner_id == 1000u);
         PCHECK(parsed_security.group_present == 1u && parsed_security.group_id == 100u);
         PCHECK(parsed_security.mode_present == 1u && parsed_security.mode == 0640u);
+        {
+            uint8_t saved_group_sid[16];
+
+            memcpy(saved_group_sid, response.data + 92u, sizeof(saved_group_sid));
+            response.data[94] = 0u;
+            response.data[95] = 0u;
+            response.data[96] = 0u;
+            response.data[97] = 0u;
+            response.data[98] = 0u;
+            response.data[99] = 5u;
+            response.data[100] = 32u;
+            response.data[101] = 0u;
+            response.data[102] = 0u;
+            response.data[103] = 0u;
+            response.data[104] = 0x21u;
+            response.data[105] = 0x02u;
+            response.data[106] = 0u;
+            response.data[107] = 0u;
+            PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(
+                       response.data,
+                       response.length,
+                       RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
+                       &parsed_security) == LIBRDP_STATUS_OK);
+            PCHECK(parsed_security.mode_present == 1u && parsed_security.mode == 0640u);
+            response.data[84] = 1u;
+            PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(
+                       response.data,
+                       response.length,
+                       RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
+                       &parsed_security) == LIBRDP_STATUS_OK);
+            PCHECK(parsed_security.mode_present == 1u && parsed_security.mode == 0600u);
+            response.data[84] = 0u;
+            memcpy(response.data + 92u, saved_group_sid, sizeof(saved_group_sid));
+        }
         response.data[4] = 0u;
         response.data[5] = 0u;
         response.data[6] = 0u;
@@ -8228,13 +8262,17 @@ static int test_filesystem_redirection_channel(void)
                                                                           RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
                                                                           &parsed_security) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
-        response.data[60] = 1u;
+        response.data[60] = 2u;
+        response.data[84] = 2u;
+        response.data[108] = 2u;
         PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(
                    response.data,
                    response.length,
                    RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
                    &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
         response.data[60] = 0u;
+        response.data[84] = 0u;
+        response.data[108] = 0u;
     }
     PCHECK(rdp_filesystem_redirection_write_buffer_response(&request,
                                                             1u,
