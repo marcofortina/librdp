@@ -7565,21 +7565,34 @@ static DWORD rdp_session_smartcard_scope_to_pcsc(uint32_t scope)
 }
 
 static char* rdp_session_smartcard_connect_reader_name(
-    const rdp_smartcard_redirection_request_message* message)
+    const rdp_smartcard_redirection_request_message* message,
+    LONG* pcsc_status)
 {
     char* reader_name = NULL;
     int wide = 0;
 
+    if (pcsc_status)
+        *pcsc_status = SCARD_S_SUCCESS;
     if (!message || message->body.connect.reader_name_is_null ||
         message->body.connect.reader_name_len == 0 || !message->body.connect.reader_name)
         return NULL;
     wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTW;
     if (wide)
-        return rdp_session_smartcard_utf16le_to_utf8_multisz(message->body.connect.reader_name,
-                                                             message->body.connect.reader_name_len);
+    {
+        reader_name = rdp_session_smartcard_utf16le_to_utf8_multisz(
+            message->body.connect.reader_name,
+            message->body.connect.reader_name_len);
+        if (!reader_name && pcsc_status)
+            *pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+        return reader_name;
+    }
     reader_name = (char*)calloc((size_t)message->body.connect.reader_name_len + 1u, 1u);
     if (!reader_name)
+    {
+        if (pcsc_status)
+            *pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
         return NULL;
+    }
     memcpy(reader_name, message->body.connect.reader_name, message->body.connect.reader_name_len);
     return reader_name;
 }
@@ -8277,17 +8290,13 @@ static librdp_status rdp_session_smartcard_handle_connect(librdp_session* sessio
                                                  message->body.connect.context.length);
     if (context)
     {
-        requested_reader = rdp_session_smartcard_connect_reader_name(message);
+        requested_reader = rdp_session_smartcard_connect_reader_name(message, &pcsc_status);
         connect_reader = requested_reader;
-        if (!connect_reader)
+        if (pcsc_status == SCARD_S_SUCCESS && !connect_reader)
         {
             pcsc_status = SCardListReaders(context->context, NULL, readers, &readers_len);
             if (pcsc_status == SCARD_S_SUCCESS && readers_len > 1u && readers[0] != '\0')
                 connect_reader = readers;
-        }
-        else
-        {
-            pcsc_status = SCARD_S_SUCCESS;
         }
         if (pcsc_status == SCARD_S_SUCCESS && connect_reader && connect_reader[0] != '\0')
         {
@@ -8311,6 +8320,10 @@ static librdp_status rdp_session_smartcard_handle_connect(librdp_session* sessio
                     rdp_session_smartcard_write_blob(handle_blob, handle->id, handle->generation);
                 }
             }
+        }
+        else if (pcsc_status == SCARD_S_SUCCESS)
+        {
+            pcsc_status = (LONG)RDP_SESSION_SCARD_E_FILE_NOT_FOUND;
         }
     }
     status = rdp_smartcard_redirection_write_connect_return(
