@@ -13308,6 +13308,16 @@ static int test_composited_remoting_channel(void)
            tree.last_extension_command == 0x12u &&
            tree.last_extension_payload_len == 4u &&
            tree.skipped_known_count == 0u);
+    buffer.length = 0;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_write_channel_message(&buffer, 0xffffffffu, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
+    buffer.length = 0;
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 8u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0xffffffffu) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

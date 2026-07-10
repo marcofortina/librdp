@@ -1902,7 +1902,7 @@ librdp_status rdp_composited_parse_channel_message(const void* data,
         message->message_size < 8u ||
         message->message_size > length ||
         !rdp_composited_aligned_size(message->message_size) ||
-        message->control_code == 0)
+        !rdp_composited_channel_command_known(message->control_code))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     message->payload_len = message->message_size - 8u;
     if (rdp_stream_read_bytes(&stream, &message->payload, message->payload_len) != LIBRDP_STATUS_OK)
@@ -1917,7 +1917,7 @@ librdp_status rdp_composited_write_channel_message(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || control_code == 0 || (!payload && payload_len > 0) ||
+    if (!buffer || !rdp_composited_channel_command_known(control_code) || (!payload && payload_len > 0) ||
         payload_len > UINT32_MAX - 8u || !rdp_composited_aligned_size(payload_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, (uint32_t)(8u + payload_len));
