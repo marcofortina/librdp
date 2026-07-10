@@ -93,6 +93,13 @@ static librdp_status rdp_license_write_blob_checked(rdp_buffer* buffer,
     return rdp_license_write_binary_blob(buffer, blob->type, blob->data, blob->length);
 }
 
+static int rdp_license_blob_writeable(const rdp_license_binary_blob* blob, uint16_t expected_type)
+{
+    return blob &&
+           blob->type == expected_type &&
+           (blob->data || blob->length == 0);
+}
+
 static int rdp_license_range_valid(size_t length, size_t offset, size_t range_len)
 {
     return offset <= length && range_len <= length - offset;
@@ -855,7 +862,9 @@ librdp_status rdp_license_write_client_new_license_request(rdp_buffer* buffer,
 
     if (!buffer || !client_random ||
         preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
-        !encrypted_pre_master || !user_name || !machine_name)
+        !rdp_license_blob_writeable(encrypted_pre_master, RDP_LICENSE_BLOB_RANDOM) ||
+        !rdp_license_blob_writeable(user_name, RDP_LICENSE_BLOB_CLIENT_USER_NAME) ||
+        !rdp_license_blob_writeable(machine_name, RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     total = 40u + 4u + encrypted_pre_master->length + 4u + user_name->length +
             4u + machine_name->length;
@@ -940,7 +949,9 @@ librdp_status rdp_license_write_client_info(rdp_buffer* buffer,
 
     if (!buffer || !client_random || !mac ||
         preferred_key_exchange_alg != RDP_LICENSE_KEY_EXCHANGE_RSA ||
-        !encrypted_pre_master || !license_info || !encrypted_hardware_id)
+        !rdp_license_blob_writeable(encrypted_pre_master, RDP_LICENSE_BLOB_RANDOM) ||
+        !rdp_license_blob_writeable(license_info, RDP_LICENSE_BLOB_DATA) ||
+        !rdp_license_blob_writeable(encrypted_hardware_id, RDP_LICENSE_BLOB_ENCRYPTED_DATA))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     total = 40u + 4u + encrypted_pre_master->length + 4u + license_info->length +
             4u + encrypted_hardware_id->length + 16u;
@@ -1014,7 +1025,9 @@ librdp_status rdp_license_write_platform_challenge_response(
     librdp_status status = LIBRDP_STATUS_OK;
     size_t total = 0;
 
-    if (!buffer || !encrypted_response || !encrypted_hardware_id || !mac)
+    if (!buffer || !mac ||
+        !rdp_license_blob_writeable(encrypted_response, RDP_LICENSE_BLOB_ENCRYPTED_DATA) ||
+        !rdp_license_blob_writeable(encrypted_hardware_id, RDP_LICENSE_BLOB_ENCRYPTED_DATA))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     total = 4u + encrypted_response->length + 4u + encrypted_hardware_id->length + 16u;
     if (total > UINT16_MAX)

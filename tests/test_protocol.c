@@ -3086,6 +3086,7 @@ static int test_path_security_license_channels(void)
     rdp_license_error_alert alert;
     rdp_license_preamble license_preamble;
     rdp_license_binary_blob license_blob;
+    rdp_license_binary_blob license_bad_blob;
     rdp_license_server_request license_request;
     rdp_license_platform_challenge license_challenge;
     rdp_license_new_or_upgrade license_new;
@@ -5626,6 +5627,20 @@ static int test_path_security_license_channels(void)
     license_request.server_certificate.data = (const uint8_t*)"host";
     memset(client_random, 0x5a, sizeof(client_random));
     license_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&license_packet, 0xa5) == LIBRDP_STATUS_OK);
+    license_bad_blob = license_blob;
+    license_bad_blob.type = RDP_LICENSE_BLOB_DATA;
+    PCHECK(rdp_license_write_client_new_license_request(&license_packet,
+                                                        RDP_LICENSE_VERSION_3,
+                                                        RDP_LICENSE_KEY_EXCHANGE_RSA,
+                                                        0x03000000u,
+                                                        client_random,
+                                                        &license_bad_blob,
+                                                        &license_request.key_exchange_list,
+                                                        &license_request.server_certificate) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
+    license_packet.length = 0;
     PCHECK(rdp_license_write_client_new_license_request(&license_packet,
                                                         RDP_LICENSE_VERSION_3,
                                                         RDP_LICENSE_KEY_EXCHANGE_RSA,
@@ -5669,6 +5684,20 @@ static int test_path_security_license_channels(void)
     license_challenge.encrypted_challenge.length = 20;
     license_challenge.encrypted_challenge.data = client_random;
     license_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&license_packet, 0xa5) == LIBRDP_STATUS_OK);
+    license_bad_blob = license_request.scope_list.scopes[0];
+    license_bad_blob.type = RDP_LICENSE_BLOB_SCOPE;
+    PCHECK(rdp_license_write_client_info(&license_packet,
+                                         RDP_LICENSE_VERSION_3,
+                                         RDP_LICENSE_KEY_EXCHANGE_RSA,
+                                         0x03000000u,
+                                         client_random,
+                                         &license_blob,
+                                         &license_bad_blob,
+                                         &license_challenge.encrypted_challenge,
+                                         client_random) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
+    license_packet.length = 0;
     PCHECK(rdp_license_write_client_info(&license_packet,
                                          RDP_LICENSE_VERSION_3,
                                          RDP_LICENSE_KEY_EXCHANGE_RSA,
@@ -5694,6 +5723,16 @@ static int test_path_security_license_channels(void)
                                          license_packet.length,
                                          &client_license_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
     license_packet.data[48 + license_blob.length] = RDP_LICENSE_BLOB_DATA;
+    license_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&license_packet, 0xa5) == LIBRDP_STATUS_OK);
+    license_bad_blob = license_challenge.encrypted_challenge;
+    license_bad_blob.type = RDP_LICENSE_BLOB_DATA;
+    PCHECK(rdp_license_write_platform_challenge_response(&license_packet,
+                                                         RDP_LICENSE_VERSION_3,
+                                                         &license_bad_blob,
+                                                         &license_challenge.encrypted_challenge,
+                                                         client_random) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(license_packet.length == 1 && license_packet.data[0] == 0xa5);
     license_packet.length = 0;
     PCHECK(rdp_license_write_platform_challenge_response(&license_packet,
                                                          RDP_LICENSE_VERSION_3,
