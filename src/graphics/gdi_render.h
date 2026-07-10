@@ -11,7 +11,8 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_NONE = 0,
     RDP_GDI_RENDER_OP_OPAQUE_RECT = 1,
     RDP_GDI_RENDER_OP_DSTBLT = 2,
-    RDP_GDI_RENDER_OP_SCRBLT = 3
+    RDP_GDI_RENDER_OP_SCRBLT = 3,
+    RDP_GDI_RENDER_OP_PATBLT = 4
 } rdp_gdi_render_op_kind;
 
 typedef struct rdp_gdi_render_rect
@@ -67,6 +68,18 @@ typedef struct rdp_gdi_render_state
     uint8_t scr_rop;
     int32_t scr_src_x;
     int32_t scr_src_y;
+    int32_t pat_left;
+    int32_t pat_top;
+    int32_t pat_width;
+    int32_t pat_height;
+    uint8_t pat_rop;
+    uint32_t pat_back_color;
+    uint32_t pat_fore_color;
+    int32_t pat_brush_x;
+    int32_t pat_brush_y;
+    uint8_t pat_brush_style;
+    uint8_t pat_brush_hatch;
+    uint8_t pat_brush_extra[7];
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);

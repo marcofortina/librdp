@@ -16710,14 +16710,16 @@ typedef struct rdp_session_gdi_region
     uint32_t height;
 } rdp_session_gdi_region;
 
-static uint8_t rdp_session_gdi_rop3(uint8_t rop, uint8_t source, uint8_t dest)
+static uint8_t rdp_session_gdi_rop3(uint8_t rop, uint8_t source, uint8_t pattern, uint8_t dest)
 {
     uint8_t result = 0;
     uint8_t bit = 0;
 
     for (bit = 0; bit < 8u; bit++)
     {
-        uint8_t index = (uint8_t)((((source >> bit) & 1u) << 1u) | ((dest >> bit) & 1u));
+        uint8_t index = (uint8_t)((((pattern >> bit) & 1u) << 2u) |
+                                  (((source >> bit) & 1u) << 1u) |
+                                  ((dest >> bit) & 1u));
 
         if ((rop >> index) & 1u)
             result |= (uint8_t)(1u << bit);
@@ -16852,9 +16854,9 @@ static librdp_status rdp_session_gdi_fill_rect(librdp_session* session,
         {
             if (use_rop)
             {
-                pixel[0] = rdp_session_gdi_rop3(rop, 0, pixel[0]);
-                pixel[1] = rdp_session_gdi_rop3(rop, 0, pixel[1]);
-                pixel[2] = rdp_session_gdi_rop3(rop, 0, pixel[2]);
+                pixel[0] = rdp_session_gdi_rop3(rop, 0, b, pixel[0]);
+                pixel[1] = rdp_session_gdi_rop3(rop, 0, g, pixel[1]);
+                pixel[2] = rdp_session_gdi_rop3(rop, 0, r, pixel[2]);
             }
             else
             {
@@ -16921,9 +16923,9 @@ static librdp_status rdp_session_gdi_copy_rect(librdp_session* session,
 
         for (x = 0; x < region->width; x++)
         {
-            dst[0] = rdp_session_gdi_rop3(op->rop, src[0], dst[0]);
-            dst[1] = rdp_session_gdi_rop3(op->rop, src[1], dst[1]);
-            dst[2] = rdp_session_gdi_rop3(op->rop, src[2], dst[2]);
+            dst[0] = rdp_session_gdi_rop3(op->rop, src[0], 0, dst[0]);
+            dst[1] = rdp_session_gdi_rop3(op->rop, src[1], 0, dst[1]);
+            dst[2] = rdp_session_gdi_rop3(op->rop, src[2], 0, dst[2]);
             dst[3] = 0xffu;
             src += 4u;
             dst += 4u;
@@ -16971,6 +16973,12 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
         if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, &region))
             return LIBRDP_STATUS_OK;
         return rdp_session_gdi_fill_rect(session, op, &region, op->rop, 0, 1);
+    }
+    if (op->kind == RDP_GDI_RENDER_OP_PATBLT)
+    {
+        if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, &region))
+            return LIBRDP_STATUS_OK;
+        return rdp_session_gdi_fill_rect(session, op, &region, op->rop, op->color, 1);
     }
     if (op->kind == RDP_GDI_RENDER_OP_SCRBLT)
     {
