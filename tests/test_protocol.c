@@ -2697,6 +2697,15 @@ static int test_path_security_license_channels(void)
         0x29, 0x15, 0x7f, 0x79, 0xa3, 0x08, 0x93, 0x53,
         0x78, 0x3e, 0x24, 0x4f, 0xad, 0x52, 0x8a, 0x5c
     };
+    const uint8_t ntlm_v2_expected_encrypted_key[] = {
+        0x89, 0x7f, 0x84, 0x0c, 0x2b, 0x3c, 0xcc, 0xa4,
+        0xbd, 0x38, 0x95, 0x03, 0x54, 0xe8, 0x31, 0x05
+    };
+    const uint8_t ntlm_expected_wrapped_data[] = {
+        0x01, 0x00, 0x00, 0x00, 0x47, 0xea, 0xc4, 0xa7,
+        0x26, 0xe2, 0x57, 0xb3, 0x00, 0x00, 0x00, 0x00,
+        0x04, 0x8d, 0x3d, 0x6c
+    };
     const uint8_t server_certificate[] = {
         0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -7535,6 +7544,9 @@ static int test_path_security_license_channels(void)
     PCHECK(memcmp(ntlm_authenticate.data + nt_offset,
                   ntlm_v2_expected_proof,
                   sizeof(ntlm_v2_expected_proof)) == 0);
+    PCHECK(memcmp(ntlm_authenticate.data + key_offset,
+                  ntlm_v2_expected_encrypted_key,
+                  sizeof(ntlm_v2_expected_encrypted_key)) == 0);
     PCHECK(memcmp(ntlm_auth_result.session_key, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) == 0);
     PCHECK(memcmp(ntlm_authenticate.data + key_offset, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) != 0);
     PCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
@@ -7546,6 +7558,7 @@ static int test_path_security_license_channels(void)
     PCHECK(ntlm_wrapped.length == 20);
     PCHECK(test_read_u32_le(ntlm_wrapped.data) == 1);
     PCHECK(test_read_u32_le(ntlm_wrapped.data + 12) == 0);
+    PCHECK(memcmp(ntlm_wrapped.data, ntlm_expected_wrapped_data, sizeof(ntlm_expected_wrapped_data)) == 0);
     PCHECK(memcmp(ntlm_wrapped.data + 16, "data", 4) != 0);
     PCHECK(ntlm_security.send_seq == 1);
     PCHECK(rdp_credssp_encrypt_public_key_hash(&ntlm_security,

@@ -34,9 +34,10 @@ typedef struct rdp_credssp_ts_request
 
 typedef struct rdp_ntlm_rc4_context
 {
-    uint8_t s[256];
-    uint8_t i;
-    uint8_t j;
+    uint8_t key[256];
+    size_t key_len;
+    size_t offset;
+    uint8_t initialized;
 } rdp_ntlm_rc4_context;
 
 typedef struct rdp_ntlm_security_context

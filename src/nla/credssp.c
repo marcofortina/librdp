@@ -6,6 +6,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
+#include <openssl/provider.h>
 #include <openssl/rand.h>
 
 #include <ctype.h>
@@ -25,14 +26,6 @@
 #define RDP_NTLM_NEGOTIATE_128 0x20000000u
 #define RDP_NTLM_NEGOTIATE_KEY_EXCH 0x40000000u
 #define RDP_NTLM_NEGOTIATE_56 0x80000000u
-
-typedef struct rdp_md4_context
-{
-    uint32_t state[4];
-    uint64_t total_len;
-    uint8_t block[64];
-    size_t block_len;
-} rdp_md4_context;
 
 static uint16_t rdp_read_u16_le_bytes(const uint8_t* data)
 {
@@ -244,185 +237,60 @@ static librdp_status rdp_append_utf16le_ascii(rdp_buffer* buffer, const char* te
     return LIBRDP_STATUS_OK;
 }
 
-static uint32_t rdp_rotl32(uint32_t value, uint8_t bits)
+static CRYPTO_ONCE rdp_credssp_provider_once = CRYPTO_ONCE_STATIC_INIT;
+static OSSL_PROVIDER* rdp_credssp_default_provider;
+static OSSL_PROVIDER* rdp_credssp_legacy_provider;
+static int rdp_credssp_legacy_ready;
+
+static void rdp_credssp_provider_init(void)
 {
-    return (value << bits) | (value >> (32u - bits));
+    rdp_credssp_default_provider = OSSL_PROVIDER_load(NULL, "default");
+    rdp_credssp_legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
+    rdp_credssp_legacy_ready = rdp_credssp_legacy_provider != NULL;
 }
 
-static void rdp_md4_init(rdp_md4_context* context)
+static librdp_status rdp_credssp_legacy_provider_ensure(void)
 {
-    if (!context)
-        return;
-    context->state[0] = 0x67452301u;
-    context->state[1] = 0xefcdab89u;
-    context->state[2] = 0x98badcfeu;
-    context->state[3] = 0x10325476u;
-    context->total_len = 0;
-    context->block_len = 0;
-}
-
-static void rdp_md4_step_f(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
-{
-    *a = rdp_rotl32(*a + ((b & c) | (~b & d)) + x, s);
-}
-
-static void rdp_md4_step_g(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
-{
-    *a = rdp_rotl32(*a + ((b & c) | (b & d) | (c & d)) + x + 0x5a827999u, s);
-}
-
-static void rdp_md4_step_h(uint32_t* a, uint32_t b, uint32_t c, uint32_t d, uint32_t x, uint8_t s)
-{
-    *a = rdp_rotl32(*a + (b ^ c ^ d) + x + 0x6ed9eba1u, s);
-}
-
-static void rdp_md4_process(rdp_md4_context* context, const uint8_t block[64])
-{
-    uint32_t a = 0;
-    uint32_t b = 0;
-    uint32_t c = 0;
-    uint32_t d = 0;
-    uint32_t x[16];
-    size_t i = 0;
-
-    if (!context || !block)
-        return;
-    for (i = 0; i < 16u; i++)
-        x[i] = rdp_read_u32_le_bytes(block + (i * 4u));
-
-    a = context->state[0];
-    b = context->state[1];
-    c = context->state[2];
-    d = context->state[3];
-
-    rdp_md4_step_f(&a, b, c, d, x[0], 3);
-    rdp_md4_step_f(&d, a, b, c, x[1], 7);
-    rdp_md4_step_f(&c, d, a, b, x[2], 11);
-    rdp_md4_step_f(&b, c, d, a, x[3], 19);
-    rdp_md4_step_f(&a, b, c, d, x[4], 3);
-    rdp_md4_step_f(&d, a, b, c, x[5], 7);
-    rdp_md4_step_f(&c, d, a, b, x[6], 11);
-    rdp_md4_step_f(&b, c, d, a, x[7], 19);
-    rdp_md4_step_f(&a, b, c, d, x[8], 3);
-    rdp_md4_step_f(&d, a, b, c, x[9], 7);
-    rdp_md4_step_f(&c, d, a, b, x[10], 11);
-    rdp_md4_step_f(&b, c, d, a, x[11], 19);
-    rdp_md4_step_f(&a, b, c, d, x[12], 3);
-    rdp_md4_step_f(&d, a, b, c, x[13], 7);
-    rdp_md4_step_f(&c, d, a, b, x[14], 11);
-    rdp_md4_step_f(&b, c, d, a, x[15], 19);
-
-    rdp_md4_step_g(&a, b, c, d, x[0], 3);
-    rdp_md4_step_g(&d, a, b, c, x[4], 5);
-    rdp_md4_step_g(&c, d, a, b, x[8], 9);
-    rdp_md4_step_g(&b, c, d, a, x[12], 13);
-    rdp_md4_step_g(&a, b, c, d, x[1], 3);
-    rdp_md4_step_g(&d, a, b, c, x[5], 5);
-    rdp_md4_step_g(&c, d, a, b, x[9], 9);
-    rdp_md4_step_g(&b, c, d, a, x[13], 13);
-    rdp_md4_step_g(&a, b, c, d, x[2], 3);
-    rdp_md4_step_g(&d, a, b, c, x[6], 5);
-    rdp_md4_step_g(&c, d, a, b, x[10], 9);
-    rdp_md4_step_g(&b, c, d, a, x[14], 13);
-    rdp_md4_step_g(&a, b, c, d, x[3], 3);
-    rdp_md4_step_g(&d, a, b, c, x[7], 5);
-    rdp_md4_step_g(&c, d, a, b, x[11], 9);
-    rdp_md4_step_g(&b, c, d, a, x[15], 13);
-
-    rdp_md4_step_h(&a, b, c, d, x[0], 3);
-    rdp_md4_step_h(&d, a, b, c, x[8], 9);
-    rdp_md4_step_h(&c, d, a, b, x[4], 11);
-    rdp_md4_step_h(&b, c, d, a, x[12], 15);
-    rdp_md4_step_h(&a, b, c, d, x[2], 3);
-    rdp_md4_step_h(&d, a, b, c, x[10], 9);
-    rdp_md4_step_h(&c, d, a, b, x[6], 11);
-    rdp_md4_step_h(&b, c, d, a, x[14], 15);
-    rdp_md4_step_h(&a, b, c, d, x[1], 3);
-    rdp_md4_step_h(&d, a, b, c, x[9], 9);
-    rdp_md4_step_h(&c, d, a, b, x[5], 11);
-    rdp_md4_step_h(&b, c, d, a, x[13], 15);
-    rdp_md4_step_h(&a, b, c, d, x[3], 3);
-    rdp_md4_step_h(&d, a, b, c, x[11], 9);
-    rdp_md4_step_h(&c, d, a, b, x[7], 11);
-    rdp_md4_step_h(&b, c, d, a, x[15], 15);
-
-    context->state[0] += a;
-    context->state[1] += b;
-    context->state[2] += c;
-    context->state[3] += d;
-}
-
-static void rdp_md4_update(rdp_md4_context* context, const uint8_t* data, size_t length)
-{
-    size_t offset = 0;
-
-    if (!context || (!data && length > 0))
-        return;
-    context->total_len += length;
-    if (context->block_len > 0)
-    {
-        size_t needed = sizeof(context->block) - context->block_len;
-        size_t take = length < needed ? length : needed;
-        if (take > 0)
-            memcpy(context->block + context->block_len, data, take);
-        context->block_len += take;
-        offset += take;
-        if (context->block_len == sizeof(context->block))
-        {
-            rdp_md4_process(context, context->block);
-            context->block_len = 0;
-        }
-    }
-    while (length - offset >= sizeof(context->block))
-    {
-        rdp_md4_process(context, data + offset);
-        offset += sizeof(context->block);
-    }
-    if (offset < length)
-    {
-        context->block_len = length - offset;
-        memcpy(context->block, data + offset, context->block_len);
-    }
-}
-
-static void rdp_md4_final(rdp_md4_context* context, uint8_t digest[16])
-{
-    uint8_t pad[64];
-    uint8_t length_bytes[8];
-    uint64_t bits = 0;
-    size_t pad_len = 0;
-    size_t i = 0;
-
-    if (!context || !digest)
-        return;
-    memset(pad, 0, sizeof(pad));
-    pad[0] = 0x80;
-    pad_len = context->block_len < 56u ? 56u - context->block_len : 120u - context->block_len;
-    bits = context->total_len * 8u;
-    for (i = 0; i < sizeof(length_bytes); i++)
-        length_bytes[i] = (uint8_t)((bits >> (i * 8u)) & 0xffu);
-    rdp_md4_update(context, pad, pad_len);
-    rdp_md4_update(context, length_bytes, sizeof(length_bytes));
-    for (i = 0; i < 4u; i++)
-    {
-        digest[(i * 4u) + 0u] = (uint8_t)(context->state[i] & 0xffu);
-        digest[(i * 4u) + 1u] = (uint8_t)((context->state[i] >> 8) & 0xffu);
-        digest[(i * 4u) + 2u] = (uint8_t)((context->state[i] >> 16) & 0xffu);
-        digest[(i * 4u) + 3u] = (uint8_t)((context->state[i] >> 24) & 0xffu);
-    }
+    if (CRYPTO_THREAD_run_once(&rdp_credssp_provider_once, rdp_credssp_provider_init) != 1)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_credssp_legacy_ready ? LIBRDP_STATUS_OK : LIBRDP_STATUS_UNSUPPORTED;
 }
 
 static librdp_status rdp_md4_digest(const uint8_t* data, size_t length, uint8_t digest[16])
 {
-    rdp_md4_context context;
+    EVP_MD* md = NULL;
+    EVP_MD_CTX* context = NULL;
+    unsigned int got = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if ((!data && length > 0) || !digest)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    rdp_md4_init(&context);
-    rdp_md4_update(&context, data, length);
-    rdp_md4_final(&context, digest);
-    OPENSSL_cleanse(&context, sizeof(context));
-    return LIBRDP_STATUS_OK;
+    status = rdp_credssp_legacy_provider_ensure();
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    md = EVP_MD_fetch(NULL, "MD4", "provider=legacy");
+    if (!md)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    context = EVP_MD_CTX_new();
+    if (!context)
+    {
+        EVP_MD_free(md);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+
+    if (EVP_DigestInit_ex(context, md, NULL) != 1)
+        goto out;
+    if (length > 0 && EVP_DigestUpdate(context, data, length) != 1)
+        goto out;
+    if (EVP_DigestFinal_ex(context, digest, &got) != 1 || got != 16u)
+        goto out;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MD_CTX_free(context);
+    EVP_MD_free(md);
+    return status;
 }
 
 static librdp_status rdp_hmac_md5_parts(const uint8_t* key,
@@ -508,45 +376,102 @@ out:
     return status;
 }
 
-static void rdp_ntlm_rc4_init(rdp_ntlm_rc4_context* context, const uint8_t* key, size_t key_len)
+static librdp_status rdp_ntlm_rc4_init(rdp_ntlm_rc4_context* context, const uint8_t* key, size_t key_len)
 {
-    size_t i = 0;
-    uint8_t j = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!context || !key || key_len == 0)
-        return;
-    for (i = 0; i < 256u; i++)
-        context->s[i] = (uint8_t)i;
-    for (i = 0; i < 256u; i++)
-    {
-        uint8_t tmp = 0;
-        j = (uint8_t)(j + context->s[i] + key[i % key_len]);
-        tmp = context->s[i];
-        context->s[i] = context->s[j];
-        context->s[j] = tmp;
-    }
-    context->i = 0;
-    context->j = 0;
+    if (!context || !key || key_len == 0 || key_len > sizeof(context->key))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_credssp_legacy_provider_ensure();
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    memset(context, 0, sizeof(*context));
+    memcpy(context->key, key, key_len);
+    context->key_len = key_len;
+    context->initialized = 1;
+    return LIBRDP_STATUS_OK;
 }
 
-static void rdp_ntlm_rc4_crypt(rdp_ntlm_rc4_context* context, uint8_t* data, size_t length)
+static librdp_status rdp_ntlm_rc4_discard(EVP_CIPHER_CTX* cipher_context, size_t length)
 {
-    size_t i = 0;
+    uint8_t zero[256];
+    uint8_t discard[256];
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!context || (!data && length > 0))
-        return;
-    for (i = 0; i < length; i++)
+    memset(zero, 0, sizeof(zero));
+    while (length > 0)
     {
-        uint8_t tmp = 0;
-        uint8_t index = 0;
-        context->i = (uint8_t)(context->i + 1u);
-        context->j = (uint8_t)(context->j + context->s[context->i]);
-        tmp = context->s[context->i];
-        context->s[context->i] = context->s[context->j];
-        context->s[context->j] = tmp;
-        index = (uint8_t)(context->s[context->i] + context->s[context->j]);
-        data[i] ^= context->s[index];
+        int out_len = 0;
+        int chunk = length > sizeof(zero) ? (int)sizeof(zero) : (int)length;
+
+        if (EVP_EncryptUpdate(cipher_context, discard, &out_len, zero, chunk) != 1 || out_len != chunk)
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        }
+        length -= (size_t)chunk;
     }
+    OPENSSL_cleanse(discard, sizeof(discard));
+    return status;
+}
+
+static librdp_status rdp_ntlm_rc4_crypt(rdp_ntlm_rc4_context* context, uint8_t* data, size_t length)
+{
+    EVP_CIPHER* cipher = NULL;
+    EVP_CIPHER_CTX* cipher_context = NULL;
+    size_t offset = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!context || (!data && length > 0) || !context->initialized || context->key_len == 0 ||
+        context->key_len > INT_MAX || SIZE_MAX - context->offset < length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length == 0)
+        return LIBRDP_STATUS_OK;
+
+    status = rdp_credssp_legacy_provider_ensure();
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    cipher = EVP_CIPHER_fetch(NULL, "RC4", "provider=legacy");
+    if (!cipher)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    cipher_context = EVP_CIPHER_CTX_new();
+    if (!cipher_context)
+    {
+        EVP_CIPHER_free(cipher);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+
+    if (EVP_EncryptInit_ex(cipher_context, cipher, NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_set_key_length(cipher_context, (int)context->key_len) != 1 ||
+        EVP_EncryptInit_ex(cipher_context, NULL, NULL, context->key, NULL) != 1)
+        goto out;
+
+    status = rdp_ntlm_rc4_discard(cipher_context, context->offset);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+
+    while (offset < length)
+    {
+        int out_len = 0;
+        int chunk = length - offset > (size_t)INT_MAX ? INT_MAX : (int)(length - offset);
+
+        if (EVP_EncryptUpdate(cipher_context, data + offset, &out_len, data + offset, chunk) != 1 ||
+            out_len != chunk)
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto out;
+        }
+        offset += (size_t)chunk;
+    }
+    context->offset += length;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_CIPHER_CTX_free(cipher_context);
+    EVP_CIPHER_free(cipher);
+    return status;
 }
 
 static librdp_status rdp_ntlm_random_bytes(uint8_t* output, size_t length)
@@ -900,6 +825,8 @@ librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
     if ((flags & RDP_NTLM_NEGOTIATE_KEY_EXCH) != 0)
     {
         rdp_ntlm_rc4_context rc4;
+
+        memset(&rc4, 0, sizeof(rc4));
         if (exported_session_key)
             memcpy(session_key, exported_session_key, sizeof(session_key));
         else
@@ -911,9 +838,12 @@ librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
         status = rdp_buffer_append(&encrypted_key, session_key, sizeof(session_key));
         if (status != LIBRDP_STATUS_OK)
             goto out;
-        rdp_ntlm_rc4_init(&rc4, session_base_key, sizeof(session_base_key));
-        rdp_ntlm_rc4_crypt(&rc4, encrypted_key.data, encrypted_key.length);
+        status = rdp_ntlm_rc4_init(&rc4, session_base_key, sizeof(session_base_key));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_ntlm_rc4_crypt(&rc4, encrypted_key.data, encrypted_key.length);
         OPENSSL_cleanse(&rc4, sizeof(rc4));
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
     }
     else
     {
@@ -1432,9 +1362,12 @@ librdp_status rdp_credssp_ntlm_security_init(rdp_ntlm_security_context* context,
         return status;
     }
 
-    rdp_ntlm_rc4_init(&context->send_rc4, context->client_sealing_key, sizeof(context->client_sealing_key));
-    rdp_ntlm_rc4_init(&context->recv_rc4, context->server_sealing_key, sizeof(context->server_sealing_key));
-    return LIBRDP_STATUS_OK;
+    status = rdp_ntlm_rc4_init(&context->send_rc4, context->client_sealing_key, sizeof(context->client_sealing_key));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_ntlm_rc4_init(&context->recv_rc4, context->server_sealing_key, sizeof(context->server_sealing_key));
+    if (status != LIBRDP_STATUS_OK)
+        OPENSSL_cleanse(context, sizeof(*context));
+    return status;
 }
 
 librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
@@ -1472,9 +1405,22 @@ librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
         OPENSSL_cleanse(digest, sizeof(digest));
         return status;
     }
-    rdp_ntlm_rc4_crypt(&context->send_rc4, wrapped->data + base + 16u, length);
+    status = rdp_ntlm_rc4_crypt(&context->send_rc4, wrapped->data + base + 16u, length);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        wrapped->length = base;
+        OPENSSL_cleanse(digest, sizeof(digest));
+        return status;
+    }
     memcpy(checksum, digest, sizeof(checksum));
-    rdp_ntlm_rc4_crypt(&context->send_rc4, checksum, sizeof(checksum));
+    status = rdp_ntlm_rc4_crypt(&context->send_rc4, checksum, sizeof(checksum));
+    if (status != LIBRDP_STATUS_OK)
+    {
+        wrapped->length = base;
+        OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
+        return status;
+    }
     rdp_write_u32_le_bytes(wrapped->data + base, 1);
     memcpy(wrapped->data + base + 4u, checksum, sizeof(checksum));
     rdp_write_u32_le_bytes(wrapped->data + base + 12u, context->send_seq);
@@ -1506,7 +1452,12 @@ librdp_status rdp_credssp_ntlm_unwrap(rdp_ntlm_security_context* context,
     status = rdp_buffer_append(plain, wrapped + 16u, length - 16u);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    rdp_ntlm_rc4_crypt(&context->recv_rc4, plain->data + base, plain->length - base);
+    status = rdp_ntlm_rc4_crypt(&context->recv_rc4, plain->data + base, plain->length - base);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        plain->length = base;
+        return status;
+    }
     rdp_write_u32_le_bytes(seq, context->recv_seq);
     status = rdp_hmac_md5_parts(context->server_signing_key,
                                 sizeof(context->server_signing_key),
@@ -1520,11 +1471,20 @@ librdp_status rdp_credssp_ntlm_unwrap(rdp_ntlm_security_context* context,
     if (status != LIBRDP_STATUS_OK)
         return status;
     memcpy(checksum, digest, sizeof(checksum));
-    rdp_ntlm_rc4_crypt(&context->recv_rc4, checksum, sizeof(checksum));
+    status = rdp_ntlm_rc4_crypt(&context->recv_rc4, checksum, sizeof(checksum));
+    if (status != LIBRDP_STATUS_OK)
+    {
+        plain->length = base;
+        OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
+        return status;
+    }
     if (memcmp(wrapped + 4u, checksum, sizeof(checksum)) != 0)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     else
         context->recv_seq++;
+    if (status != LIBRDP_STATUS_OK)
+        plain->length = base;
     OPENSSL_cleanse(digest, sizeof(digest));
     OPENSSL_cleanse(checksum, sizeof(checksum));
     return status;
