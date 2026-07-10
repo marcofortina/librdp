@@ -366,6 +366,8 @@ struct librdp_session
     uint8_t fastpath_fragmenting;
     uint8_t fastpath_fragment_update_code;
     rdp_buffer fastpath_fragment;
+    uint8_t palette_valid;
+    rdp_palette_update palette;
     uint32_t core_input_channel_id;
     uint8_t core_input_channel_id_bytes;
     uint8_t core_input_ready;
@@ -16642,7 +16644,10 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
         librdp_status status = LIBRDP_STATUS_OK;
 
         rdp_buffer_init(&pixels);
-        status = rdp_bitmap_decode_rect_bgra32(rect, &pixels, &stride);
+        status = rdp_bitmap_decode_rect_bgra32_with_palette(rect,
+                                                            session->palette_valid ? &session->palette : NULL,
+                                                            &pixels,
+                                                            &stride);
         if (status == LIBRDP_STATUS_OK)
             status = librdp_surface_blit_bgra32(session->surface,
                                                 rect->dest_left,
@@ -16663,6 +16668,24 @@ static librdp_status rdp_session_apply_bitmap_update(librdp_session* session, co
                         rect->width,
                         rect->height);
     }
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_session_palette_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->palette_valid = 0;
+    memset(&session->palette, 0, sizeof(session->palette));
+}
+
+static librdp_status rdp_session_apply_palette_update(librdp_session* session, const rdp_palette_update* palette)
+{
+    if (!session || !palette || palette->count > RDP_BITMAP_PALETTE_MAX_ENTRIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    session->palette = *palette;
+    session->palette_valid = 1;
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.graphics.palette.update", "colors=%u", palette->count);
     return LIBRDP_STATUS_OK;
 }
 
@@ -16814,6 +16837,40 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                 if (status != LIBRDP_STATUS_OK)
                     goto out;
                 rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.bitmap_update", "rectangles=%u", bitmap.count);
+            }
+        }
+        else if (update->update_code == RDP_FASTPATH_UPDATE_PALETTE)
+        {
+            rdp_palette_update palette;
+            const uint8_t* update_data = NULL;
+            size_t update_len = 0;
+            int complete = 0;
+            int from_fragment = 0;
+
+            status = rdp_session_fastpath_payload(session, update, &update_data, &update_len, &complete, &from_fragment);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.fastpath.palette.unsupported",
+                                "fragmentation=%u compression=%u payload_len=%u",
+                                update->fragmentation,
+                                update->compression,
+                                (unsigned)update->data_len);
+            }
+            else if (status != LIBRDP_STATUS_OK)
+            {
+                goto out;
+            }
+            else if (complete)
+            {
+                status = rdp_bitmap_parse_fastpath_palette_update(update_data, update_len, &palette);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_apply_palette_update(session, &palette);
+                if (from_fragment)
+                    rdp_session_fastpath_fragment_reset(session);
+                if (status != LIBRDP_STATUS_OK)
+                    goto out;
+                rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.palette_update", "colors=%u", palette.count);
             }
         }
         else if (update->update_code == RDP_FASTPATH_UPDATE_POINTER_NULL ||
@@ -17117,6 +17174,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
+    rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_redirected_files_clear(session);
 
@@ -18706,6 +18764,21 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         }
                         rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.bitmap_update", "rectangles=%u", update.count);
                     }
+                    else if (update_type == RDP_UPDATE_TYPE_PALETTE)
+                    {
+                        rdp_palette_update palette;
+
+                        status = rdp_bitmap_parse_palette_update(data_pdu.payload, data_pdu.payload_len, &palette);
+                        if (status == LIBRDP_STATUS_OK)
+                            status = rdp_session_apply_palette_update(session, &palette);
+                        if (status != LIBRDP_STATUS_OK)
+                        {
+                            rdp_buffer_free(&security_payload);
+                            rdp_buffer_free(&packet);
+                            return rdp_session_fail(session, status);
+                        }
+                        rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.palette_update", "colors=%u", palette.count);
+                    }
                     else if (update_type == RDP_UPDATE_TYPE_POINTER)
                     {
                         rdp_pointer_update pointer;
@@ -18850,6 +18923,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
+    rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_smartcard_reset(session);

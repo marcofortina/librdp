@@ -117,6 +117,65 @@ librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, 
     return rdp_bitmap_parse_rectangles(&stream, count, update);
 }
 
+static librdp_status rdp_bitmap_parse_palette_body(rdp_stream* stream, rdp_palette_update* palette)
+{
+    uint16_t pad = 0;
+    uint32_t count = 0;
+    uint32_t i = 0;
+
+    if (!stream || !palette)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u16_le(stream, &pad) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(stream, &count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (count > RDP_BITMAP_PALETTE_MAX_ENTRIES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(stream) < (size_t)count * 3u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(palette, 0, sizeof(*palette));
+    palette->count = count;
+    for (i = 0; i < count; i++)
+    {
+        if (rdp_stream_read_u8(stream, &palette->entries[i].red) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(stream, &palette->entries[i].green) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(stream, &palette->entries[i].blue) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    (void)pad;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_bitmap_parse_palette_update(const void* data, size_t length, rdp_palette_update* palette)
+{
+    rdp_stream stream;
+    uint16_t update_type = 0;
+
+    if (!data || !palette)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u16_le(&stream, &update_type) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (update_type != RDP_UPDATE_TYPE_PALETTE)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    return rdp_bitmap_parse_palette_body(&stream, palette);
+}
+
+librdp_status rdp_bitmap_parse_fastpath_palette_update(const void* data, size_t length, rdp_palette_update* palette)
+{
+    rdp_stream stream;
+    uint16_t first = 0;
+
+    if (!data || !palette)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u16_le(&stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (first == RDP_UPDATE_TYPE_PALETTE)
+        return rdp_bitmap_parse_palette_body(&stream, palette);
+    rdp_stream_init(&stream, data, length);
+    return rdp_bitmap_parse_palette_body(&stream, palette);
+}
+
 static librdp_status rdp_bitmap_validate_rect(const rdp_bitmap_rect* rect)
 {
     if (!rect)
@@ -210,6 +269,61 @@ librdp_status rdp_bitmap_write_fastpath_update(rdp_buffer* buffer, const rdp_bit
     return rdp_bitmap_write_rects(buffer, rects, count);
 }
 
+librdp_status rdp_bitmap_write_palette_update(rdp_buffer* buffer, const rdp_palette_update* palette)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0;
+
+    if (!buffer || !palette || palette->count > RDP_BITMAP_PALETTE_MAX_ENTRIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, RDP_UPDATE_TYPE_PALETTE);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, palette->count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < palette->count; i++)
+    {
+        status = rdp_buffer_append_u8(buffer, palette->entries[i].red);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, palette->entries[i].green);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, palette->entries[i].blue);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_bitmap_write_fastpath_palette_update(rdp_buffer* buffer, const rdp_palette_update* palette)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0;
+
+    if (!buffer || !palette || palette->count > RDP_BITMAP_PALETTE_MAX_ENTRIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, palette->count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < palette->count; i++)
+    {
+        status = rdp_buffer_append_u8(buffer, palette->entries[i].red);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, palette->entries[i].green);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, palette->entries[i].blue);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static uint8_t rdp_scale_5_to_8(uint16_t value)
 {
     return (uint8_t)((value * 255u + 15u) / 31u);
@@ -235,6 +349,8 @@ typedef struct rdp_bitmap_rle_reader
 
 static uint8_t rdp_bitmap_rle_bytes_per_pixel(uint16_t bits_per_pixel)
 {
+    if (bits_per_pixel == 8u)
+        return 1;
     if (bits_per_pixel == 15u)
         return 2;
     if (bits_per_pixel == 16u)
@@ -248,6 +364,8 @@ static uint8_t rdp_bitmap_rle_bytes_per_pixel(uint16_t bits_per_pixel)
 
 static uint32_t rdp_bitmap_rle_white(uint16_t bits_per_pixel)
 {
+    if (bits_per_pixel == 8u)
+        return 0xffu;
     if (bits_per_pixel == 15u)
         return 0x7fffu;
     if (bits_per_pixel == 16u)
@@ -276,6 +394,10 @@ static librdp_status rdp_bitmap_rle_read_pixel(rdp_bitmap_rle_reader* reader, ui
     if (reader->bits_per_pixel == 15u || reader->bits_per_pixel == 16u)
     {
         *pixel = (uint32_t)reader->current[0] | ((uint32_t)reader->current[1] << 8);
+    }
+    else if (reader->bits_per_pixel == 8u)
+    {
+        *pixel = reader->current[0];
     }
     else
     {
@@ -636,8 +758,31 @@ static librdp_status rdp_bitmap_rle_decode_stream(const uint8_t* data,
     return reader.position == reader.total ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
-static void rdp_bitmap_raw_pixel_to_bgra(uint32_t pixel, uint16_t bits_per_pixel, uint8_t* dst)
+static librdp_status rdp_bitmap_indexed_pixel_to_bgra(uint32_t pixel,
+                                                      const rdp_palette_update* palette,
+                                                      uint8_t* dst)
 {
+    const rdp_palette_entry* entry = NULL;
+
+    if (!palette || !dst || pixel >= palette->count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    entry = &palette->entries[pixel];
+    dst[0] = entry->blue;
+    dst[1] = entry->green;
+    dst[2] = entry->red;
+    dst[3] = 0xffu;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bitmap_raw_pixel_to_bgra(uint32_t pixel,
+                                                  uint16_t bits_per_pixel,
+                                                  const rdp_palette_update* palette,
+                                                  uint8_t* dst)
+{
+    if (bits_per_pixel == 8u)
+    {
+        return rdp_bitmap_indexed_pixel_to_bgra(pixel, palette, dst);
+    }
     if (bits_per_pixel == 15u)
     {
         dst[0] = rdp_scale_5_to_8((uint16_t)(pixel & 0x001fu));
@@ -657,6 +802,7 @@ static void rdp_bitmap_raw_pixel_to_bgra(uint32_t pixel, uint16_t bits_per_pixel
         dst[2] = (uint8_t)((pixel >> 16) & 0xffu);
     }
     dst[3] = 0xffu;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_bitmap_compressed_payload(const rdp_bitmap_rect* rect,
@@ -686,6 +832,7 @@ static librdp_status rdp_bitmap_compressed_payload(const rdp_bitmap_rect* rect,
 }
 
 static librdp_status rdp_bitmap_decode_compressed_bgra32(const rdp_bitmap_rect* rect,
+                                                         const rdp_palette_update* palette,
                                                          rdp_buffer* output,
                                                          size_t* stride)
 {
@@ -703,9 +850,11 @@ static librdp_status rdp_bitmap_decode_compressed_bgra32(const rdp_bitmap_rect* 
     if ((rect->flags & ~(RDP_BITMAP_FLAG_COMPRESSED | RDP_BITMAP_FLAG_NO_COMPRESSION_HEADER)) != 0)
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rect->width == 0 || rect->height == 0 ||
-        (rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
+        (rect->bits_per_pixel != 8 && rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
          rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rect->bits_per_pixel == 8u && !palette)
+        return LIBRDP_STATUS_UNSUPPORTED;
     if ((size_t)rect->width > SIZE_MAX / rect->height)
         return LIBRDP_STATUS_NO_MEMORY;
     pixel_count = (size_t)rect->width * rect->height;
@@ -730,7 +879,11 @@ static librdp_status rdp_bitmap_decode_compressed_bgra32(const rdp_bitmap_rect* 
         goto out;
     output->length = dst_size;
     for (i = 0; i < pixel_count; i++)
-        rdp_bitmap_raw_pixel_to_bgra(pixels[i], rect->bits_per_pixel, output->data + (i * 4u));
+    {
+        status = rdp_bitmap_raw_pixel_to_bgra(pixels[i], rect->bits_per_pixel, palette, output->data + (i * 4u));
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
+    }
     *stride = dst_stride;
 
 out:
@@ -738,7 +891,10 @@ out:
     return status;
 }
 
-librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buffer* output, size_t* stride)
+librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* rect,
+                                                         const rdp_palette_update* palette,
+                                                         rdp_buffer* output,
+                                                         size_t* stride)
 {
     uint16_t row = 0;
     uint16_t column = 0;
@@ -751,15 +907,17 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
     if (!rect || !output || !stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((rect->flags & RDP_BITMAP_FLAG_COMPRESSED) != 0)
-        return rdp_bitmap_decode_compressed_bgra32(rect, output, stride);
+        return rdp_bitmap_decode_compressed_bgra32(rect, palette, output, stride);
     if (rect->flags != 0 ||
-        (rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
+        (rect->bits_per_pixel != 8 && rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
          rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (rect->bits_per_pixel == 8u && !palette)
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rect->width == 0 || rect->height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    bytes_per_pixel = (uint16_t)(rect->bits_per_pixel / 8u);
+    bytes_per_pixel = rect->bits_per_pixel == 15u ? 2u : (uint16_t)(rect->bits_per_pixel / 8u);
     if ((size_t)rect->width > SIZE_MAX / bytes_per_pixel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     src_stride = (size_t)rect->width * bytes_per_pixel;
@@ -783,6 +941,15 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
         if (rect->bits_per_pixel == 32)
         {
             memcpy(dst, src, dst_stride);
+        }
+        else if (rect->bits_per_pixel == 8)
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                status = rdp_bitmap_indexed_pixel_to_bgra(src[column], palette, dst + ((size_t)column * 4u));
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
         }
         else if (rect->bits_per_pixel == 24)
         {
@@ -820,4 +987,9 @@ librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buf
 
     *stride = dst_stride;
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_bitmap_decode_rect_bgra32(const rdp_bitmap_rect* rect, rdp_buffer* output, size_t* stride)
+{
+    return rdp_bitmap_decode_rect_bgra32_with_palette(rect, NULL, output, stride);
 }

@@ -1464,6 +1464,19 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t bitmap_15_data[] = {0x00, 0x7c, 0xe0, 0x03};
     const uint8_t bitmap_16_data[] = {0x00, 0xf8, 0xe0, 0x07};
+    const uint8_t bitmap_8_data[] = {0, 1, 2, 3};
+    const uint8_t bitmap_8_rle_color_image[] = {0x84, 0, 1, 2, 3};
+    const uint8_t palette_update_data[] = {
+        0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+        10,   20,   30,   200,  100,  50,   1,    2,
+        3,    9,    8,    7
+    };
+    const uint8_t palette_fastpath_data[] = {
+        0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+        10,   20,   30,   200,  100,  50,   1,
+        2,    3,    9,    8,    7
+    };
+    const uint8_t palette_invalid_count[] = {0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00};
     const uint8_t bitmap_24_rle_color_image[] = {
         0x84,
         1, 2, 3,
@@ -2465,6 +2478,8 @@ static int test_path_security_license_channels(void)
     rdp_bitmap_update bitmap_update;
     rdp_bitmap_update_header bitmap_header;
     rdp_bitmap_rect bitmap_rect;
+    rdp_palette_update palette_update;
+    rdp_palette_update palette_roundtrip;
     rdp_pointer_update pointer_update;
     int32_t rfx_coefficients[8];
     int32_t rfx_component[RDP_RFX_TILE_COEFFICIENTS];
@@ -3056,6 +3071,36 @@ static int test_path_security_license_channels(void)
            bitmap_update.rects[0].data_len == 16);
     rdp_buffer_free(&decoded_bitmap);
     rdp_buffer_init(&decoded_bitmap);
+    PCHECK(rdp_bitmap_parse_palette_update(palette_update_data, sizeof(palette_update_data), &palette_update) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(palette_update.count == 4 && palette_update.entries[1].red == 200 &&
+           palette_update.entries[1].green == 100 && palette_update.entries[1].blue == 50);
+    PCHECK(rdp_bitmap_parse_fastpath_palette_update(palette_fastpath_data,
+                                                    sizeof(palette_fastpath_data),
+                                                    &palette_roundtrip) == LIBRDP_STATUS_OK);
+    PCHECK(palette_roundtrip.count == 4 && palette_roundtrip.entries[3].red == 9 &&
+           palette_roundtrip.entries[3].green == 8 && palette_roundtrip.entries[3].blue == 7);
+    PCHECK(rdp_bitmap_parse_palette_update(palette_fastpath_data,
+                                           sizeof(palette_fastpath_data),
+                                           &palette_roundtrip) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_bitmap_parse_palette_update(palette_invalid_count,
+                                           sizeof(palette_invalid_count),
+                                           &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_bitmap_write_palette_update(&decoded_bitmap, &palette_update) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_bitmap_parse_palette_update(decoded_bitmap.data,
+                                           decoded_bitmap.length,
+                                           &palette_roundtrip) == LIBRDP_STATUS_OK);
+    PCHECK(palette_roundtrip.count == 4 && palette_roundtrip.entries[0].red == 10 &&
+           palette_roundtrip.entries[2].blue == 3);
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
+    PCHECK(rdp_bitmap_write_fastpath_palette_update(&decoded_bitmap, &palette_update) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_bitmap_parse_fastpath_palette_update(decoded_bitmap.data,
+                                                    decoded_bitmap.length,
+                                                    &palette_roundtrip) == LIBRDP_STATUS_OK);
+    PCHECK(palette_roundtrip.count == 4 && palette_roundtrip.entries[1].green == 100);
+    rdp_buffer_free(&decoded_bitmap);
+    rdp_buffer_init(&decoded_bitmap);
     PCHECK(rdp_bitmap_write_rect(&decoded_bitmap, &bitmap_rect) == LIBRDP_STATUS_OK);
     PCHECK(decoded_bitmap.length == 36);
     bitmap_rect.width = 0;
@@ -3100,6 +3145,31 @@ static int test_path_security_license_channels(void)
     bitmap_rect.height = 2;
     bitmap_rect.dest_right = 1;
     bitmap_rect.dest_bottom = 1;
+    bitmap_rect.bits_per_pixel = 8;
+    bitmap_rect.data = bitmap_8_data;
+    bitmap_rect.data_len = sizeof(bitmap_8_data);
+    PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) ==
+           LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_bitmap_decode_rect_bgra32_with_palette(&bitmap_rect,
+                                                      &palette_update,
+                                                      &decoded_bitmap,
+                                                      &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 &&
+           decoded_bitmap.data[0] == 3 && decoded_bitmap.data[1] == 2 &&
+           decoded_bitmap.data[2] == 1 && decoded_bitmap.data[4] == 7 &&
+           decoded_bitmap.data[5] == 8 && decoded_bitmap.data[6] == 9 &&
+           decoded_bitmap.data[8] == 30 && decoded_bitmap.data[9] == 20 &&
+           decoded_bitmap.data[10] == 10);
+    bitmap_rect.data_len = 3;
+    PCHECK(rdp_bitmap_decode_rect_bgra32_with_palette(&bitmap_rect,
+                                                      &palette_update,
+                                                      &decoded_bitmap,
+                                                      &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(&bitmap_rect, 0, sizeof(bitmap_rect));
+    bitmap_rect.width = 2;
+    bitmap_rect.height = 2;
+    bitmap_rect.dest_right = 1;
+    bitmap_rect.dest_bottom = 1;
     bitmap_rect.bits_per_pixel = 24;
     bitmap_rect.flags = 0x0401;
     bitmap_rect.data = bitmap_24_rle_color_image;
@@ -3108,6 +3178,23 @@ static int test_path_security_license_channels(void)
     PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 1 &&
            decoded_bitmap.data[1] == 2 && decoded_bitmap.data[2] == 3 && decoded_bitmap.data[12] == 10 &&
            decoded_bitmap.data[13] == 11 && decoded_bitmap.data[14] == 12);
+    memset(&bitmap_rect, 0, sizeof(bitmap_rect));
+    bitmap_rect.width = 4;
+    bitmap_rect.height = 1;
+    bitmap_rect.dest_right = 3;
+    bitmap_rect.bits_per_pixel = 8;
+    bitmap_rect.flags = 0x0401;
+    bitmap_rect.data = bitmap_8_rle_color_image;
+    bitmap_rect.data_len = sizeof(bitmap_8_rle_color_image);
+    PCHECK(rdp_bitmap_decode_rect_bgra32_with_palette(&bitmap_rect,
+                                                      &palette_update,
+                                                      &decoded_bitmap,
+                                                      &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(decoded_stride == 16 && decoded_bitmap.data[0] == 30 && decoded_bitmap.data[1] == 20 &&
+           decoded_bitmap.data[2] == 10 && decoded_bitmap.data[4] == 50 &&
+           decoded_bitmap.data[5] == 100 && decoded_bitmap.data[6] == 200 &&
+           decoded_bitmap.data[12] == 7 && decoded_bitmap.data[13] == 8 &&
+           decoded_bitmap.data[14] == 9);
     memset(&bitmap_rect, 0, sizeof(bitmap_rect));
     bitmap_rect.width = 4;
     bitmap_rect.height = 1;
