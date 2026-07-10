@@ -80,9 +80,7 @@ static librdp_status rdp_rfx_stream_parse_codec_versions(rdp_rfx_stream_state* s
 static librdp_status rdp_rfx_stream_parse_channels(rdp_rfx_stream_state* state, rdp_stream* stream)
 {
     uint8_t count = 0;
-    uint8_t channel_id = 0;
-    uint16_t width = 0;
-    uint16_t height = 0;
+    uint8_t i = 0;
 
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -90,16 +88,26 @@ static librdp_status rdp_rfx_stream_parse_channels(rdp_rfx_stream_state* state, 
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(stream) < (size_t)count * 5u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_u8(stream, &channel_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &height) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (channel_id != RDP_RFX_DATA_CHANNEL || width == 0 || height == 0)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (count > 1u && rdp_stream_skip(stream, (size_t)(count - 1u) * 5u) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    state->summary.width = width;
-    state->summary.height = height;
+    for (i = 0; i < count; i++)
+    {
+        uint8_t channel_id = 0;
+        uint16_t width = 0;
+        uint16_t height = 0;
+
+        if (rdp_stream_read_u8(stream, &channel_id) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(stream, &width) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(stream, &height) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (width == 0 || height == 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (i == 0)
+        {
+            if (channel_id != RDP_RFX_DATA_CHANNEL)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            state->summary.width = width;
+            state->summary.height = height;
+        }
+    }
     state->summary.channels_seen = 1;
     return rdp_rfx_stream_require_consumed(stream);
 }
