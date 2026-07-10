@@ -280,10 +280,8 @@ librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* 
             uint8_t ru = rdp_avc_clip_u8(u);
             uint8_t rv = rdp_avc_clip_u8(v);
 
-            if (abs((int)ru - (int)dst_u0[x]) >= 30)
-                dst_u0[x] = ru;
-            if (abs((int)rv - (int)dst_v0[x]) >= 30)
-                dst_v0[x] = rv;
+            dst_u0[x] = ru;
+            dst_v0[x] = rv;
         }
     }
 

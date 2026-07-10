@@ -6799,6 +6799,48 @@ static int test_path_security_license_channels(void)
         PCHECK(dst_u[1] == 10 && dst_u[4] == 20 && dst_u[5] == 30 && dst_u[0] == 180);
         PCHECK(dst_v[1] == 40 && dst_v[4] == 50 && dst_v[5] == 70 && dst_v[0] == 200);
     }
+    {
+        uint8_t aux_y[4u * 2u] = {0};
+        uint8_t aux_u[2u] = {0};
+        uint8_t aux_v[2u] = {0};
+        uint8_t dst_u[4u * 2u];
+        uint8_t dst_v[4u * 2u];
+        rdp_avc_444v2_chroma_view chroma_view;
+
+        memset(dst_u, 0x80, sizeof(dst_u));
+        memset(dst_v, 0x80, sizeof(dst_v));
+        dst_u[0] = 60;
+        dst_v[0] = 90;
+        aux_y[0] = 61;
+        aux_y[2] = 91;
+        aux_y[4] = 62;
+        aux_y[6] = 92;
+        aux_u[0] = 63;
+        aux_u[1] = 93;
+        aux_v[0] = 64;
+        aux_v[1] = 94;
+        memset(&chroma_view, 0, sizeof(chroma_view));
+        chroma_view.aux_y = aux_y;
+        chroma_view.aux_y_stride = 4;
+        chroma_view.aux_u = aux_u;
+        chroma_view.aux_u_stride = 2;
+        chroma_view.aux_v = aux_v;
+        chroma_view.aux_v_stride = 2;
+        chroma_view.aux_width = 4;
+        chroma_view.aux_height = 2;
+        chroma_view.rect.left = 0;
+        chroma_view.rect.top = 0;
+        chroma_view.rect.right = 4;
+        chroma_view.rect.bottom = 2;
+        chroma_view.dst_u = dst_u;
+        chroma_view.dst_u_stride = 4;
+        chroma_view.dst_v = dst_v;
+        chroma_view.dst_v_stride = 4;
+        chroma_view.dst_width = 4;
+        chroma_view.dst_height = 2;
+        PCHECK(rdp_avc_reconstruct_444v2_chroma(&chroma_view) == LIBRDP_STATUS_OK);
+        PCHECK(dst_u[0] == 54 && dst_v[0] == 84);
+    }
 #if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
     {
         uint8_t y_plane[4] = {128, 128, 128, 128};
