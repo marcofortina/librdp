@@ -1800,7 +1800,9 @@ static void x11_handle_channel_data(x11_app* app, librdp_session* session, const
 
     if (!app || !session || !event)
         return;
-    if (app->video_output_file && x11_channel_name_contains(event->name, event->name_len, "video") &&
+    if (app->video_output_file &&
+        (x11_channel_name_contains(event->name, event->name_len, "video") ||
+         x11_channel_name_contains(event->name, event->name_len, "tsmf")) &&
         event->data_len > 0)
     {
         video_written = fwrite(event->data, 1, event->data_len, app->video_output_file);

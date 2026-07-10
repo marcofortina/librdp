@@ -21,6 +21,7 @@
 #include "channels/smartcard_redirection.h"
 #include "channels/usb_redirection.h"
 #include "channels/video_capture.h"
+#include "channels/video_optimized.h"
 #include "channels/video_redirection.h"
 #include "channels/virtual_channel.h"
 #include "channels/webauthn_channel.h"
@@ -122,6 +123,7 @@
 #define RDP_SESSION_VOLUME_LABEL_MAX_CHARS 32u
 #define RDP_SESSION_VOLUME_LABEL_MAX_BYTES 129u
 #define RDP_SESSION_VIDEO_STREAMS 32u
+#define RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS 16u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_WIDTH 640u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_HEIGHT 480u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_FPS 30u
@@ -490,6 +492,28 @@ typedef struct rdp_session_video_stream
     uint32_t playback_rate_bits;
 } rdp_session_video_stream;
 
+typedef struct rdp_session_video_optimized_presentation
+{
+    uint8_t active;
+    uint8_t presentation_id;
+    uint8_t frame_rate;
+    uint16_t average_bitrate_kbps;
+    uint32_t source_width;
+    uint32_t source_height;
+    uint32_t scaled_width;
+    uint32_t scaled_height;
+    uint64_t timestamp_offset;
+    uint64_t geometry_mapping_id;
+    uint64_t sample_count;
+    uint64_t sample_bytes;
+    uint64_t last_timestamp;
+    uint64_t last_duration;
+    uint32_t last_sample_number;
+    uint16_t last_packet_index;
+    uint16_t last_packets_in_sample;
+    uint8_t last_flags;
+} rdp_session_video_optimized_presentation;
+
 typedef struct rdp_session_clipboard_file_entry
 {
     char* path;
@@ -649,6 +673,11 @@ struct librdp_session
     uint8_t video_redirection_ready;
     uint8_t video_redirection_capabilities_sent;
     uint8_t video_redirection_rim_sent;
+    uint32_t video_optimized_control_channel_id;
+    uint8_t video_optimized_control_channel_id_bytes;
+    uint8_t video_optimized_control_ready;
+    uint32_t video_optimized_data_channel_id;
+    uint8_t video_optimized_data_channel_id_bytes;
     uint32_t video_capture_control_channel_id;
     uint8_t video_capture_control_channel_id_bytes;
     uint32_t video_capture_channel_id;
@@ -686,6 +715,7 @@ struct librdp_session
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
     rdp_composited_render_tree composited_tree;
     rdp_session_video_stream video_streams[RDP_SESSION_VIDEO_STREAMS];
+    rdp_session_video_optimized_presentation video_optimized_presentations[RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS];
     rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
     char drive_volume_labels[LIBRDP_SETTINGS_MAX_DRIVES][RDP_SESSION_VOLUME_LABEL_MAX_BYTES];
     uint8_t drive_volume_label_set[LIBRDP_SETTINGS_MAX_DRIVES];
@@ -784,6 +814,65 @@ static void rdp_session_video_redirection_reset(librdp_session* session)
     session->video_redirection_capabilities_sent = 0;
     session->video_redirection_rim_sent = 0;
     memset(session->video_streams, 0, sizeof(session->video_streams));
+}
+
+static void rdp_session_video_optimized_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->video_optimized_control_channel_id = 0;
+    session->video_optimized_control_channel_id_bytes = 0;
+    session->video_optimized_control_ready = 0;
+    session->video_optimized_data_channel_id = 0;
+    session->video_optimized_data_channel_id_bytes = 0;
+    memset(session->video_optimized_presentations, 0, sizeof(session->video_optimized_presentations));
+}
+
+static rdp_session_video_optimized_presentation* rdp_session_video_optimized_find(librdp_session* session,
+                                                                                  uint8_t presentation_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS; i++)
+    {
+        if (session->video_optimized_presentations[i].active &&
+            session->video_optimized_presentations[i].presentation_id == presentation_id)
+            return &session->video_optimized_presentations[i];
+    }
+    return NULL;
+}
+
+static rdp_session_video_optimized_presentation* rdp_session_video_optimized_upsert(librdp_session* session,
+                                                                                    uint8_t presentation_id)
+{
+    size_t i = 0;
+    rdp_session_video_optimized_presentation* entry = rdp_session_video_optimized_find(session, presentation_id);
+
+    if (entry)
+        return entry;
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS; i++)
+    {
+        if (!session->video_optimized_presentations[i].active)
+        {
+            memset(&session->video_optimized_presentations[i], 0, sizeof(session->video_optimized_presentations[i]));
+            session->video_optimized_presentations[i].active = 1;
+            session->video_optimized_presentations[i].presentation_id = presentation_id;
+            return &session->video_optimized_presentations[i];
+        }
+    }
+    return NULL;
+}
+
+static void rdp_session_video_optimized_remove(librdp_session* session, uint8_t presentation_id)
+{
+    rdp_session_video_optimized_presentation* entry = rdp_session_video_optimized_find(session, presentation_id);
+
+    if (entry)
+        memset(entry, 0, sizeof(*entry));
 }
 
 static void rdp_session_video_capture_reset(librdp_session* session)
@@ -12738,6 +12827,8 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_COMPOSITED_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) == 0 ||
+           strcmp(name, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL) == 0 ||
            strcmp(name, RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_CAPTURE_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_AUDIO_INPUT_CHANNEL_NAME) == 0;
@@ -21126,7 +21217,239 @@ static librdp_status rdp_session_send_video_sample_ack(librdp_session* session,
     return status;
 }
 
+static librdp_status rdp_session_send_video_optimized_control(librdp_session* session,
+                                                              const rdp_buffer* payload,
+                                                              const char* event)
+{
+    if (!session || !payload || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->video_optimized_control_channel_id == 0 ||
+        session->video_optimized_control_channel_id_bytes == 0)
+        return LIBRDP_STATUS_STATE;
+    return rdp_session_send_dynamic_channel_data(session,
+                                                 session->video_optimized_control_channel_id,
+                                                 session->video_optimized_control_channel_id_bytes,
+                                                 payload->data,
+                                                 payload->length,
+                                                 event);
+}
+
+static librdp_status rdp_session_send_video_optimized_presentation_response(librdp_session* session,
+                                                                           uint8_t presentation_id)
+{
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&response);
+    status = rdp_video_optimized_write_presentation_response(&response, presentation_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_video_optimized_control(session,
+                                                          &response,
+                                                          "client.video_optimized.presentation.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.presentation.response",
+                        "dvc_channel_id=%u presentation_id=%u",
+                        session->video_optimized_control_channel_id,
+                        presentation_id);
+    return status;
+}
+
+static librdp_status rdp_session_handle_video_optimized_control_message(librdp_session* session,
+                                                                        uint32_t channel_id,
+                                                                        const uint8_t* data,
+                                                                        size_t data_len)
+{
+    rdp_video_optimized_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_optimized_parse_header(data, data_len, &header);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.control.invalid",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        return status;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.video_optimized.control",
+                          "dvc_channel_id=%u packet_type=%u payload_len=%u enabled=%u",
+                          channel_id,
+                          header.packet_type,
+                          (unsigned)header.payload_len,
+                          librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
+
+    if (header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST)
+    {
+        rdp_video_optimized_presentation_request request;
+
+        status = rdp_video_optimized_parse_presentation_request(data, data_len, &request);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (request.command == RDP_VIDEO_OPTIMIZED_COMMAND_START)
+        {
+            rdp_session_video_optimized_presentation* entry =
+                rdp_session_video_optimized_upsert(session, request.presentation_id);
+
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->frame_rate = request.frame_rate;
+            entry->average_bitrate_kbps = request.average_bitrate_kbps;
+            entry->source_width = request.source_width;
+            entry->source_height = request.source_height;
+            entry->scaled_width = request.scaled_width;
+            entry->scaled_height = request.scaled_height;
+            entry->timestamp_offset = request.timestamp_offset;
+            entry->geometry_mapping_id = request.geometry_mapping_id;
+            status = rdp_session_send_video_optimized_presentation_response(session, request.presentation_id);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.video_optimized.presentation.start",
+                                "dvc_channel_id=%u presentation_id=%u source_width=%u source_height=%u scaled_width=%u scaled_height=%u frame_rate=%u bitrate_kbps=%u extra_len=%u",
+                                channel_id,
+                                request.presentation_id,
+                                request.source_width,
+                                request.source_height,
+                                request.scaled_width,
+                                request.scaled_height,
+                                request.frame_rate,
+                                request.average_bitrate_kbps,
+                                request.extra_len);
+            return status;
+        }
+        rdp_session_video_optimized_remove(session, request.presentation_id);
+        status = rdp_session_send_video_optimized_presentation_response(session, request.presentation_id);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.video_optimized.presentation.stop",
+                            "dvc_channel_id=%u presentation_id=%u",
+                            channel_id,
+                            request.presentation_id);
+        return status;
+    }
+    if (header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_CLIENT_NOTIFICATION)
+    {
+        rdp_video_optimized_client_notification notification;
+
+        status = rdp_video_optimized_parse_client_notification(data, data_len, &notification);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (notification.notification_type == RDP_VIDEO_OPTIMIZED_NOTIFICATION_FRAMERATE_OVERRIDE)
+        {
+            rdp_video_optimized_framerate_override framerate;
+
+            status = rdp_video_optimized_parse_framerate_override(notification.data,
+                                                                 notification.data_len,
+                                                                 &framerate);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.video_optimized.framerate",
+                            "dvc_channel_id=%u presentation_id=%u flags=%u desired_frame_rate=%u",
+                            channel_id,
+                            notification.presentation_id,
+                            framerate.flags,
+                            framerate.desired_frame_rate);
+        }
+        else
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.video_optimized.network_error",
+                            "dvc_channel_id=%u presentation_id=%u",
+                            channel_id,
+                            notification.presentation_id);
+        }
+        return LIBRDP_STATUS_OK;
+    }
+    if (header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_RESPONSE)
+    {
+        rdp_video_optimized_presentation_response response;
+
+        status = rdp_video_optimized_parse_presentation_response(data, data_len, &response);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.presentation.response.recv",
+                        "dvc_channel_id=%u presentation_id=%u",
+                        channel_id,
+                        response.presentation_id);
+        return LIBRDP_STATUS_OK;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.video_optimized.control.skipped",
+                          "dvc_channel_id=%u packet_type=%u payload_len=%u",
+                          channel_id,
+                          header.packet_type,
+                          (unsigned)header.payload_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_handle_video_optimized_data_message(librdp_session* session,
+                                                                     rdp_session_dynamic_channel* entry,
+                                                                     uint32_t channel_id,
+                                                                     const uint8_t* data,
+                                                                     size_t data_len)
+{
+    rdp_video_optimized_video_data video;
+    rdp_session_video_optimized_presentation* presentation = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !entry || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_optimized_parse_video_data(data, data_len, &video);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.data.invalid",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        return status;
+    }
+
+    presentation = rdp_session_video_optimized_upsert(session, video.presentation_id);
+    if (!presentation)
+        return LIBRDP_STATUS_NO_MEMORY;
+    presentation->sample_count++;
+    presentation->sample_bytes += video.sample_len;
+    presentation->last_timestamp = video.timestamp;
+    presentation->last_duration = video.duration;
+    presentation->last_sample_number = video.sample_number;
+    presentation->last_packet_index = video.current_packet_index;
+    presentation->last_packets_in_sample = video.packets_in_sample;
+    presentation->last_flags = video.flags;
+    if (librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) && video.sample_len > 0)
+        rdp_session_emit_channel_data(session, entry, video.sample, video.sample_len);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.video_optimized.sample",
+                          "dvc_channel_id=%u presentation_id=%u sample_number=%u packet=%u packets=%u flags=%u sample_len=%u samples=%llu bytes=%llu emitted=%u",
+                          channel_id,
+                          video.presentation_id,
+                          video.sample_number,
+                          video.current_packet_index,
+                          video.packets_in_sample,
+                          video.flags,
+                          video.sample_len,
+                          (unsigned long long)presentation->sample_count,
+                          (unsigned long long)presentation->sample_bytes,
+                          librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_handle_video_redirection_message(librdp_session* session,
+                                                                  rdp_session_dynamic_channel* channel,
                                                                   uint32_t channel_id,
                                                                   const uint8_t* data,
                                                                   size_t data_len)
@@ -21332,17 +21655,21 @@ static librdp_status rdp_session_handle_video_redirection_message(librdp_session
             entry->sample_bytes += sample.data_len;
             entry->last_sample_start = sample.sample_start_time;
             entry->last_sample_end = sample.sample_end_time;
+            if (librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) &&
+                sample.data_len > 0)
+                rdp_session_emit_channel_data(session, channel, sample.data, sample.data_len);
             rdp_trace_event_level(RDP_TRACE_CLIENT,
                                   RDP_TRACE_LEVEL_DEBUG,
                                   "client.tsmf.sample",
-                                  "dvc_channel_id=%u message_id=%u stream_id=%u sample_len=%u samples=%llu bytes=%llu flags=%u",
+                                  "dvc_channel_id=%u message_id=%u stream_id=%u sample_len=%u samples=%llu bytes=%llu flags=%u emitted=%u",
                                   channel_id,
                                   stream.header.message_id,
                                   stream.stream_id,
                                   sample.data_len,
                                   (unsigned long long)entry->sample_count,
                                   (unsigned long long)entry->sample_bytes,
-                                  sample.sample_flags);
+                                  sample.sample_flags,
+                                  librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
             return rdp_session_send_video_sample_ack(session,
                                                      stream.header.message_id,
                                                      stream.stream_id,
@@ -22825,7 +23152,15 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     }
     else if (strcmp(entry->name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) == 0)
     {
-        status = rdp_session_handle_video_redirection_message(session, channel_id, data, data_len);
+        status = rdp_session_handle_video_redirection_message(session, entry, channel_id, data, data_len);
+    }
+    else if (strcmp(entry->name, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) == 0)
+    {
+        status = rdp_session_handle_video_optimized_control_message(session, channel_id, data, data_len);
+    }
+    else if (strcmp(entry->name, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL) == 0)
+    {
+        status = rdp_session_handle_video_optimized_data_message(session, entry, channel_id, data, data_len);
     }
     else if (strcmp(entry->name, RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME) == 0)
     {
@@ -23037,6 +23372,29 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             memset(session->video_streams, 0, sizeof(session->video_streams));
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.tsmf.channel",
+                            "dvc_channel_id=%u enabled=%u",
+                            request.channel_id,
+                            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
+        }
+        else if (request.name_len == sizeof(RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) - 1u &&
+                 memcmp(request.name, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL, request.name_len) == 0)
+        {
+            session->video_optimized_control_channel_id = request.channel_id;
+            session->video_optimized_control_channel_id_bytes = request.channel_id_bytes;
+            session->video_optimized_control_ready = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.video_optimized.control.channel",
+                            "dvc_channel_id=%u enabled=%u",
+                            request.channel_id,
+                            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
+        }
+        else if (request.name_len == sizeof(RDP_VIDEO_OPTIMIZED_DATA_CHANNEL) - 1u &&
+                 memcmp(request.name, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL, request.name_len) == 0)
+        {
+            session->video_optimized_data_channel_id = request.channel_id;
+            session->video_optimized_data_channel_id_bytes = request.channel_id_bytes;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.video_optimized.data.channel",
                             "dvc_channel_id=%u enabled=%u",
                             request.channel_id,
                             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u);
@@ -23460,6 +23818,9 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 rdp_session_composited_reset(session);
             if (entry->channel_id == session->video_redirection_channel_id)
                 rdp_session_video_redirection_reset(session);
+            if (entry->channel_id == session->video_optimized_control_channel_id ||
+                entry->channel_id == session->video_optimized_data_channel_id)
+                rdp_session_video_optimized_reset(session);
             if (entry->channel_id == session->video_capture_control_channel_id ||
                 entry->channel_id == session->video_capture_channel_id)
                 rdp_session_video_capture_reset(session);
@@ -26946,6 +27307,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_usb_redirection_reset(session);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
+    rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
     rdp_session_auth_redirection_channel_reset(session);
     rdp_session_credssp_security_reset(session);
@@ -27152,6 +27514,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
+    rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
@@ -27976,6 +28339,7 @@ fail:
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
+    rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_fragment);
@@ -29027,6 +29391,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
+    rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
