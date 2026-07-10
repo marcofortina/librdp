@@ -21,7 +21,9 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_MULTISCRBLT = 10,
     RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT = 11,
     RDP_GDI_RENDER_OP_MULTIPATBLT = 12,
-    RDP_GDI_RENDER_OP_SAVE_BITMAP = 13
+    RDP_GDI_RENDER_OP_SAVE_BITMAP = 13,
+    RDP_GDI_RENDER_OP_POLYGON_CB = 14,
+    RDP_GDI_RENDER_OP_ELLIPSE_CB = 15
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -69,6 +71,7 @@ typedef struct rdp_gdi_render_op
     uint8_t brush_style;
     uint8_t brush_hatch;
     uint8_t brush_extra[7];
+    uint8_t transparent_background;
     uint32_t bitmap_id;
     uint8_t operation;
     uint32_t fill_mode;

@@ -10721,6 +10721,28 @@ static int test_gdi_orders(void)
         0x04u,
         0x7cu
     };
+    const uint8_t render_polygon_cb[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_POLYGON_CB,
+        0xffu, 0x1fu,
+        0x1eu, 0x00u,
+        0x1eu, 0x00u,
+        0x8du,
+        1u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x03u,
+        0xaau,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u,
+        3u,
+        4u,
+        0x64u,
+        0x04u,
+        0x04u,
+        0x7cu
+    };
     const uint8_t render_ellipse_sc[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_ELLIPSE_SC,
@@ -10732,6 +10754,24 @@ static int test_gdi_orders(void)
         13u,
         1u,
         0x88u, 0x99u, 0xaau
+    };
+    const uint8_t render_ellipse_cb[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_ELLIPSE_CB,
+        0xffu, 0x1fu,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x0au, 0x00u,
+        0x0cu, 0x00u,
+        0x8du,
+        1u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x02u,
+        0x04u,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u
     };
     const uint8_t render_multi_dstblt[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
@@ -11102,6 +11142,26 @@ static int test_gdi_orders(void)
            render_op.points[2].x == -4 &&
            render_op.points[2].y == 0);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_polygon_cb,
+                                               sizeof(render_polygon_cb),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_polygon_cb) &&
+           render_op.kind == RDP_GDI_RENDER_OP_POLYGON_CB &&
+           render_op.rop == 13u &&
+           render_op.transparent_background &&
+           render_op.fill_mode == 1u &&
+           render_op.back_color == 0x00302010u &&
+           render_op.color == 0x00605040u &&
+           render_op.brush_x == 5 &&
+           render_op.brush_y == 6 &&
+           render_op.brush_style == 3 &&
+           render_op.brush_hatch == 0xaau &&
+           render_op.brush_extra[6] == 0x55u &&
+           render_op.point_count == 3 &&
+           render_op.points[2].x == -4 &&
+           render_op.points[2].y == 0);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_ellipse_sc,
                                                sizeof(render_ellipse_sc),
                                                &render_op,
@@ -11115,6 +11175,27 @@ static int test_gdi_orders(void)
            render_op.rect.y == 6 &&
            render_op.rect.width == 6 &&
            render_op.rect.height == 7);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_ellipse_cb,
+                                               sizeof(render_ellipse_cb),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_ellipse_cb) &&
+           render_op.kind == RDP_GDI_RENDER_OP_ELLIPSE_CB &&
+           render_op.rop == 13u &&
+           render_op.transparent_background &&
+           render_op.fill_mode == 1u &&
+           render_op.back_color == 0x00302010u &&
+           render_op.color == 0x00605040u &&
+           render_op.rect.x == 5 &&
+           render_op.rect.y == 6 &&
+           render_op.rect.width == 6 &&
+           render_op.rect.height == 7 &&
+           render_op.brush_x == 2 &&
+           render_op.brush_y == 3 &&
+           render_op.brush_style == 2 &&
+           render_op.brush_hatch == 4 &&
+           render_op.brush_extra[6] == 0x55u);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_multi_dstblt,
                                                sizeof(render_multi_dstblt),

@@ -18434,12 +18434,50 @@ static void rdp_session_gdi_line_plot(librdp_session* session,
     }
 }
 
-static void rdp_session_gdi_plot_rop2_pixel(uint8_t* pixel, const rdp_gdi_render_op* op)
+static int rdp_session_gdi_shape_color(const rdp_gdi_render_op* op,
+                                       uint32_t x,
+                                       uint32_t y,
+                                       uint32_t* color)
 {
-    uint8_t b = (uint8_t)(op->color & 0xffu);
-    uint8_t g = (uint8_t)((op->color >> 8u) & 0xffu);
-    uint8_t r = (uint8_t)((op->color >> 16u) & 0xffu);
+    int foreground = 1;
 
+    if (!op || !color)
+        return 0;
+    if (op->kind != RDP_GDI_RENDER_OP_POLYGON_CB &&
+        op->kind != RDP_GDI_RENDER_OP_ELLIPSE_CB)
+    {
+        *color = op->color;
+        return 1;
+    }
+    if (op->brush_style == 1u)
+        return 0;
+    if (op->brush_style == 2u)
+        foreground = rdp_session_gdi_hatch_bit(op->brush_hatch, x, y);
+    else if (op->brush_style == 3u || op->brush_style == 7u)
+        foreground = rdp_session_gdi_pattern_bit(op, x, y);
+    else if (op->brush_style != 0u)
+        return 0;
+    if (!foreground && op->transparent_background)
+        return 0;
+    *color = foreground ? op->color : op->back_color;
+    return 1;
+}
+
+static void rdp_session_gdi_plot_rop2_pixel(uint8_t* pixel,
+                                            const rdp_gdi_render_op* op,
+                                            uint32_t x,
+                                            uint32_t y)
+{
+    uint32_t color = 0;
+    uint8_t b = 0;
+    uint8_t g = 0;
+    uint8_t r = 0;
+
+    if (!rdp_session_gdi_shape_color(op, x, y, &color))
+        return;
+    b = (uint8_t)(color & 0xffu);
+    g = (uint8_t)((color >> 8u) & 0xffu);
+    r = (uint8_t)((color >> 16u) & 0xffu);
     pixel[0] = rdp_session_gdi_rop2(op->rop, b, pixel[0]);
     pixel[1] = rdp_session_gdi_rop2(op->rop, g, pixel[1]);
     pixel[2] = rdp_session_gdi_rop2(op->rop, r, pixel[2]);
@@ -18706,7 +18744,7 @@ static librdp_status rdp_session_gdi_fill_polygon(librdp_session* session, const
                 !rdp_session_gdi_polygon_inside(points, count, x, y, op->fill_mode))
                 continue;
             pixel = pixels + ((size_t)(uint32_t)y * stride) + ((size_t)(uint32_t)x * 4u);
-            rdp_session_gdi_plot_rop2_pixel(pixel, op);
+            rdp_session_gdi_plot_rop2_pixel(pixel, op, (uint32_t)x, (uint32_t)y);
             if ((uint32_t)x < dirty_left)
                 dirty_left = (uint32_t)x;
             if ((uint32_t)y < dirty_top)
@@ -18784,7 +18822,7 @@ static librdp_status rdp_session_gdi_fill_ellipse(librdp_session* session, const
                 ((dx * dx) / (width * width) + (dy * dy) / (height * height)) > 0.25)
                 continue;
             pixel = pixels + ((size_t)absolute_y * stride) + ((size_t)absolute_x * 4u);
-            rdp_session_gdi_plot_rop2_pixel(pixel, op);
+            rdp_session_gdi_plot_rop2_pixel(pixel, op, absolute_x, absolute_y);
         }
     }
     rdp_session_emit_surface_invalidated(session, region.dst_x, region.dst_y, region.width, region.height);
@@ -18845,9 +18883,9 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
         return rdp_session_gdi_draw_line(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_POLYLINE)
         return rdp_session_gdi_draw_polyline(session, op);
-    if (op->kind == RDP_GDI_RENDER_OP_POLYGON_SC)
+    if (op->kind == RDP_GDI_RENDER_OP_POLYGON_SC || op->kind == RDP_GDI_RENDER_OP_POLYGON_CB)
         return rdp_session_gdi_fill_polygon(session, op);
-    if (op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC)
+    if (op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_ELLIPSE_CB)
         return rdp_session_gdi_fill_ellipse(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_SAVE_BITMAP)
     {

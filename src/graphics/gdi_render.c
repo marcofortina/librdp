@@ -24,7 +24,13 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_MULTIPATBLT:
         case RDP_GDI_ORDER_MULTISCRBLT:
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
+        case RDP_GDI_ORDER_POLYGON_CB:
+        case RDP_GDI_ORDER_ELLIPSE_CB:
             *bytes = 2;
+            return 1;
+        case RDP_GDI_ORDER_MEM3BLT:
+        case RDP_GDI_ORDER_GLYPH_INDEX:
+            *bytes = 3;
             return 1;
         default:
             return 0;
@@ -875,6 +881,88 @@ static librdp_status rdp_gdi_render_decode_polygon_sc(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_render_decode_polygon_cb(rdp_stream* stream,
+                                                      uint32_t flags,
+                                                      int delta,
+                                                      rdp_gdi_render_state* state,
+                                                      rdp_gdi_render_op* op)
+{
+    const uint8_t* extra = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_coord(stream, delta, &state->polygon_start_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->polygon_start_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u) &&
+        rdp_stream_read_u8(stream, &state->polygon_rop2) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u) &&
+        rdp_stream_read_u8(stream, &state->polygon_fill_mode) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u))
+        status = rdp_gdi_render_read_color(stream, &state->pat_back_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u))
+        status = rdp_gdi_render_read_color(stream, &state->pat_fore_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->pat_brush_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->pat_brush_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u) &&
+        rdp_stream_read_u8(stream, &state->pat_brush_style) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0200u) &&
+        rdp_stream_read_u8(stream, &state->pat_brush_hatch) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0400u))
+    {
+        if (rdp_stream_read_bytes(stream, &extra, sizeof(state->pat_brush_extra)) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            memcpy(state->pat_brush_extra, extra, sizeof(state->pat_brush_extra));
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0800u))
+    {
+        uint8_t count = 0;
+
+        if (rdp_stream_read_u8(stream, &count) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            state->polygon_point_count = count;
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x1000u))
+    {
+        if (state->polygon_point_count == 0 ||
+            state->polygon_point_count > RDP_GDI_RENDER_MAX_POINTS)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            status = rdp_gdi_render_read_delta_blob(stream,
+                                                    state->polygon_point_count,
+                                                    state->polygon_points);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (state->polygon_point_count > RDP_GDI_RENDER_MAX_POINTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    op->kind = RDP_GDI_RENDER_OP_POLYGON_CB;
+    op->rop = state->polygon_rop2 & 0x1fu;
+    op->transparent_background = (state->polygon_rop2 & 0x80u) != 0;
+    op->fill_mode = state->polygon_fill_mode;
+    op->color = state->pat_fore_color;
+    op->back_color = state->pat_back_color;
+    op->rect.x = state->polygon_start_x;
+    op->rect.y = state->polygon_start_y;
+    op->brush_x = state->pat_brush_x;
+    op->brush_y = state->pat_brush_y;
+    op->brush_style = state->pat_brush_style;
+    op->brush_hatch = state->pat_brush_hatch;
+    op->point_count = state->polygon_point_count;
+    memcpy(op->brush_extra, state->pat_brush_extra, sizeof(op->brush_extra));
+    memcpy(op->points, state->polygon_points, sizeof(op->points[0]) * op->point_count);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_render_decode_ellipse_sc(rdp_stream* stream,
                                                       uint32_t flags,
                                                       int delta,
@@ -910,6 +998,71 @@ static librdp_status rdp_gdi_render_decode_ellipse_sc(rdp_stream* stream,
     op->rect.y = state->ellipse_top;
     op->rect.width = state->ellipse_right - state->ellipse_left + 1;
     op->rect.height = state->ellipse_bottom - state->ellipse_top + 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_ellipse_cb(rdp_stream* stream,
+                                                      uint32_t flags,
+                                                      int delta,
+                                                      rdp_gdi_render_state* state,
+                                                      rdp_gdi_render_op* op)
+{
+    const uint8_t* extra = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_coord(stream, delta, &state->ellipse_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->ellipse_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->ellipse_right);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->ellipse_bottom);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u) &&
+        rdp_stream_read_u8(stream, &state->ellipse_rop2) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u) &&
+        rdp_stream_read_u8(stream, &state->ellipse_fill_mode) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u))
+        status = rdp_gdi_render_read_color(stream, &state->pat_back_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u))
+        status = rdp_gdi_render_read_color(stream, &state->pat_fore_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->pat_brush_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0200u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->pat_brush_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0400u) &&
+        rdp_stream_read_u8(stream, &state->pat_brush_style) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0800u) &&
+        rdp_stream_read_u8(stream, &state->pat_brush_hatch) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x1000u))
+    {
+        if (rdp_stream_read_bytes(stream, &extra, sizeof(state->pat_brush_extra)) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            memcpy(state->pat_brush_extra, extra, sizeof(state->pat_brush_extra));
+    }
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    op->kind = RDP_GDI_RENDER_OP_ELLIPSE_CB;
+    op->rop = state->ellipse_rop2 & 0x1fu;
+    op->transparent_background = (state->ellipse_rop2 & 0x80u) != 0;
+    op->fill_mode = state->ellipse_fill_mode;
+    op->color = state->pat_fore_color;
+    op->back_color = state->pat_back_color;
+    op->rect.x = state->ellipse_left;
+    op->rect.y = state->ellipse_top;
+    op->rect.width = state->ellipse_right - state->ellipse_left + 1;
+    op->rect.height = state->ellipse_bottom - state->ellipse_top + 1;
+    op->brush_x = state->pat_brush_x;
+    op->brush_y = state->pat_brush_y;
+    op->brush_style = state->pat_brush_style;
+    op->brush_hatch = state->pat_brush_hatch;
+    memcpy(op->brush_extra, state->pat_brush_extra, sizeof(op->brush_extra));
     return LIBRDP_STATUS_OK;
 }
 
@@ -1057,8 +1210,14 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
         case RDP_GDI_ORDER_POLYGON_SC:
             status = rdp_gdi_render_decode_polygon_sc(&stream, field_flags, delta, state, op);
             break;
+        case RDP_GDI_ORDER_POLYGON_CB:
+            status = rdp_gdi_render_decode_polygon_cb(&stream, field_flags, delta, state, op);
+            break;
         case RDP_GDI_ORDER_ELLIPSE_SC:
             status = rdp_gdi_render_decode_ellipse_sc(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_ELLIPSE_CB:
+            status = rdp_gdi_render_decode_ellipse_cb(&stream, field_flags, delta, state, op);
             break;
         case RDP_GDI_ORDER_OPAQUERECT:
             status = rdp_gdi_render_decode_opaque_rect(&stream, field_flags, delta, state, op);
@@ -1077,7 +1236,8 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
         return status;
     if ((op->kind == RDP_GDI_RENDER_OP_DSTBLT || op->kind == RDP_GDI_RENDER_OP_SCRBLT ||
          op->kind == RDP_GDI_RENDER_OP_PATBLT || op->kind == RDP_GDI_RENDER_OP_OPAQUE_RECT ||
-         op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
+         op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_ELLIPSE_CB ||
+         op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT || op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
          op->kind == RDP_GDI_RENDER_OP_SAVE_BITMAP) &&
