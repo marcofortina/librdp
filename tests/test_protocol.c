@@ -6027,6 +6027,53 @@ static int test_path_security_license_channels(void)
         PCHECK(avc_frame.width == 16 && avc_frame.height == 16 && avc_frame.stride >= 64u);
         PCHECK(red_delta_bg > 8 && red_delta_gr > 8 && pixel[3] == 0xffu);
     }
+    {
+        uint8_t aux_y[16u * 4u];
+        uint8_t aux_u[8u * 2u];
+        uint8_t aux_v[8u * 2u];
+        uint8_t dst_u[16u * 4u];
+        uint8_t dst_v[16u * 4u];
+        size_t i = 0;
+        rdp_avc_444v2_chroma_view chroma_view;
+
+        for (i = 0; i < sizeof(aux_y); i++)
+            aux_y[i] = (uint8_t)(0x20u + i);
+        for (i = 0; i < sizeof(aux_u); i++)
+            aux_u[i] = (uint8_t)(0x60u + i);
+        for (i = 0; i < sizeof(aux_v); i++)
+            aux_v[i] = (uint8_t)(0xa0u + i);
+        memset(dst_u, 0xee, sizeof(dst_u));
+        memset(dst_v, 0xdd, sizeof(dst_v));
+        memset(&chroma_view, 0, sizeof(chroma_view));
+        chroma_view.aux_y = aux_y;
+        chroma_view.aux_y_stride = 16;
+        chroma_view.aux_u = aux_u;
+        chroma_view.aux_u_stride = 8;
+        chroma_view.aux_v = aux_v;
+        chroma_view.aux_v_stride = 8;
+        chroma_view.aux_width = 16;
+        chroma_view.aux_height = 4;
+        chroma_view.rect.left = 2;
+        chroma_view.rect.top = 0;
+        chroma_view.rect.right = 7;
+        chroma_view.rect.bottom = 3;
+        chroma_view.dst_u = dst_u;
+        chroma_view.dst_u_stride = 16;
+        chroma_view.dst_v = dst_v;
+        chroma_view.dst_v_stride = 16;
+        chroma_view.dst_width = 16;
+        chroma_view.dst_height = 4;
+        PCHECK(rdp_avc_reconstruct_444v2_chroma(&chroma_view) == LIBRDP_STATUS_OK);
+        PCHECK(dst_u[3] == aux_y[1] && dst_v[3] == aux_y[9]);
+        PCHECK(dst_u[5] == aux_y[2] && dst_v[5] == aux_y[10]);
+        PCHECK(dst_u[16u + 3u] == aux_y[16u + 1u] && dst_v[16u + 3u] == aux_y[16u + 9u]);
+        PCHECK(dst_u[16u + 2u] == aux_u[0] && dst_v[16u + 2u] == aux_u[4]);
+        PCHECK(dst_u[16u + 4u] == aux_v[0] && dst_v[16u + 4u] == aux_v[4]);
+        PCHECK(dst_u[16u + 6u] == aux_u[1] && dst_v[16u + 6u] == aux_u[5]);
+        PCHECK(dst_u[0] == 0xeeu && dst_v[0] == 0xddu);
+        chroma_view.aux_u_stride = 4;
+        PCHECK(rdp_avc_reconstruct_444v2_chroma(&chroma_view) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
     rdp_avc_frame_free(&avc_frame);
     rdp_avc_decoder_free(avc_decoder);
     PCHECK(rdp_graphics_progressive_parse_block(graphics_progressive_stream,
