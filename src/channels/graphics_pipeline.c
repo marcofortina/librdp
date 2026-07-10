@@ -131,6 +131,22 @@ static int rdp_graphics_pixel_format_supported(uint8_t pixel_format)
            pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888;
 }
 
+static int rdp_graphics_wire_to_surface_1_codec_supported(uint16_t codec_id)
+{
+    return codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED ||
+           codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ||
+           codec_id == RDP_GRAPHICS_CODECID_PLANAR ||
+           codec_id == RDP_GRAPHICS_CODECID_AVC420 ||
+           codec_id == RDP_GRAPHICS_CODECID_AVC444 ||
+           codec_id == RDP_GRAPHICS_CODECID_AVC444V2;
+}
+
+static int rdp_graphics_wire_to_surface_2_codec_supported(uint16_t codec_id)
+{
+    return codec_id == RDP_GRAPHICS_CODECID_CAPROGRESSIVE ||
+           codec_id == RDP_GRAPHICS_CODECID_CAVIDEO;
+}
+
 static int rdp_graphics_is_short_literal(uint32_t value)
 {
     return value <= 0x0cu || (value >= 0x38u && value <= 0x40u) || value == 0x66u || value == 0x80u ||
@@ -905,6 +921,9 @@ librdp_status rdp_graphics_parse_wire_to_surface_1(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((wire->pixel_format != RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888 &&
          wire->pixel_format != RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888) ||
+        !rdp_graphics_wire_to_surface_1_codec_supported(wire->codec_id) ||
+        wire->dest_rect.right == wire->dest_rect.left ||
+        wire->dest_rect.bottom == wire->dest_rect.top ||
         rdp_stream_remaining(&stream) != wire->bitmap_data_length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &wire->bitmap_data, wire->bitmap_data_length) != LIBRDP_STATUS_OK)
@@ -923,7 +942,10 @@ librdp_status rdp_graphics_write_wire_to_surface_1(rdp_buffer* buffer,
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !rdp_graphics_pixel_format_supported(pixel_format) ||
+        !rdp_graphics_wire_to_surface_1_codec_supported(codec_id) ||
         !rdp_graphics_rect16_valid(dest_rect) || (!bitmap_data && bitmap_data_length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (dest_rect->right == dest_rect->left || dest_rect->bottom == dest_rect->top)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (bitmap_data_length > UINT32_MAX - 25u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -971,6 +993,7 @@ librdp_status rdp_graphics_parse_wire_to_surface_2(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((wire->pixel_format != RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888 &&
          wire->pixel_format != RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888) ||
+        !rdp_graphics_wire_to_surface_2_codec_supported(wire->codec_id) ||
         rdp_stream_remaining(&stream) != wire->bitmap_data_length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &wire->bitmap_data, wire->bitmap_data_length) != LIBRDP_STATUS_OK)
@@ -989,6 +1012,7 @@ librdp_status rdp_graphics_write_wire_to_surface_2(rdp_buffer* buffer,
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !rdp_graphics_pixel_format_supported(pixel_format) ||
+        !rdp_graphics_wire_to_surface_2_codec_supported(codec_id) ||
         (!bitmap_data && bitmap_data_length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (bitmap_data_length > UINT32_MAX - 21u)
