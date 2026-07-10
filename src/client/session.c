@@ -125,6 +125,10 @@
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_WIDTH 640u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_HEIGHT 480u
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_FPS 30u
+#define RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MIN 0
+#define RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MAX 100
+#define RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_STEP 1
+#define RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_DEFAULT 50
 #define RDP_SESSION_CLIPBOARD_MAX_FORMATS 64u
 #define RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES 64u
 #define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
@@ -648,6 +652,8 @@ struct librdp_session
     uint8_t video_capture_selected_stream;
     uint8_t video_capture_sample_reply_pending;
     rdp_video_capture_media_type video_capture_media;
+    uint8_t video_capture_brightness_mode;
+    int32_t video_capture_brightness;
     uint32_t usb_redirection_channel_id;
     uint8_t usb_redirection_channel_id_bytes;
     uint8_t usb_redirection_ready;
@@ -787,6 +793,8 @@ static void rdp_session_video_capture_reset(librdp_session* session)
     session->video_capture_selected_stream = 0;
     session->video_capture_sample_reply_pending = 0;
     memset(&session->video_capture_media, 0, sizeof(session->video_capture_media));
+    session->video_capture_brightness_mode = RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL;
+    session->video_capture_brightness = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_DEFAULT;
 }
 
 static void rdp_session_auth_redirection_channel_reset(librdp_session* session)
@@ -21478,6 +21486,90 @@ static librdp_status rdp_session_send_video_capture_media_list(librdp_session* s
     return status;
 }
 
+static int rdp_session_video_capture_property_is_brightness(
+    const rdp_video_capture_property_request* request)
+{
+    return request &&
+           request->property_set == RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP &&
+           request->property_id == RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS;
+}
+
+static rdp_video_capture_property_description rdp_session_video_capture_brightness_property(void)
+{
+    rdp_video_capture_property_description property;
+
+    memset(&property, 0, sizeof(property));
+    property.property_set = RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP;
+    property.property_id = RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS;
+    property.capabilities = RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_MANUAL |
+                            RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_AUTO;
+    property.min_value = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MIN;
+    property.max_value = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MAX;
+    property.step = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_STEP;
+    property.default_value = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_DEFAULT;
+    return property;
+}
+
+static librdp_status rdp_session_send_video_capture_property_list(librdp_session* session)
+{
+    rdp_video_capture_property_description property;
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    property = rdp_session_video_capture_brightness_property();
+    rdp_buffer_init(&response);
+    status = rdp_video_capture_write_property_list(&response,
+                                                   rdp_session_video_capture_version(session),
+                                                   &property,
+                                                   1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_video_capture_data(session,
+                                                     &response,
+                                                     "client.rdpecam.property_list.response");
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpecam.property_list.response",
+                        "dvc_channel_id=%u count=1 property_set=%u property_id=%u",
+                        session->video_capture_channel_id,
+                        property.property_set,
+                        property.property_id);
+    return status;
+}
+
+static librdp_status rdp_session_send_video_capture_property_value(librdp_session* session,
+                                                                   const char* event)
+{
+    rdp_video_capture_property_value value;
+    rdp_buffer response;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&value, 0, sizeof(value));
+    value.mode = session->video_capture_brightness_mode;
+    value.value = session->video_capture_brightness;
+    rdp_buffer_init(&response);
+    status = rdp_video_capture_write_property_value(&response,
+                                                    rdp_session_video_capture_version(session),
+                                                    &value);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_video_capture_data(session, &response, event);
+    rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        event,
+                        "dvc_channel_id=%u property_set=%u property_id=%u mode=%u value=%d",
+                        session->video_capture_channel_id,
+                        RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP,
+                        RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS,
+                        value.mode,
+                        value.value);
+    return status;
+}
+
 static librdp_status rdp_session_send_video_capture_sample_error(librdp_session* session,
                                                                  uint8_t stream_index,
                                                                  uint32_t error_code)
@@ -21874,41 +21966,71 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
         }
         case RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_REQUEST:
         {
-            rdp_video_capture_opaque request;
-            rdp_buffer response;
+            rdp_video_capture_header request;
 
-            status = rdp_video_capture_parse_opaque(data,
+            status = rdp_video_capture_parse_empty(data,
                                                     data_len,
                                                     RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_REQUEST,
                                                     &request);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            rdp_buffer_init(&response);
-            status = rdp_video_capture_write_opaque(&response,
-                                                    rdp_session_video_capture_version(session),
-                                                    RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_RESPONSE,
-                                                    NULL,
-                                                    0);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_send_video_capture_data(
-                    session,
-                    &response,
-                    "client.rdpecam.property_list.response");
-            rdp_buffer_free(&response);
-            return status;
+            return rdp_session_send_video_capture_property_list(session);
         }
         case RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST:
-        case RDP_VIDEO_CAPTURE_MESSAGE_SET_PROPERTY_VALUE_REQUEST:
         {
-            rdp_video_capture_opaque request;
+            rdp_video_capture_property_request request;
 
-            status = rdp_video_capture_parse_opaque(data, data_len, header.message_id, &request);
+            status = rdp_video_capture_parse_property_request(
+                data,
+                data_len,
+                RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST,
+                &request);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            return rdp_session_send_video_capture_error(session,
-                                                        0,
-                                                        RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED,
-                                                        "client.rdpecam.property.error");
+            if (!rdp_session_video_capture_property_is_brightness(&request))
+                return rdp_session_send_video_capture_error(session,
+                                                            0,
+                                                            RDP_VIDEO_CAPTURE_ERROR_SET_NOT_FOUND,
+                                                            "client.rdpecam.property.error");
+            return rdp_session_send_video_capture_property_value(
+                session,
+                "client.rdpecam.property_value.response");
+        }
+        case RDP_VIDEO_CAPTURE_MESSAGE_SET_PROPERTY_VALUE_REQUEST:
+        {
+            rdp_video_capture_property_request request;
+            rdp_video_capture_property_value value;
+
+            status = rdp_video_capture_parse_set_property_request(data, data_len, &request, &value);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            if (!rdp_session_video_capture_property_is_brightness(&request))
+                return rdp_session_send_video_capture_error(session,
+                                                            0,
+                                                            RDP_VIDEO_CAPTURE_ERROR_SET_NOT_FOUND,
+                                                            "client.rdpecam.property.error");
+            if (value.mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL &&
+                (value.value < RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MIN ||
+                 value.value > RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_MAX))
+                return rdp_session_send_video_capture_error(session,
+                                                            0,
+                                                            RDP_VIDEO_CAPTURE_ERROR_INVALID_REQUEST,
+                                                            "client.rdpecam.property.error");
+            session->video_capture_brightness_mode = value.mode;
+            if (value.mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL)
+                session->video_capture_brightness = value.value;
+            else
+                session->video_capture_brightness = RDP_SESSION_VIDEO_CAPTURE_BRIGHTNESS_DEFAULT;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.rdpecam.property.set",
+                            "dvc_channel_id=%u property_set=%u property_id=%u mode=%u value=%d",
+                            session->video_capture_channel_id,
+                            request.property_set,
+                            request.property_id,
+                            session->video_capture_brightness_mode,
+                            session->video_capture_brightness);
+            return rdp_session_send_video_capture_success(session,
+                                                          "client.rdpecam.property.set.success");
         }
         case RDP_VIDEO_CAPTURE_MESSAGE_SUCCESS_RESPONSE:
         {

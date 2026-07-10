@@ -27,6 +27,38 @@ static int rdp_video_capture_media_format_valid(uint8_t format)
     return format >= RDP_VIDEO_CAPTURE_MEDIA_H264 && format <= RDP_VIDEO_CAPTURE_MEDIA_RGB32;
 }
 
+static int rdp_video_capture_property_set_valid(uint8_t property_set)
+{
+    return property_set == RDP_VIDEO_CAPTURE_PROPERTY_SET_CAMERA_CONTROL ||
+           property_set == RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP;
+}
+
+static int rdp_video_capture_property_capabilities_valid(uint8_t capabilities)
+{
+    return (capabilities & ~(RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_MANUAL |
+                             RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_AUTO)) == 0;
+}
+
+static int rdp_video_capture_property_mode_valid(uint8_t mode)
+{
+    return mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL ||
+           mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_AUTO;
+}
+
+static int rdp_video_capture_property_description_valid(
+    const rdp_video_capture_property_description* property)
+{
+    if (!property || !rdp_video_capture_property_set_valid(property->property_set) ||
+        !rdp_video_capture_property_capabilities_valid(property->capabilities))
+        return 0;
+    if (property->min_value > property->max_value)
+        return 0;
+    if (property->default_value < property->min_value ||
+        property->default_value > property->max_value)
+        return 0;
+    return 1;
+}
+
 static int rdp_video_capture_media_valid(const rdp_video_capture_media_type* media)
 {
     if (!media || !rdp_video_capture_media_format_valid(media->format))
@@ -69,6 +101,72 @@ static librdp_status rdp_video_capture_read_media(rdp_stream* stream,
     if (!rdp_video_capture_media_valid(media))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_video_capture_read_i32_le(rdp_stream* stream, int32_t* value)
+{
+    uint32_t raw = 0;
+
+    if (!value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u32_le(stream, &raw) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = (int32_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_video_capture_append_i32_le(rdp_buffer* buffer, int32_t value)
+{
+    return rdp_buffer_append_u32_le(buffer, (uint32_t)value);
+}
+
+static librdp_status rdp_video_capture_read_property_description(
+    rdp_stream* stream,
+    rdp_video_capture_property_description* property)
+{
+    if (!stream || !property)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(property, 0, sizeof(*property));
+    if (rdp_stream_read_u8(stream, &property->property_set) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(stream, &property->property_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(stream, &property->capabilities) != LIBRDP_STATUS_OK ||
+        rdp_video_capture_read_i32_le(stream, &property->min_value) != LIBRDP_STATUS_OK ||
+        rdp_video_capture_read_i32_le(stream, &property->max_value) != LIBRDP_STATUS_OK ||
+        rdp_video_capture_read_i32_le(stream, &property->step) != LIBRDP_STATUS_OK ||
+        rdp_video_capture_read_i32_le(stream, &property->default_value) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_video_capture_property_description_valid(property))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_video_capture_append_property_description(
+    rdp_buffer* buffer,
+    const rdp_video_capture_property_description* property)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !rdp_video_capture_property_description_valid(property))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, property->property_set);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, property->property_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, property->capabilities);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_capture_append_i32_le(buffer, property->min_value);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_capture_append_i32_le(buffer, property->max_value);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_video_capture_append_i32_le(buffer, property->step);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_video_capture_append_i32_le(buffer, property->default_value);
 }
 
 static const uint8_t* rdp_video_capture_find_utf16_null(const uint8_t* data, size_t length)
@@ -626,4 +724,142 @@ librdp_status rdp_video_capture_write_opaque(rdp_buffer* buffer,
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append(buffer, payload, payload_len);
+}
+
+librdp_status rdp_video_capture_parse_property_list(const void* data,
+                                                    size_t length,
+                                                    rdp_video_capture_property_list* list)
+{
+    rdp_stream stream;
+    size_t remaining = 0;
+    size_t i = 0;
+
+    if (!data || !list)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(list, 0, sizeof(*list));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_video_capture_read_header(&stream, &list->header) != LIBRDP_STATUS_OK ||
+        list->header.message_id != RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_RESPONSE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    remaining = rdp_stream_remaining(&stream);
+    if (remaining % RDP_VIDEO_CAPTURE_PROPERTY_DESCRIPTION_LENGTH != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    list->count = (uint8_t)(remaining / RDP_VIDEO_CAPTURE_PROPERTY_DESCRIPTION_LENGTH);
+    if (list->count > RDP_VIDEO_CAPTURE_MAX_PROPERTIES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < list->count; i++)
+    {
+        if (rdp_video_capture_read_property_description(&stream, &list->properties[i]) !=
+            LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_video_capture_write_property_list(
+    rdp_buffer* buffer,
+    uint8_t version,
+    const rdp_video_capture_property_description* properties,
+    uint8_t count)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t i = 0;
+
+    if (!buffer || (!properties && count > 0) || count > RDP_VIDEO_CAPTURE_MAX_PROPERTIES)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_capture_write_header(buffer,
+                                            version,
+                                            RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_LIST_RESPONSE);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < count; i++)
+    {
+        status = rdp_video_capture_append_property_description(buffer, &properties[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_capture_parse_property_request(
+    const void* data,
+    size_t length,
+    uint8_t expected_message_id,
+    rdp_video_capture_property_request* request)
+{
+    rdp_stream stream;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(request, 0, sizeof(*request));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_video_capture_read_header(&stream, &request->header) != LIBRDP_STATUS_OK ||
+        request->header.message_id != expected_message_id ||
+        rdp_stream_read_u8(&stream, &request->property_set) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &request->property_id) != LIBRDP_STATUS_OK ||
+        !rdp_video_capture_property_set_valid(request->property_set) ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_capture_parse_property_value(const void* data,
+                                                     size_t length,
+                                                     rdp_video_capture_property_value* value)
+{
+    rdp_stream stream;
+
+    if (!data || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 5u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(value, 0, sizeof(*value));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u8(&stream, &value->mode) != LIBRDP_STATUS_OK ||
+        rdp_video_capture_read_i32_le(&stream, &value->value) != LIBRDP_STATUS_OK ||
+        !rdp_video_capture_property_mode_valid(value->mode) ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_video_capture_parse_set_property_request(
+    const void* data,
+    size_t length,
+    rdp_video_capture_property_request* request,
+    rdp_video_capture_property_value* value)
+{
+    if (!data || !request || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 9u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_video_capture_parse_property_request(data,
+                                                 4u,
+                                                 RDP_VIDEO_CAPTURE_MESSAGE_SET_PROPERTY_VALUE_REQUEST,
+                                                 request) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_video_capture_parse_property_value((const uint8_t*)data + 4u, 5u, value);
+}
+
+librdp_status rdp_video_capture_write_property_value(rdp_buffer* buffer,
+                                                     uint8_t version,
+                                                     const rdp_video_capture_property_value* value)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !value || !rdp_video_capture_property_mode_valid(value->mode))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_video_capture_write_header(buffer,
+                                            version,
+                                            RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u8(buffer, value->mode);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_video_capture_append_i32_le(buffer, value->value);
 }

@@ -58,12 +58,31 @@
 #define RDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED 0x01u
 #define RDP_VIDEO_CAPTURE_MEDIA_FLAG_BOTTOM_UP 0x02u
 #define RDP_VIDEO_CAPTURE_MEDIA_TYPE_LENGTH 26u
+#define RDP_VIDEO_CAPTURE_PROPERTY_DESCRIPTION_LENGTH 19u
 #define RDP_VIDEO_CAPTURE_MAX_STRING_BYTES 4096u
 #define RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES 16777216u
 #define RDP_VIDEO_CAPTURE_MAX_OPAQUE_BYTES 1048576u
 #define RDP_VIDEO_CAPTURE_MAX_STREAMS 255u
+#define RDP_VIDEO_CAPTURE_MAX_PROPERTIES 64u
 #define RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME "RDCamera_Device_Enumerator"
 #define RDP_VIDEO_CAPTURE_CHANNEL_NAME "rdpecam"
+#define RDP_VIDEO_CAPTURE_PROPERTY_SET_CAMERA_CONTROL 0x01u
+#define RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP 0x02u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_EXPOSURE 0x01u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_FOCUS 0x02u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_PAN 0x03u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_ROLL 0x04u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_TILT 0x05u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_CAMERA_ZOOM 0x06u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BACKLIGHT 0x01u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS 0x02u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_CONTRAST 0x03u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_HUE 0x04u
+#define RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_WHITE_BALANCE 0x05u
+#define RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_MANUAL 0x01u
+#define RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_AUTO 0x02u
+#define RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL 0x01u
+#define RDP_VIDEO_CAPTURE_PROPERTY_MODE_AUTO 0x02u
 
 typedef struct rdp_video_capture_header
 {
@@ -140,6 +159,37 @@ typedef struct rdp_video_capture_opaque
     const uint8_t* payload;
     size_t payload_len;
 } rdp_video_capture_opaque;
+
+typedef struct rdp_video_capture_property_description
+{
+    uint8_t property_set;
+    uint8_t property_id;
+    uint8_t capabilities;
+    int32_t min_value;
+    int32_t max_value;
+    int32_t step;
+    int32_t default_value;
+} rdp_video_capture_property_description;
+
+typedef struct rdp_video_capture_property_list
+{
+    rdp_video_capture_header header;
+    uint8_t count;
+    rdp_video_capture_property_description properties[RDP_VIDEO_CAPTURE_MAX_PROPERTIES];
+} rdp_video_capture_property_list;
+
+typedef struct rdp_video_capture_property_request
+{
+    rdp_video_capture_header header;
+    uint8_t property_set;
+    uint8_t property_id;
+} rdp_video_capture_property_request;
+
+typedef struct rdp_video_capture_property_value
+{
+    uint8_t mode;
+    int32_t value;
+} rdp_video_capture_property_value;
 
 int rdp_video_capture_version_valid(uint8_t version);
 int rdp_video_capture_message_valid(uint8_t version, uint8_t message_id);
@@ -227,5 +277,29 @@ librdp_status rdp_video_capture_write_opaque(rdp_buffer* buffer,
                                              uint8_t message_id,
                                              const void* payload,
                                              size_t payload_len);
+librdp_status rdp_video_capture_parse_property_list(const void* data,
+                                                    size_t length,
+                                                    rdp_video_capture_property_list* list);
+librdp_status rdp_video_capture_write_property_list(
+    rdp_buffer* buffer,
+    uint8_t version,
+    const rdp_video_capture_property_description* properties,
+    uint8_t count);
+librdp_status rdp_video_capture_parse_property_request(
+    const void* data,
+    size_t length,
+    uint8_t expected_message_id,
+    rdp_video_capture_property_request* request);
+librdp_status rdp_video_capture_parse_set_property_request(
+    const void* data,
+    size_t length,
+    rdp_video_capture_property_request* request,
+    rdp_video_capture_property_value* value);
+librdp_status rdp_video_capture_parse_property_value(const void* data,
+                                                     size_t length,
+                                                     rdp_video_capture_property_value* value);
+librdp_status rdp_video_capture_write_property_value(rdp_buffer* buffer,
+                                                     uint8_t version,
+                                                     const rdp_video_capture_property_value* value);
 
 #endif

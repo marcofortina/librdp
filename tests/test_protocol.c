@@ -469,6 +469,22 @@ static int test_video_capture_channel(void)
     rdp_video_capture_stream_index index;
     rdp_video_capture_sample sample;
     rdp_video_capture_opaque opaque;
+    rdp_video_capture_property_description property = {
+        RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP,
+        RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS,
+        RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_MANUAL | RDP_VIDEO_CAPTURE_PROPERTY_CAPABILITY_AUTO,
+        0,
+        100,
+        1,
+        50
+    };
+    rdp_video_capture_property_list property_list;
+    rdp_video_capture_property_request property_request;
+    rdp_video_capture_property_value property_value = {
+        RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL,
+        42
+    };
+    rdp_video_capture_property_value parsed_property_value;
     uint8_t sample_error_index = 0;
     rdp_buffer buffer;
 
@@ -601,6 +617,94 @@ static int test_video_capture_channel(void)
                                           RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE,
                                           &opaque) == LIBRDP_STATUS_OK);
     PCHECK(opaque.payload_len == sizeof(opaque_data));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_property_list(&buffer,
+                                                 RDP_VIDEO_CAPTURE_VERSION_2,
+                                                 &property,
+                                                 1u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 2u + RDP_VIDEO_CAPTURE_PROPERTY_DESCRIPTION_LENGTH);
+    PCHECK(rdp_video_capture_parse_property_list(buffer.data,
+                                                 buffer.length,
+                                                 &property_list) == LIBRDP_STATUS_OK);
+    PCHECK(property_list.count == 1u &&
+           property_list.properties[0].property_set == RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP &&
+           property_list.properties[0].property_id == RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS &&
+           property_list.properties[0].default_value == 50);
+    buffer.data[4] = 0x80u;
+    PCHECK(rdp_video_capture_parse_property_list(buffer.data,
+                                                 buffer.length,
+                                                 &property_list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[4] = property.capabilities;
+    PCHECK(rdp_video_capture_parse_property_list(buffer.data,
+                                                 buffer.length - 1u,
+                                                 &property_list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_header(&buffer,
+                                          RDP_VIDEO_CAPTURE_VERSION_2,
+                                          RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_property_request(
+               buffer.data,
+               buffer.length,
+               RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST,
+               &property_request) == LIBRDP_STATUS_OK);
+    PCHECK(property_request.property_set == RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP &&
+           property_request.property_id == RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS);
+    buffer.data[2] = 0xffu;
+    PCHECK(rdp_video_capture_parse_property_request(
+               buffer.data,
+               buffer.length,
+               RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST,
+               &property_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_property_value(&buffer,
+                                                  RDP_VIDEO_CAPTURE_VERSION_2,
+                                                  &property_value) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_opaque(buffer.data,
+                                          buffer.length,
+                                          RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_RESPONSE,
+                                          &opaque) == LIBRDP_STATUS_OK);
+    PCHECK(opaque.payload_len == 5u);
+    PCHECK(rdp_video_capture_parse_property_value(buffer.data + 2u,
+                                                  buffer.length - 2u,
+                                                  &parsed_property_value) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_property_value.mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_MANUAL &&
+           parsed_property_value.value == 42);
+    buffer.data[2] = 0xffu;
+    PCHECK(rdp_video_capture_parse_property_value(buffer.data + 2u,
+                                                  buffer.length - 2u,
+                                                  &parsed_property_value) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_video_capture_write_header(&buffer,
+                                          RDP_VIDEO_CAPTURE_VERSION_2,
+                                          RDP_VIDEO_CAPTURE_MESSAGE_SET_PROPERTY_VALUE_REQUEST) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_CAPTURE_PROPERTY_SET_VIDEO_PROC_AMP) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u8(&buffer, RDP_VIDEO_CAPTURE_PROPERTY_MODE_AUTO) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 50u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_capture_parse_set_property_request(buffer.data,
+                                                        buffer.length,
+                                                        &property_request,
+                                                        &parsed_property_value) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(property_request.property_id == RDP_VIDEO_CAPTURE_PROPERTY_ID_VIDEO_BRIGHTNESS &&
+           parsed_property_value.mode == RDP_VIDEO_CAPTURE_PROPERTY_MODE_AUTO);
 
     rdp_buffer_free(&buffer);
     return 0;
