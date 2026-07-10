@@ -306,11 +306,17 @@ librdp_status rdp_device_redirection_parse_client_name(const void* data,
         rdp_stream_read_u32_le(&stream, &name->code_page) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &name->name_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (name->name_len > rdp_stream_remaining(&stream))
+    if (name->unicode > 1u || name->name_len == 0 || name->name_len > rdp_stream_remaining(&stream))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &name->name, name->name_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (name->unicode &&
+        ((name->name_len & 1u) != 0 ||
+         name->name_len < 2u ||
+         name->name[name->name_len - 2u] != 0 ||
+         name->name[name->name_len - 1u] != 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }

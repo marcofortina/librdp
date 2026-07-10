@@ -7350,6 +7350,13 @@ static int test_device_redirection_channel(void)
     PCHECK(client_name.unicode == 1 && client_name.code_page == 0);
     PCHECK(client_name.name_len == sizeof(machine_utf16));
     PCHECK(memcmp(client_name.name, machine_utf16, sizeof(machine_utf16)) == 0);
+    buffer.data[4] = 2u;
+    PCHECK(rdp_device_redirection_parse_client_name(buffer.data, buffer.length, &client_name) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[4] = 1u;
+    buffer.data[buffer.length - 2u] = 'X';
+    PCHECK(rdp_device_redirection_parse_client_name(buffer.data, buffer.length, &client_name) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_device_redirection_write_client_name_utf16le(&buffer, machine_utf16, 9) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
