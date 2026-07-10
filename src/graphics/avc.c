@@ -664,7 +664,8 @@ librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view
     uint32_t u_row = 0;
     uint32_t v_row = 0;
     uint32_t y = 0;
-    uint32_t half_width = 0;
+    uint32_t odd_column_count = 0;
+    uint32_t first_odd_column = 0;
     uint32_t even_row_count = 0;
 
     if (!view || !view->aux_y || !view->aux_u || !view->aux_v || !view->dst_u || !view->dst_v ||
@@ -679,7 +680,8 @@ librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view
     width = (uint32_t)(view->rect.right - view->rect.left);
     height = (uint32_t)(view->rect.bottom - view->rect.top);
     padded_height = ((height + 15u) / 16u) * 16u;
-    half_width = width / 2u;
+    odd_column_count = (uint32_t)(view->rect.right / 2u - view->rect.left / 2u);
+    first_odd_column = (view->rect.left & 1u) ? 0u : 1u;
     even_row_count = (height + 1u) / 2u;
 
     for (y = 0; y < padded_height; y++)
@@ -727,8 +729,8 @@ librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view
             break;
         if ((size_t)(view->rect.top / 2u + y) >= (((size_t)view->aux_height + 1u) / 2u))
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if ((size_t)(view->rect.left / 2u) + half_width > view->aux_u_stride ||
-            (size_t)(view->rect.left / 2u) + half_width > view->aux_v_stride)
+        if ((size_t)(view->rect.left / 2u) + odd_column_count > view->aux_u_stride ||
+            (size_t)(view->rect.left / 2u) + odd_column_count > view->aux_v_stride)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         src_u = view->aux_u + ((size_t)(view->rect.top / 2u + y) * view->aux_u_stride) +
                 (view->rect.left / 2u);
@@ -736,9 +738,9 @@ librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view
                 (view->rect.left / 2u);
         dest_u = view->dst_u + ((size_t)dest_row * view->dst_u_stride) + view->rect.left;
         dest_v = view->dst_v + ((size_t)dest_row * view->dst_v_stride) + view->rect.left;
-        for (x = 0; x < half_width; x++)
+        for (x = 0; x < odd_column_count; x++)
         {
-            uint32_t dest_col = 2u * x + 1u;
+            uint32_t dest_col = first_odd_column + 2u * x;
 
             if (view->rect.left + dest_col >= view->rect.right)
                 break;
