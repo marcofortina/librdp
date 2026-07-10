@@ -720,6 +720,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->invalid_rect = invalidate.rect;
             entry->invalid_rect_valid = 1;
             tree->invalidation_count++;
+            entry->invalidation_generation = tree->invalidation_count;
             break;
         }
         case RDP_COMPOSITED_CMD_TARGET_CAPTURE_BITS:

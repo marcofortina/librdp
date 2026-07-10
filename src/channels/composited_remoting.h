@@ -404,6 +404,7 @@ typedef struct rdp_composited_render_resource
     rdp_composited_margins_i alpha_margins;
     rdp_composited_margins_i maximized_clip_margins;
     rdp_composited_margins_i sprite_margins;
+    uint32_t invalidation_generation;
     uint8_t clear_color[16];
     uint8_t color_key[16];
     uint8_t bounds_valid;

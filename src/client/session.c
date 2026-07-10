@@ -17670,6 +17670,68 @@ static librdp_status rdp_session_send_composited_batch_replies(librdp_session* s
     return status == LIBRDP_STATUS_AGAIN ? LIBRDP_STATUS_OK : status;
 }
 
+static uint32_t rdp_session_composited_clamp_coord(int32_t value, uint32_t limit)
+{
+    if (value <= 0)
+        return 0;
+    if ((uint32_t)value > limit)
+        return limit;
+    return (uint32_t)value;
+}
+
+static void rdp_session_emit_composited_invalidations(librdp_session* session,
+                                                      uint32_t before_invalidation_count)
+{
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    uint32_t i = 0;
+
+    if (!session || !session->surface)
+        return;
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    if (surface_width == 0 || surface_height == 0)
+        return;
+
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        const rdp_composited_render_resource* resource = &session->composited_tree.resources[i];
+        uint32_t left = 0;
+        uint32_t top = 0;
+        uint32_t right = surface_width;
+        uint32_t bottom = surface_height;
+        uint8_t fallback_full = 0;
+
+        if (!resource->active || !resource->invalid_rect_valid ||
+            resource->invalidation_generation <= before_invalidation_count)
+            continue;
+
+        left = rdp_session_composited_clamp_coord(resource->invalid_rect.left, surface_width);
+        top = rdp_session_composited_clamp_coord(resource->invalid_rect.top, surface_height);
+        right = rdp_session_composited_clamp_coord(resource->invalid_rect.right, surface_width);
+        bottom = rdp_session_composited_clamp_coord(resource->invalid_rect.bottom, surface_height);
+        if (right <= left || bottom <= top)
+        {
+            left = 0;
+            top = 0;
+            right = surface_width;
+            bottom = surface_height;
+            fallback_full = 1u;
+        }
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.cr2.surface.invalidated",
+                        "resource=%u generation=%u x=%u y=%u width=%u height=%u fallback_full=%u",
+                        resource->resource,
+                        resource->invalidation_generation,
+                        left,
+                        top,
+                        right - left,
+                        bottom - top,
+                        fallback_full);
+        rdp_session_emit_surface_invalidated(session, left, top, right - left, bottom - top);
+    }
+}
+
 static librdp_status rdp_session_handle_composited_message(librdp_session* session,
                                                            uint32_t channel_id,
                                                            const uint8_t* data,
@@ -17793,6 +17855,7 @@ static librdp_status rdp_session_handle_composited_message(librdp_session* sessi
         {
             uint32_t before_commands = session->composited_tree.command_count;
             uint32_t before_resources = session->composited_tree.resource_count;
+            uint32_t before_invalidations = session->composited_tree.invalidation_count;
 
             status = rdp_composited_render_tree_apply_batch(&session->composited_tree,
                                                             control.payload,
@@ -17802,6 +17865,9 @@ static librdp_status rdp_session_handle_composited_message(librdp_session* sessi
                                                                    control.word0,
                                                                    control.payload,
                                                                    control.payload_len);
+            if (status == LIBRDP_STATUS_OK &&
+                session->composited_tree.invalidation_count > before_invalidations)
+                rdp_session_emit_composited_invalidations(session, before_invalidations);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.cr2.render.batch",
                             "dvc_channel_id=%u channel=%u payload_len=%u status=%s commands=%u resources=%u resource_delta=%d invalidations=%u skipped=%u",

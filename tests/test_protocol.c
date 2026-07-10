@@ -10933,7 +10933,8 @@ static int test_composited_remoting_channel(void)
     PCHECK(render_resource &&
            render_resource->invalid_rect_valid &&
            render_resource->invalid_rect.bottom == 402 &&
-           tree.invalidation_count == 1u);
+           tree.invalidation_count == 1u &&
+           render_resource->invalidation_generation == 1u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
