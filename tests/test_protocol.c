@@ -10870,6 +10870,33 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_composited_write_target_order(&buffer,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_DETACH,
+                                             0x44u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource &&
+           render_resource->detached == 1u &&
+           render_resource->detach_count == 1u &&
+           render_resource->sprite_clip_resource == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_bounds(&buffer,
+                                                   0x44u,
+                                                   &rect,
+                                                   &client_rect,
+                                                   &content_rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource && render_resource->detached == 0u && render_resource->detach_count == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_target_window_settings(&buffer, 0x40u, &window_settings) ==
            LIBRDP_STATUS_OK);
     PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==

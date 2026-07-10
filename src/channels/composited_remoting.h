@@ -371,6 +371,8 @@ typedef struct rdp_composited_render_resource
     uint32_t compose_once;
     uint32_t protected_content;
     uint32_t visible_region_updates;
+    uint32_t detached;
+    uint32_t detach_count;
     uint32_t window_layer_type;
     uint32_t transparency_mode;
     uint32_t constant_alpha_bits;

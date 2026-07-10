@@ -472,6 +472,32 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_id = window_node.sprite_id;
             entry->window_id = window_node.window_id;
+            entry->detached = 0;
+            break;
+        }
+        case RDP_COMPOSITED_CMD_WINDOW_NODE_DETACH:
+        {
+            rdp_composited_target_order detach;
+
+            status = rdp_composited_parse_target_order(message->data,
+                                                       message->message_size,
+                                                       RDP_COMPOSITED_CMD_WINDOW_NODE_DETACH,
+                                                       &detach);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      detach.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->detached = 1;
+            entry->detach_count++;
+            entry->rendering_enabled = 0;
+            entry->sprite_image_resource = 0;
+            entry->logical_surface_image_resource = 0;
+            entry->sprite_clip_resource = 0;
+            entry->sprite_clip_for_dirty_accum = 0;
+            entry->dx_clip_resource = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_BOUNDS:
@@ -492,6 +518,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->client_rect = bounds.client;
             entry->content_rect = bounds.content;
             entry->bounds_valid = 1;
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE:
@@ -510,6 +537,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_id = sprite_handle.value;
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SPRITE_CLIP:
@@ -528,6 +556,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->sprite_clip_for_dirty_accum = clip.for_dirty_accum ? 1u : 0u;
             entry->sprite_clip_resource = clip.clip_resource;
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_SOURCE_MODIFICATIONS:
@@ -547,6 +576,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             entry->source_modifications = source.source_modifications;
             entry->low_color_key = source.low_color_key;
             entry->high_color_key = source.high_color_key;
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS:
@@ -575,6 +605,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 entry->maximized_clip_margins = margins.margins;
                 entry->maximized_clip_margins_valid = 1;
             }
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_COPY_OWNED_RESOURCES:
@@ -595,6 +626,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             source = rdp_composited_render_tree_find(tree, copy.value);
             rdp_composited_render_copy_owned(entry, source);
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION:
@@ -613,6 +645,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             if (!entry)
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->visible_region_updates++;
+            entry->detached = 0;
             break;
         }
         case RDP_COMPOSITED_CMD_HWND_TARGET_CREATE:
