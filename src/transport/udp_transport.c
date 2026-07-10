@@ -63,16 +63,19 @@ librdp_status rdp_udp_parse_fec_header(const void* data, size_t length, rdp_udp_
 librdp_status rdp_udp_write_fec_header(rdp_buffer* buffer, const rdp_udp_fec_header* header)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !header || !rdp_udp_valid_flags(header->flags))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, header->source_ack);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, header->receive_window_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, header->flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, header->receive_window_size);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, header->flags);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_parse_fec_payload_header(const void* data,
@@ -100,22 +103,23 @@ librdp_status rdp_udp_write_fec_payload_header(rdp_buffer* buffer,
                                                const rdp_udp_fec_payload_header* header)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !header || header->padding != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, header->coded_sequence);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, header->source_start);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, header->range);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, header->fec_index);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, header->padding);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, header->source_start);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, header->range);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, header->fec_index);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, header->padding);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_parse_payload_prefix(const void* data, size_t length, rdp_udp_payload_prefix* prefix)
@@ -162,13 +166,17 @@ librdp_status rdp_udp_write_source_payload_header(rdp_buffer* buffer,
                                                   const rdp_udp_source_payload_header* header)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, header->coded_sequence);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, header->source_start);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, header->source_start);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_parse_syn_data(const void* data, size_t length, rdp_udp_syn_data* syn)
@@ -193,16 +201,19 @@ librdp_status rdp_udp_parse_syn_data(const void* data, size_t length, rdp_udp_sy
 librdp_status rdp_udp_write_syn_data(rdp_buffer* buffer, const rdp_udp_syn_data* syn)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !syn || !rdp_udp_valid_mtu(syn->upstream_mtu) || !rdp_udp_valid_mtu(syn->downstream_mtu))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, syn->initial_sequence_number);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, syn->upstream_mtu);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, syn->downstream_mtu);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, syn->upstream_mtu);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, syn->downstream_mtu);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_parse_ack_of_ack_vector(const void* data,
@@ -267,20 +278,23 @@ librdp_status rdp_udp_write_ack_vector(rdp_buffer* buffer, const uint8_t* vector
 {
     size_t used = 0;
     size_t padding = 0;
+    size_t start = 0;
     static const uint8_t zeroes[3] = {0, 0, 0};
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || (!vector && vector_size > 0) || vector_size > RDP_UDP_ACK_VECTOR_MAX_SIZE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, vector_size);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append(buffer, vector, vector_size);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, vector, vector_size);
     used = 2u + vector_size;
     padding = (4u - (used % 4u)) % 4u;
-    return rdp_buffer_append(buffer, zeroes, padding);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, zeroes, padding);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_ack_vector_decode_entry(uint8_t value, rdp_udp_ack_vector_entry* entry)
@@ -360,13 +374,17 @@ librdp_status rdp_udp_write_correlation_id(rdp_buffer* buffer, const uint8_t cor
 {
     static const uint8_t reserved[16] = {0};
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !correlation_id)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append(buffer, correlation_id, 16u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, reserved, sizeof(reserved));
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, reserved, sizeof(reserved));
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_udp_parse_syn_data_ex(const void* data, size_t length, rdp_udp_syn_data_ex* syn_ex)

@@ -16612,6 +16612,7 @@ static int test_udp_transport(void)
            fec.flags == (RDP_UDP_FLAG_SYN | RDP_UDP_FLAG_ACK | RDP_UDP_FLAG_DATA));
     fec.flags = 0x8000u;
     PCHECK(rdp_udp_write_fec_header(&buffer, &fec) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 8u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -16627,6 +16628,7 @@ static int test_udp_transport(void)
            syn.downstream_mtu == RDP_UDP_MAX_MTU);
     syn.upstream_mtu = RDP_UDP_MIN_MTU - 1u;
     PCHECK(rdp_udp_write_syn_data(&buffer, &syn) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 8u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -16642,6 +16644,9 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp_parse_ack_vector(bad_ack_vector_padding,
                                     sizeof(bad_ack_vector_padding),
                                     &ack_vector) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_udp_write_ack_vector(&buffer, ack_payload, RDP_UDP_ACK_VECTOR_MAX_SIZE + 1u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 8u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
