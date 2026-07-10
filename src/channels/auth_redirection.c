@@ -830,6 +830,52 @@ librdp_status rdp_auth_redirection_parse_response_message(
     }
 }
 
+librdp_status rdp_auth_redirection_write_default_response(
+    rdp_buffer* buffer,
+    const rdp_auth_redirection_call_message* call,
+    uint32_t status)
+{
+    rdp_auth_redirection_compare_credentials_result compare;
+
+    if (!buffer || !call)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (call->call.call_id)
+    {
+        case RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION:
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION:
+            return rdp_auth_redirection_write_negotiate_version_response(buffer,
+                                                                         call->call.call_id,
+                                                                         status);
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS:
+            memset(&compare, 0, sizeof(compare));
+            return rdp_auth_redirection_write_compare_credentials_response(buffer,
+                                                                          status,
+                                                                          &compare);
+        case RDP_AUTH_REDIRECTION_CALL_KERB_DECRYPT_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_COMPUTE_TGS_CHECKSUM:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_BUILD_ENCRYPTED_AUTH_DATA:
+            return rdp_auth_redirection_write_asn1_response(buffer,
+                                                            call->call.call_id,
+                                                            status,
+                                                            RDP_AUTH_REDIRECTION_ASN1_PDU_IGNORED,
+                                                            NULL,
+                                                            0);
+        case RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY:
+        case RDP_AUTH_REDIRECTION_CALL_KERB_KEY_AGREEMENT_GENERATE_NONCE:
+            return rdp_auth_redirection_write_octet_response(buffer,
+                                                             call->call.call_id,
+                                                             status,
+                                                             NULL,
+                                                             0);
+        default:
+            return rdp_auth_redirection_write_response(buffer,
+                                                       call->call.call_id,
+                                                       status,
+                                                       NULL,
+                                                       0);
+    }
+}
+
 librdp_status rdp_auth_redirection_parse_negotiate_version_call(
     const void* data,
     size_t length,

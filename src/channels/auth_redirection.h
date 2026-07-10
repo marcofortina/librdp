@@ -297,6 +297,10 @@ librdp_status rdp_auth_redirection_parse_response_message(
     const void* data,
     size_t length,
     rdp_auth_redirection_response_message* message);
+librdp_status rdp_auth_redirection_write_default_response(
+    rdp_buffer* buffer,
+    const rdp_auth_redirection_call_message* call,
+    uint32_t status);
 librdp_status rdp_auth_redirection_parse_negotiate_version_call(
     const void* data,
     size_t length,

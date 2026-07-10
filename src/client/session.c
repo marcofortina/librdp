@@ -17747,18 +17747,10 @@ static librdp_status rdp_session_handle_auth_redirection_message(librdp_session*
         if (call.kind == RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION)
         {
             response_status = 0;
-            status = rdp_auth_redirection_write_negotiate_version_response(&response_payload,
-                                                                           call.call.call_id,
-                                                                           response_status);
         }
-        else
-        {
-            status = rdp_auth_redirection_write_response(&response_payload,
-                                                         call.call.call_id,
-                                                         response_status,
-                                                         NULL,
-                                                         0);
-        }
+        status = rdp_auth_redirection_write_default_response(&response_payload,
+                                                             &call,
+                                                             response_status);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_auth_redirection_send_payload(session,
                                                                channel_id,
