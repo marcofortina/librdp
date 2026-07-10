@@ -233,8 +233,10 @@ librdp_status rdp_udp_write_ack_of_ack_vector(rdp_buffer* buffer,
 librdp_status rdp_udp_parse_ack_vector(const void* data, size_t length, rdp_udp_ack_vector* ack_vector)
 {
     rdp_stream stream;
+    const uint8_t* pad = NULL;
     size_t used = 0;
     size_t padding = 0;
+    size_t i = 0;
 
     if (!data || !ack_vector)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -249,8 +251,14 @@ librdp_status rdp_udp_parse_ack_vector(const void* data, size_t length, rdp_udp_
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     used = 2u + ack_vector->size;
     padding = (4u - (used % 4u)) % 4u;
-    if (padding > rdp_stream_remaining(&stream))
+    if (rdp_stream_remaining(&stream) != padding ||
+        (padding > 0 && rdp_stream_read_bytes(&stream, &pad, padding) != LIBRDP_STATUS_OK))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < padding; i++)
+    {
+        if (pad[i] != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
     ack_vector->padding_len = padding;
     return LIBRDP_STATUS_OK;
 }
