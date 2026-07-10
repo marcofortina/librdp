@@ -9862,6 +9862,22 @@ static int test_gdi_orders(void)
         0x01u, 0x02u, 0x03u,
         0x21u, 0x22u, 0x23u
     };
+    const uint8_t render_patblt_pattern[] = {
+        RDP_GDI_TS_STANDARD,
+        0xffu, 0x0fu,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0xf0u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x03u,
+        0xaau,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u
+    };
     const uint8_t render_lineto[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_LINETO,
@@ -10084,10 +10100,31 @@ static int test_gdi_orders(void)
            render_op.kind == RDP_GDI_RENDER_OP_PATBLT &&
            render_op.rop == 0xf0u &&
            render_op.color == 0x00232221u &&
+           render_op.back_color == 0x00030201u &&
            render_op.rect.x == 9 &&
            render_op.rect.y == 10 &&
            render_op.rect.width == 11 &&
-           render_op.rect.height == 12);
+           render_op.rect.height == 12 &&
+           render_op.brush_style == 0);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_patblt_pattern,
+                                               sizeof(render_patblt_pattern),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_patblt_pattern) &&
+           render_op.kind == RDP_GDI_RENDER_OP_PATBLT &&
+           render_op.color == 0x00605040u &&
+           render_op.back_color == 0x00302010u &&
+           render_op.rect.x == 1 &&
+           render_op.rect.y == 2 &&
+           render_op.rect.width == 3 &&
+           render_op.rect.height == 4 &&
+           render_op.brush_x == 5 &&
+           render_op.brush_y == 6 &&
+           render_op.brush_style == 3 &&
+           render_op.brush_hatch == 0xaau &&
+           render_op.brush_extra[0] == 0x55u &&
+           render_op.brush_extra[6] == 0x55u);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_lineto,
                                                sizeof(render_lineto),

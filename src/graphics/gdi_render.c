@@ -261,16 +261,20 @@ static librdp_status rdp_gdi_render_decode_patblt(rdp_stream* stream,
     }
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (state->pat_brush_style != 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
 
     op->kind = RDP_GDI_RENDER_OP_PATBLT;
     op->rop = state->pat_rop;
     op->color = state->pat_fore_color;
+    op->back_color = state->pat_back_color;
     op->rect.x = state->pat_left;
     op->rect.y = state->pat_top;
     op->rect.width = state->pat_width;
     op->rect.height = state->pat_height;
+    op->brush_x = state->pat_brush_x;
+    op->brush_y = state->pat_brush_y;
+    op->brush_style = state->pat_brush_style;
+    op->brush_hatch = state->pat_brush_hatch;
+    memcpy(op->brush_extra, state->pat_brush_extra, sizeof(op->brush_extra));
     return LIBRDP_STATUS_OK;
 }
 

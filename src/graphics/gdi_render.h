@@ -39,6 +39,7 @@ typedef struct rdp_gdi_render_op
     uint8_t order_type;
     uint8_t rop;
     uint32_t color;
+    uint32_t back_color;
     rdp_gdi_render_rect rect;
     int32_t src_x;
     int32_t src_y;
@@ -46,6 +47,11 @@ typedef struct rdp_gdi_render_op
     int32_t end_y;
     uint32_t pen_width;
     uint32_t pen_style;
+    int32_t brush_x;
+    int32_t brush_y;
+    uint8_t brush_style;
+    uint8_t brush_hatch;
+    uint8_t brush_extra[7];
     rdp_gdi_render_bounds bounds;
 } rdp_gdi_render_op;
 
