@@ -108,7 +108,7 @@ librdp_status rdp_audio_output_write_client_formats(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(&body, pitch);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_be(&body, datagram_port);
+        status = rdp_buffer_append_u16_le(&body, datagram_port);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(&body, format_count);
     if (status == LIBRDP_STATUS_OK)
