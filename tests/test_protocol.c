@@ -9820,7 +9820,22 @@ static int test_gdi_orders(void)
     };
     const uint8_t render_lineto[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
-        RDP_GDI_ORDER_LINETO
+        RDP_GDI_ORDER_LINETO,
+        0xffu, 0x03u,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0x06u, 0x07u, 0x08u,
+        13u,
+        0x00u,
+        0x01u,
+        0x31u, 0x32u, 0x33u
+    };
+    const uint8_t render_unsupported[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_DRAWNINEGRID
     };
     const uint8_t bad_bounds[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
@@ -10032,6 +10047,20 @@ static int test_gdi_orders(void)
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_lineto,
                                                sizeof(render_lineto),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_lineto) &&
+           render_op.kind == RDP_GDI_RENDER_OP_LINE &&
+           render_op.rop == 13u &&
+           render_op.color == 0x00333231u &&
+           render_op.rect.x == 2 &&
+           render_op.rect.y == 3 &&
+           render_op.end_x == 4 &&
+           render_op.end_y == 5 &&
+           render_op.pen_width == 1);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_unsupported,
+                                               sizeof(render_unsupported),
                                                &render_op,
                                                &render_consumed) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_gdi_parse_altsec_order(altsec_order,

@@ -16949,6 +16949,204 @@ static librdp_status rdp_session_gdi_copy_rect(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+static int32_t rdp_session_gdi_abs_i32(int32_t value)
+{
+    return value < 0 ? -value : value;
+}
+
+static uint8_t rdp_session_gdi_rop2(uint8_t rop, uint8_t pen, uint8_t dest)
+{
+    switch (rop)
+    {
+        case 1u:
+            return 0;
+        case 2u:
+            return (uint8_t)~(dest | pen);
+        case 3u:
+            return (uint8_t)(dest & (uint8_t)~pen);
+        case 4u:
+            return (uint8_t)~pen;
+        case 5u:
+            return (uint8_t)(pen & (uint8_t)~dest);
+        case 6u:
+            return (uint8_t)~dest;
+        case 7u:
+            return (uint8_t)(dest ^ pen);
+        case 8u:
+            return (uint8_t)~(dest & pen);
+        case 9u:
+            return (uint8_t)(dest & pen);
+        case 10u:
+            return (uint8_t)~(dest ^ pen);
+        case 11u:
+            return dest;
+        case 12u:
+            return (uint8_t)(dest | (uint8_t)~pen);
+        case 13u:
+            return pen;
+        case 14u:
+            return (uint8_t)(pen | (uint8_t)~dest);
+        case 15u:
+            return (uint8_t)(dest | pen);
+        case 16u:
+            return 0xffu;
+        default:
+            return pen;
+    }
+}
+
+static int rdp_session_gdi_line_point_visible(const rdp_gdi_render_op* op,
+                                              int32_t x,
+                                              int32_t y,
+                                              uint32_t width,
+                                              uint32_t height)
+{
+    if (x < 0 || y < 0 || x >= (int32_t)width || y >= (int32_t)height)
+        return 0;
+    if (op->bounds.present &&
+        (x < op->bounds.left || y < op->bounds.top || x > op->bounds.right || y > op->bounds.bottom))
+        return 0;
+    return 1;
+}
+
+static void rdp_session_gdi_line_plot(librdp_session* session,
+                                      const rdp_gdi_render_op* op,
+                                      int32_t x,
+                                      int32_t y,
+                                      uint32_t surface_width,
+                                      uint32_t surface_height,
+                                      uint32_t* dirty_left,
+                                      uint32_t* dirty_top,
+                                      uint32_t* dirty_right,
+                                      uint32_t* dirty_bottom)
+{
+    uint8_t* pixels = librdp_surface_pixels_mut(session->surface);
+    size_t stride = librdp_surface_stride(session->surface);
+    uint32_t pen_width = op->pen_width == 0 ? 1u : op->pen_width;
+    int32_t start = -(int32_t)(pen_width / 2u);
+    int32_t end = start + (int32_t)pen_width;
+    int32_t dy = 0;
+    uint8_t b = (uint8_t)(op->color & 0xffu);
+    uint8_t g = (uint8_t)((op->color >> 8u) & 0xffu);
+    uint8_t r = (uint8_t)((op->color >> 16u) & 0xffu);
+
+    if (!pixels || stride == 0)
+        return;
+    for (dy = start; dy < end; dy++)
+    {
+        int32_t dx = 0;
+
+        for (dx = start; dx < end; dx++)
+        {
+            int32_t px = x + dx;
+            int32_t py = y + dy;
+            uint8_t* pixel = NULL;
+
+            if (!rdp_session_gdi_line_point_visible(op, px, py, surface_width, surface_height))
+                continue;
+            pixel = pixels + ((size_t)(uint32_t)py * stride) + ((size_t)(uint32_t)px * 4u);
+            pixel[0] = rdp_session_gdi_rop2(op->rop, b, pixel[0]);
+            pixel[1] = rdp_session_gdi_rop2(op->rop, g, pixel[1]);
+            pixel[2] = rdp_session_gdi_rop2(op->rop, r, pixel[2]);
+            pixel[3] = 0xffu;
+            if ((uint32_t)px < *dirty_left)
+                *dirty_left = (uint32_t)px;
+            if ((uint32_t)py < *dirty_top)
+                *dirty_top = (uint32_t)py;
+            if ((uint32_t)px + 1u > *dirty_right)
+                *dirty_right = (uint32_t)px + 1u;
+            if ((uint32_t)py + 1u > *dirty_bottom)
+                *dirty_bottom = (uint32_t)py + 1u;
+        }
+    }
+}
+
+static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    int32_t x0 = 0;
+    int32_t y0 = 0;
+    int32_t x1 = 0;
+    int32_t y1 = 0;
+    int32_t dx = 0;
+    int32_t dy = 0;
+    int32_t sx = 0;
+    int32_t sy = 0;
+    int32_t err = 0;
+    uint32_t dirty_left = UINT32_MAX;
+    uint32_t dirty_top = UINT32_MAX;
+    uint32_t dirty_right = 0;
+    uint32_t dirty_bottom = 0;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    x0 = op->rect.x;
+    y0 = op->rect.y;
+    x1 = op->end_x;
+    y1 = op->end_y;
+    dx = rdp_session_gdi_abs_i32(x1 - x0);
+    dy = -rdp_session_gdi_abs_i32(y1 - y0);
+    sx = x0 < x1 ? 1 : -1;
+    sy = y0 < y1 ? 1 : -1;
+    err = dx + dy;
+    for (;;)
+    {
+        int32_t e2 = 0;
+
+        rdp_session_gdi_line_plot(session,
+                                  op,
+                                  x0,
+                                  y0,
+                                  surface_width,
+                                  surface_height,
+                                  &dirty_left,
+                                  &dirty_top,
+                                  &dirty_right,
+                                  &dirty_bottom);
+        if (x0 == x1 && y0 == y1)
+            break;
+        e2 = 2 * err;
+        if (e2 >= dy)
+        {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx)
+        {
+            err += dx;
+            y0 += sy;
+        }
+    }
+    if (dirty_left < dirty_right && dirty_top < dirty_bottom)
+    {
+        rdp_session_emit_surface_invalidated(session,
+                                             dirty_left,
+                                             dirty_top,
+                                             dirty_right - dirty_left,
+                                             dirty_bottom - dirty_top);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.order.apply",
+                              "type=%u kind=%u x0=%d y0=%d x1=%d y1=%d width=%u rop2=%u dirty_x=%u dirty_y=%u dirty_width=%u dirty_height=%u",
+                              op->order_type,
+                              op->kind,
+                              op->rect.x,
+                              op->rect.y,
+                              op->end_x,
+                              op->end_y,
+                              op->pen_width,
+                              op->rop,
+                              dirty_left,
+                              dirty_top,
+                              dirty_right - dirty_left,
+                              dirty_bottom - dirty_top);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_session_gdi_region region;
@@ -16986,6 +17184,8 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
             return LIBRDP_STATUS_OK;
         return rdp_session_gdi_copy_rect(session, op, &region);
     }
+    if (op->kind == RDP_GDI_RENDER_OP_LINE)
+        return rdp_session_gdi_draw_line(session, op);
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 

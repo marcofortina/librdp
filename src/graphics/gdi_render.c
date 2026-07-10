@@ -15,6 +15,7 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
             *bytes = 1;
             return 1;
         case RDP_GDI_ORDER_PATBLT:
+        case RDP_GDI_ORDER_LINETO:
             *bytes = 2;
             return 1;
         default:
@@ -29,6 +30,16 @@ static librdp_status rdp_gdi_render_read_i16(rdp_stream* stream, int32_t* value)
     if (rdp_stream_read_u16_le(stream, &raw) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *value = (int16_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_read_u16(rdp_stream* stream, uint32_t* value)
+{
+    uint16_t raw = 0;
+
+    if (rdp_stream_read_u16_le(stream, &raw) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = raw;
     return LIBRDP_STATUS_OK;
 }
 
@@ -263,6 +274,54 @@ static librdp_status rdp_gdi_render_decode_patblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_render_decode_line(rdp_stream* stream,
+                                                uint32_t flags,
+                                                int delta,
+                                                rdp_gdi_render_state* state,
+                                                rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_u16(stream, &state->line_back_mode);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->line_start_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->line_start_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->line_end_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->line_end_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u))
+        status = rdp_gdi_render_read_color(stream, &state->line_back_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u) &&
+        rdp_stream_read_u8(stream, &state->line_rop2) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u) &&
+        rdp_stream_read_u8(stream, &state->line_pen_style) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u) &&
+        rdp_stream_read_u8(stream, &state->line_pen_width) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0200u))
+        status = rdp_gdi_render_read_color(stream, &state->line_pen_color);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (state->line_pen_style != 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    op->kind = RDP_GDI_RENDER_OP_LINE;
+    op->rop = state->line_rop2;
+    op->color = state->line_pen_color;
+    op->rect.x = state->line_start_x;
+    op->rect.y = state->line_start_y;
+    op->end_x = state->line_end_x;
+    op->end_y = state->line_end_y;
+    op->pen_width = state->line_pen_width == 0 ? 1u : state->line_pen_width;
+    op->pen_style = state->line_pen_style;
+    return LIBRDP_STATUS_OK;
+}
+
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
 {
     if (!state)
@@ -272,6 +331,8 @@ void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
     state->dst_rop = 0x00u;
     state->scr_rop = 0xccu;
     state->pat_rop = 0xf0u;
+    state->line_rop2 = 13u;
+    state->line_pen_width = 1u;
 }
 
 librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
@@ -338,6 +399,9 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             break;
         case RDP_GDI_ORDER_PATBLT:
             status = rdp_gdi_render_decode_patblt(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_LINETO:
+            status = rdp_gdi_render_decode_line(&stream, field_flags, delta, state, op);
             break;
         case RDP_GDI_ORDER_OPAQUERECT:
             status = rdp_gdi_render_decode_opaque_rect(&stream, field_flags, delta, state, op);
