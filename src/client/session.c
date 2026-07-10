@@ -17763,13 +17763,22 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
             }
             else if (control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_URB)
             {
-                result = RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+                usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_NOT_SUPPORTED;
+                status = rdp_session_usb_make_urb_result(usbd_status, &output);
+                result = RDP_SESSION_HRESULT_OK;
             }
         }
         else if (control.io_control_code == RDP_USB_REDIRECTION_IOCTL_QUERY_BUS_TIME)
         {
             status = rdp_session_usb_make_u32_output(rdp_session_usb_bus_time(), &output);
             result = RDP_SESSION_HRESULT_OK;
+        }
+        if (status == LIBRDP_STATUS_OK &&
+            result == RDP_SESSION_HRESULT_OK &&
+            output.length > control.output_buffer_size)
+        {
+            output.length = 0;
+            result = RDP_SESSION_HRESULT_FAIL;
         }
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.urbdrc.io_control",
