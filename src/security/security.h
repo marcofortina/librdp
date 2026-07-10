@@ -9,6 +9,8 @@
 
 #include "common/buffer.h"
 
+#include <openssl/types.h>
+
 #define RDP_SEC_EXCHANGE_PKT 0x0001u
 #define RDP_SEC_ENCRYPT 0x0008u
 #define RDP_SEC_INFO_PKT 0x0040u
@@ -23,9 +25,8 @@
 
 typedef struct rdp_rc4_context
 {
-    uint8_t s[256];
-    uint8_t i;
-    uint8_t j;
+    EVP_CIPHER_CTX* cipher;
+    uint8_t initialized;
 } rdp_rc4_context;
 
 typedef struct rdp_standard_security_context

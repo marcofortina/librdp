@@ -3002,6 +3002,9 @@ static int test_path_security_license_channels(void)
     uint32_t error_info = 0;
     uint16_t security_flags = 0;
     uint8_t signature[8];
+    uint8_t standard_work1[16];
+    uint8_t standard_work2[8];
+    uint8_t standard_update_work[4];
     size_t decoded_stride = 0;
     size_t pointer_stride = 0;
     size_t i = 0;
@@ -3035,6 +3038,18 @@ static int test_path_security_license_channels(void)
     const uint8_t set_error_info_payload[] = {0x34, 0x12, 0, 0};
     const uint8_t save_session_info_payload[] = {1, 0, 0, 0, 0xaa, 0x55};
     const uint8_t orders_update_payload[] = {0, 0, 0, 0};
+    const uint8_t standard_plain1[] = {
+        0x00, 0x01, 0x02, 0x03, 0x10, 0x20, 0x30, 0x40,
+        0x55, 0xaa, 0xff, 0x7e, 0x80, 0x90, 0xfe, 0xdc
+    };
+    const uint8_t standard_plain2[] = {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48};
+    const uint8_t standard_update_plain[] = {0x11, 0x22, 0x33, 0x44};
+    const uint8_t standard_cipher1[] = {
+        0x06, 0x5b, 0xef, 0xa9, 0x84, 0xe0, 0xbb, 0x46,
+        0x51, 0x7f, 0xa7, 0xf4, 0xff, 0x0c, 0xb1, 0x12
+    };
+    const uint8_t standard_cipher2[] = {0x68, 0xec, 0x7e, 0xa5, 0xf2, 0x04, 0xad, 0x55};
+    const uint8_t standard_update_cipher[] = {0xc6, 0x08, 0x84, 0xfe};
 
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
@@ -4797,6 +4812,32 @@ static int test_path_security_license_channels(void)
                                              client_random,
                                              server_random) == LIBRDP_STATUS_OK);
     PCHECK(secure_a.key_len == 16);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    memcpy(standard_work1, standard_plain1, sizeof(standard_work1));
+    memcpy(standard_work2, standard_plain2, sizeof(standard_work2));
+    PCHECK(rdp_security_encrypt_payload(&secure_a, standard_work1, sizeof(standard_work1)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_encrypt_payload(&secure_a, standard_work2, sizeof(standard_work2)) == LIBRDP_STATUS_OK);
+    PCHECK(memcmp(standard_work1, standard_cipher1, sizeof(standard_cipher1)) == 0);
+    PCHECK(memcmp(standard_work2, standard_cipher2, sizeof(standard_cipher2)) == 0);
+    rdp_security_standard_clear(&secure_a);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    memcpy(standard_update_work, standard_update_plain, sizeof(standard_update_work));
+    secure_a.encrypt_count = 4096;
+    PCHECK(rdp_security_encrypt_payload(&secure_a, standard_update_work, sizeof(standard_update_work)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(memcmp(standard_update_work, standard_update_cipher, sizeof(standard_update_cipher)) == 0);
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
     PCHECK(rdp_security_standard_client_init(&secure_b,
                                              RDP_SECURITY_METHOD_128BIT,
                                              client_random,

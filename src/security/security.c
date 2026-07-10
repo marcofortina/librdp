@@ -7,6 +7,7 @@
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/provider.h>
 
 #include <limits.h>
 #include <string.h>
@@ -212,47 +213,88 @@ static librdp_status rdp_md5_key(const uint8_t* seed,
                              server_random, RDP_SECURITY_CLIENT_RANDOM_LEN, NULL, 0);
 }
 
-static void rdp_rc4_init(rdp_rc4_context* context, const uint8_t* key, size_t key_len)
+static CRYPTO_ONCE rdp_openssl_provider_once = CRYPTO_ONCE_STATIC_INIT;
+static OSSL_PROVIDER* rdp_openssl_default_provider;
+static OSSL_PROVIDER* rdp_openssl_legacy_provider;
+static int rdp_openssl_legacy_ready;
+
+static void rdp_openssl_provider_init(void)
 {
-    size_t i = 0;
-    uint8_t j = 0;
-
-    if (!context || !key || key_len == 0)
-        return;
-
-    for (i = 0; i < 256u; i++)
-        context->s[i] = (uint8_t)i;
-    for (i = 0; i < 256u; i++)
-    {
-        uint8_t tmp = 0;
-        j = (uint8_t)(j + context->s[i] + key[i % key_len]);
-        tmp = context->s[i];
-        context->s[i] = context->s[j];
-        context->s[j] = tmp;
-    }
-    context->i = 0;
-    context->j = 0;
+    rdp_openssl_default_provider = OSSL_PROVIDER_load(NULL, "default");
+    rdp_openssl_legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
+    rdp_openssl_legacy_ready = rdp_openssl_legacy_provider != NULL;
 }
 
-static void rdp_rc4_crypt(rdp_rc4_context* context, uint8_t* data, size_t length)
+static librdp_status rdp_rc4_provider_ensure(void)
 {
-    size_t n = 0;
+    if (CRYPTO_THREAD_run_once(&rdp_openssl_provider_once, rdp_openssl_provider_init) != 1)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_openssl_legacy_ready ? LIBRDP_STATUS_OK : LIBRDP_STATUS_UNSUPPORTED;
+}
 
-    if (!context || (!data && length > 0))
+static void rdp_rc4_clear(rdp_rc4_context* context)
+{
+    if (!context)
         return;
+    EVP_CIPHER_CTX_free(context->cipher);
+    memset(context, 0, sizeof(*context));
+}
 
-    for (n = 0; n < length; n++)
+static librdp_status rdp_rc4_init(rdp_rc4_context* context, const uint8_t* key, size_t key_len)
+{
+    EVP_CIPHER* cipher = NULL;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!context || !key || key_len == 0 || key_len > INT_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_rc4_provider_ensure();
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    if (!context->cipher)
     {
-        uint8_t tmp = 0;
-        uint8_t index = 0;
-        context->i = (uint8_t)(context->i + 1u);
-        context->j = (uint8_t)(context->j + context->s[context->i]);
-        tmp = context->s[context->i];
-        context->s[context->i] = context->s[context->j];
-        context->s[context->j] = tmp;
-        index = (uint8_t)(context->s[context->i] + context->s[context->j]);
-        data[n] ^= context->s[index];
+        context->cipher = EVP_CIPHER_CTX_new();
+        if (!context->cipher)
+            return LIBRDP_STATUS_NO_MEMORY;
     }
+    else if (EVP_CIPHER_CTX_reset(context->cipher) != 1)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    cipher = EVP_CIPHER_fetch(NULL, "RC4", "provider=legacy");
+    if (!cipher)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    if (EVP_EncryptInit_ex(context->cipher, cipher, NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_set_key_length(context->cipher, (int)key_len) != 1 ||
+        EVP_EncryptInit_ex(context->cipher, NULL, NULL, key, NULL) != 1)
+    {
+        EVP_CIPHER_free(cipher);
+        rdp_rc4_clear(context);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+
+    context->initialized = 1;
+    EVP_CIPHER_free(cipher);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rc4_crypt(rdp_rc4_context* context, uint8_t* data, size_t length)
+{
+    if (!context || (!data && length > 0) || !context->cipher || !context->initialized)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    while (length > 0)
+    {
+        int out_len = 0;
+        int chunk = length > (size_t)INT_MAX ? INT_MAX : (int)length;
+
+        if (EVP_EncryptUpdate(context->cipher, data, &out_len, data, chunk) != 1 || out_len != chunk)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        data += chunk;
+        length -= (size_t)chunk;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_security_apply_method(uint8_t* sign_key,
@@ -311,8 +353,13 @@ static librdp_status rdp_security_key_update(uint8_t key[16],
     if (status != LIBRDP_STATUS_OK)
         return status;
 
-    rdp_rc4_init(&rc4, key, key_len);
-    rdp_rc4_crypt(&rc4, key, key_len);
+    memset(&rc4, 0, sizeof(rc4));
+    status = rdp_rc4_init(&rc4, key, key_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rc4_crypt(&rc4, key, key_len);
+    rdp_rc4_clear(&rc4);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (method == RDP_SECURITY_METHOD_40BIT)
     {
         static const uint8_t salt[] = {0xd1, 0x26, 0x9e};
@@ -465,8 +512,9 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
         context->method = method;
         memcpy(context->encrypt_update_key, context->encrypt_key, sizeof(context->encrypt_update_key));
         memcpy(context->decrypt_update_key, context->decrypt_key, sizeof(context->decrypt_update_key));
-        rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
-        rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
+        status = rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
     }
 
     OPENSSL_cleanse(pre_master, sizeof(pre_master));
@@ -481,6 +529,8 @@ void rdp_security_standard_clear(rdp_standard_security_context* context)
 {
     if (!context)
         return;
+    rdp_rc4_clear(&context->encrypt_rc4);
+    rdp_rc4_clear(&context->decrypt_rc4);
     OPENSSL_cleanse(context, sizeof(*context));
 }
 
@@ -527,10 +577,16 @@ librdp_status rdp_security_encrypt_payload(rdp_standard_security_context* contex
                                                        context->method);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
+        status = rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
         context->encrypt_count = 0;
     }
-    rdp_rc4_crypt(&context->encrypt_rc4, (uint8_t*)data, length);
+    {
+        librdp_status status = rdp_rc4_crypt(&context->encrypt_rc4, (uint8_t*)data, length);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     context->encrypt_count++;
     return LIBRDP_STATUS_OK;
 }
@@ -547,10 +603,16 @@ librdp_status rdp_security_decrypt_payload(rdp_standard_security_context* contex
                                                        context->method);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
+        status = rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
         context->decrypt_count = 0;
     }
-    rdp_rc4_crypt(&context->decrypt_rc4, (uint8_t*)data, length);
+    {
+        librdp_status status = rdp_rc4_crypt(&context->decrypt_rc4, (uint8_t*)data, length);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     context->decrypt_count++;
     return LIBRDP_STATUS_OK;
 }
