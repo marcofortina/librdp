@@ -7004,6 +7004,7 @@ static int test_filesystem_redirection_channel(void)
     rdp_filesystem_redirection_create_response create_response;
     rdp_filesystem_redirection_length_response length_response;
     rdp_device_redirection_io_completion completion_response;
+    rdp_device_redirection_io_completion security_descriptor_response;
     rdp_buffer request;
     rdp_buffer response;
 
@@ -7255,6 +7256,59 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_free(&request);
     rdp_buffer_free(&response);
     rdp_buffer_init(&request);
+    rdp_buffer_init(&response);
+
+    PCHECK(rdp_filesystem_redirection_write_posix_security_descriptor(
+               &response,
+               RDP_FILESYSTEM_REDIRECTION_SUPPORTED_SECURITY_INFORMATION,
+               1000u,
+               100u,
+               0640u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 128u);
+    PCHECK(response.data[0] == 1u);
+    PCHECK(test_read_u16_le(response.data + 2u) == 0x8004u);
+    PCHECK(test_read_u32_le(response.data + 4u) == 20u);
+    PCHECK(test_read_u32_le(response.data + 8u) == 36u);
+    PCHECK(test_read_u32_le(response.data + 16u) == 52u);
+    PCHECK(response.data[20] == 1u && response.data[21] == 2u);
+    PCHECK(test_read_u32_le(response.data + 28u) == 1u);
+    PCHECK(test_read_u32_le(response.data + 32u) == 1000u);
+    PCHECK(response.data[36] == 1u && response.data[37] == 2u);
+    PCHECK(test_read_u32_le(response.data + 44u) == 2u);
+    PCHECK(test_read_u32_le(response.data + 48u) == 100u);
+    PCHECK(response.data[52] == 2u);
+    PCHECK(test_read_u16_le(response.data + 54u) == 76u);
+    PCHECK(test_read_u16_le(response.data + 56u) == 3u);
+    PCHECK(test_read_u32_le(response.data + 64u) == 0x0012019fu);
+    PCHECK(test_read_u32_le(response.data + 88u) == 0x00120089u);
+    PCHECK(test_read_u32_le(response.data + 112u) == 0u);
+    PCHECK(response.data[116] == 1u && response.data[117] == 1u);
+    PCHECK(test_read_u32_le(response.data + 124u) == 0u);
+    PCHECK(rdp_filesystem_redirection_write_buffer_response(&request,
+                                                            1u,
+                                                            3u,
+                                                            RDP_DEVICE_REDIRECTION_STATUS_SUCCESS,
+                                                            response.data,
+                                                            (uint32_t)response.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_completion(request.data,
+                                                      request.length,
+                                                      &security_descriptor_response) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(security_descriptor_response.payload_len == response.length + 4u);
+    PCHECK(test_read_u32_le(security_descriptor_response.payload) == response.length);
+    PCHECK(memcmp(security_descriptor_response.payload + 4u, response.data, response.length) == 0);
+    rdp_buffer_free(&request);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_posix_security_descriptor(
+               &response,
+               0x00000008u,
+               1000u,
+               100u,
+               0644u) == LIBRDP_STATUS_UNSUPPORTED);
+    rdp_buffer_free(&response);
     rdp_buffer_init(&response);
 
     PCHECK(test_append_device_io_request(&request,

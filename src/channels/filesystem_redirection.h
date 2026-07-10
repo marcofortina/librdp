@@ -29,6 +29,14 @@
 #define RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA 0x000980c8u
 #define RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES 0x000940cfu
 
+#define RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION 0x00000001u
+#define RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION 0x00000002u
+#define RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION 0x00000004u
+#define RDP_FILESYSTEM_REDIRECTION_SUPPORTED_SECURITY_INFORMATION                                   \
+    (RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION |                                        \
+     RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION |                                        \
+     RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION)
+
 typedef struct rdp_filesystem_redirection_create_request
 {
     rdp_device_redirection_io_request io;
@@ -270,6 +278,11 @@ librdp_status rdp_filesystem_redirection_write_security_request(rdp_buffer* buff
                                                                 uint32_t data_len);
 
 int rdp_filesystem_redirection_fsctl_supported(uint32_t code);
+librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buffer* buffer,
+                                                                         uint32_t security_information,
+                                                                         uint32_t owner_id,
+                                                                         uint32_t group_id,
+                                                                         uint32_t mode);
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,

@@ -885,6 +885,186 @@ int rdp_filesystem_redirection_fsctl_supported(uint32_t code)
            code == RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES;
 }
 
+static void rdp_filesystem_security_write_u16_le(uint8_t* data, size_t offset, uint16_t value)
+{
+    data[offset] = (uint8_t)(value & 0xffu);
+    data[offset + 1u] = (uint8_t)((value >> 8) & 0xffu);
+}
+
+static void rdp_filesystem_security_write_u32_le(uint8_t* data, size_t offset, uint32_t value)
+{
+    data[offset] = (uint8_t)(value & 0xffu);
+    data[offset + 1u] = (uint8_t)((value >> 8) & 0xffu);
+    data[offset + 2u] = (uint8_t)((value >> 16) & 0xffu);
+    data[offset + 3u] = (uint8_t)((value >> 24) & 0xffu);
+}
+
+static librdp_status rdp_filesystem_security_append_sid(rdp_buffer* buffer,
+                                                        uint32_t authority,
+                                                        const uint32_t* sub_authorities,
+                                                        uint8_t sub_authority_count)
+{
+    uint8_t header[8];
+    uint8_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!sub_authorities && sub_authority_count > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (authority > 0xffffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    header[0] = 1;
+    header[1] = sub_authority_count;
+    header[2] = 0;
+    header[3] = 0;
+    header[4] = 0;
+    header[5] = 0;
+    header[6] = (uint8_t)((authority >> 8) & 0xffu);
+    header[7] = (uint8_t)(authority & 0xffu);
+    status = rdp_buffer_append(buffer, header, sizeof(header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < sub_authority_count; i++)
+    {
+        status = rdp_buffer_append_u32_le(buffer, sub_authorities[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_filesystem_security_mode_mask(uint32_t bits)
+{
+    uint32_t mask = 0;
+
+    if ((bits & 4u) != 0)
+        mask |= 0x00120089u;
+    if ((bits & 2u) != 0)
+        mask |= 0x00120116u;
+    if ((bits & 1u) != 0)
+        mask |= 0x001200a0u;
+    return mask;
+}
+
+static librdp_status rdp_filesystem_security_append_ace(rdp_buffer* buffer,
+                                                        uint32_t access_mask,
+                                                        uint32_t authority,
+                                                        const uint32_t* sub_authorities,
+                                                        uint8_t sub_authority_count)
+{
+    uint8_t header[4];
+    uint16_t ace_size = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    ace_size = (uint16_t)(8u + 8u + ((uint16_t)sub_authority_count * 4u));
+    header[0] = 0;
+    header[1] = 0;
+    header[2] = (uint8_t)(ace_size & 0xffu);
+    header[3] = (uint8_t)((ace_size >> 8) & 0xffu);
+    status = rdp_buffer_append(buffer, header, sizeof(header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_buffer_append_u32_le(buffer, access_mask);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_filesystem_security_append_sid(buffer,
+                                              authority,
+                                              sub_authorities,
+                                              sub_authority_count);
+}
+
+librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buffer* buffer,
+                                                                         uint32_t security_information,
+                                                                         uint32_t owner_id,
+                                                                         uint32_t group_id,
+                                                                         uint32_t mode)
+{
+    static const uint8_t zero_header[20] = {0};
+    static const uint32_t world_sub_authority[1] = {0};
+    uint32_t owner_sub_authorities[2];
+    uint32_t group_sub_authorities[2];
+    size_t base = 0;
+    size_t dacl_offset = 0;
+    size_t dacl_size = 0;
+    uint16_t control = 0x8000u;
+    uint16_t ace_count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((security_information & ~RDP_FILESYSTEM_REDIRECTION_SUPPORTED_SECURITY_INFORMATION) != 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    owner_sub_authorities[0] = 1u;
+    owner_sub_authorities[1] = owner_id;
+    group_sub_authorities[0] = 2u;
+    group_sub_authorities[1] = group_id;
+
+    base = buffer->length;
+    status = rdp_buffer_append(buffer, zero_header, sizeof(zero_header));
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    buffer->data[base] = 1;
+
+    if ((security_information & RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION) != 0)
+    {
+        rdp_filesystem_security_write_u32_le(buffer->data, base + 4u, (uint32_t)(buffer->length - base));
+        status = rdp_filesystem_security_append_sid(buffer, 22u, owner_sub_authorities, 2u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    if ((security_information & RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION) != 0)
+    {
+        rdp_filesystem_security_write_u32_le(buffer->data, base + 8u, (uint32_t)(buffer->length - base));
+        status = rdp_filesystem_security_append_sid(buffer, 22u, group_sub_authorities, 2u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    if ((security_information & RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION) != 0)
+    {
+        control |= 0x0004u;
+        dacl_offset = buffer->length - base;
+        rdp_filesystem_security_write_u32_le(buffer->data, base + 16u, (uint32_t)dacl_offset);
+        status = rdp_filesystem_append_zeroes(buffer, 8u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+
+        status = rdp_filesystem_security_append_ace(buffer,
+                                                    rdp_filesystem_security_mode_mask((mode >> 6) & 7u),
+                                                    22u,
+                                                    owner_sub_authorities,
+                                                    2u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        ace_count++;
+        status = rdp_filesystem_security_append_ace(buffer,
+                                                    rdp_filesystem_security_mode_mask((mode >> 3) & 7u),
+                                                    22u,
+                                                    group_sub_authorities,
+                                                    2u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        ace_count++;
+        status = rdp_filesystem_security_append_ace(buffer,
+                                                    rdp_filesystem_security_mode_mask(mode & 7u),
+                                                    1u,
+                                                    world_sub_authority,
+                                                    1u);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        ace_count++;
+
+        dacl_size = buffer->length - base - dacl_offset;
+        buffer->data[base + dacl_offset] = 2;
+        rdp_filesystem_security_write_u16_le(buffer->data, base + dacl_offset + 2u, (uint16_t)dacl_size);
+        rdp_filesystem_security_write_u16_le(buffer->data, base + dacl_offset + 4u, ace_count);
+    }
+
+    rdp_filesystem_security_write_u16_le(buffer->data, base + 2u, control);
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,

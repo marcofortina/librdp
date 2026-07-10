@@ -4791,33 +4791,92 @@ static librdp_status rdp_session_handle_filesystem_security(librdp_session* sess
                                                             uint32_t major_function)
 {
     rdp_filesystem_redirection_security_request request;
+    rdp_session_redirected_file* file = NULL;
+    rdp_buffer payload;
     rdp_buffer response;
     uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t payload_len = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
     if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY)
         status = rdp_filesystem_redirection_parse_query_security_request(data, data_len, &request);
     else if (major_function == RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY)
         status = rdp_filesystem_redirection_parse_set_security_request(data, data_len, &request);
     else
+    {
+        rdp_buffer_free(&payload);
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&payload);
         return status;
-    if (!rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
+    }
+    file = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
+    if (!file || file->fd < 0)
         io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    else if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY)
+    {
+        struct stat st;
+
+        if (fstat(file->fd, &st) != 0)
+        {
+            io_status = rdp_session_errno_to_device_status(errno);
+        }
+        else
+        {
+            status = rdp_filesystem_redirection_write_posix_security_descriptor(&payload,
+                                                                                request.security_information,
+                                                                                (uint32_t)st.st_uid,
+                                                                                (uint32_t)st.st_gid,
+                                                                                (uint32_t)st.st_mode);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
+            {
+                io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
+                status = LIBRDP_STATUS_OK;
+            }
+            else if (status != LIBRDP_STATUS_OK)
+            {
+                io_status = rdp_session_filesystem_error_from_status(status);
+                status = LIBRDP_STATUS_OK;
+            }
+            else if (payload.length > request.length)
+            {
+                io_status = RDP_SESSION_DEVICE_BUFFER_TOO_SMALL;
+            }
+        }
+    }
     else
         io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
 
+    payload_len = (uint32_t)payload.length;
     rdp_buffer_init(&response);
     if (major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY)
-        status = rdp_filesystem_redirection_write_buffer_response(&response,
-                                                                  request.io.device_id,
-                                                                  request.io.completion_id,
-                                                                  io_status,
-                                                                  NULL,
-                                                                  0);
+    {
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            status = rdp_filesystem_redirection_write_buffer_response(&response,
+                                                                      request.io.device_id,
+                                                                      request.io.completion_id,
+                                                                      io_status,
+                                                                      payload.data,
+                                                                      payload_len);
+        else if (io_status == RDP_SESSION_DEVICE_BUFFER_TOO_SMALL)
+            status = rdp_filesystem_redirection_write_length_response(&response,
+                                                                      request.io.device_id,
+                                                                      request.io.completion_id,
+                                                                      io_status,
+                                                                      payload_len);
+        else
+            status = rdp_filesystem_redirection_write_buffer_response(&response,
+                                                                      request.io.device_id,
+                                                                      request.io.completion_id,
+                                                                      io_status,
+                                                                      NULL,
+                                                                      0);
+    }
     else
         status = rdp_filesystem_redirection_write_length_response(&response,
                                                                   request.io.device_id,
@@ -4829,16 +4888,18 @@ static librdp_status rdp_session_handle_filesystem_security(librdp_session* sess
                                                             &response,
                                                             "client.rdpdr.file.security.response");
     rdp_buffer_free(&response);
+    rdp_buffer_free(&payload);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.file.security",
-                        "device_id=%u file_id=%u completion_id=%u major=%u security_information=%u length=%u status=%u",
+                        "device_id=%u file_id=%u completion_id=%u major=%u security_information=%u length=%u payload_len=%u status=%u",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         request.io.major_function,
                         request.security_information,
                         request.length,
+                        payload_len,
                         io_status);
     return status;
 }
