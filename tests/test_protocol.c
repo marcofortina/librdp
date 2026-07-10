@@ -10176,6 +10176,17 @@ static int test_gdi_orders(void)
         0x02u, 0x03u, 0x04u, 0x05u,
         0x0au, 0x06u
     };
+    const uint8_t render_save_bitmap[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SAVEBITMAP,
+        0x3fu,
+        0x78u, 0x56u, 0x34u, 0x12u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x06u, 0x00u,
+        0x08u, 0x00u,
+        0x00u
+    };
     const uint8_t render_unsupported[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_DRAWNINEGRID
@@ -10527,6 +10538,19 @@ static int test_gdi_orders(void)
            render_op.rect_count == 2 &&
            render_op.rects[1].x == 12 &&
            render_op.rects[1].height == 6);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_save_bitmap,
+                                               sizeof(render_save_bitmap),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_save_bitmap) &&
+           render_op.kind == RDP_GDI_RENDER_OP_SAVE_BITMAP &&
+           render_op.bitmap_id == 0x12345678u &&
+           render_op.operation == 0u &&
+           render_op.rect.x == 2 &&
+           render_op.rect.y == 3 &&
+           render_op.rect.width == 5 &&
+           render_op.rect.height == 6);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_unsupported,
                                                sizeof(render_unsupported),

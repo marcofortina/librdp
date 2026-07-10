@@ -20,7 +20,8 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_MULTIDSTBLT = 9,
     RDP_GDI_RENDER_OP_MULTISCRBLT = 10,
     RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT = 11,
-    RDP_GDI_RENDER_OP_MULTIPATBLT = 12
+    RDP_GDI_RENDER_OP_MULTIPATBLT = 12,
+    RDP_GDI_RENDER_OP_SAVE_BITMAP = 13
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -68,6 +69,8 @@ typedef struct rdp_gdi_render_op
     uint8_t brush_style;
     uint8_t brush_hatch;
     uint8_t brush_extra[7];
+    uint32_t bitmap_id;
+    uint8_t operation;
     uint32_t fill_mode;
     uint32_t point_count;
     rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS];
@@ -180,6 +183,12 @@ typedef struct rdp_gdi_render_state
     uint8_t multi_pat_brush_extra[7];
     uint32_t multi_pat_rect_count;
     rdp_gdi_render_rect multi_pat_rects[RDP_GDI_RENDER_MAX_RECTS];
+    uint32_t save_bitmap_position;
+    int32_t save_bitmap_left;
+    int32_t save_bitmap_top;
+    int32_t save_bitmap_right;
+    int32_t save_bitmap_bottom;
+    uint8_t save_bitmap_operation;
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);

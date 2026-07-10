@@ -16,6 +16,7 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_POLYGON_SC:
         case RDP_GDI_ORDER_POLYLINE:
         case RDP_GDI_ORDER_ELLIPSE_SC:
+        case RDP_GDI_ORDER_SAVEBITMAP:
             *bytes = 1;
             return 1;
         case RDP_GDI_ORDER_PATBLT:
@@ -47,6 +48,13 @@ static librdp_status rdp_gdi_render_read_u16(rdp_stream* stream, uint32_t* value
     if (rdp_stream_read_u16_le(stream, &raw) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *value = raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_read_u32(rdp_stream* stream, uint32_t* value)
+{
+    if (rdp_stream_read_u32_le(stream, value) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 
@@ -905,6 +913,44 @@ static librdp_status rdp_gdi_render_decode_ellipse_sc(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_render_decode_save_bitmap(rdp_stream* stream,
+                                                       uint32_t flags,
+                                                       int delta,
+                                                       rdp_gdi_render_state* state,
+                                                       rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x01u)
+        status = rdp_gdi_render_read_u32(stream, &state->save_bitmap_position);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x02u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->save_bitmap_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x04u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->save_bitmap_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x08u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->save_bitmap_right);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x10u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->save_bitmap_bottom);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x20u) &&
+        rdp_stream_read_u8(stream, &state->save_bitmap_operation) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (state->save_bitmap_operation > 1u ||
+        state->save_bitmap_right < state->save_bitmap_left ||
+        state->save_bitmap_bottom < state->save_bitmap_top)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    op->kind = RDP_GDI_RENDER_OP_SAVE_BITMAP;
+    op->bitmap_id = state->save_bitmap_position;
+    op->operation = state->save_bitmap_operation;
+    op->rect.x = state->save_bitmap_left;
+    op->rect.y = state->save_bitmap_top;
+    op->rect.width = state->save_bitmap_right - state->save_bitmap_left + 1;
+    op->rect.height = state->save_bitmap_bottom - state->save_bitmap_top + 1;
+    return LIBRDP_STATUS_OK;
+}
+
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
 {
     if (!state)
@@ -1020,6 +1066,9 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
         case RDP_GDI_ORDER_SCRBLT:
             status = rdp_gdi_render_decode_scrblt(&stream, field_flags, delta, state, op);
             break;
+        case RDP_GDI_ORDER_SAVEBITMAP:
+            status = rdp_gdi_render_decode_save_bitmap(&stream, field_flags, delta, state, op);
+            break;
         default:
             status = LIBRDP_STATUS_UNSUPPORTED;
             break;
@@ -1030,7 +1079,8 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
          op->kind == RDP_GDI_RENDER_OP_PATBLT || op->kind == RDP_GDI_RENDER_OP_OPAQUE_RECT ||
          op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
          op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT || op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
-         op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT) &&
+         op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
+         op->kind == RDP_GDI_RENDER_OP_SAVE_BITMAP) &&
         (op->rect.width < 0 || op->rect.height < 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->current_order_type = order_type;
