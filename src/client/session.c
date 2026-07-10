@@ -5733,8 +5733,6 @@ static librdp_status rdp_session_handle_printer_device_control(librdp_session* s
     else if (request.io.file_id != 0 &&
              !rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
         io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
-    else
-        io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
     rdp_buffer_init(&response);
     status = rdp_printer_redirection_write_device_control_response(&response,
                                                                    request.io.device_id,
