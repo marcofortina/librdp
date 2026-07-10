@@ -6010,7 +6010,7 @@ static librdp_status rdp_session_handle_printer_create(librdp_session* session,
                 if (backend == RDP_SESSION_PRINTER_BACKEND_CUPS)
                     fd = mkstemp(path);
                 else
-                    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+                    fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
                 if (fd < 0)
                     io_status = rdp_session_errno_to_device_status(errno);
             }
@@ -6243,7 +6243,9 @@ static librdp_status rdp_session_handle_printer_read(librdp_session* session,
     rdp_filesystem_redirection_read_request request;
     rdp_session_redirected_file* job = NULL;
     rdp_buffer response;
+    uint8_t* bytes = NULL;
     uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t read_len = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
@@ -6258,28 +6260,54 @@ static librdp_status rdp_session_handle_printer_read(librdp_session* session,
         job = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
         if (!job)
             io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+        else if (job->fd < 0)
+            io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+        else if (rdp_session_seek_fd(job->fd, request.offset) != 0)
+            io_status = rdp_session_errno_to_device_status(errno);
+        else if (request.length > 0)
+        {
+            ssize_t count = 0;
+
+            bytes = (uint8_t*)malloc(request.length);
+            if (!bytes)
+                io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+            else
+            {
+                do
+                {
+                    count = read(job->fd, bytes, request.length);
+                } while (count < 0 && errno == EINTR);
+                if (count < 0)
+                    io_status = rdp_session_errno_to_device_status(errno);
+                else
+                    read_len = (uint32_t)count;
+            }
+        }
     }
     rdp_buffer_init(&response);
     status = rdp_printer_redirection_write_read_response(&response,
                                                          request.io.device_id,
                                                          request.io.completion_id,
                                                          io_status,
-                                                         NULL,
-                                                         0);
+                                                         bytes,
+                                                         read_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_printer_response(session,
                                                    &response,
                                                    "client.rdpdr.printer.read.response");
     rdp_buffer_free(&response);
+    free(bytes);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.printer.read",
-                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u returned=0",
+                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u returned=%u offset=%llu",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         io_status,
-                        request.length);
+                        request.length,
+                        read_len,
+                        (unsigned long long)request.offset);
     return status;
 }
 
