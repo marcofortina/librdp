@@ -145,15 +145,28 @@ librdp_status rdp_printer_redirection_detect_document_format(
     const char** format)
 {
     const uint8_t* bytes = (const uint8_t*)data;
+    const uint8_t* text = bytes;
+    size_t text_len = length;
 
     if (!format)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *format = RDP_PRINTER_REDIRECTION_FORMAT_RAW;
     if (!bytes || length == 0)
         return LIBRDP_STATUS_OK;
-    if (length >= 4u && memcmp(bytes, "%PDF", 4u) == 0)
+    if (text_len >= 3u && text[0] == 0xefu && text[1] == 0xbbu && text[2] == 0xbfu)
+    {
+        text += 3u;
+        text_len -= 3u;
+    }
+    while (text_len > 0 &&
+           (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n' || *text == '\f'))
+    {
+        text++;
+        text_len--;
+    }
+    if (text_len >= 4u && memcmp(text, "%PDF", 4u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_PDF;
-    else if (length >= 2u && memcmp(bytes, "%!", 2u) == 0)
+    else if (text_len >= 2u && memcmp(text, "%!", 2u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_POSTSCRIPT;
     else if (length >= 4u && memcmp(bytes, "PK\003\004", 4u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_XPS;
@@ -163,7 +176,11 @@ librdp_status rdp_printer_redirection_detect_document_format(
         *format = RDP_PRINTER_REDIRECTION_FORMAT_JPEG;
     else if (length >= 2u && bytes[0] == 0x1bu && bytes[1] == 'E')
         *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
+    else if (text_len >= 4u && memcmp(text, "@PJL", 4u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
     else if (length >= 9u && memcmp(bytes, "\033%-12345X", 9u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
+    else if (length >= 11u && memcmp(bytes, ") HP-PCL XL", 11u) == 0)
         *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
     return LIBRDP_STATUS_OK;
 }

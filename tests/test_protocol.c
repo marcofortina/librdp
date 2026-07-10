@@ -8494,8 +8494,14 @@ static int test_printer_redirection_channel(void)
         const uint8_t png[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
         const uint8_t jpg[] = {0xff, 0xd8, 0xff, 0xe0};
         const uint8_t pcl[] = {0x1b, '%', '-', '1', '2', '3', '4', '5', 'X'};
+        const uint8_t pdf_bom[] = {0xef, 0xbb, 0xbf, '\r', '\n', '%', 'P', 'D', 'F', '-'};
+        const uint8_t pjl[] = {' ', '\t', '@', 'P', 'J', 'L', ' '};
+        const uint8_t pclxl[] = {')', ' ', 'H', 'P', '-', 'P', 'C', 'L', ' ', 'X', 'L', ';'};
 
         PCHECK(rdp_printer_redirection_detect_document_format(pdf, sizeof(pdf), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PDF) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(pdf_bom, sizeof(pdf_bom), &format) ==
                LIBRDP_STATUS_OK);
         PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PDF) == 0);
         PCHECK(rdp_printer_redirection_detect_document_format(ps, sizeof(ps), &format) ==
@@ -8511,6 +8517,12 @@ static int test_printer_redirection_channel(void)
                LIBRDP_STATUS_OK);
         PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_JPEG) == 0);
         PCHECK(rdp_printer_redirection_detect_document_format(pcl, sizeof(pcl), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PCL) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(pjl, sizeof(pjl), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PCL) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(pclxl, sizeof(pclxl), &format) ==
                LIBRDP_STATUS_OK);
         PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PCL) == 0);
         PCHECK(rdp_printer_redirection_detect_document_format(cache, sizeof(cache), &format) ==
