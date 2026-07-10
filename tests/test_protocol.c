@@ -13073,7 +13073,8 @@ static int test_gdi_orders(void)
                                       sizeof(altsec_order),
                                       &altsec) == LIBRDP_STATUS_OK);
     PCHECK(altsec.order_type == RDP_GDI_ALTSEC_SWITCH_SURFACE &&
-           altsec.payload_len == 2u);
+           altsec.payload_len == 2u &&
+           altsec.actual_length == sizeof(altsec_order));
     PCHECK(rdp_gdi_parse_switch_surface_order(&altsec, &switch_surface) == LIBRDP_STATUS_OK);
     PCHECK(switch_surface.bitmap_id == 0x1234u);
     payload.length = 0;
@@ -13249,6 +13250,19 @@ static int test_gdi_orders(void)
     PCHECK(list.count == 2 &&
            list.orders[0].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
            list.orders[1].kind == RDP_GDI_ORDER_KIND_ALTSEC);
+    mixed.length = 0;
+    PCHECK(rdp_buffer_append(&mixed, altsec_order, sizeof(altsec_order)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&mixed, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_order_list(mixed.data,
+                                    mixed.length,
+                                    2,
+                                    RDP_GDI_ORDER_PATBLT,
+                                    &list) == LIBRDP_STATUS_OK);
+    PCHECK(list.count == 2 &&
+           list.orders[0].kind == RDP_GDI_ORDER_KIND_ALTSEC &&
+           list.orders[0].length == sizeof(altsec_order) &&
+           list.orders[1].kind == RDP_GDI_ORDER_KIND_PRIMARY &&
+           list.orders[1].order_type == RDP_GDI_ORDER_OPAQUERECT);
     mixed.length = 0;
     PCHECK(rdp_buffer_append(&mixed, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append(&mixed, secondary.data, secondary.length) == LIBRDP_STATUS_OK);

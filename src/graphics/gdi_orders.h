@@ -241,6 +241,7 @@ typedef struct rdp_gdi_altsec_order_header
     uint8_t order_type;
     const uint8_t* payload;
     size_t payload_len;
+    size_t actual_length;
 } rdp_gdi_altsec_order_header;
 
 typedef struct rdp_gdi_bitmap_cache_error_info

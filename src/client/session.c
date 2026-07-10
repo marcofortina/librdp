@@ -23672,7 +23672,7 @@ static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session
             status = rdp_session_apply_gdi_altsec_order(session, &altsec);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            offset = update->order_data_len;
+            offset += altsec.actual_length;
             continue;
         }
         status = rdp_gdi_decode_primary_render_order(&session->gdi_render,

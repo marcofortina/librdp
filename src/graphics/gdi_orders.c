@@ -61,6 +61,76 @@ static int rdp_gdi_altsec_order_type_valid(uint8_t order_type)
     return order_type <= RDP_GDI_ALTSEC_FRAME_MARKER;
 }
 
+static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
+                                                   const uint8_t* payload,
+                                                   size_t available,
+                                                   size_t* payload_len)
+{
+    size_t need = available;
+
+    if (!payload || !payload_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (order_type)
+    {
+        case RDP_GDI_ALTSEC_SWITCH_SURFACE:
+            need = 2u;
+            break;
+        case RDP_GDI_ALTSEC_FRAME_MARKER:
+            need = 4u;
+            break;
+        case RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP:
+            need = 19u;
+            break;
+        case RDP_GDI_ALTSEC_CREATE_OFFSCREEN_BITMAP:
+            if (available < 6u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 6u;
+            if ((payload[1] & 0x80u) != 0)
+            {
+                uint16_t delete_count = 0;
+
+                if (available < 8u)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                delete_count = (uint16_t)payload[6] | ((uint16_t)payload[7] << 8u);
+                if (delete_count > RDP_GDI_MAX_OFFSCREEN_DELETE_INDICES)
+                    return LIBRDP_STATUS_UNSUPPORTED;
+                need = 8u + ((size_t)delete_count * 2u);
+            }
+            break;
+        case RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST:
+            if (available < 12u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            if ((payload[0] & RDP_GDI_STREAM_BITMAP_V2) != 0)
+            {
+                uint16_t block_len = 0;
+
+                if (available < 14u)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                block_len = (uint16_t)payload[12] | ((uint16_t)payload[13] << 8u);
+                need = 14u + block_len;
+            }
+            else
+            {
+                uint16_t block_len = (uint16_t)payload[10] | ((uint16_t)payload[11] << 8u);
+
+                need = 12u + block_len;
+            }
+            break;
+        case RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT:
+            if (available < 5u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 5u + ((uint16_t)payload[3] | ((uint16_t)payload[4] << 8u));
+            break;
+        default:
+            need = available;
+            break;
+    }
+    if (need > available)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *payload_len = need;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_parse_bounds(rdp_stream* stream, rdp_gdi_primary_order_header* header)
 {
     uint8_t flags = 0;
@@ -1021,9 +1091,14 @@ librdp_status rdp_gdi_parse_altsec_order(const void* data,
     header->order_type = (uint8_t)(header->control_flags >> 2);
     if (!rdp_gdi_altsec_order_type_valid(header->order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->payload_len = rdp_stream_remaining(&stream);
+    if (rdp_gdi_altsec_payload_length(header->order_type,
+                                      stream.data + stream.position,
+                                      rdp_stream_remaining(&stream),
+                                      &header->payload_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    header->actual_length = stream.position;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1459,14 +1534,12 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         }
         if ((control & 0x03u) == RDP_GDI_TS_SECONDARY)
         {
-            if (index + 1u != number_orders)
-                return LIBRDP_STATUS_UNSUPPORTED;
             if (rdp_gdi_parse_altsec_order(bytes + offset, length - offset, &altsec) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             list->orders[index].kind = RDP_GDI_ORDER_KIND_ALTSEC;
             list->orders[index].order_type = altsec.order_type;
-            list->orders[index].length = length - offset;
-            offset = length;
+            list->orders[index].length = altsec.actual_length;
+            offset += altsec.actual_length;
             continue;
         }
         if (control & RDP_GDI_TS_STANDARD)
