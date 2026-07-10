@@ -148,6 +148,7 @@
 #define RDP_SESSION_DEVICE_ACCESS_DENIED 0xc0000022u
 #define RDP_SESSION_DEVICE_OBJECT_NAME_COLLISION 0xc0000035u
 #define RDP_SESSION_DEVICE_LOCK_NOT_GRANTED 0xc0000054u
+#define RDP_SESSION_DEVICE_RANGE_NOT_LOCKED 0xc000007eu
 #define RDP_SESSION_DEVICE_NO_MORE_FILES 0x80000006u
 #define RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES 0xc000011fu
 #define RDP_SESSION_DEVICE_UNSUCCESSFUL 0xc0000001u
@@ -168,6 +169,7 @@
 #define RDP_SESSION_SMARTCARD_BLOB_BYTES 8u
 #define RDP_SESSION_SMARTCARD_MAX_IO_BYTES 65536u
 #define RDP_SESSION_MAX_REDIRECTED_FILES 256u
+#define RDP_SESSION_MAX_FILE_LOCKS RDP_FILESYSTEM_REDIRECTION_MAX_LOCKS
 #define RDP_SESSION_MAX_FILE_IO_BYTES (4u * 1024u * 1024u)
 #define RDP_SESSION_MAX_PNP_READ_BYTES 65536u
 #define RDP_SESSION_FILE_DIRECTORY_FILE 0x00000001u
@@ -217,6 +219,14 @@
 #define RDP_SESSION_GDI_PEN_INSIDEFRAME 6u
 #define RDP_SESSION_USB_URB_HEADER_LENGTH 8u
 
+typedef struct rdp_session_file_lock_range
+{
+    uint8_t active;
+    uint8_t exclusive;
+    uint64_t offset;
+    uint64_t length;
+} rdp_session_file_lock_range;
+
 typedef struct rdp_session_redirected_file
 {
     uint8_t active;
@@ -230,6 +240,8 @@ typedef struct rdp_session_redirected_file
     char* directory_pattern;
     uint32_t desired_access;
     uint32_t create_options;
+    uint32_t lock_count;
+    rdp_session_file_lock_range locks[RDP_SESSION_MAX_FILE_LOCKS];
     uint8_t port_type;
     uint8_t printer_backend;
     uint32_t printer_index;
@@ -4634,21 +4646,215 @@ static librdp_status rdp_session_handle_filesystem_query_directory(librdp_sessio
     return status;
 }
 
-static uint32_t rdp_session_apply_file_locks(rdp_session_redirected_file* file,
+static int rdp_session_file_lock_value_fits_off_t(uint64_t value)
+{
+    off_t converted = (off_t)value;
+
+    return converted >= 0 && (uint64_t)converted == value;
+}
+
+static uint64_t rdp_session_file_lock_end(uint64_t offset, uint64_t length)
+{
+    if (length == 0 || UINT64_MAX - offset < length)
+        return UINT64_MAX;
+    return offset + length;
+}
+
+static int rdp_session_file_locks_overlap(uint64_t offset_a,
+                                          uint64_t length_a,
+                                          uint64_t offset_b,
+                                          uint64_t length_b)
+{
+    uint64_t end_a = rdp_session_file_lock_end(offset_a, length_a);
+    uint64_t end_b = rdp_session_file_lock_end(offset_b, length_b);
+
+    return offset_a < end_b && offset_b < end_a;
+}
+
+static rdp_session_file_lock_range* rdp_session_find_file_lock(rdp_session_redirected_file* file,
+                                                               uint64_t offset,
+                                                               uint64_t length)
+{
+    size_t i = 0;
+
+    if (!file)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_MAX_FILE_LOCKS; i++)
+    {
+        if (file->locks[i].active && file->locks[i].offset == offset && file->locks[i].length == length)
+            return &file->locks[i];
+    }
+    return NULL;
+}
+
+static uint32_t rdp_session_record_file_lock(rdp_session_redirected_file* file,
+                                             uint64_t offset,
+                                             uint64_t length,
+                                             int exclusive,
+                                             uint8_t* inserted)
+{
+    rdp_session_file_lock_range* existing = NULL;
+    size_t i = 0;
+
+    if (!file)
+        return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    if (inserted)
+        *inserted = 0;
+    existing = rdp_session_find_file_lock(file, offset, length);
+    if (existing)
+    {
+        if (existing->exclusive != (uint8_t)(exclusive ? 1u : 0u))
+            return RDP_SESSION_DEVICE_LOCK_NOT_GRANTED;
+        return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    }
+    if (file->lock_count >= RDP_SESSION_MAX_FILE_LOCKS)
+        return RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+    for (i = 0; i < RDP_SESSION_MAX_FILE_LOCKS; i++)
+    {
+        if (!file->locks[i].active)
+        {
+            file->locks[i].active = 1u;
+            file->locks[i].exclusive = exclusive ? 1u : 0u;
+            file->locks[i].offset = offset;
+            file->locks[i].length = length;
+            file->lock_count++;
+            if (inserted)
+                *inserted = 1u;
+            return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+        }
+    }
+    return RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+}
+
+static uint32_t rdp_session_forget_file_lock(rdp_session_redirected_file* file,
+                                             uint64_t offset,
+                                             uint64_t length)
+{
+    rdp_session_file_lock_range* existing = rdp_session_find_file_lock(file, offset, length);
+
+    if (!existing)
+        return RDP_SESSION_DEVICE_RANGE_NOT_LOCKED;
+    memset(existing, 0, sizeof(*existing));
+    if (file->lock_count > 0)
+        file->lock_count--;
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static uint32_t rdp_session_apply_fd_lock(int fd, short type, uint64_t offset, uint64_t length)
+{
+    struct flock lock;
+
+    if (fd < 0 || !rdp_session_file_lock_value_fits_off_t(offset) ||
+        !rdp_session_file_lock_value_fits_off_t(length))
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = type;
+    lock.l_whence = SEEK_SET;
+    lock.l_start = (off_t)offset;
+    lock.l_len = (off_t)length;
+    if (fcntl(fd, F_SETLK, &lock) != 0)
+    {
+        if (errno == EACCES || errno == EAGAIN)
+            return RDP_SESSION_DEVICE_LOCK_NOT_GRANTED;
+        return rdp_session_errno_to_device_status(errno);
+    }
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static uint32_t rdp_session_check_file_lock_conflict(librdp_session* session,
+                                                     const rdp_session_redirected_file* owner,
+                                                     uint64_t offset,
+                                                     uint64_t length,
+                                                     int exclusive)
+{
+    size_t i = 0;
+    size_t j = 0;
+
+    if (!session || !owner || !owner->path)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    {
+        const rdp_session_redirected_file* other = &session->redirected_files[i];
+
+        if (!other->active || other == owner || !other->path || strcmp(other->path, owner->path) != 0)
+            continue;
+        for (j = 0; j < RDP_SESSION_MAX_FILE_LOCKS; j++)
+        {
+            const rdp_session_file_lock_range* lock = &other->locks[j];
+
+            if (!lock->active || !rdp_session_file_locks_overlap(offset, length, lock->offset, lock->length))
+                continue;
+            if (exclusive || lock->exclusive)
+                return RDP_SESSION_DEVICE_LOCK_NOT_GRANTED;
+        }
+    }
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
+static void rdp_session_rollback_inserted_file_locks(rdp_session_redirected_file* file,
+                                                     const rdp_filesystem_redirection_lock_request* request,
+                                                     const uint8_t* inserted,
+                                                     uint32_t count)
+{
+    uint32_t i = count;
+
+    if (!file || !request || !inserted)
+        return;
+    while (i > 0)
+    {
+        i--;
+        if (!inserted[i])
+            continue;
+        (void)rdp_session_apply_fd_lock(file->fd,
+                                        F_UNLCK,
+                                        request->locks[i].offset,
+                                        request->locks[i].length);
+        (void)rdp_session_forget_file_lock(file,
+                                           request->locks[i].offset,
+                                           request->locks[i].length);
+    }
+}
+
+static int rdp_session_file_lock_seen_in_request(
+    const rdp_filesystem_redirection_lock_request* request,
+    uint32_t index,
+    uint64_t offset,
+    uint64_t length)
+{
+    uint32_t i = 0;
+
+    if (!request)
+        return 0;
+    for (i = 0; i < index; i++)
+    {
+        if (request->locks[i].offset == offset && request->locks[i].length == length)
+            return 1;
+    }
+    return 0;
+}
+
+static uint32_t rdp_session_apply_file_locks(librdp_session* session,
+                                             rdp_session_redirected_file* file,
                                              const rdp_filesystem_redirection_lock_request* request)
 {
     uint32_t i = 0;
+    uint32_t pending_new = 0;
     short type = F_UNLCK;
+    uint8_t inserted[RDP_FILESYSTEM_REDIRECTION_MAX_LOCKS];
+    int exclusive = 0;
 
     if (!file || file->fd < 0 || !request)
         return RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    memset(inserted, 0, sizeof(inserted));
     switch (request->operation)
     {
         case RDP_FILESYSTEM_REDIRECTION_LOWIO_SHAREDLOCK:
             type = F_RDLCK;
+            exclusive = 0;
             break;
         case RDP_FILESYSTEM_REDIRECTION_LOWIO_EXCLUSIVELOCK:
             type = F_WRLCK;
+            exclusive = 1;
             break;
         case RDP_FILESYSTEM_REDIRECTION_LOWIO_UNLOCK:
         case RDP_FILESYSTEM_REDIRECTION_LOWIO_UNLOCK_MULTIPLE:
@@ -4659,21 +4865,65 @@ static uint32_t rdp_session_apply_file_locks(rdp_session_redirected_file* file,
     }
     for (i = 0; i < request->lock_count; i++)
     {
-        struct flock lock;
+        uint64_t offset = request->locks[i].offset;
+        uint64_t length = request->locks[i].length;
+        uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 
-        if (request->locks[i].offset > (uint64_t)INT64_MAX ||
-            request->locks[i].length > (uint64_t)INT64_MAX)
+        if (!rdp_session_file_lock_value_fits_off_t(offset) ||
+            !rdp_session_file_lock_value_fits_off_t(length))
             return RDP_SESSION_DEVICE_INVALID_PARAMETER;
-        memset(&lock, 0, sizeof(lock));
-        lock.l_type = type;
-        lock.l_whence = SEEK_SET;
-        lock.l_start = (off_t)request->locks[i].offset;
-        lock.l_len = (off_t)request->locks[i].length;
-        if (fcntl(file->fd, F_SETLK, &lock) != 0)
+        if (type == F_UNLCK)
         {
-            if (errno == EACCES || errno == EAGAIN)
+            if (rdp_session_file_lock_seen_in_request(request, i, offset, length))
+                return RDP_SESSION_DEVICE_RANGE_NOT_LOCKED;
+            if (!rdp_session_find_file_lock(file, offset, length))
+                return RDP_SESSION_DEVICE_RANGE_NOT_LOCKED;
+            continue;
+        }
+        {
+            rdp_session_file_lock_range* existing = rdp_session_find_file_lock(file, offset, length);
+
+            if (existing && existing->exclusive != (uint8_t)(exclusive ? 1u : 0u))
                 return RDP_SESSION_DEVICE_LOCK_NOT_GRANTED;
-            return rdp_session_errno_to_device_status(errno);
+            if (!existing && !rdp_session_file_lock_seen_in_request(request, i, offset, length))
+            {
+                if (file->lock_count + pending_new >= RDP_SESSION_MAX_FILE_LOCKS)
+                    return RDP_SESSION_DEVICE_TOO_MANY_OPENED_FILES;
+                pending_new++;
+            }
+        }
+        io_status = rdp_session_check_file_lock_conflict(session, file, offset, length, exclusive);
+        if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            return io_status;
+    }
+    for (i = 0; i < request->lock_count; i++)
+    {
+        uint64_t offset = request->locks[i].offset;
+        uint64_t length = request->locks[i].length;
+        uint32_t io_status = rdp_session_apply_fd_lock(file->fd, type, offset, length);
+
+        if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+        {
+            rdp_session_rollback_inserted_file_locks(file, request, inserted, i);
+            return io_status;
+        }
+        if (type == F_UNLCK)
+        {
+            io_status = rdp_session_forget_file_lock(file, offset, length);
+        }
+        else
+        {
+            io_status = rdp_session_record_file_lock(file,
+                                                     offset,
+                                                     length,
+                                                     exclusive,
+                                                     &inserted[i]);
+        }
+        if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+        {
+            (void)rdp_session_apply_fd_lock(file->fd, F_UNLCK, offset, length);
+            rdp_session_rollback_inserted_file_locks(file, request, inserted, i);
+            return io_status;
         }
     }
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
@@ -4698,7 +4948,7 @@ static librdp_status rdp_session_handle_filesystem_lock(librdp_session* session,
     if (!file)
         io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
     else
-        io_status = rdp_session_apply_file_locks(file, &request);
+        io_status = rdp_session_apply_file_locks(session, file, &request);
 
     rdp_buffer_init(&response);
     status = rdp_filesystem_redirection_write_lock_response(&response,
