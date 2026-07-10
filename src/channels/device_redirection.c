@@ -159,6 +159,26 @@ static int rdp_device_redirection_valid_device_type(uint32_t device_type)
            device_type == RDP_DEVICE_REDIRECTION_TYPE_SMARTCARD;
 }
 
+static int rdp_device_redirection_valid_major_function(uint32_t major_function)
+{
+    return major_function == RDP_DEVICE_REDIRECTION_IRP_CREATE ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_CLOSE ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_READ ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_WRITE ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_SET_INFORMATION ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_FLUSH_BUFFERS ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_VOLUME_INFORMATION ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_SET_VOLUME_INFORMATION ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_DIRECTORY_CONTROL ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_SHUTDOWN ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_LOCK_CONTROL ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_CLEANUP ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_QUERY_SECURITY ||
+           major_function == RDP_DEVICE_REDIRECTION_IRP_SET_SECURITY;
+}
+
 static int rdp_device_redirection_valid_preferred_name(uint32_t device_type, const char name[8])
 {
     size_t i = 0;
@@ -844,6 +864,8 @@ librdp_status rdp_device_redirection_parse_io_request(const void* data,
         rdp_stream_read_u32_le(&stream, &request->major_function) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &request->minor_function) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_device_redirection_valid_major_function(request->major_function))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     request->payload_len = rdp_stream_remaining(&stream);
     if (rdp_stream_read_bytes(&stream, &request->payload, request->payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -861,7 +883,8 @@ librdp_status rdp_device_redirection_write_io_request(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || (!payload && payload_len > 0))
+    if (!buffer || (!payload && payload_len > 0) ||
+        !rdp_device_redirection_valid_major_function(major_function))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_device_redirection_write_header(buffer,
                                                  RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
