@@ -70,6 +70,7 @@ typedef struct x11_app
     size_t clipboard_remote_utf8_len;
     int clipboard_owns_selection;
     int clipboard_request_pending;
+    char* clipboard_file_path;
     x11_pipewire_audio* audio;
     x11_camera_capture* camera;
     char* audio_output_device;
@@ -903,6 +904,8 @@ static void x11_clipboard_free(x11_app* app)
     app->clipboard_remote_utf8_len = 0;
     app->clipboard_owns_selection = 0;
     app->clipboard_request_pending = 0;
+    free(app->clipboard_file_path);
+    app->clipboard_file_path = NULL;
 }
 
 static int x11_clipboard_store_utf8(x11_app* app, const uint8_t* data, size_t length)
@@ -2333,12 +2336,14 @@ static void handle_motion(x11_app* app, XMotionEvent* motion)
     (void)librdp_session_send_mouse(app->session, &event);
 }
 
-static int configure_settings(librdp_settings* settings, int argc, char** argv)
+static int configure_settings(librdp_settings* settings, x11_app* app, int argc, char** argv)
 {
     int i = 1;
     uint32_t width = librdp_settings_width(settings);
     uint32_t height = librdp_settings_height(settings);
 
+    if (!settings || !app)
+        return 0;
     while (i < argc)
     {
         if (strcmp(argv[i], "--target") == 0)
@@ -2403,6 +2408,16 @@ static int configure_settings(librdp_settings* settings, int argc, char** argv)
         else if (strcmp(argv[i], "--printer") == 0)
         {
             if (!require_value(argc, &i) || !add_printer_arg(settings, argv[i]))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--clipboard-file") == 0)
+        {
+            free(app->clipboard_file_path);
+            app->clipboard_file_path = NULL;
+            if (!require_value(argc, &i))
+                return 0;
+            app->clipboard_file_path = x11_strdup_text(argv[i]);
+            if (!app->clipboard_file_path)
                 return 0;
         }
         else if (strcmp(argv[i], "--audio-output") == 0)
@@ -2518,11 +2533,12 @@ int main(int argc, char** argv)
     if (!settings)
         return 1;
 
-    if (!configure_settings(settings, argc, argv))
+    if (!configure_settings(settings, &app, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry]\n",
                 argv[0]);
+        x11_clipboard_free(&app);
         librdp_settings_free(settings);
         return 2;
     }
@@ -2653,6 +2669,34 @@ int main(int argc, char** argv)
     }
 
     librdp_session_set_event_callback(app.session, app_event, &app);
+    if (app.clipboard_file_path)
+    {
+        librdp_clipboard_file file;
+
+        memset(&file, 0, sizeof(file));
+        file.path = app.clipboard_file_path;
+        status = librdp_session_clipboard_set_files(app.session, &file, 1);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            fprintf(stderr, "error=clipboard_file status=%s\n", librdp_status_string(status));
+            librdp_session_free(app.session);
+            x11_runtime_features_free(&app);
+            x11_audio_free(&app);
+            if (app.xkb)
+                XkbFreeKeyboard(app.xkb, 0, True);
+            if (app.ic)
+                XDestroyIC(app.ic);
+            if (app.im)
+                XCloseIM(app.im);
+            x11_clipboard_free(&app);
+            clear_viewer_cursor(&app);
+            XFreeGC(app.display, app.gc);
+            XDestroyWindow(app.display, app.window);
+            XCloseDisplay(app.display);
+            return 1;
+        }
+        rdp_trace_event(RDP_TRACE_CLIENT, "x11.clipboard.local_file", "configured=1");
+    }
     status = librdp_session_connect(app.session);
     if (status != LIBRDP_STATUS_OK)
     {

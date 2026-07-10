@@ -41,6 +41,24 @@ static int rdp_clipboard_find_utf16_null(const uint8_t* data, size_t length, siz
     return 0;
 }
 
+static librdp_status rdp_clipboard_append_zero(rdp_buffer* buffer, size_t length)
+{
+    uint8_t zero[64];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(zero, 0, sizeof(zero));
+    while (length > 0 && status == LIBRDP_STATUS_OK)
+    {
+        size_t chunk = length > sizeof(zero) ? sizeof(zero) : length;
+
+        status = rdp_buffer_append(buffer, zero, chunk);
+        length -= chunk;
+    }
+    return status;
+}
+
 librdp_status rdp_clipboard_parse_packet(const void* data, size_t length, rdp_clipboard_packet* packet)
 {
     rdp_stream stream;
@@ -542,4 +560,83 @@ librdp_status rdp_clipboard_parse_lock(const rdp_clipboard_packet* packet, rdp_c
 librdp_status rdp_clipboard_parse_unlock(const rdp_clipboard_packet* packet, rdp_clipboard_lock* lock)
 {
     return rdp_clipboard_parse_clip_data_id(packet, RDP_CLIPBOARD_CB_UNLOCK_CLIPDATA, lock);
+}
+
+librdp_status rdp_clipboard_write_hdrop(rdp_buffer* buffer,
+                                        const rdp_clipboard_file_descriptor* files,
+                                        uint32_t count)
+{
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!files && count > 0) || count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, RDP_CLIPBOARD_DROPFILES_HEADER_SIZE);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 1);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < count; i++)
+    {
+        if (!files[i].name_utf16 || files[i].name_utf16_len == 0 ||
+            (files[i].name_utf16_len & 1u) != 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        status = rdp_buffer_append(buffer, files[i].name_utf16, files[i].name_utf16_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(buffer, 0);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    return status;
+}
+
+librdp_status rdp_clipboard_write_file_group_descriptor_w(rdp_buffer* buffer,
+                                                          const rdp_clipboard_file_descriptor* files,
+                                                          uint32_t count)
+{
+    uint32_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!files && count > 0) || count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < count; i++)
+    {
+        uint8_t name[520];
+        size_t name_len = 0;
+        uint32_t attributes = files[i].attributes ? files[i].attributes : RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+
+        if (!files[i].name_utf16 || files[i].name_utf16_len == 0 ||
+            (files[i].name_utf16_len & 1u) != 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        memset(name, 0, sizeof(name));
+        name_len = files[i].name_utf16_len;
+        if (name_len > sizeof(name) - 2u)
+            name_len = sizeof(name) - 2u;
+        memcpy(name, files[i].name_utf16, name_len);
+
+        status = rdp_buffer_append_u32_le(buffer,
+                                          RDP_CLIPBOARD_FD_ATTRIBUTES | RDP_CLIPBOARD_FD_FILESIZE);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_clipboard_append_zero(buffer, 16);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_clipboard_append_zero(buffer, 8);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_clipboard_append_zero(buffer, 8);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(buffer, attributes);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_clipboard_append_zero(buffer, 24);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(buffer, (uint32_t)(files[i].size >> 32));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(buffer, (uint32_t)(files[i].size & 0xffffffffu));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(buffer, name, sizeof(name));
+    }
+    return status;
 }

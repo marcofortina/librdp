@@ -1242,6 +1242,24 @@ static int test_settings_surface_input_session(void)
                                             LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
                                             "t\0e\0x\0t\0\0",
                                             10) == LIBRDP_STATUS_OK);
+    {
+        char path[] = "/tmp/librdp-clip-XXXXXX";
+        int fd = mkstemp(path);
+        librdp_clipboard_file file;
+
+        CHECK(fd >= 0);
+        CHECK(write(fd, "abcdef", 6) == 6);
+        CHECK(close(fd) == 0);
+        memset(&file, 0, sizeof(file));
+        file.path = path;
+        file.name = "clip.txt";
+        CHECK(librdp_session_clipboard_set_files(session, &file, 1) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_clipboard_set_files(NULL, &file, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        CHECK(librdp_session_clipboard_set_files(session, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        CHECK(librdp_session_clipboard_set_files(session, &file, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        CHECK(unlink(path) == 0);
+        CHECK(librdp_session_clipboard_set_files(session, &file, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
     CHECK(librdp_session_clipboard_request_data(session,
                                                 LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT) == LIBRDP_STATUS_STATE);
     CHECK(librdp_session_clipboard_clear(session) == LIBRDP_STATUS_OK);

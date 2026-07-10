@@ -7451,6 +7451,39 @@ static int test_path_security_license_channels(void)
     PCHECK(cb_file_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_FAIL &&
            cb_file_response.stream_id == 0x1122u &&
            cb_file_response.data_len == 0);
+    {
+        const uint8_t file_name[] = {'c', 0, 'l', 0, 'i', 0, 'p', 0, '.', 0, 't', 0, 'x', 0, 't', 0};
+        rdp_clipboard_file_descriptor file_desc;
+
+        memset(&file_desc, 0, sizeof(file_desc));
+        file_desc.name_utf16 = file_name;
+        file_desc.name_utf16_len = sizeof(file_name);
+        file_desc.size = 0x0000000212345678ull;
+        file_desc.attributes = RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+        dyn_response.length = 0;
+        PCHECK(rdp_clipboard_write_hdrop(&dyn_response, &file_desc, 1) == LIBRDP_STATUS_OK);
+        PCHECK(dyn_response.length == RDP_CLIPBOARD_DROPFILES_HEADER_SIZE + sizeof(file_name) + 4u);
+        PCHECK(test_read_u32_le(dyn_response.data) == RDP_CLIPBOARD_DROPFILES_HEADER_SIZE &&
+               test_read_u32_le(dyn_response.data + 16) == 1 &&
+               memcmp(dyn_response.data + RDP_CLIPBOARD_DROPFILES_HEADER_SIZE,
+                      file_name,
+                      sizeof(file_name)) == 0);
+        dyn_response.length = 0;
+        PCHECK(rdp_clipboard_write_file_group_descriptor_w(&dyn_response, &file_desc, 1) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(dyn_response.length == 4u + RDP_CLIPBOARD_FILE_DESCRIPTORW_SIZE);
+        PCHECK(test_read_u32_le(dyn_response.data) == 1 &&
+               test_read_u32_le(dyn_response.data + 4) ==
+                   (RDP_CLIPBOARD_FD_ATTRIBUTES | RDP_CLIPBOARD_FD_FILESIZE) &&
+               test_read_u32_le(dyn_response.data + 40) == RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL &&
+               test_read_u32_le(dyn_response.data + 68) == 2u &&
+               test_read_u32_le(dyn_response.data + 72) == 0x12345678u &&
+               memcmp(dyn_response.data + 76, file_name, sizeof(file_name)) == 0);
+        file_desc.name_utf16_len--;
+        dyn_response.length = 0;
+        PCHECK(rdp_clipboard_write_hdrop(&dyn_response, &file_desc, 1) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
     dyn_response.length = 0;
     PCHECK(rdp_clipboard_write_lock(&dyn_response, 0x99887766u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_clipboard_parse_packet(dyn_response.data, dyn_response.length, &cb) == LIBRDP_STATUS_OK);

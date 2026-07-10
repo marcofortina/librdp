@@ -13,10 +13,16 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_clipboard_format_data_response data_response;
     rdp_clipboard_file_contents_request file_request;
     rdp_clipboard_file_contents_response file_response;
+    rdp_clipboard_file_descriptor file_desc;
     rdp_clipboard_lock lock;
     rdp_buffer out;
+    const uint8_t file_name[] = {'a', 0};
     uint32_t count = 0;
 
+    file_desc.name_utf16 = file_name;
+    file_desc.name_utf16_len = sizeof(file_name);
+    file_desc.size = size;
+    file_desc.attributes = RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
     rdp_buffer_init(&out);
     if (rdp_clipboard_parse_packet(data, size, &packet) == LIBRDP_STATUS_OK)
     {
@@ -46,6 +52,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_clipboard_write_format_data_response(&out, 1, data, size > 32u ? 32u : size);
     out.length = 0;
     (void)rdp_clipboard_write_file_contents_response(&out, 1, (uint32_t)size, data, size > 32u ? 32u : size);
+    out.length = 0;
+    (void)rdp_clipboard_write_hdrop(&out, &file_desc, 1);
+    out.length = 0;
+    (void)rdp_clipboard_write_file_group_descriptor_w(&out, &file_desc, 1);
     out.length = 0;
     (void)rdp_clipboard_write_lock(&out, (uint32_t)size);
     out.length = 0;

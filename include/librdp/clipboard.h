@@ -25,10 +25,19 @@ typedef struct librdp_clipboard_format
     size_t name_len;
 } librdp_clipboard_format;
 
+typedef struct librdp_clipboard_file
+{
+    const char* path;
+    const char* name;
+} librdp_clipboard_file;
+
 librdp_status librdp_session_clipboard_set_data(librdp_session* session,
                                                 uint32_t format_id,
                                                 const void* data,
                                                 size_t data_len);
+librdp_status librdp_session_clipboard_set_files(librdp_session* session,
+                                                 const librdp_clipboard_file* files,
+                                                 uint32_t count);
 librdp_status librdp_session_clipboard_clear(librdp_session* session);
 librdp_status librdp_session_clipboard_request_data(librdp_session* session, uint32_t format_id);
 

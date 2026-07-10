@@ -41,6 +41,13 @@
 #define RDP_CLIPBOARD_FORMAT_DIB 8u
 #define RDP_CLIPBOARD_FORMAT_UNICODETEXT 13u
 #define RDP_CLIPBOARD_FORMAT_HDROP 15u
+#define RDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW 0xc001u
+#define RDP_CLIPBOARD_FORMAT_FILECONTENTS 0xc002u
+#define RDP_CLIPBOARD_FILE_DESCRIPTORW_SIZE 592u
+#define RDP_CLIPBOARD_DROPFILES_HEADER_SIZE 20u
+#define RDP_CLIPBOARD_FD_ATTRIBUTES 0x00000004u
+#define RDP_CLIPBOARD_FD_FILESIZE 0x00000040u
+#define RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL 0x00000080u
 
 typedef struct rdp_clipboard_packet
 {
@@ -114,6 +121,14 @@ typedef struct rdp_clipboard_lock
     uint32_t clip_data_id;
 } rdp_clipboard_lock;
 
+typedef struct rdp_clipboard_file_descriptor
+{
+    const uint8_t* name_utf16;
+    size_t name_utf16_len;
+    uint64_t size;
+    uint32_t attributes;
+} rdp_clipboard_file_descriptor;
+
 librdp_status rdp_clipboard_parse_packet(const void* data, size_t length, rdp_clipboard_packet* packet);
 librdp_status rdp_clipboard_write_header(rdp_buffer* buffer, uint16_t type, uint16_t flags, uint32_t data_len);
 librdp_status rdp_clipboard_write_monitor_ready(rdp_buffer* buffer);
@@ -156,5 +171,11 @@ librdp_status rdp_clipboard_write_lock(rdp_buffer* buffer, uint32_t clip_data_id
 librdp_status rdp_clipboard_write_unlock(rdp_buffer* buffer, uint32_t clip_data_id);
 librdp_status rdp_clipboard_parse_lock(const rdp_clipboard_packet* packet, rdp_clipboard_lock* lock);
 librdp_status rdp_clipboard_parse_unlock(const rdp_clipboard_packet* packet, rdp_clipboard_lock* lock);
+librdp_status rdp_clipboard_write_hdrop(rdp_buffer* buffer,
+                                        const rdp_clipboard_file_descriptor* files,
+                                        uint32_t count);
+librdp_status rdp_clipboard_write_file_group_descriptor_w(rdp_buffer* buffer,
+                                                          const rdp_clipboard_file_descriptor* files,
+                                                          uint32_t count);
 
 #endif
