@@ -23,7 +23,9 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_MULTIPATBLT = 12,
     RDP_GDI_RENDER_OP_SAVE_BITMAP = 13,
     RDP_GDI_RENDER_OP_POLYGON_CB = 14,
-    RDP_GDI_RENDER_OP_ELLIPSE_CB = 15
+    RDP_GDI_RENDER_OP_ELLIPSE_CB = 15,
+    RDP_GDI_RENDER_OP_MEMBLT = 16,
+    RDP_GDI_RENDER_OP_MEM3BLT = 17
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -74,6 +76,9 @@ typedef struct rdp_gdi_render_op
     uint8_t transparent_background;
     uint32_t bitmap_id;
     uint8_t operation;
+    uint32_t cache_id;
+    uint32_t color_index;
+    uint32_t cache_index;
     uint32_t fill_mode;
     uint32_t point_count;
     rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS];
@@ -192,6 +197,31 @@ typedef struct rdp_gdi_render_state
     int32_t save_bitmap_right;
     int32_t save_bitmap_bottom;
     uint8_t save_bitmap_operation;
+    uint32_t mem_cache_id;
+    int32_t mem_left;
+    int32_t mem_top;
+    int32_t mem_width;
+    int32_t mem_height;
+    uint8_t mem_rop;
+    int32_t mem_src_x;
+    int32_t mem_src_y;
+    uint32_t mem_cache_index;
+    uint32_t mem3_cache_id;
+    int32_t mem3_left;
+    int32_t mem3_top;
+    int32_t mem3_width;
+    int32_t mem3_height;
+    uint8_t mem3_rop;
+    int32_t mem3_src_x;
+    int32_t mem3_src_y;
+    uint32_t mem3_back_color;
+    uint32_t mem3_fore_color;
+    int32_t mem3_brush_x;
+    int32_t mem3_brush_y;
+    uint8_t mem3_brush_style;
+    uint8_t mem3_brush_hatch;
+    uint8_t mem3_brush_extra[7];
+    uint32_t mem3_cache_index;
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);

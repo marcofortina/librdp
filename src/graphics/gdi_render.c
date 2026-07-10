@@ -21,6 +21,7 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
             return 1;
         case RDP_GDI_ORDER_PATBLT:
         case RDP_GDI_ORDER_LINETO:
+        case RDP_GDI_ORDER_MEMBLT:
         case RDP_GDI_ORDER_MULTIPATBLT:
         case RDP_GDI_ORDER_MULTISCRBLT:
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
@@ -454,6 +455,129 @@ static librdp_status rdp_gdi_render_decode_patblt(rdp_stream* stream,
     op->brush_style = state->pat_brush_style;
     op->brush_hatch = state->pat_brush_hatch;
     memcpy(op->brush_extra, state->pat_brush_extra, sizeof(op->brush_extra));
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_gdi_render_split_cache_id(uint32_t packed, uint32_t* cache_id, uint32_t* color_index)
+{
+    if (cache_id)
+        *cache_id = packed & 0xffu;
+    if (color_index)
+        *color_index = (packed >> 8u) & 0xffu;
+}
+
+static librdp_status rdp_gdi_render_decode_memblt(rdp_stream* stream,
+                                                  uint32_t flags,
+                                                  int delta,
+                                                  rdp_gdi_render_state* state,
+                                                  rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_u16(stream, &state->mem_cache_id);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_width);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_height);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u) &&
+        rdp_stream_read_u8(stream, &state->mem_rop) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_src_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem_src_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u))
+        status = rdp_gdi_render_read_u16(stream, &state->mem_cache_index);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    op->kind = RDP_GDI_RENDER_OP_MEMBLT;
+    op->rop = state->mem_rop;
+    op->rect.x = state->mem_left;
+    op->rect.y = state->mem_top;
+    op->rect.width = state->mem_width;
+    op->rect.height = state->mem_height;
+    op->src_x = state->mem_src_x;
+    op->src_y = state->mem_src_y;
+    op->cache_index = state->mem_cache_index;
+    rdp_gdi_render_split_cache_id(state->mem_cache_id, &op->cache_id, &op->color_index);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_mem3blt(rdp_stream* stream,
+                                                   uint32_t flags,
+                                                   int delta,
+                                                   rdp_gdi_render_state* state,
+                                                   rdp_gdi_render_op* op)
+{
+    const uint8_t* extra = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x0001u)
+        status = rdp_gdi_render_read_u16(stream, &state->mem3_cache_id);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0002u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0004u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0008u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_width);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0010u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_height);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0020u) &&
+        rdp_stream_read_u8(stream, &state->mem3_rop) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0040u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_src_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0080u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_src_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0100u))
+        status = rdp_gdi_render_read_color(stream, &state->mem3_back_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0200u))
+        status = rdp_gdi_render_read_color(stream, &state->mem3_fore_color);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0400u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_brush_x);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x0800u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->mem3_brush_y);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x1000u) &&
+        rdp_stream_read_u8(stream, &state->mem3_brush_style) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x2000u) &&
+        rdp_stream_read_u8(stream, &state->mem3_brush_hatch) != LIBRDP_STATUS_OK)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && (flags & 0x4000u))
+    {
+        if (rdp_stream_read_bytes(stream, &extra, sizeof(state->mem3_brush_extra)) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            memcpy(state->mem3_brush_extra, extra, sizeof(state->mem3_brush_extra));
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x8000u))
+        status = rdp_gdi_render_read_u16(stream, &state->mem3_cache_index);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    op->kind = RDP_GDI_RENDER_OP_MEM3BLT;
+    op->rop = state->mem3_rop;
+    op->color = state->mem3_fore_color;
+    op->back_color = state->mem3_back_color;
+    op->rect.x = state->mem3_left;
+    op->rect.y = state->mem3_top;
+    op->rect.width = state->mem3_width;
+    op->rect.height = state->mem3_height;
+    op->src_x = state->mem3_src_x;
+    op->src_y = state->mem3_src_y;
+    op->brush_x = state->mem3_brush_x;
+    op->brush_y = state->mem3_brush_y;
+    op->brush_style = state->mem3_brush_style;
+    op->brush_hatch = state->mem3_brush_hatch;
+    op->cache_index = state->mem3_cache_index;
+    memcpy(op->brush_extra, state->mem3_brush_extra, sizeof(op->brush_extra));
+    rdp_gdi_render_split_cache_id(state->mem3_cache_id, &op->cache_id, &op->color_index);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1188,6 +1312,12 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             break;
         case RDP_GDI_ORDER_PATBLT:
             status = rdp_gdi_render_decode_patblt(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_MEMBLT:
+            status = rdp_gdi_render_decode_memblt(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_MEM3BLT:
+            status = rdp_gdi_render_decode_mem3blt(&stream, field_flags, delta, state, op);
             break;
         case RDP_GDI_ORDER_MULTIDSTBLT:
             status = rdp_gdi_render_decode_multi_dstblt(&stream, field_flags, delta, state, op);

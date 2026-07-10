@@ -19178,6 +19178,25 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
             return LIBRDP_STATUS_OK;
         return rdp_session_gdi_copy_rect(session, op, &region);
     }
+    if (op->kind == RDP_GDI_RENDER_OP_MEMBLT || op->kind == RDP_GDI_RENDER_OP_MEM3BLT)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.bitmap_cache.miss",
+                              "kind=%u cache_id=%u color_index=%u cache_index=%u x=%d y=%d width=%d height=%d src_x=%d src_y=%d rop=%u",
+                              op->kind,
+                              op->cache_id,
+                              op->color_index,
+                              op->cache_index,
+                              op->rect.x,
+                              op->rect.y,
+                              op->rect.width,
+                              op->rect.height,
+                              op->src_x,
+                              op->src_y,
+                              op->rop);
+        return LIBRDP_STATUS_OK;
+    }
     if (op->kind == RDP_GDI_RENDER_OP_LINE)
         return rdp_session_gdi_draw_line(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_POLYLINE)

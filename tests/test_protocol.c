@@ -10925,6 +10925,41 @@ static int test_gdi_orders(void)
         0xaau,
         0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u
     };
+    const uint8_t render_memblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x03u, 0x02u,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0xccu,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x34u, 0x12u
+    };
+    const uint8_t render_mem3blt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEM3BLT,
+        0xffu, 0xffu, 0x00u,
+        0x04u, 0x03u,
+        0x11u, 0x00u,
+        0x12u, 0x00u,
+        0x13u, 0x00u,
+        0x14u, 0x00u,
+        0xb8u,
+        0x15u, 0x00u,
+        0x16u, 0x00u,
+        0x10u, 0x20u, 0x30u,
+        0x40u, 0x50u, 0x60u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x03u,
+        0xaau,
+        0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u,
+        0x78u, 0x56u
+    };
     const uint8_t render_lineto[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_LINETO,
@@ -11349,6 +11384,45 @@ static int test_gdi_orders(void)
            render_op.brush_style == 3 &&
            render_op.brush_hatch == 0xaau &&
            render_op.brush_extra[0] == 0x55u &&
+           render_op.brush_extra[6] == 0x55u);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_memblt,
+                                               sizeof(render_memblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_memblt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MEMBLT &&
+           render_op.cache_id == 3 &&
+           render_op.color_index == 2 &&
+           render_op.cache_index == 0x1234u &&
+           render_op.rop == 0xccu &&
+           render_op.rect.x == 1 &&
+           render_op.rect.y == 2 &&
+           render_op.rect.width == 3 &&
+           render_op.rect.height == 4 &&
+           render_op.src_x == 5 &&
+           render_op.src_y == 6);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_mem3blt,
+                                               sizeof(render_mem3blt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_mem3blt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MEM3BLT &&
+           render_op.cache_id == 4 &&
+           render_op.color_index == 3 &&
+           render_op.cache_index == 0x5678u &&
+           render_op.rop == 0xb8u &&
+           render_op.color == 0x00605040u &&
+           render_op.back_color == 0x00302010u &&
+           render_op.rect.x == 17 &&
+           render_op.rect.y == 18 &&
+           render_op.rect.width == 19 &&
+           render_op.rect.height == 20 &&
+           render_op.src_x == 21 &&
+           render_op.src_y == 22 &&
+           render_op.brush_style == 3 &&
+           render_op.brush_hatch == 0xaau &&
            render_op.brush_extra[6] == 0x55u);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_lineto,
