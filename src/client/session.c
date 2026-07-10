@@ -6391,6 +6391,7 @@ static librdp_status rdp_session_handle_printer_lock(librdp_session* session,
                                                      size_t data_len)
 {
     rdp_filesystem_redirection_lock_request request;
+    rdp_session_redirected_file* job = NULL;
     rdp_buffer response;
     uint32_t io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -6402,8 +6403,14 @@ static librdp_status rdp_session_handle_printer_lock(librdp_session* session,
         return status;
     if (rdp_session_printer_index_from_device_id(session, request.io.device_id) == UINT32_MAX)
         io_status = RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
-    else if (!rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
-        io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+    else
+    {
+        job = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
+        if (!job)
+            io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+        else
+            io_status = rdp_session_apply_file_locks(session, job, &request);
+    }
     rdp_buffer_init(&response);
     status = rdp_filesystem_redirection_write_lock_response(&response,
                                                             request.io.device_id,
