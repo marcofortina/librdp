@@ -6811,6 +6811,50 @@ static int test_device_redirection_channel(void)
     PCHECK(rdp_device_redirection_parse_io_request(buffer.data, buffer.length, &request) ==
            LIBRDP_STATUS_OK);
     PCHECK(request.payload_len == 2 && request.payload[1] == 0xbb);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_device_redirection_write_io_request(&buffer,
+                                                   7,
+                                                   8,
+                                                   9,
+                                                   RDP_DEVICE_REDIRECTION_IRP_CLEANUP,
+                                                   0,
+                                                   NULL,
+                                                   0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_request(buffer.data, buffer.length, &request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(request.device_id == 7 &&
+           request.file_id == 8 &&
+           request.completion_id == 9 &&
+           request.major_function == RDP_DEVICE_REDIRECTION_IRP_CLEANUP &&
+           request.payload_len == 0);
+    buffer.length = 0;
+    PCHECK(rdp_device_redirection_write_io_request(&buffer,
+                                                   7,
+                                                   8,
+                                                   10,
+                                                   RDP_DEVICE_REDIRECTION_IRP_FLUSH_BUFFERS,
+                                                   0,
+                                                   NULL,
+                                                   0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_request(buffer.data, buffer.length, &request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(request.major_function == RDP_DEVICE_REDIRECTION_IRP_FLUSH_BUFFERS &&
+           request.completion_id == 10);
+    buffer.length = 0;
+    PCHECK(rdp_device_redirection_write_io_request(&buffer,
+                                                   7,
+                                                   0,
+                                                   11,
+                                                   RDP_DEVICE_REDIRECTION_IRP_SHUTDOWN,
+                                                   0,
+                                                   NULL,
+                                                   0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_io_request(buffer.data, buffer.length, &request) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(request.major_function == RDP_DEVICE_REDIRECTION_IRP_SHUTDOWN &&
+           request.file_id == 0 &&
+           request.completion_id == 11);
     PCHECK(rdp_device_redirection_write_io_request(&buffer,
                                                    1,
                                                    2,
