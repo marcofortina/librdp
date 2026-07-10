@@ -921,18 +921,31 @@ librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* 
     if ((rect->flags & RDP_BITMAP_FLAG_COMPRESSED) != 0)
         return rdp_bitmap_decode_compressed_bgra32(rect, palette, output, stride);
     if (rect->flags != 0 ||
-        (rect->bits_per_pixel != 8 && rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
+        (rect->bits_per_pixel != 1 && rect->bits_per_pixel != 4 &&
+         rect->bits_per_pixel != 8 && rect->bits_per_pixel != 15 && rect->bits_per_pixel != 16 &&
          rect->bits_per_pixel != 24 && rect->bits_per_pixel != 32))
         return LIBRDP_STATUS_UNSUPPORTED;
-    if (rect->bits_per_pixel == 8u && !palette)
+    if ((rect->bits_per_pixel == 1u || rect->bits_per_pixel == 4u || rect->bits_per_pixel == 8u) &&
+        !palette)
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rect->width == 0 || rect->height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    bytes_per_pixel = rect->bits_per_pixel == 15u ? 2u : (uint16_t)(rect->bits_per_pixel / 8u);
-    if ((size_t)rect->width > SIZE_MAX / bytes_per_pixel)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    src_stride = (size_t)rect->width * bytes_per_pixel;
+    if (rect->bits_per_pixel == 1u)
+    {
+        src_stride = ((size_t)rect->width + 7u) / 8u;
+    }
+    else if (rect->bits_per_pixel == 4u)
+    {
+        src_stride = ((size_t)rect->width + 1u) / 2u;
+    }
+    else
+    {
+        bytes_per_pixel = rect->bits_per_pixel == 15u ? 2u : (uint16_t)(rect->bits_per_pixel / 8u);
+        if ((size_t)rect->width > SIZE_MAX / bytes_per_pixel)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        src_stride = (size_t)rect->width * bytes_per_pixel;
+    }
     if ((size_t)rect->height > SIZE_MAX / src_stride || rect->data_len < src_stride * rect->height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     dst_stride = (size_t)rect->width * 4u;
@@ -953,6 +966,29 @@ librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* 
         if (rect->bits_per_pixel == 32)
         {
             memcpy(dst, src, dst_stride);
+        }
+        else if (rect->bits_per_pixel == 1)
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                uint32_t pixel = (src[column / 8u] >> (7u - (column % 8u))) & 0x01u;
+
+                status = rdp_bitmap_indexed_pixel_to_bgra(pixel, palette, dst + ((size_t)column * 4u));
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
+        }
+        else if (rect->bits_per_pixel == 4)
+        {
+            for (column = 0; column < rect->width; column++)
+            {
+                uint8_t packed = src[column / 2u];
+                uint32_t pixel = (column & 1u) ? (uint32_t)(packed & 0x0fu) : (uint32_t)(packed >> 4u);
+
+                status = rdp_bitmap_indexed_pixel_to_bgra(pixel, palette, dst + ((size_t)column * 4u));
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
         }
         else if (rect->bits_per_pixel == 8)
         {
