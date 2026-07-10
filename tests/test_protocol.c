@@ -8640,6 +8640,14 @@ static int test_printer_redirection_channel(void)
     buffer.data[0] = (uint8_t)announce.flags;
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+    announce.driver_name_len = 0;
+    PCHECK(rdp_printer_redirection_write_announce_data(&buffer, &announce) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    announce.driver_name_len = sizeof(driver);
+    announce.printer_name_len = 0;
+    PCHECK(rdp_printer_redirection_write_announce_data(&buffer, &announce) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    announce.printer_name_len = sizeof(printer);
 
     PCHECK(rdp_printer_redirection_write_cache_add(&packet,
                                                    port_name,
@@ -8660,6 +8668,26 @@ static int test_printer_redirection_channel(void)
     PCHECK(rdp_printer_redirection_parse_cache_event(packet.data,
                                                      packet.length - 1u,
                                                      &event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_printer_redirection_write_cache_add(&buffer,
+                                                   port_name,
+                                                   pnp,
+                                                   sizeof(pnp),
+                                                   driver,
+                                                   0,
+                                                   printer,
+                                                   sizeof(printer),
+                                                   cache,
+                                                   sizeof(cache)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_printer_redirection_write_cache_add(&buffer,
+                                                   port_name,
+                                                   pnp,
+                                                   sizeof(pnp),
+                                                   driver,
+                                                   sizeof(driver),
+                                                   printer,
+                                                   0,
+                                                   cache,
+                                                   sizeof(cache)) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
@@ -8671,6 +8699,11 @@ static int test_printer_redirection_channel(void)
     PCHECK(rdp_printer_redirection_parse_cache_event(packet.data, packet.length, &event) ==
            LIBRDP_STATUS_OK);
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_UPDATE);
+    PCHECK(rdp_printer_redirection_write_cache_update(&buffer,
+                                                      printer,
+                                                      0,
+                                                      cache,
+                                                      sizeof(cache)) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
@@ -8681,6 +8714,20 @@ static int test_printer_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_DELETE);
     PCHECK(event.printer_name_len == sizeof(printer));
+    PCHECK(rdp_printer_redirection_write_cache_delete(&buffer,
+                                                      printer,
+                                                      0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_device_redirection_write_header(&buffer,
+                                               RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER,
+                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_PRINTER_REDIRECTION_CACHE_DELETE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_parse_cache_event(buffer.data, buffer.length, &event) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
@@ -8694,6 +8741,16 @@ static int test_printer_redirection_channel(void)
     PCHECK(event.event_id == RDP_PRINTER_REDIRECTION_CACHE_RENAME);
     PCHECK(event.old_printer_name_len == sizeof(printer));
     PCHECK(event.new_printer_name_len == sizeof(driver));
+    PCHECK(rdp_printer_redirection_write_cache_rename(&buffer,
+                                                      printer,
+                                                      0,
+                                                      driver,
+                                                      sizeof(driver)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_printer_redirection_write_cache_rename(&buffer,
+                                                      printer,
+                                                      sizeof(printer),
+                                                      driver,
+                                                      0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 

@@ -17,6 +17,11 @@ static int rdp_printer_redirection_valid_utf16le(const uint8_t* data, uint32_t l
     return data[length - 2u] == 0 && data[length - 1u] == 0;
 }
 
+static int rdp_printer_redirection_required_utf16le(const uint8_t* data, uint32_t length)
+{
+    return length > 0 && rdp_printer_redirection_valid_utf16le(data, length);
+}
+
 static librdp_status rdp_printer_redirection_read_blob(rdp_stream* stream,
                                                        uint32_t length,
                                                        const uint8_t** data)
@@ -139,8 +144,8 @@ librdp_status rdp_printer_redirection_write_announce_data(
     if (!buffer || !announce ||
         (announce->flags & ~RDP_PRINTER_REDIRECTION_KNOWN_FLAGS) != 0 ||
         !rdp_printer_redirection_valid_utf16le(announce->pnp_name, announce->pnp_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(announce->driver_name, announce->driver_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(announce->printer_name, announce->printer_name_len) ||
+        !rdp_printer_redirection_required_utf16le(announce->driver_name, announce->driver_name_len) ||
+        !rdp_printer_redirection_required_utf16le(announce->printer_name, announce->printer_name_len) ||
         (!announce->cached_fields && announce->cached_fields_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
@@ -260,8 +265,8 @@ librdp_status rdp_printer_redirection_parse_announce_data(
                                           &announce->cached_fields) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!rdp_printer_redirection_valid_utf16le(announce->pnp_name, announce->pnp_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(announce->driver_name, announce->driver_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(announce->printer_name, announce->printer_name_len))
+        !rdp_printer_redirection_required_utf16le(announce->driver_name, announce->driver_name_len) ||
+        !rdp_printer_redirection_required_utf16le(announce->printer_name, announce->printer_name_len))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -345,12 +350,29 @@ librdp_status rdp_printer_redirection_parse_cache_event(
         default:
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (!rdp_printer_redirection_valid_utf16le(event->pnp_name, event->pnp_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(event->driver_name, event->driver_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(event->printer_name, event->printer_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(event->old_printer_name, event->old_printer_name_len) ||
-        !rdp_printer_redirection_valid_utf16le(event->new_printer_name, event->new_printer_name_len))
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    switch (event->event_id)
+    {
+        case RDP_PRINTER_REDIRECTION_CACHE_ADD:
+            if (!rdp_printer_redirection_valid_utf16le(event->pnp_name, event->pnp_name_len) ||
+                !rdp_printer_redirection_required_utf16le(event->driver_name, event->driver_name_len) ||
+                !rdp_printer_redirection_required_utf16le(event->printer_name, event->printer_name_len))
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        case RDP_PRINTER_REDIRECTION_CACHE_UPDATE:
+        case RDP_PRINTER_REDIRECTION_CACHE_DELETE:
+            if (!rdp_printer_redirection_required_utf16le(event->printer_name, event->printer_name_len))
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        case RDP_PRINTER_REDIRECTION_CACHE_RENAME:
+            if (!rdp_printer_redirection_required_utf16le(event->old_printer_name,
+                                                          event->old_printer_name_len) ||
+                !rdp_printer_redirection_required_utf16le(event->new_printer_name,
+                                                          event->new_printer_name_len))
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        default:
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
@@ -370,8 +392,8 @@ librdp_status rdp_printer_redirection_write_cache_add(
 
     if (!buffer || !port_name ||
         !rdp_printer_redirection_valid_utf16le((const uint8_t*)pnp_name, pnp_name_len) ||
-        !rdp_printer_redirection_valid_utf16le((const uint8_t*)driver_name, driver_name_len) ||
-        !rdp_printer_redirection_valid_utf16le((const uint8_t*)printer_name, printer_name_len) ||
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)driver_name, driver_name_len) ||
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)printer_name, printer_name_len) ||
         (!cached_fields && cached_fields_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_printer_redirection_write_packet_header(buffer,
@@ -418,7 +440,7 @@ librdp_status rdp_printer_redirection_write_cache_update(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer ||
-        !rdp_printer_redirection_valid_utf16le((const uint8_t*)printer_name, printer_name_len) ||
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)printer_name, printer_name_len) ||
         (!cached_fields && cached_fields_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_printer_redirection_write_packet_header(buffer,
@@ -447,7 +469,8 @@ librdp_status rdp_printer_redirection_write_cache_delete(
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || !rdp_printer_redirection_valid_utf16le((const uint8_t*)printer_name, printer_name_len))
+    if (!buffer ||
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)printer_name, printer_name_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_printer_redirection_write_packet_header(buffer,
                                                          RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA);
@@ -472,8 +495,10 @@ librdp_status rdp_printer_redirection_write_cache_rename(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer ||
-        !rdp_printer_redirection_valid_utf16le((const uint8_t*)old_printer_name, old_printer_name_len) ||
-        !rdp_printer_redirection_valid_utf16le((const uint8_t*)new_printer_name, new_printer_name_len))
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)old_printer_name,
+                                                  old_printer_name_len) ||
+        !rdp_printer_redirection_required_utf16le((const uint8_t*)new_printer_name,
+                                                  new_printer_name_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_printer_redirection_write_packet_header(buffer,
                                                          RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA);
