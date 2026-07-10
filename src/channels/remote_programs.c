@@ -358,6 +358,304 @@ librdp_status rdp_remote_programs_write_activate(rdp_buffer* buffer,
     return rdp_buffer_append_u8(buffer, enabled ? 1u : 0u);
 }
 
+static librdp_status rdp_remote_programs_read_i16(rdp_stream* stream, int16_t* value)
+{
+    uint16_t raw = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_stream_read_u16_le(stream, &raw);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *value = (int16_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_remote_programs_write_i16(rdp_buffer* buffer, int16_t value)
+{
+    return rdp_buffer_append_u16_le(buffer, (uint16_t)value);
+}
+
+librdp_status rdp_remote_programs_parse_sysmenu(const void* data,
+                                                size_t length,
+                                                rdp_remote_programs_sysmenu* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 12u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_SYSMENU)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->left) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->top) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_sysmenu(rdp_buffer* buffer,
+                                                uint32_t window_id,
+                                                int16_t left,
+                                                int16_t top)
+{
+    librdp_status status = rdp_remote_programs_write_header(
+        buffer,
+        RDP_REMOTE_PROGRAMS_ORDER_SYSMENU,
+        12u);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, left);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, top);
+    return status;
+}
+
+librdp_status rdp_remote_programs_parse_syscommand(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_syscommand* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 10u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_SYSCOMMAND)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &order->command) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_syscommand(rdp_buffer* buffer,
+                                                   uint32_t window_id,
+                                                   uint16_t command)
+{
+    librdp_status status = rdp_remote_programs_write_header(
+        buffer,
+        RDP_REMOTE_PROGRAMS_ORDER_SYSCOMMAND,
+        10u);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, command);
+    return status;
+}
+
+librdp_status rdp_remote_programs_parse_notify_event(const void* data,
+                                                     size_t length,
+                                                     rdp_remote_programs_notify_event* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_NOTIFY_EVENT)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->notify_icon_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->message) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_notify_event(rdp_buffer* buffer,
+                                                     uint32_t window_id,
+                                                     uint32_t notify_icon_id,
+                                                     uint32_t message)
+{
+    librdp_status status = rdp_remote_programs_write_header(
+        buffer,
+        RDP_REMOTE_PROGRAMS_ORDER_NOTIFY_EVENT,
+        16u);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, notify_icon_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, message);
+    return status;
+}
+
+librdp_status rdp_remote_programs_parse_minmaxinfo(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_minmaxinfo* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 24u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_MINMAXINFO)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_width) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_height) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_pos_x) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_pos_y) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->min_track_width) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->min_track_height) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_track_width) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->max_track_height) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_minmaxinfo(rdp_buffer* buffer,
+                                                   const rdp_remote_programs_minmaxinfo* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_remote_programs_write_header(buffer, RDP_REMOTE_PROGRAMS_ORDER_MINMAXINFO, 24u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, order->window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_pos_x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_pos_y);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->min_track_width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->min_track_height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_track_width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->max_track_height);
+    return status;
+}
+
+librdp_status rdp_remote_programs_parse_localmovesize(const void* data,
+                                                      size_t length,
+                                                      rdp_remote_programs_localmovesize* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_LOCALMOVESIZE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &order->is_move_size_start) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &order->move_size_type) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->pos_x) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->pos_y) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_localmovesize(rdp_buffer* buffer,
+                                                      const rdp_remote_programs_localmovesize* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_remote_programs_write_header(
+        buffer,
+        RDP_REMOTE_PROGRAMS_ORDER_LOCALMOVESIZE,
+        16u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, order->window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, order->is_move_size_start);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, order->move_size_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->pos_x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, order->pos_y);
+    return status;
+}
+
+librdp_status rdp_remote_programs_parse_windowmove(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_windowmove* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length != 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_remote_programs_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.order_type != RDP_REMOTE_PROGRAMS_ORDER_WINDOWMOVE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->left) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->top) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->right) != LIBRDP_STATUS_OK ||
+        rdp_remote_programs_read_i16(&stream, &order->bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_remote_programs_write_windowmove(rdp_buffer* buffer,
+                                                   uint32_t window_id,
+                                                   int16_t left,
+                                                   int16_t top,
+                                                   int16_t right,
+                                                   int16_t bottom)
+{
+    librdp_status status = rdp_remote_programs_write_header(
+        buffer,
+        RDP_REMOTE_PROGRAMS_ORDER_WINDOWMOVE,
+        16u);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, window_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, left);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, top);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, right);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_remote_programs_write_i16(buffer, bottom);
+    return status;
+}
+
 librdp_status rdp_remote_programs_parse_opaque(const void* data,
                                                size_t length,
                                                rdp_remote_programs_opaque* order)

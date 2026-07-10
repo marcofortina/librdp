@@ -810,6 +810,12 @@ static int test_remote_programs_channel(void)
     rdp_remote_programs_exec exec;
     rdp_remote_programs_exec_result exec_result;
     rdp_remote_programs_activate activate;
+    rdp_remote_programs_sysmenu sysmenu;
+    rdp_remote_programs_syscommand syscommand;
+    rdp_remote_programs_notify_event notify_event;
+    rdp_remote_programs_minmaxinfo minmaxinfo;
+    rdp_remote_programs_localmovesize localmovesize;
+    rdp_remote_programs_windowmove windowmove;
     rdp_remote_programs_opaque opaque;
     rdp_buffer buffer;
 
@@ -893,6 +899,86 @@ static int test_remote_programs_channel(void)
     PCHECK(rdp_remote_programs_parse_activate(buffer.data, buffer.length, &activate) ==
            LIBRDP_STATUS_OK);
     PCHECK(activate.window_id == 0x11223344u && activate.enabled == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_sysmenu(&buffer, 0x01020304u, -10, 20) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_sysmenu(buffer.data, buffer.length, &sysmenu) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(sysmenu.window_id == 0x01020304u && sysmenu.left == -10 && sysmenu.top == 20);
+    PCHECK(rdp_remote_programs_parse_sysmenu(buffer.data, buffer.length - 1u, &sysmenu) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_syscommand(&buffer, 0x01020304u, 0xf060u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_syscommand(buffer.data, buffer.length, &syscommand) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(syscommand.window_id == 0x01020304u && syscommand.command == 0xf060u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_notify_event(&buffer, 0x01020304u, 0xaabbccddu, 0x00000201u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_notify_event(buffer.data, buffer.length, &notify_event) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(notify_event.window_id == 0x01020304u &&
+           notify_event.notify_icon_id == 0xaabbccddu &&
+           notify_event.message == 0x00000201u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&minmaxinfo, 0, sizeof(minmaxinfo));
+    minmaxinfo.window_id = 0x01020304u;
+    minmaxinfo.max_width = 1920;
+    minmaxinfo.max_height = 1080;
+    minmaxinfo.max_pos_x = -8;
+    minmaxinfo.max_pos_y = -8;
+    minmaxinfo.min_track_width = 120;
+    minmaxinfo.min_track_height = 80;
+    minmaxinfo.max_track_width = 3200;
+    minmaxinfo.max_track_height = 2000;
+    PCHECK(rdp_remote_programs_write_minmaxinfo(&buffer, &minmaxinfo) == LIBRDP_STATUS_OK);
+    memset(&minmaxinfo, 0, sizeof(minmaxinfo));
+    PCHECK(rdp_remote_programs_parse_minmaxinfo(buffer.data, buffer.length, &minmaxinfo) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(minmaxinfo.window_id == 0x01020304u &&
+           minmaxinfo.max_width == 1920 &&
+           minmaxinfo.max_pos_x == -8 &&
+           minmaxinfo.max_track_height == 2000);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&localmovesize, 0, sizeof(localmovesize));
+    localmovesize.window_id = 0x01020304u;
+    localmovesize.is_move_size_start = 1;
+    localmovesize.move_size_type = 9;
+    localmovesize.pos_x = -5;
+    localmovesize.pos_y = 6;
+    PCHECK(rdp_remote_programs_write_localmovesize(&buffer, &localmovesize) ==
+           LIBRDP_STATUS_OK);
+    memset(&localmovesize, 0, sizeof(localmovesize));
+    PCHECK(rdp_remote_programs_parse_localmovesize(buffer.data, buffer.length, &localmovesize) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(localmovesize.window_id == 0x01020304u &&
+           localmovesize.is_move_size_start == 1 &&
+           localmovesize.move_size_type == 9 &&
+           localmovesize.pos_x == -5 &&
+           localmovesize.pos_y == 6);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_remote_programs_write_windowmove(&buffer, 0x01020304u, -10, -20, 640, 480) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_remote_programs_parse_windowmove(buffer.data, buffer.length, &windowmove) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(windowmove.window_id == 0x01020304u &&
+           windowmove.left == -10 &&
+           windowmove.top == -20 &&
+           windowmove.right == 640 &&
+           windowmove.bottom == 480);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

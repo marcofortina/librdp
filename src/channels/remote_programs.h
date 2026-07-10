@@ -115,6 +115,63 @@ typedef struct rdp_remote_programs_activate
     uint8_t enabled;
 } rdp_remote_programs_activate;
 
+typedef struct rdp_remote_programs_sysmenu
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    int16_t left;
+    int16_t top;
+} rdp_remote_programs_sysmenu;
+
+typedef struct rdp_remote_programs_syscommand
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    uint16_t command;
+} rdp_remote_programs_syscommand;
+
+typedef struct rdp_remote_programs_notify_event
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    uint32_t notify_icon_id;
+    uint32_t message;
+} rdp_remote_programs_notify_event;
+
+typedef struct rdp_remote_programs_minmaxinfo
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    int16_t max_width;
+    int16_t max_height;
+    int16_t max_pos_x;
+    int16_t max_pos_y;
+    int16_t min_track_width;
+    int16_t min_track_height;
+    int16_t max_track_width;
+    int16_t max_track_height;
+} rdp_remote_programs_minmaxinfo;
+
+typedef struct rdp_remote_programs_localmovesize
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    uint16_t is_move_size_start;
+    uint16_t move_size_type;
+    int16_t pos_x;
+    int16_t pos_y;
+} rdp_remote_programs_localmovesize;
+
+typedef struct rdp_remote_programs_windowmove
+{
+    rdp_remote_programs_header header;
+    uint32_t window_id;
+    int16_t left;
+    int16_t top;
+    int16_t right;
+    int16_t bottom;
+} rdp_remote_programs_windowmove;
+
 typedef struct rdp_remote_programs_opaque
 {
     rdp_remote_programs_header header;
@@ -170,6 +227,45 @@ librdp_status rdp_remote_programs_parse_activate(const void* data,
 librdp_status rdp_remote_programs_write_activate(rdp_buffer* buffer,
                                                  uint32_t window_id,
                                                  uint8_t enabled);
+librdp_status rdp_remote_programs_parse_sysmenu(const void* data,
+                                                size_t length,
+                                                rdp_remote_programs_sysmenu* order);
+librdp_status rdp_remote_programs_write_sysmenu(rdp_buffer* buffer,
+                                                uint32_t window_id,
+                                                int16_t left,
+                                                int16_t top);
+librdp_status rdp_remote_programs_parse_syscommand(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_syscommand* order);
+librdp_status rdp_remote_programs_write_syscommand(rdp_buffer* buffer,
+                                                   uint32_t window_id,
+                                                   uint16_t command);
+librdp_status rdp_remote_programs_parse_notify_event(const void* data,
+                                                     size_t length,
+                                                     rdp_remote_programs_notify_event* order);
+librdp_status rdp_remote_programs_write_notify_event(rdp_buffer* buffer,
+                                                     uint32_t window_id,
+                                                     uint32_t notify_icon_id,
+                                                     uint32_t message);
+librdp_status rdp_remote_programs_parse_minmaxinfo(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_minmaxinfo* order);
+librdp_status rdp_remote_programs_write_minmaxinfo(rdp_buffer* buffer,
+                                                   const rdp_remote_programs_minmaxinfo* order);
+librdp_status rdp_remote_programs_parse_localmovesize(const void* data,
+                                                      size_t length,
+                                                      rdp_remote_programs_localmovesize* order);
+librdp_status rdp_remote_programs_write_localmovesize(rdp_buffer* buffer,
+                                                      const rdp_remote_programs_localmovesize* order);
+librdp_status rdp_remote_programs_parse_windowmove(const void* data,
+                                                   size_t length,
+                                                   rdp_remote_programs_windowmove* order);
+librdp_status rdp_remote_programs_write_windowmove(rdp_buffer* buffer,
+                                                   uint32_t window_id,
+                                                   int16_t left,
+                                                   int16_t top,
+                                                   int16_t right,
+                                                   int16_t bottom);
 librdp_status rdp_remote_programs_parse_opaque(const void* data,
                                                size_t length,
                                                rdp_remote_programs_opaque* order);

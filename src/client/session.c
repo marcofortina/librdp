@@ -2864,12 +2864,6 @@ static librdp_status rdp_session_handle_remote_programs_message(librdp_session* 
         case RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE:
         case RDP_REMOTE_PROGRAMS_ORDER_CLIENTSTATUS:
         case RDP_REMOTE_PROGRAMS_ORDER_SYSPARAM:
-        case RDP_REMOTE_PROGRAMS_ORDER_SYSCOMMAND:
-        case RDP_REMOTE_PROGRAMS_ORDER_NOTIFY_EVENT:
-        case RDP_REMOTE_PROGRAMS_ORDER_WINDOWMOVE:
-        case RDP_REMOTE_PROGRAMS_ORDER_LOCALMOVESIZE:
-        case RDP_REMOTE_PROGRAMS_ORDER_MINMAXINFO:
-        case RDP_REMOTE_PROGRAMS_ORDER_SYSMENU:
         case RDP_REMOTE_PROGRAMS_ORDER_LANGBARINFO:
         case RDP_REMOTE_PROGRAMS_ORDER_GET_APPID_REQ:
         case RDP_REMOTE_PROGRAMS_ORDER_GET_APPID_RESP:
@@ -2920,6 +2914,99 @@ static librdp_status rdp_session_handle_remote_programs_message(librdp_session* 
                                 "window_id=%u enabled=%u",
                                 order.window_id,
                                 order.enabled);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_SYSMENU:
+        {
+            rdp_remote_programs_sysmenu order;
+
+            status = rdp_remote_programs_parse_sysmenu(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.sysmenu",
+                                "window_id=%u left=%d top=%d",
+                                order.window_id,
+                                order.left,
+                                order.top);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_SYSCOMMAND:
+        {
+            rdp_remote_programs_syscommand order;
+
+            status = rdp_remote_programs_parse_syscommand(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.syscommand",
+                                "window_id=%u command=%u",
+                                order.window_id,
+                                order.command);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_NOTIFY_EVENT:
+        {
+            rdp_remote_programs_notify_event order;
+
+            status = rdp_remote_programs_parse_notify_event(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.notify_event",
+                                "window_id=%u notify_icon_id=%u message=%u",
+                                order.window_id,
+                                order.notify_icon_id,
+                                order.message);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_WINDOWMOVE:
+        {
+            rdp_remote_programs_windowmove order;
+
+            status = rdp_remote_programs_parse_windowmove(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.windowmove",
+                                "window_id=%u left=%d top=%d right=%d bottom=%d",
+                                order.window_id,
+                                order.left,
+                                order.top,
+                                order.right,
+                                order.bottom);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_LOCALMOVESIZE:
+        {
+            rdp_remote_programs_localmovesize order;
+
+            status = rdp_remote_programs_parse_localmovesize(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.localmovesize",
+                                "window_id=%u start=%u move_size_type=%u pos_x=%d pos_y=%d",
+                                order.window_id,
+                                order.is_move_size_start,
+                                order.move_size_type,
+                                order.pos_x,
+                                order.pos_y);
+            break;
+        }
+        case RDP_REMOTE_PROGRAMS_ORDER_MINMAXINFO:
+        {
+            rdp_remote_programs_minmaxinfo order;
+
+            status = rdp_remote_programs_parse_minmaxinfo(data, data_len, &order);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rail.minmaxinfo",
+                                "window_id=%u max=%dx%d max_pos=%d,%d min_track=%dx%d max_track=%dx%d",
+                                order.window_id,
+                                order.max_width,
+                                order.max_height,
+                                order.max_pos_x,
+                                order.max_pos_y,
+                                order.min_track_width,
+                                order.min_track_height,
+                                order.max_track_width,
+                                order.max_track_height);
             break;
         }
         case RDP_REMOTE_PROGRAMS_ORDER_EXEC_RESULT:
