@@ -7048,26 +7048,40 @@ static DWORD rdp_session_smartcard_protocol_to_pcsc(uint32_t protocol)
     uint32_t base = protocol & ~RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT;
     DWORD pcsc = 0;
 
-    if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0)
-        pcsc = SCARD_PROTOCOL_T0;
-    else if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1)
-        pcsc = SCARD_PROTOCOL_T1;
-    else if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_TX || base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED)
+    if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED)
         pcsc = SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1;
+    if ((base & RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0) != 0)
+        pcsc |= SCARD_PROTOCOL_T0;
+    if ((base & RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1) != 0)
+        pcsc |= SCARD_PROTOCOL_T1;
+#ifdef SCARD_PROTOCOL_T15
+    if ((base & RDP_SMARTCARD_REDIRECTION_PROTOCOL_T15) != 0)
+        pcsc |= SCARD_PROTOCOL_T15;
+#endif
 #ifdef SCARD_PROTOCOL_RAW
-    else if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW)
-        pcsc = SCARD_PROTOCOL_RAW;
+    if ((base & RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW) != 0)
+        pcsc |= SCARD_PROTOCOL_RAW;
 #endif
     return pcsc;
 }
 
 static uint32_t rdp_session_smartcard_protocol_from_pcsc(DWORD protocol)
 {
+    uint32_t value = RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED;
+
     if (protocol & SCARD_PROTOCOL_T1)
-        return RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1;
+        value |= RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1;
     if (protocol & SCARD_PROTOCOL_T0)
-        return RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0;
-    return RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED;
+        value |= RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0;
+#ifdef SCARD_PROTOCOL_T15
+    if (protocol & SCARD_PROTOCOL_T15)
+        value |= RDP_SMARTCARD_REDIRECTION_PROTOCOL_T15;
+#endif
+#ifdef SCARD_PROTOCOL_RAW
+    if (protocol & SCARD_PROTOCOL_RAW)
+        value |= RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW;
+#endif
+    return value;
 }
 
 static uint32_t rdp_session_smartcard_u32_from_dword(DWORD value)
@@ -7283,6 +7297,8 @@ static const SCARD_IO_REQUEST* rdp_session_smartcard_pci_from_protocol(uint32_t 
 {
     uint32_t base = protocol & ~RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT;
 
+    if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED)
+        return NULL;
     if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0)
         return SCARD_PCI_T0;
     if (base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1)

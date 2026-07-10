@@ -21,12 +21,12 @@ int rdp_smartcard_redirection_share_mode_valid(uint32_t share_mode)
 int rdp_smartcard_redirection_protocol_mask_valid(uint32_t protocols)
 {
     uint32_t base = protocols & ~RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT;
+    const uint32_t valid_mask = RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0 |
+                                RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1 |
+                                RDP_SMARTCARD_REDIRECTION_PROTOCOL_T15 |
+                                RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW;
 
-    return base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED ||
-           base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0 ||
-           base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1 ||
-           base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_TX ||
-           base == RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW;
+    return (base & ~valid_mask) == 0;
 }
 
 int rdp_smartcard_redirection_bool_valid(uint32_t value)

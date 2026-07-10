@@ -9751,6 +9751,15 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(rdp_smartcard_redirection_bool_valid(0));
     PCHECK(rdp_smartcard_redirection_bool_valid(1));
     PCHECK(!rdp_smartcard_redirection_bool_valid(2));
+    PCHECK(rdp_smartcard_redirection_protocol_mask_valid(RDP_SMARTCARD_REDIRECTION_PROTOCOL_UNDEFINED));
+    PCHECK(rdp_smartcard_redirection_protocol_mask_valid(RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0 |
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1));
+    PCHECK(rdp_smartcard_redirection_protocol_mask_valid(RDP_SMARTCARD_REDIRECTION_PROTOCOL_T0 |
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_RAW |
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT));
+    PCHECK(rdp_smartcard_redirection_protocol_mask_valid(RDP_SMARTCARD_REDIRECTION_PROTOCOL_T15 |
+                                                         RDP_SMARTCARD_REDIRECTION_PROTOCOL_DEFAULT));
+    PCHECK(!rdp_smartcard_redirection_protocol_mask_valid(0x00020000u));
     PCHECK(rdp_smartcard_redirection_write_scard_io_request(
                &buffer,
                RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1,
