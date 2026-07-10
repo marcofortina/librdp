@@ -13268,6 +13268,33 @@ static int test_gdi_orders(void)
                                                     fast.length,
                                                     &update) == LIBRDP_STATUS_OK);
     PCHECK(update.number_orders == 1 && update.order_data_len == secondary.length);
+    {
+        const uint16_t too_many = (uint16_t)(RDP_GDI_MAX_ORDERS + 1u);
+        const uint8_t slow_too_many[] = {
+            0x00u, 0x00u,
+            0x00u, 0x00u,
+            (uint8_t)(too_many & 0xffu), (uint8_t)(too_many >> 8u),
+            0x00u, 0x00u
+        };
+        const uint8_t fast_too_many[] = {
+            (uint8_t)(too_many & 0xffu), (uint8_t)(too_many >> 8u)
+        };
+
+        PCHECK(rdp_gdi_parse_slow_orders_update_payload(slow_too_many,
+                                                        sizeof(slow_too_many),
+                                                        &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast_too_many,
+                                                        sizeof(fast_too_many),
+                                                        &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
+                                                        too_many,
+                                                        secondary.data,
+                                                        secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(rdp_gdi_write_fast_orders_update_payload(&fast,
+                                                        too_many,
+                                                        secondary.data,
+                                                        secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
 
     PCHECK(rdp_gdi_parse_primary_order(primary_order,
                                        sizeof(primary_order),
