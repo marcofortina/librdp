@@ -6726,7 +6726,7 @@ static librdp_status rdp_session_handle_printer_device_control(librdp_session* s
 {
     rdp_filesystem_redirection_control_request request;
     rdp_buffer response;
-    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint32_t io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
