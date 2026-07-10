@@ -9405,6 +9405,13 @@ static int test_auth_smartcard_redirection_channels(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_auth_redirection_write_call(&packet, 0x00000300u, NULL, 0) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_auth_redirection_write_call(&packet, RDP_AUTH_REDIRECTION_CALL_INVALID, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_auth_redirection_write_response(&packet,
+                                               RDP_AUTH_REDIRECTION_CALL_INVALID,
+                                               0,
+                                               NULL,
+                                               0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     buffer.data[0] = 0x0c;
     buffer.data[1] = 0x01;
     PCHECK(rdp_auth_redirection_parse_call(buffer.data, buffer.length, &auth_call) ==

@@ -159,6 +159,12 @@ int rdp_auth_redirection_call_id_valid(uint32_t call_id)
     return call_id == RDP_AUTH_REDIRECTION_CALL_INVALID;
 }
 
+static int rdp_auth_redirection_call_id_writable(uint32_t call_id)
+{
+    return call_id != RDP_AUTH_REDIRECTION_CALL_INVALID &&
+           rdp_auth_redirection_call_id_valid(call_id);
+}
+
 int rdp_auth_redirection_kerb_call_id_valid(uint32_t call_id)
 {
     switch (call_id)
@@ -290,7 +296,7 @@ librdp_status rdp_auth_redirection_write_octet_response(
     rdp_buffer payload;
     librdp_status result = LIBRDP_STATUS_OK;
 
-    if (!buffer || !rdp_auth_redirection_call_id_valid(call_id))
+    if (!buffer || !rdp_auth_redirection_call_id_writable(call_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_buffer_init(&payload);
     result = rdp_auth_redirection_write_octet_string(&payload, value, length);
@@ -380,7 +386,7 @@ librdp_status rdp_auth_redirection_write_asn1_response(
     rdp_buffer payload;
     librdp_status result = LIBRDP_STATUS_OK;
 
-    if (!buffer || !rdp_auth_redirection_call_id_valid(call_id))
+    if (!buffer || !rdp_auth_redirection_call_id_writable(call_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_buffer_init(&payload);
     result = rdp_auth_redirection_write_asn1_data(&payload, pdu, value, length);
@@ -629,7 +635,7 @@ librdp_status rdp_auth_redirection_write_call(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || (!payload && payload_len > 0) ||
-        !rdp_auth_redirection_call_id_valid(call_id))
+        !rdp_auth_redirection_call_id_writable(call_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, call_id);
     if (status != LIBRDP_STATUS_OK)
@@ -671,7 +677,7 @@ librdp_status rdp_auth_redirection_write_response(
     librdp_status result = LIBRDP_STATUS_OK;
 
     if (!buffer || (!payload && payload_len > 0) ||
-        !rdp_auth_redirection_call_id_valid(call_id))
+        !rdp_auth_redirection_call_id_writable(call_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     result = rdp_buffer_append_u32_le(buffer, call_id);
     if (result != LIBRDP_STATUS_OK)
