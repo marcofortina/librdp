@@ -124,6 +124,8 @@ void rdp_avc_frame_free(rdp_avc_frame* frame)
 }
 
 #if defined(RDP_HAVE_ANY_AVC)
+static uint8_t rdp_avc_clip_u8(int value);
+
 static void rdp_avc_yuv420_init(rdp_avc_yuv420* yuv)
 {
     size_t i = 0;
@@ -181,14 +183,8 @@ static librdp_status rdp_avc_yuv420_prepare(rdp_avc_yuv420* yuv, uint32_t width,
 
 librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* view)
 {
-    uint32_t width = 0;
-    uint32_t height = 0;
     size_t half_source_width = 0;
     size_t quarter_source_width = 0;
-    uint32_t odd_column_count = 0;
-    uint32_t quarter_column_count0 = 0;
-    uint32_t quarter_column_count2 = 0;
-    uint32_t odd_row_count = 0;
     uint32_t y = 0;
 
     if (!view || !view->aux_y || !view->aux_u || !view->aux_v || !view->dst_u || !view->dst_v ||
@@ -200,89 +196,94 @@ librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* 
         view->dst_v_stride < view->dst_width)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    width = (uint32_t)(view->rect.right - view->rect.left);
-    height = (uint32_t)(view->rect.bottom - view->rect.top);
     half_source_width = ((size_t)view->aux_width + 1u) / 2u;
     quarter_source_width = ((size_t)view->aux_width + 3u) / 4u;
-    odd_column_count = width / 2u;
-    quarter_column_count0 = (width + 3u) / 4u;
-    quarter_column_count2 = (width + 1u) / 4u;
-    odd_row_count = height / 2u;
 
-    for (y = 0; y < height; y++)
+    for (y = view->rect.top; y < view->rect.bottom; y++)
     {
-        size_t src_offset = (size_t)view->rect.left / 2u;
-        size_t src_v_offset = src_offset + half_source_width;
-        const uint8_t* src_u = NULL;
-        const uint8_t* src_v = NULL;
         uint8_t* dst_u = NULL;
         uint8_t* dst_v = NULL;
-        uint32_t x = 0;
+        const uint8_t* src = NULL;
+        uint32_t x = view->rect.left;
 
-        if (src_offset + odd_column_count > view->aux_y_stride ||
-            src_v_offset + odd_column_count > view->aux_y_stride)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        src_u = view->aux_y + ((size_t)(view->rect.top + y) * view->aux_y_stride) + src_offset;
-        src_v = view->aux_y + ((size_t)(view->rect.top + y) * view->aux_y_stride) + src_v_offset;
-        dst_u = view->dst_u + ((size_t)(view->rect.top + y) * view->dst_u_stride) + view->rect.left;
-        dst_v = view->dst_v + ((size_t)(view->rect.top + y) * view->dst_v_stride) + view->rect.left;
+        dst_u = view->dst_u + ((size_t)y * view->dst_u_stride);
+        dst_v = view->dst_v + ((size_t)y * view->dst_v_stride);
+        src = view->aux_y + ((size_t)y * view->aux_y_stride);
 
-        for (x = 0; x < odd_column_count; x++)
+        for (; x < view->rect.right; x++)
         {
-            size_t dst_col = (size_t)(2u * x + 1u);
+            size_t src_u_col = (size_t)x / 2u;
+            size_t src_v_col = src_u_col + half_source_width;
 
-            dst_u[dst_col] = src_u[x];
-            dst_v[dst_col] = src_v[x];
+            if ((x & 1u) == 0)
+                continue;
+            if (src_u_col >= half_source_width || src_v_col >= view->aux_y_stride)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            dst_u[x] = src[src_u_col];
+            dst_v[x] = src[src_v_col];
         }
     }
 
-    for (y = 0; y < odd_row_count; y++)
+    for (y = view->rect.top; y < view->rect.bottom; y++)
     {
-        size_t src_row = (size_t)(view->rect.top / 2u + y);
-        size_t src_offset = (size_t)view->rect.left / 4u;
-        size_t src_1_offset = src_offset + quarter_source_width;
-        uint32_t x = 0;
-        uint32_t max_columns = quarter_column_count0 > quarter_column_count2 ? quarter_column_count0 :
-                                                                         quarter_column_count2;
+        size_t src_row = (size_t)y / 2u;
         uint8_t* dst_u = NULL;
         uint8_t* dst_v = NULL;
-        const uint8_t* src_uu = NULL;
-        const uint8_t* src_uv = NULL;
-        const uint8_t* src_vu = NULL;
-        const uint8_t* src_vv = NULL;
+        uint32_t x = view->rect.left;
 
-        if (src_row >= (((size_t)view->aux_height + 1u) / 2u) ||
-            src_offset + quarter_column_count0 > view->aux_u_stride ||
-            src_offset + quarter_column_count0 > view->aux_v_stride ||
-            src_1_offset + quarter_column_count2 > view->aux_u_stride ||
-            src_1_offset + quarter_column_count2 > view->aux_v_stride)
+        if ((y & 1u) == 0)
+            continue;
+        if (src_row >= (((size_t)view->aux_height + 1u) / 2u))
             return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-        src_uu = view->aux_u + src_row * view->aux_u_stride + src_offset;
-        src_uv = view->aux_u + src_row * view->aux_u_stride + src_1_offset;
-        src_vu = view->aux_v + src_row * view->aux_v_stride + src_offset;
-        src_vv = view->aux_v + src_row * view->aux_v_stride + src_1_offset;
-        dst_u = view->dst_u + ((size_t)(view->rect.top + 2u * y + 1u) * view->dst_u_stride) +
-                view->rect.left;
-        dst_v = view->dst_v + ((size_t)(view->rect.top + 2u * y + 1u) * view->dst_v_stride) +
-                view->rect.left;
+        dst_u = view->dst_u + ((size_t)y * view->dst_u_stride);
+        dst_v = view->dst_v + ((size_t)y * view->dst_v_stride);
 
-        for (x = 0; x < max_columns; x++)
+        for (; x < view->rect.right; x++)
         {
-            if (x < quarter_column_count0)
-            {
-                size_t dst_col = (size_t)4u * x;
+            size_t src_col = (size_t)x / 4u;
+            size_t src_pair_col = src_col + quarter_source_width;
+            const uint8_t* src_plane = NULL;
+            size_t src_stride = 0;
 
-                dst_u[dst_col] = src_uu[x];
-                dst_v[dst_col] = src_uv[x];
-            }
-            if (x < quarter_column_count2)
+            if ((x & 1u) != 0)
+                continue;
+            if ((x & 3u) == 0)
             {
-                size_t dst_col = (size_t)4u * x + 2u;
-
-                dst_u[dst_col] = src_vu[x];
-                dst_v[dst_col] = src_vv[x];
+                src_plane = view->aux_u + src_row * view->aux_u_stride;
+                src_stride = view->aux_u_stride;
             }
+            else
+            {
+                src_plane = view->aux_v + src_row * view->aux_v_stride;
+                src_stride = view->aux_v_stride;
+            }
+            if (src_col >= quarter_source_width || src_pair_col >= src_stride)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            dst_u[x] = src_plane[src_col];
+            dst_v[x] = src_plane[src_pair_col];
+        }
+    }
+
+    for (y = (view->rect.top + 1u) & ~1u; y + 1u < view->rect.bottom; y += 2u)
+    {
+        uint8_t* dst_u0 = view->dst_u + ((size_t)y * view->dst_u_stride);
+        uint8_t* dst_v0 = view->dst_v + ((size_t)y * view->dst_v_stride);
+        const uint8_t* dst_u1 = view->dst_u + (((size_t)y + 1u) * view->dst_u_stride);
+        const uint8_t* dst_v1 = view->dst_v + (((size_t)y + 1u) * view->dst_v_stride);
+        uint32_t x = (view->rect.left + 1u) & ~1u;
+
+        for (; x + 1u < view->rect.right; x += 2u)
+        {
+            int u = 4 * (int)dst_u0[x] - (int)dst_u0[x + 1u] - (int)dst_u1[x] - (int)dst_u1[x + 1u];
+            int v = 4 * (int)dst_v0[x] - (int)dst_v0[x + 1u] - (int)dst_v1[x] - (int)dst_v1[x + 1u];
+            uint8_t ru = rdp_avc_clip_u8(u);
+            uint8_t rv = rdp_avc_clip_u8(v);
+
+            if (abs((int)ru - (int)dst_u0[x]) >= 30)
+                dst_u0[x] = ru;
+            if (abs((int)rv - (int)dst_v0[x]) >= 30)
+                dst_v0[x] = rv;
         }
     }
 
