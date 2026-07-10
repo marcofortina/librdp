@@ -9,6 +9,24 @@ static int rdp_composited_aligned_size(size_t length)
     return (length % 4u) == 0;
 }
 
+static int rdp_composited_align4_size(size_t length, size_t* aligned)
+{
+    size_t rem = 0;
+
+    if (!aligned)
+        return 0;
+    rem = length % 4u;
+    if (rem == 0)
+    {
+        *aligned = length;
+        return 1;
+    }
+    if (length > SIZE_MAX - (4u - rem))
+        return 0;
+    *aligned = length + 4u - rem;
+    return 1;
+}
+
 static uint32_t rdp_composited_read_u32_at(const uint8_t* data, size_t offset)
 {
     return (uint32_t)data[offset] | ((uint32_t)data[offset + 1u] << 8) |
@@ -49,6 +67,49 @@ static librdp_status rdp_composited_write_u64(rdp_buffer* buffer, uint64_t value
 static librdp_status rdp_composited_write_i32(rdp_buffer* buffer, int32_t value)
 {
     return rdp_buffer_append_u32_le(buffer, (uint32_t)value);
+}
+
+static uint64_t rdp_composited_hash_bytes_seed(uint64_t hash, const uint8_t* data, size_t length)
+{
+    size_t i = 0;
+
+    if (!data && length > 0)
+        return hash;
+    for (i = 0; i < length; i++)
+    {
+        hash ^= data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static uint64_t rdp_composited_hash_u64_seed(uint64_t hash, uint64_t value)
+{
+    uint8_t bytes[8];
+    uint8_t i = 0;
+
+    for (i = 0; i < sizeof(bytes); i++)
+        bytes[i] = (uint8_t)((value >> (i * 8u)) & 0xffu);
+    return rdp_composited_hash_bytes_seed(hash, bytes, sizeof(bytes));
+}
+
+static uint64_t rdp_composited_hash_payload(const uint8_t* data, size_t data_len,
+                                            const uint8_t* palette, size_t palette_len)
+{
+    uint64_t hash = 1469598103934665603ull;
+
+    hash = rdp_composited_hash_u64_seed(hash, data_len);
+    hash = rdp_composited_hash_bytes_seed(hash, data, data_len);
+    hash = rdp_composited_hash_u64_seed(hash, palette_len);
+    return rdp_composited_hash_bytes_seed(hash, palette, palette_len);
+}
+
+static int rdp_composited_pixel_format_palettized(uint32_t format)
+{
+    return format == RDP_COMPOSITED_PIXEL_FORMAT_1BPP_INDEXED ||
+           format == RDP_COMPOSITED_PIXEL_FORMAT_2BPP_INDEXED ||
+           format == RDP_COMPOSITED_PIXEL_FORMAT_4BPP_INDEXED ||
+           format == RDP_COMPOSITED_PIXEL_FORMAT_8BPP_INDEXED;
 }
 
 static librdp_status rdp_composited_read_rect_i(rdp_stream* stream, rdp_composited_rect_i* rect)
@@ -662,6 +723,7 @@ static uint32_t rdp_composited_render_resource_source_ref(
     switch (entry->resource_type)
     {
         case RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP:
+        case RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE:
         case RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET:
         case RDP_COMPOSITED_RESOURCE_RENDERDATA:
         case RDP_COMPOSITED_RESOURCE_GLYPH_RUN:
@@ -771,6 +833,15 @@ librdp_status rdp_composited_render_tree_resolve_view(
         view->surface_count = source->surface_count;
         view->texture_width = source->texture_width;
         view->texture_height = source->texture_height;
+        view->bitmap_format = source->bitmap_format;
+        view->bitmap_stride = source->bitmap_stride;
+        view->bitmap_payload_length = source->bitmap_payload_length;
+        view->bitmap_palette_entries = source->bitmap_palette_entries;
+        view->bitmap_palette_length = source->bitmap_palette_length;
+        view->bitmap_compressed = source->bitmap_compressed;
+        view->bitmap_dpi_x_bits = source->bitmap_dpi_x_bits;
+        view->bitmap_dpi_y_bits = source->bitmap_dpi_y_bits;
+        view->bitmap_payload_hash = source->bitmap_payload_hash;
         view->meta_capture_count = source->meta_capture_count;
         view->meta_capture_update_id = source->meta_capture_update_id;
         view->sprite_dirty_count = source->sprite_dirty_count;
@@ -1418,11 +1489,64 @@ librdp_status rdp_composited_render_tree_apply_message(
             tree->notification_registration_count++;
             break;
         case RDP_COMPOSITED_CMD_BITMAP_PIXELS:
+        {
+            rdp_composited_bitmap_pixels pixels;
+
+            status = rdp_composited_parse_bitmap_pixels(message->data, message->message_size, &pixels);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      pixels.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->width = pixels.width;
+            entry->height = pixels.height;
+            entry->dxgi_format = pixels.format;
+            entry->bitmap_format = pixels.format;
+            entry->bitmap_stride = pixels.stride;
+            entry->bitmap_payload_length = (uint32_t)pixels.image_bitmap_len;
+            entry->bitmap_palette_entries = pixels.palette_color_count;
+            entry->bitmap_palette_length = (uint32_t)pixels.image_palette_len;
+            entry->bitmap_compressed = 0;
+            entry->bitmap_dpi_x_bits = pixels.dpi_x_bits;
+            entry->bitmap_dpi_y_bits = pixels.dpi_y_bits;
+            entry->bitmap_payload_hash = rdp_composited_hash_payload(pixels.image_bitmap,
+                                                                     pixels.image_bitmap_len,
+                                                                     pixels.image_palette,
+                                                                     pixels.image_palette_len);
             tree->bitmap_pixels_count++;
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
+        }
         case RDP_COMPOSITED_CMD_BITMAP_COMPRESSED_PIXELS:
+        {
+            rdp_composited_bitmap_compressed_pixels pixels;
+
+            status = rdp_composited_parse_bitmap_compressed_pixels(message->data,
+                                                                   message->message_size,
+                                                                   &pixels);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            entry = rdp_composited_render_tree_upsert(tree,
+                                                      pixels.target_resource,
+                                                      RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE);
+            if (!entry)
+                return LIBRDP_STATUS_NO_MEMORY;
+            entry->bitmap_payload_length = (uint32_t)pixels.compressed_image_bitmap_len;
+            entry->bitmap_palette_entries = 0;
+            entry->bitmap_palette_length = 0;
+            entry->bitmap_compressed = 1;
+            entry->bitmap_dpi_x_bits = pixels.dpi_x_bits;
+            entry->bitmap_dpi_y_bits = pixels.dpi_y_bits;
+            entry->bitmap_payload_hash = rdp_composited_hash_payload(pixels.compressed_image_bitmap,
+                                                                     pixels.compressed_image_bitmap_len,
+                                                                     NULL,
+                                                                     0);
             tree->bitmap_compressed_pixels_count++;
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
+        }
         case RDP_COMPOSITED_CMD_VISUAL_GROUP:
             tree->visual_group_count++;
             break;
@@ -2445,6 +2569,193 @@ librdp_status rdp_composited_write_render_data(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_composited_write_channel_message(buffer,
                                                       RDP_COMPOSITED_CMD_RENDERDATA,
+                                                      payload.data,
+                                                      payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_composited_parse_bitmap_pixels(const void* data,
+                                                 size_t length,
+                                                 rdp_composited_bitmap_pixels* order)
+{
+    rdp_stream stream;
+    const uint8_t* ignored = NULL;
+    size_t bitmap_len = 0;
+    size_t palette_len = 0;
+    size_t variable_len = 0;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 0x38u || !rdp_composited_aligned_size(length))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_composited_parse_channel_message(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.control_code != RDP_COMPOSITED_CMD_BITMAP_PIXELS ||
+        order->header.payload_len < 48u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, order->header.payload, order->header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &order->target_resource) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->format) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->stride) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->offset) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->reserved) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &order->palette_color_count) != LIBRDP_STATUS_OK ||
+        rdp_composited_read_u64(&stream, &order->dpi_x_bits) != LIBRDP_STATUS_OK ||
+        rdp_composited_read_u64(&stream, &order->dpi_y_bits) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (order->target_resource == 0 || order->width == 0 || order->height == 0 ||
+        order->stride == 0 || order->palette_color_count > 256u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_composited_pixel_format_palettized(order->format))
+    {
+        if (order->palette_color_count == 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    else if (order->palette_color_count != 0)
+    {
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if ((size_t)order->height > SIZE_MAX / order->stride)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_composited_align4_size((size_t)order->height * order->stride, &bitmap_len))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    palette_len = (size_t)order->palette_color_count * 4u;
+    variable_len = rdp_stream_remaining(&stream);
+    if (order->offset > variable_len ||
+        bitmap_len > variable_len - order->offset ||
+        palette_len > variable_len - order->offset - bitmap_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &ignored, order->offset) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &order->image_bitmap, bitmap_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &order->image_palette, palette_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->image_bitmap_len = bitmap_len;
+    order->image_palette_len = palette_len;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_composited_write_bitmap_pixels(rdp_buffer* buffer,
+                                                 uint32_t target_resource,
+                                                 uint32_t width,
+                                                 uint32_t height,
+                                                 uint32_t format,
+                                                 uint32_t stride,
+                                                 uint32_t palette_color_count,
+                                                 uint64_t dpi_x_bits,
+                                                 uint64_t dpi_y_bits,
+                                                 const void* image_bitmap,
+                                                 size_t image_bitmap_len,
+                                                 const void* image_palette,
+                                                 size_t image_palette_len)
+{
+    rdp_buffer payload;
+    size_t expected_bitmap_len = 0;
+    size_t expected_palette_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || target_resource == 0 || width == 0 || height == 0 || stride == 0 ||
+        (!image_bitmap && image_bitmap_len > 0) || (!image_palette && image_palette_len > 0) ||
+        palette_color_count > 256u || (size_t)height > SIZE_MAX / stride ||
+        !rdp_composited_align4_size((size_t)height * stride, &expected_bitmap_len))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    expected_palette_len = (size_t)palette_color_count * 4u;
+    if (image_bitmap_len != expected_bitmap_len ||
+        image_palette_len != expected_palette_len ||
+        (rdp_composited_pixel_format_palettized(format) && palette_color_count == 0) ||
+        (!rdp_composited_pixel_format_palettized(format) && palette_color_count != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, target_resource);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, format);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, stride);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, palette_color_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_u64(&payload, dpi_x_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_u64(&payload, dpi_y_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&payload, image_bitmap, image_bitmap_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&payload, image_palette, image_palette_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_channel_message(buffer,
+                                                      RDP_COMPOSITED_CMD_BITMAP_PIXELS,
+                                                      payload.data,
+                                                      payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_composited_parse_bitmap_compressed_pixels(
+    const void* data,
+    size_t length,
+    rdp_composited_bitmap_compressed_pixels* order)
+{
+    rdp_stream stream;
+
+    if (!data || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 0x1cu || !rdp_composited_aligned_size(length))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    if (rdp_composited_parse_channel_message(data, length, &order->header) != LIBRDP_STATUS_OK ||
+        order->header.control_code != RDP_COMPOSITED_CMD_BITMAP_COMPRESSED_PIXELS ||
+        order->header.payload_len < 20u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, order->header.payload, order->header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &order->target_resource) != LIBRDP_STATUS_OK ||
+        rdp_composited_read_u64(&stream, &order->dpi_x_bits) != LIBRDP_STATUS_OK ||
+        rdp_composited_read_u64(&stream, &order->dpi_y_bits) != LIBRDP_STATUS_OK ||
+        order->target_resource == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    order->compressed_image_bitmap_len = rdp_stream_remaining(&stream);
+    if (order->compressed_image_bitmap_len == 0 ||
+        rdp_stream_read_bytes(&stream,
+                              &order->compressed_image_bitmap,
+                              order->compressed_image_bitmap_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_composited_write_bitmap_compressed_pixels(rdp_buffer* buffer,
+                                                           uint32_t target_resource,
+                                                           uint64_t dpi_x_bits,
+                                                           uint64_t dpi_y_bits,
+                                                           const void* compressed_image_bitmap,
+                                                           size_t compressed_image_bitmap_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || target_resource == 0 || !compressed_image_bitmap ||
+        compressed_image_bitmap_len == 0 || !rdp_composited_aligned_size(compressed_image_bitmap_len))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload, target_resource);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_u64(&payload, dpi_x_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_u64(&payload, dpi_y_bits);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&payload, compressed_image_bitmap, compressed_image_bitmap_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_composited_write_channel_message(buffer,
+                                                      RDP_COMPOSITED_CMD_BITMAP_COMPRESSED_PIXELS,
                                                       payload.data,
                                                       payload.length);
     rdp_buffer_free(&payload);

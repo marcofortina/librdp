@@ -94,7 +94,15 @@
 #define RDP_COMPOSITED_RESOURCE_HWND_TARGET 0x00000018u
 #define RDP_COMPOSITED_RESOURCE_DESKTOP_TARGET 0x00000019u
 #define RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET 0x00000023u
+#define RDP_COMPOSITED_RESOURCE_BITMAP_SOURCE 0x00000036u
 #define RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP 0x00000038u
+#define RDP_COMPOSITED_PIXEL_FORMAT_1BPP_INDEXED 0x00000001u
+#define RDP_COMPOSITED_PIXEL_FORMAT_2BPP_INDEXED 0x00000002u
+#define RDP_COMPOSITED_PIXEL_FORMAT_4BPP_INDEXED 0x00000003u
+#define RDP_COMPOSITED_PIXEL_FORMAT_8BPP_INDEXED 0x00000004u
+#define RDP_COMPOSITED_PIXEL_FORMAT_32BPP_BGR 0x0000000eu
+#define RDP_COMPOSITED_PIXEL_FORMAT_32BPP_BGRA 0x0000000fu
+#define RDP_COMPOSITED_PIXEL_FORMAT_32BPP_PBGRA 0x00000010u
 #define RDP_COMPOSITED_RENDER_RESOURCE_LIMIT 512u
 #define RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT 512u
 #define RDP_COMPOSITED_VIEW_TARGET_PRESENT 0x00000001u
@@ -265,6 +273,35 @@ typedef struct rdp_composited_render_data
     size_t data_len;
 } rdp_composited_render_data;
 
+typedef struct rdp_composited_bitmap_pixels
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t stride;
+    uint32_t offset;
+    uint32_t reserved;
+    uint32_t palette_color_count;
+    uint64_t dpi_x_bits;
+    uint64_t dpi_y_bits;
+    const uint8_t* image_bitmap;
+    size_t image_bitmap_len;
+    const uint8_t* image_palette;
+    size_t image_palette_len;
+} rdp_composited_bitmap_pixels;
+
+typedef struct rdp_composited_bitmap_compressed_pixels
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint64_t dpi_x_bits;
+    uint64_t dpi_y_bits;
+    const uint8_t* compressed_image_bitmap;
+    size_t compressed_image_bitmap_len;
+} rdp_composited_bitmap_compressed_pixels;
+
 typedef struct rdp_composited_target_capture_bits
 {
     rdp_composited_channel_message header;
@@ -374,6 +411,12 @@ typedef struct rdp_composited_render_resource
     uint32_t texture_height;
     uint32_t render_data_length;
     uint32_t render_instruction_count;
+    uint32_t bitmap_format;
+    uint32_t bitmap_stride;
+    uint32_t bitmap_payload_length;
+    uint32_t bitmap_palette_entries;
+    uint32_t bitmap_palette_length;
+    uint32_t bitmap_compressed;
     uint32_t sprite_image_resource;
     uint32_t logical_surface_image_resource;
     uint32_t sprite_clip_resource;
@@ -411,6 +454,9 @@ typedef struct rdp_composited_render_resource
     uint64_t logical_surface_id;
     uint64_t meta_capture_update_id;
     uint64_t sprite_dirty_cookie;
+    uint64_t bitmap_dpi_x_bits;
+    uint64_t bitmap_dpi_y_bits;
+    uint64_t bitmap_payload_hash;
     rdp_composited_rect_i window_rect;
     rdp_composited_rect_i client_rect;
     rdp_composited_rect_i content_rect;
@@ -456,6 +502,12 @@ typedef struct rdp_composited_resolved_view
     uint32_t capture_y;
     uint32_t capture_width;
     uint32_t capture_height;
+    uint32_t bitmap_format;
+    uint32_t bitmap_stride;
+    uint32_t bitmap_payload_length;
+    uint32_t bitmap_palette_entries;
+    uint32_t bitmap_palette_length;
+    uint32_t bitmap_compressed;
     uint32_t meta_capture_count;
     uint32_t sprite_dirty_count;
     uint32_t sprite_dirty_flags;
@@ -464,6 +516,9 @@ typedef struct rdp_composited_resolved_view
     uint64_t logical_surface_id;
     uint64_t meta_capture_update_id;
     uint64_t sprite_dirty_cookie;
+    uint64_t bitmap_dpi_x_bits;
+    uint64_t bitmap_dpi_y_bits;
+    uint64_t bitmap_payload_hash;
     rdp_composited_rect_i target_rect;
     rdp_composited_rect_i root_rect;
     rdp_composited_rect_i source_rect;
@@ -677,6 +732,32 @@ librdp_status rdp_composited_write_render_data(rdp_buffer* buffer,
                                                uint32_t target_resource,
                                                const void* render_data,
                                                size_t render_data_len);
+librdp_status rdp_composited_parse_bitmap_pixels(const void* data,
+                                                 size_t length,
+                                                 rdp_composited_bitmap_pixels* order);
+librdp_status rdp_composited_write_bitmap_pixels(rdp_buffer* buffer,
+                                                 uint32_t target_resource,
+                                                 uint32_t width,
+                                                 uint32_t height,
+                                                 uint32_t format,
+                                                 uint32_t stride,
+                                                 uint32_t palette_color_count,
+                                                 uint64_t dpi_x_bits,
+                                                 uint64_t dpi_y_bits,
+                                                 const void* image_bitmap,
+                                                 size_t image_bitmap_len,
+                                                 const void* image_palette,
+                                                 size_t image_palette_len);
+librdp_status rdp_composited_parse_bitmap_compressed_pixels(
+    const void* data,
+    size_t length,
+    rdp_composited_bitmap_compressed_pixels* order);
+librdp_status rdp_composited_write_bitmap_compressed_pixels(rdp_buffer* buffer,
+                                                           uint32_t target_resource,
+                                                           uint64_t dpi_x_bits,
+                                                           uint64_t dpi_y_bits,
+                                                           const void* compressed_image_bitmap,
+                                                           size_t compressed_image_bitmap_len);
 librdp_status rdp_composited_parse_target_capture_bits(
     const void* data,
     size_t length,
