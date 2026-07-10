@@ -18,8 +18,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_udp2_header udp2_header;
     rdp_udp2_packet udp2_packet;
     rdp_udp2_prefix udp2_prefix;
+    rdp_udp_ack_vector_entry ack_entry;
+    rdp_udp2_ack_vector_entry udp2_ack_entry;
+    rdp_udp2_packet_kind udp2_kind;
     rdp_buffer buffer;
     uint8_t correlation_id[16] = {0};
+    uint32_t received = 0;
+    uint32_t other = 0;
 
     (void)rdp_udp_parse_fec_header(data, size, &fec_header);
     (void)rdp_udp_parse_fec_payload_header(data, size, &fec_payload);
@@ -28,12 +33,25 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_udp_parse_syn_data(data, size, &syn);
     (void)rdp_udp_parse_ack_of_ack_vector(data, size, &ack_of_ack);
     (void)rdp_udp_parse_ack_vector(data, size, &ack_vector);
+    if (size > 0)
+        (void)rdp_udp_ack_vector_decode_entry(data[0], &ack_entry);
+    if (rdp_udp_parse_ack_vector(data, size, &ack_vector) == LIBRDP_STATUS_OK)
+        (void)rdp_udp_ack_vector_count(&ack_vector, &received, &other);
     (void)rdp_udp_parse_correlation_id(data, size, &correlation);
     (void)rdp_udp_parse_syn_data_ex(data, size, &syn_ex);
     (void)rdp_udp2_parse_header(data, size, &udp2_header);
     (void)rdp_udp2_parse_packet(data, size, &udp2_packet);
+    if (rdp_udp2_parse_packet(data, size, &udp2_packet) == LIBRDP_STATUS_OK)
+    {
+        (void)rdp_udp2_classify_packet(&udp2_packet, &udp2_kind);
+        if (udp2_packet.has_ack_vector)
+            (void)rdp_udp2_ack_vector_count(&udp2_packet.ack_vector, &received, &other);
+    }
     if (size > 0)
+    {
         (void)rdp_udp2_parse_prefix(data[0], &udp2_prefix);
+        (void)rdp_udp2_ack_vector_decode_entry(data[0], &udp2_ack_entry);
+    }
 
     rdp_buffer_init(&buffer);
     fec_header.source_ack = 1;

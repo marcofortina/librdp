@@ -283,6 +283,51 @@ librdp_status rdp_udp_write_ack_vector(rdp_buffer* buffer, const uint8_t* vector
     return rdp_buffer_append(buffer, zeroes, padding);
 }
 
+librdp_status rdp_udp_ack_vector_decode_entry(uint8_t value, rdp_udp_ack_vector_entry* entry)
+{
+    uint8_t state = (uint8_t)(value >> 6);
+    uint8_t run_length = (uint8_t)(value & 0x3fu);
+
+    if (!entry)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(entry, 0, sizeof(*entry));
+    if (state != RDP_UDP_ACK_VECTOR_STATE_RECEIVED &&
+        state != RDP_UDP_ACK_VECTOR_STATE_PENDING)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    entry->state = state;
+    entry->run_length = run_length;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_udp_ack_vector_count(const rdp_udp_ack_vector* ack_vector,
+                                       uint32_t* received,
+                                       uint32_t* pending)
+{
+    uint32_t received_count = 0;
+    uint32_t pending_count = 0;
+    uint16_t i = 0;
+
+    if (!ack_vector || !received || !pending || (!ack_vector->vector && ack_vector->size > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < ack_vector->size; i++)
+    {
+        rdp_udp_ack_vector_entry entry;
+        uint32_t run = 0;
+        librdp_status status = rdp_udp_ack_vector_decode_entry(ack_vector->vector[i], &entry);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        run = (uint32_t)entry.run_length + 1u;
+        if (entry.state == RDP_UDP_ACK_VECTOR_STATE_RECEIVED)
+            received_count += run;
+        else
+            pending_count += run;
+    }
+    *received = received_count;
+    *pending = pending_count;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_udp_parse_correlation_id(const void* data,
                                            size_t length,
                                            rdp_udp_correlation_id* correlation)
@@ -651,6 +696,87 @@ librdp_status rdp_udp2_write_packet(rdp_buffer* buffer, const rdp_udp2_packet* p
     }
     if (packet->has_data)
         return rdp_buffer_append(buffer, packet->data_body, packet->data_body_len);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_udp2_classify_packet(const rdp_udp2_packet* packet, rdp_udp2_packet_kind* kind)
+{
+    if (!packet || !kind)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (packet->has_data && packet->has_ack)
+        *kind = RDP_UDP2_PACKET_KIND_DATA_WITH_ACK;
+    else if (packet->has_data)
+        *kind = RDP_UDP2_PACKET_KIND_DATA;
+    else if (packet->has_ack_vector)
+        *kind = RDP_UDP2_PACKET_KIND_ACK_VECTOR;
+    else if (packet->has_ack)
+        *kind = RDP_UDP2_PACKET_KIND_ACK;
+    else if (packet->has_ack_of_acks)
+        *kind = RDP_UDP2_PACKET_KIND_ACK_OF_ACKS;
+    else
+        *kind = RDP_UDP2_PACKET_KIND_CONTROL;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_udp2_ack_vector_decode_entry(uint8_t value, rdp_udp2_ack_vector_entry* entry)
+{
+    if (!entry)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(entry, 0, sizeof(*entry));
+    if ((value & 0x80u) != 0)
+    {
+        entry->mode = RDP_UDP2_ACK_VECTOR_MODE_RLE;
+        entry->state = (value & 0x40u) ? RDP_UDP2_ACK_VECTOR_STATE_RECEIVED : RDP_UDP2_ACK_VECTOR_STATE_LOST;
+        entry->run_length = (uint8_t)(value & 0x3fu);
+    }
+    else
+    {
+        entry->mode = RDP_UDP2_ACK_VECTOR_MODE_BITMAP;
+        entry->bitmap = (uint8_t)(value & 0x7fu);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_udp2_ack_vector_count(const rdp_udp2_ack_vector* ack_vector,
+                                        uint32_t* received,
+                                        uint32_t* lost)
+{
+    uint32_t received_count = 0;
+    uint32_t lost_count = 0;
+    uint8_t i = 0;
+
+    if (!ack_vector || !received || !lost ||
+        (!ack_vector->coded_ack_vector && ack_vector->coded_ack_vector_size > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < ack_vector->coded_ack_vector_size; i++)
+    {
+        rdp_udp2_ack_vector_entry entry;
+        librdp_status status = rdp_udp2_ack_vector_decode_entry(ack_vector->coded_ack_vector[i], &entry);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (entry.mode == RDP_UDP2_ACK_VECTOR_MODE_RLE)
+        {
+            uint32_t run = (uint32_t)entry.run_length + 1u;
+            if (entry.state == RDP_UDP2_ACK_VECTOR_STATE_RECEIVED)
+                received_count += run;
+            else
+                lost_count += run;
+        }
+        else
+        {
+            uint8_t bit = 0;
+            for (bit = 0; bit < 7u; bit++)
+            {
+                if ((entry.bitmap & (uint8_t)(1u << bit)) != 0)
+                    received_count++;
+                else
+                    lost_count++;
+            }
+        }
+    }
+    *received = received_count;
+    *lost = lost_count;
     return LIBRDP_STATUS_OK;
 }
 
