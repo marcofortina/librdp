@@ -198,6 +198,8 @@
 #define RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION 37u
 #define RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION 38u
 #define RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION 39u
+#define RDP_SESSION_FILE_NORMALIZED_NAME_INFORMATION 48u
+#define RDP_SESSION_FILE_ID_INFORMATION 59u
 #define RDP_SESSION_FILE_ATTRIBUTE_READONLY 0x00000001u
 #define RDP_SESSION_FILE_ATTRIBUTE_DIRECTORY 0x00000010u
 #define RDP_SESSION_FILE_ATTRIBUTE_NORMAL 0x00000080u
@@ -2544,6 +2546,13 @@ static uint64_t rdp_session_stat_file_id(const struct stat* st)
     return (uint64_t)st->st_ino;
 }
 
+static uint64_t rdp_session_stat_volume_serial(const struct stat* st)
+{
+    if (!st)
+        return 0;
+    return (uint64_t)st->st_dev;
+}
+
 static uint32_t rdp_session_stat_attributes(const struct stat* st)
 {
     uint32_t attributes = 0;
@@ -2949,6 +2958,31 @@ static librdp_status rdp_session_write_file_name_information(rdp_buffer* buffer,
     return status;
 }
 
+static librdp_status rdp_session_write_file_normalized_name_information(rdp_buffer* buffer,
+                                                                        const char* path)
+{
+    return rdp_session_write_file_name_information(buffer, path);
+}
+
+static librdp_status rdp_session_write_file_id_information(rdp_buffer* buffer,
+                                                           const struct stat* st)
+{
+    uint64_t file_id = rdp_session_stat_file_id(st);
+    uint64_t volume_serial = rdp_session_stat_volume_serial(st);
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !st)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u32_le(buffer, 24);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_append_u64_le(buffer, volume_serial);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_append_u64_le(buffer, file_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_append_u64_le(buffer, volume_serial ^ (file_id << 1u));
+    return status;
+}
+
 static librdp_status rdp_session_write_file_stream_information(rdp_buffer* buffer,
                                                                const struct stat* st)
 {
@@ -3121,6 +3155,8 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
             return rdp_session_write_file_u32_information(buffer, file ? file->desired_access : 0);
         case RDP_SESSION_FILE_NAME_INFORMATION:
             return rdp_session_write_file_name_information(buffer, file ? file->path : NULL);
+        case RDP_SESSION_FILE_NORMALIZED_NAME_INFORMATION:
+            return rdp_session_write_file_normalized_name_information(buffer, file ? file->path : NULL);
         case RDP_SESSION_FILE_FULL_EA_INFORMATION:
             return rdp_buffer_append_u32_le(buffer, 0);
         case RDP_SESSION_FILE_POSITION_INFORMATION:
@@ -3139,6 +3175,8 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
             return rdp_session_write_file_network_open_information(buffer, st);
         case RDP_SESSION_FILE_ATTRIBUTE_TAG_INFORMATION:
             return rdp_session_write_file_attribute_tag_information(buffer, st);
+        case RDP_SESSION_FILE_ID_INFORMATION:
+            return rdp_session_write_file_id_information(buffer, st);
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }
