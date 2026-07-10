@@ -11603,6 +11603,25 @@ static int test_gdi_orders(void)
         4u, 0u, 0u, 0u,
         0xaau, 0xbbu, 0xccu, 0xffu
     };
+    const uint8_t cache_brush_mono_payload[] = {
+        3u, RDP_GDI_BMF_1BPP, 8u, 8u, 0u, 8u,
+        0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
+    };
+    const uint8_t cache_brush_color_payload[] = {
+        4u, RDP_GDI_BMF_24BPP, 8u, 8u, 0u, 28u,
+        0x00u, 0x55u, 0xaau, 0xffu,
+        0x00u, 0x55u, 0xaau, 0xffu,
+        0x00u, 0x55u, 0xaau, 0xffu,
+        0x00u, 0x55u, 0xaau, 0xffu,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u,
+        0x07u, 0x08u, 0x09u,
+        0x0au, 0x0bu, 0x0cu
+    };
+    const uint8_t cache_brush_bad_payload[] = {
+        RDP_GDI_BRUSH_CACHE_ENTRIES, RDP_GDI_BMF_1BPP, 8u, 8u, 0u, 8u,
+        0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
+    };
     const uint8_t cache_glyph_v1_payload[] = {
         1u, 1u,
         2u, 0u,
@@ -12077,6 +12096,7 @@ static int test_gdi_orders(void)
     rdp_gdi_secondary_order_header secondary_header;
     rdp_gdi_cache_bitmap_order cache_bitmap;
     rdp_gdi_cache_color_table_order cache_color_table;
+    rdp_gdi_cache_brush_order cache_brush;
     rdp_gdi_cache_glyph_order cache_glyph;
     rdp_gdi_altsec_order_header altsec;
     rdp_gdi_bitmap_cache_error bitmap_error;
@@ -12263,6 +12283,54 @@ static int test_gdi_orders(void)
            cache_color_table.palette.entries[3].blue == 3u &&
            cache_color_table.palette.entries[3].green == 252u &&
            cache_color_table.palette.entries[3].red == 0x56u);
+
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         0,
+                                         RDP_GDI_SECONDARY_CACHE_BRUSH,
+                                         cache_brush_mono_payload,
+                                         sizeof(cache_brush_mono_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_brush_order(&secondary_header, &cache_brush) == LIBRDP_STATUS_OK);
+    PCHECK(cache_brush.cache_entry == 3 &&
+           cache_brush.bitmap_format == RDP_GDI_BMF_1BPP &&
+           cache_brush.width == 8 &&
+           cache_brush.height == 8 &&
+           cache_brush.brush_data_len == 8 &&
+           cache_brush.brush_data[7] == 0x80u);
+
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         0,
+                                         RDP_GDI_SECONDARY_CACHE_BRUSH,
+                                         cache_brush_color_payload,
+                                         sizeof(cache_brush_color_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_brush_order(&secondary_header, &cache_brush) == LIBRDP_STATUS_OK);
+    PCHECK(cache_brush.cache_entry == 4 &&
+           cache_brush.bitmap_format == RDP_GDI_BMF_24BPP &&
+           cache_brush.brush_data_len == 28 &&
+           cache_brush.brush_data[16] == 0x01u &&
+           cache_brush.brush_data[27] == 0x0cu);
+
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         0,
+                                         RDP_GDI_SECONDARY_CACHE_BRUSH,
+                                         cache_brush_bad_payload,
+                                         sizeof(cache_brush_bad_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_brush_order(&secondary_header, &cache_brush) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&secondary);
     rdp_buffer_init(&secondary);

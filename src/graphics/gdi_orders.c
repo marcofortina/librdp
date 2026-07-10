@@ -772,6 +772,102 @@ librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_orde
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+static librdp_status rdp_gdi_cache_brush_format_bpp(uint32_t format, uint32_t* bits_per_pixel)
+{
+    if (!bits_per_pixel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (format)
+    {
+        case RDP_GDI_BMF_1BPP:
+            *bits_per_pixel = 1;
+            return LIBRDP_STATUS_OK;
+        case RDP_GDI_BMF_8BPP:
+            *bits_per_pixel = 8;
+            return LIBRDP_STATUS_OK;
+        case RDP_GDI_BMF_16BPP:
+            *bits_per_pixel = 16;
+            return LIBRDP_STATUS_OK;
+        case RDP_GDI_BMF_24BPP:
+            *bits_per_pixel = 24;
+            return LIBRDP_STATUS_OK;
+        case RDP_GDI_BMF_32BPP:
+            *bits_per_pixel = 32;
+            return LIBRDP_STATUS_OK;
+        default:
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+}
+
+static int rdp_gdi_cache_brush_compressed_length(uint32_t format, uint32_t length)
+{
+    return (format == RDP_GDI_BMF_8BPP && length == 20u) ||
+           (format == RDP_GDI_BMF_16BPP && length == 24u) ||
+           (format == RDP_GDI_BMF_24BPP && length == 28u) ||
+           (format == RDP_GDI_BMF_32BPP && length == 32u);
+}
+
+librdp_status rdp_gdi_parse_cache_brush_order(const rdp_gdi_secondary_order_header* header,
+                                              rdp_gdi_cache_brush_order* order)
+{
+    rdp_stream stream;
+    uint8_t cache_entry = 0;
+    uint8_t bitmap_format = 0;
+    uint8_t width = 0;
+    uint8_t height = 0;
+    uint8_t style = 0;
+    uint8_t bytes = 0;
+    uint32_t bits_per_pixel = 0;
+    uint32_t raw_len = 0;
+    const uint8_t* brush_data = NULL;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_SECONDARY_CACHE_BRUSH)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (header->payload_len < 6u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    memset(order, 0, sizeof(*order));
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u8(&stream, &cache_entry) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &bitmap_format) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &style) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &bytes) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (cache_entry >= RDP_GDI_BRUSH_CACHE_ENTRIES ||
+        width != 8u ||
+        height != 8u ||
+        rdp_gdi_cache_brush_format_bpp(bitmap_format, &bits_per_pixel) != LIBRDP_STATUS_OK ||
+        bytes == 0 ||
+        rdp_stream_remaining(&stream) != bytes)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (bits_per_pixel == 1u)
+    {
+        if (bytes != 8u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    else
+    {
+        raw_len = (uint32_t)((uint64_t)width * height * ((bits_per_pixel + 7u) / 8u));
+        if (bytes != raw_len && !rdp_gdi_cache_brush_compressed_length(bitmap_format, bytes))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (rdp_stream_read_bytes(&stream, &brush_data, bytes) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    order->cache_entry = cache_entry;
+    order->bitmap_format = bitmap_format;
+    order->width = width;
+    order->height = height;
+    order->style = style;
+    order->brush_data = brush_data;
+    order->brush_data_len = bytes;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_parse_cache_glyph_v1(const rdp_gdi_secondary_order_header* header,
                                                   rdp_gdi_cache_glyph_order* order)
 {

@@ -94,6 +94,13 @@
 #define RDP_GDI_CBR3_IGNORABLE_FLAG 0x08u
 #define RDP_GDI_CBR3_DO_NOT_CACHE 0x10u
 #define RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX 0x7fffu
+#define RDP_GDI_CACHED_BRUSH 0x80u
+#define RDP_GDI_BMF_1BPP 0x01u
+#define RDP_GDI_BMF_8BPP 0x03u
+#define RDP_GDI_BMF_16BPP 0x04u
+#define RDP_GDI_BMF_24BPP 0x05u
+#define RDP_GDI_BMF_32BPP 0x06u
+#define RDP_GDI_BRUSH_CACHE_ENTRIES 64u
 #define RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_NINEGRID_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_GDIPLUS_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
@@ -190,6 +197,17 @@ typedef struct rdp_gdi_cache_color_table_order
     uint32_t cache_index;
     rdp_palette_update palette;
 } rdp_gdi_cache_color_table_order;
+
+typedef struct rdp_gdi_cache_brush_order
+{
+    uint32_t cache_entry;
+    uint32_t bitmap_format;
+    uint32_t width;
+    uint32_t height;
+    uint32_t style;
+    const uint8_t* brush_data;
+    uint32_t brush_data_len;
+} rdp_gdi_cache_brush_order;
 
 typedef struct rdp_gdi_glyph_bitmap
 {
@@ -319,6 +337,8 @@ librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_hea
                                                rdp_gdi_cache_bitmap_order* order);
 librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_order_header* header,
                                                     rdp_gdi_cache_color_table_order* order);
+librdp_status rdp_gdi_parse_cache_brush_order(const rdp_gdi_secondary_order_header* header,
+                                              rdp_gdi_cache_brush_order* order);
 librdp_status rdp_gdi_parse_cache_glyph_order(const rdp_gdi_secondary_order_header* header,
                                               rdp_gdi_cache_glyph_order* order);
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
