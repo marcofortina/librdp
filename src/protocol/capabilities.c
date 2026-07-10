@@ -22,7 +22,7 @@ librdp_status rdp_capabilities_parse(const void* data, size_t length, rdp_capabi
     (void)pad;
 
     if (count > RDP_CAPABILITY_MAX_SETS)
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     for (i = 0; i < count; i++)
     {
@@ -466,7 +466,7 @@ librdp_status rdp_capability_parse_bitmap_codecs(const rdp_capability_set* set,
     if (rdp_stream_read_u8(&stream, &count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (count > RDP_CAPABILITY_BITMAP_CODECS_MAX)
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     for (i = 0; i < count; i++)
     {
         rdp_capability_bitmap_codec* codec = &codecs->codecs[i];

@@ -155,27 +155,17 @@ librdp_status rdp_fastpath_write_updates(rdp_buffer* buffer,
     return status;
 }
 
-librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fastpath_update_list* updates)
+librdp_status rdp_fastpath_parse_updates_payload(const void* data,
+                                                 size_t length,
+                                                 rdp_fastpath_update_list* updates)
 {
-    rdp_fastpath_header header;
     rdp_stream stream;
-    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !updates)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     memset(updates, 0, sizeof(*updates));
-    status = rdp_fastpath_parse_header(data, length, &header);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (header.action != RDP_FASTPATH_OUTPUT_ACTION_FASTPATH)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header.security_flags != 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
-
-    rdp_stream_init(&stream, data, header.length);
-    if (rdp_stream_skip(&stream, header.header_length) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
 
     while (rdp_stream_remaining(&stream) > 0)
     {
@@ -184,7 +174,7 @@ librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fa
         uint16_t size = 0;
 
         if (updates->count >= RDP_FASTPATH_MAX_UPDATES)
-            return LIBRDP_STATUS_UNSUPPORTED;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         update = &updates->updates[updates->count];
 
         if (rdp_stream_read_u8(&stream, &update_header) != LIBRDP_STATUS_OK)
@@ -213,4 +203,25 @@ librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fa
     }
 
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fastpath_update_list* updates)
+{
+    rdp_fastpath_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !updates)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_fastpath_parse_header(data, length, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (header.action != RDP_FASTPATH_OUTPUT_ACTION_FASTPATH)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header.security_flags != 0)
+        return LIBRDP_STATUS_STATE;
+
+    return rdp_fastpath_parse_updates_payload((const uint8_t*)data + header.header_length,
+                                              header.length - header.header_length,
+                                              updates);
 }

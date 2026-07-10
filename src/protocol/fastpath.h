@@ -58,6 +58,9 @@ typedef struct rdp_fastpath_update_list
 } rdp_fastpath_update_list;
 
 librdp_status rdp_fastpath_parse_header(const void* data, size_t length, rdp_fastpath_header* header);
+librdp_status rdp_fastpath_parse_updates_payload(const void* data,
+                                                 size_t length,
+                                                 rdp_fastpath_update_list* updates);
 librdp_status rdp_fastpath_parse_updates(const void* data, size_t length, rdp_fastpath_update_list* updates);
 librdp_status rdp_fastpath_write_header(rdp_buffer* buffer,
                                         uint8_t action,

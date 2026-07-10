@@ -3481,7 +3481,10 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_fastpath_parse_updates(fast_bad_update_compression,
                                       sizeof(fast_bad_update_compression),
                                       &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_STATE);
+    PCHECK(rdp_fastpath_parse_updates_payload(fast_long + 3u,
+                                              sizeof(fast_long) - 3u,
+                                              &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_surface_commands_parse(surface_command_payload,
                                       sizeof(surface_command_payload),
                                       &surface_commands) == LIBRDP_STATUS_OK);
@@ -3776,7 +3779,7 @@ static int test_path_security_license_channels(void)
            palette_roundtrip.entries[3].green == 8 && palette_roundtrip.entries[3].blue == 7);
     PCHECK(rdp_bitmap_parse_palette_update(palette_fastpath_data,
                                            sizeof(palette_fastpath_data),
-                                           &palette_roundtrip) == LIBRDP_STATUS_UNSUPPORTED);
+                                           &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_palette_update(palette_invalid_count,
                                            sizeof(palette_invalid_count),
                                            &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
@@ -3860,7 +3863,7 @@ static int test_path_security_license_channels(void)
     bitmap_rect.data = bitmap_8_data;
     bitmap_rect.data_len = sizeof(bitmap_8_data);
     PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) ==
-           LIBRDP_STATUS_UNSUPPORTED);
+           LIBRDP_STATUS_STATE);
     PCHECK(rdp_bitmap_decode_rect_bgra32_with_palette(&bitmap_rect,
                                                       &palette_update,
                                                       &decoded_bitmap,
@@ -3885,7 +3888,7 @@ static int test_path_security_license_channels(void)
     bitmap_rect.data = bitmap_4_data;
     bitmap_rect.data_len = sizeof(bitmap_4_data);
     PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_rect, &decoded_bitmap, &decoded_stride) ==
-           LIBRDP_STATUS_UNSUPPORTED);
+           LIBRDP_STATUS_STATE);
     PCHECK(rdp_bitmap_decode_rect_bgra32_with_palette(&bitmap_rect,
                                                       &palette_update,
                                                       &decoded_bitmap,
@@ -4653,7 +4656,7 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
-           LIBRDP_STATUS_UNSUPPORTED);
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     memset(&virtual_channel_minimal_set, 0, sizeof(virtual_channel_minimal_set));
     virtual_channel_minimal_set.type = RDP_CAPABILITY_TYPE_VIRTUAL_CHANNEL;
     virtual_channel_minimal_set.length = 8;
