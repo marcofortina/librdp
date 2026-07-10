@@ -227,6 +227,36 @@ librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, 
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_input_channel_negotiate_client_ready(const rdp_input_channel_sc_ready* server_ready,
+                                                       uint16_t max_touch_contacts,
+                                                       uint8_t show_touch_visuals,
+                                                       rdp_input_channel_negotiation* negotiation)
+{
+    uint32_t flags = 0;
+
+    if (!server_ready || !negotiation || max_touch_contacts == 0 ||
+        !rdp_input_channel_valid_protocol(server_ready->protocol_version) ||
+        (server_ready->has_supported_features &&
+         (server_ready->supported_features & ~RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (show_touch_visuals)
+        flags |= RDP_INPUT_CHANNEL_CS_SHOW_TOUCH_VISUALS;
+    if (server_ready->protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V101)
+        flags |= RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION;
+    if (server_ready->protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V300 &&
+        (server_ready->supported_features & RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0)
+        flags |= RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN;
+    memset(negotiation, 0, sizeof(*negotiation));
+    negotiation->flags = flags;
+    negotiation->protocol_version = server_ready->protocol_version;
+    negotiation->max_touch_contacts = max_touch_contacts;
+    negotiation->supports_touch = 1;
+    negotiation->supports_pen = (flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) != 0 ? 1u : 0u;
+    negotiation->disables_timestamp_injection =
+        (flags & RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION) != 0 ? 1u : 0u;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_input_channel_write_suspend(rdp_buffer* buffer)
 {
     return rdp_input_channel_write_header(buffer, RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT, 6);

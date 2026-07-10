@@ -8,6 +8,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_input_channel_header header;
     rdp_input_channel_sc_ready sc_ready;
     rdp_input_channel_cs_ready cs_ready;
+    rdp_input_channel_negotiation negotiation;
     rdp_input_channel_touch_event touch_event;
     rdp_input_channel_touch_frame touch_frame;
     rdp_input_channel_touch_contact touch_contact;
@@ -21,7 +22,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer_init(&contact);
     rdp_buffer_init(&out);
     (void)rdp_input_channel_parse_header(data, size, &header);
-    (void)rdp_input_channel_parse_sc_ready(data, size, &sc_ready);
+    if (rdp_input_channel_parse_sc_ready(data, size, &sc_ready) == LIBRDP_STATUS_OK)
+        (void)rdp_input_channel_negotiate_client_ready(&sc_ready, 10, 0, &negotiation);
     (void)rdp_input_channel_parse_cs_ready(data, size, &cs_ready);
     (void)rdp_input_channel_parse_empty(data, size, RDP_INPUT_CHANNEL_EVENT_SUSPEND_INPUT);
     (void)rdp_input_channel_parse_empty(data, size, RDP_INPUT_CHANNEL_EVENT_RESUME_INPUT);

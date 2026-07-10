@@ -67,6 +67,16 @@ typedef struct rdp_input_channel_cs_ready
     uint16_t max_touch_contacts;
 } rdp_input_channel_cs_ready;
 
+typedef struct rdp_input_channel_negotiation
+{
+    uint32_t flags;
+    uint32_t protocol_version;
+    uint16_t max_touch_contacts;
+    uint8_t supports_touch;
+    uint8_t supports_pen;
+    uint8_t disables_timestamp_injection;
+} rdp_input_channel_negotiation;
+
 typedef struct rdp_input_channel_touch_contact
 {
     uint8_t contact_id;
@@ -140,6 +150,10 @@ librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
                                                uint32_t protocol_version,
                                                uint16_t max_touch_contacts);
 librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, rdp_input_channel_cs_ready* ready);
+librdp_status rdp_input_channel_negotiate_client_ready(const rdp_input_channel_sc_ready* server_ready,
+                                                       uint16_t max_touch_contacts,
+                                                       uint8_t show_touch_visuals,
+                                                       rdp_input_channel_negotiation* negotiation);
 librdp_status rdp_input_channel_write_suspend(rdp_buffer* buffer);
 librdp_status rdp_input_channel_write_resume(rdp_buffer* buffer);
 librdp_status rdp_input_channel_parse_empty(const void* data, size_t length, uint16_t event_id);

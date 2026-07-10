@@ -3088,6 +3088,7 @@ static int test_path_security_license_channels(void)
     rdp_input_channel_header input_header;
     rdp_input_channel_sc_ready input_sc_ready;
     rdp_input_channel_cs_ready input_cs_ready;
+    rdp_input_channel_negotiation input_negotiation;
     rdp_input_channel_touch_contact input_touch_contact;
     rdp_input_channel_touch_frame input_touch_frame;
     rdp_input_channel_touch_event input_touch_event;
@@ -6032,6 +6033,15 @@ static int test_path_security_license_channels(void)
     PCHECK(input_sc_ready.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 &&
            input_sc_ready.has_supported_features &&
            input_sc_ready.supported_features == RDP_INPUT_CHANNEL_SC_READY_MULTIPEN);
+    PCHECK(rdp_input_channel_negotiate_client_ready(&input_sc_ready,
+                                                    10,
+                                                    0,
+                                                    &input_negotiation) == LIBRDP_STATUS_OK);
+    PCHECK(input_negotiation.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 &&
+           input_negotiation.supports_touch &&
+           input_negotiation.supports_pen &&
+           input_negotiation.disables_timestamp_injection &&
+           input_negotiation.max_touch_contacts == 10);
     PCHECK(rdp_input_channel_parse_sc_ready(input_sc_ready_v200,
                                             sizeof(input_sc_ready_v200),
                                             &input_sc_ready) == LIBRDP_STATUS_OK);

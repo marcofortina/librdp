@@ -16464,22 +16464,21 @@ static librdp_status rdp_session_send_input_channel_ready(librdp_session* sessio
                                                           const rdp_input_channel_sc_ready* ready)
 {
     rdp_buffer response;
-    uint32_t flags = 0;
-    uint32_t protocol_version = 0;
+    rdp_input_channel_negotiation negotiation;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !ready || session->input_channel_id_bytes == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    protocol_version = ready->protocol_version;
-    if (protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V101)
-        flags |= RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION;
-    if (protocol_version >= RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
-        (ready->supported_features & RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0)
-        flags |= RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN;
+    status = rdp_input_channel_negotiate_client_ready(ready, 10, 0, &negotiation);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     rdp_buffer_init(&response);
-    status = rdp_input_channel_write_cs_ready(&response, flags, protocol_version, 10);
+    status = rdp_input_channel_write_cs_ready(&response,
+                                              negotiation.flags,
+                                              negotiation.protocol_version,
+                                              negotiation.max_touch_contacts);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_dynamic_channel_data(session,
                                                        session->input_channel_id,
@@ -16491,11 +16490,14 @@ static librdp_status rdp_session_send_input_channel_ready(librdp_session* sessio
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.input_channel.ready",
-                        "dvc_channel_id=%u protocol_version=%u flags=%u max_contacts=%u",
+                        "dvc_channel_id=%u protocol_version=%u flags=%u max_contacts=%u touch=%u pen=%u timestamp_disabled=%u",
                         session->input_channel_id,
-                        protocol_version,
-                        flags,
-                        10u);
+                        negotiation.protocol_version,
+                        negotiation.flags,
+                        negotiation.max_touch_contacts,
+                        negotiation.supports_touch,
+                        negotiation.supports_pen,
+                        negotiation.disables_timestamp_injection);
     return status;
 }
 
