@@ -63,6 +63,8 @@ librdp_status rdp_core_input_parse_header(const void* data,
         header->pdu_type != RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE &&
         header->pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header->padding != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (header->pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE && header->event_count != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
