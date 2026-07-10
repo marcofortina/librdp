@@ -7,13 +7,15 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     rdp_core_input_header header;
     rdp_core_input_init_response response;
+    rdp_core_input_negotiation negotiation;
     rdp_core_input_event events[4];
     uint8_t event_count = 0;
     rdp_buffer out;
 
     rdp_buffer_init(&out);
     (void)rdp_core_input_parse_header(data, size, &header);
-    (void)rdp_core_input_parse_init_response(data, size, &response);
+    if (rdp_core_input_parse_init_response(data, size, &response) == LIBRDP_STATUS_OK)
+        (void)rdp_core_input_negotiate(&response, &negotiation);
     (void)rdp_core_input_parse_events(data,
                                       size,
                                       events,

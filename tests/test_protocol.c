@@ -3082,6 +3082,7 @@ static int test_path_security_license_channels(void)
     rdp_mouse_cursor_capset mouse_cursor_capset;
     rdp_core_input_header core_header;
     rdp_core_input_init_response core_init_response;
+    rdp_core_input_negotiation core_negotiation;
     rdp_core_input_event core_events[8];
     uint8_t core_event_count = 0;
     rdp_input_channel_header input_header;
@@ -5901,6 +5902,10 @@ static int test_path_security_license_channels(void)
                                               &core_init_response) == LIBRDP_STATUS_OK);
     PCHECK(core_init_response.selected_protocol_version == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
            core_init_response.protocol_version_max == RDP_CORE_INPUT_PROTOCOL_VERSION_100);
+    PCHECK(rdp_core_input_negotiate(&core_init_response, &core_negotiation) == LIBRDP_STATUS_OK);
+    PCHECK(core_negotiation.selected_protocol_version == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
+           core_negotiation.supports_relative_mouse &&
+           core_negotiation.supports_qoe_timestamp);
     PCHECK(rdp_core_input_parse_init_response(core_response,
                                               sizeof(core_response) - 1u,
                                               &core_init_response) == LIBRDP_STATUS_PROTOCOL_ERROR);

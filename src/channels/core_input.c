@@ -106,8 +106,29 @@ librdp_status rdp_core_input_parse_init_response(const void* data,
         rdp_stream_read_u16_le(&stream, &response->selected_protocol_version) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &response->protocol_version_max) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (response->selected_protocol_version != RDP_CORE_INPUT_PROTOCOL_VERSION_100)
-        return LIBRDP_STATUS_UNSUPPORTED;
+    if (response->selected_protocol_version == 0 ||
+        response->selected_protocol_version > response->protocol_version_max)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_core_input_negotiate(const rdp_core_input_init_response* response,
+                                       rdp_core_input_negotiation* negotiation)
+{
+    if (!response || !negotiation)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (response->selected_protocol_version == 0 ||
+        response->selected_protocol_version > response->protocol_version_max ||
+        response->protocol_version_max < RDP_CORE_INPUT_PROTOCOL_VERSION_100)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(negotiation, 0, sizeof(*negotiation));
+    negotiation->selected_protocol_version =
+        response->selected_protocol_version > RDP_CORE_INPUT_PROTOCOL_VERSION_100 ?
+            RDP_CORE_INPUT_PROTOCOL_VERSION_100 :
+            response->selected_protocol_version;
+    negotiation->protocol_version_max = response->protocol_version_max;
+    negotiation->supports_relative_mouse = 1;
+    negotiation->supports_qoe_timestamp = 1;
     return LIBRDP_STATUS_OK;
 }
 

@@ -42,6 +42,14 @@ typedef struct rdp_core_input_init_response
     uint16_t protocol_version_max;
 } rdp_core_input_init_response;
 
+typedef struct rdp_core_input_negotiation
+{
+    uint16_t selected_protocol_version;
+    uint16_t protocol_version_max;
+    uint8_t supports_relative_mouse;
+    uint8_t supports_qoe_timestamp;
+} rdp_core_input_negotiation;
+
 typedef struct rdp_core_input_event
 {
     uint8_t type;
@@ -63,6 +71,8 @@ librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer);
 librdp_status rdp_core_input_parse_init_response(const void* data,
                                                  size_t length,
                                                  rdp_core_input_init_response* response);
+librdp_status rdp_core_input_negotiate(const rdp_core_input_init_response* response,
+                                       rdp_core_input_negotiation* negotiation);
 librdp_status rdp_core_input_parse_events(const void* data,
                                           size_t length,
                                           rdp_core_input_event* events,

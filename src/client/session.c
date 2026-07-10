@@ -23559,17 +23559,22 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     else if (strcmp(entry->name, RDP_SESSION_CORE_INPUT_NAME) == 0)
     {
         rdp_core_input_init_response response;
+        rdp_core_input_negotiation negotiation;
 
         status = rdp_core_input_parse_init_response(data, data_len, &response);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_core_input_negotiate(&response, &negotiation);
         if (status != LIBRDP_STATUS_OK)
             return status;
         session->core_input_ready = 1;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.core_input.ready",
-                        "dvc_channel_id=%u selected_version=%u max_version=%u",
+                        "dvc_channel_id=%u selected_version=%u max_version=%u relmouse=%u qoe=%u",
                         channel_id,
-                        response.selected_protocol_version,
-                        response.protocol_version_max);
+                        negotiation.selected_protocol_version,
+                        negotiation.protocol_version_max,
+                        negotiation.supports_relative_mouse,
+                        negotiation.supports_qoe_timestamp);
     }
     else if (strcmp(entry->name, RDP_SESSION_INPUT_CHANNEL_NAME) == 0)
     {
