@@ -205,6 +205,7 @@
 #define RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION 39u
 #define RDP_SESSION_FILE_NORMALIZED_NAME_INFORMATION 48u
 #define RDP_SESSION_FILE_ID_INFORMATION 59u
+#define RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION 71u
 #define RDP_SESSION_FILE_ATTRIBUTE_READONLY 0x00000001u
 #define RDP_SESSION_FILE_ATTRIBUTE_DIRECTORY 0x00000010u
 #define RDP_SESSION_FILE_ATTRIBUTE_NORMAL 0x00000080u
@@ -3346,6 +3347,8 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
             return rdp_session_write_file_attribute_tag_information(buffer, st);
         case RDP_SESSION_FILE_ID_INFORMATION:
             return rdp_session_write_file_id_information(buffer, st);
+        case RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION:
+            return rdp_session_write_file_u32_information(buffer, 0);
         case RDP_SESSION_FILE_ALTERNATE_NAME_INFORMATION:
             return rdp_session_write_file_alternate_name_information(buffer);
         case RDP_SESSION_FILE_ALLOCATION_INFORMATION:
@@ -3899,6 +3902,19 @@ static uint32_t rdp_session_apply_mode_information(rdp_session_redirected_file* 
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
+static uint32_t rdp_session_apply_case_sensitive_information(const uint8_t* data,
+                                                             uint32_t length)
+{
+    uint32_t flags = 0;
+
+    if (!data || length != 4u)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    flags = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+            ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+    return flags == 0 ? RDP_DEVICE_REDIRECTION_STATUS_SUCCESS :
+                        RDP_SESSION_DEVICE_NOT_SUPPORTED;
+}
+
 static int rdp_session_directory_is_empty(const char* path)
 {
     DIR* dir = NULL;
@@ -4359,6 +4375,9 @@ static librdp_status rdp_session_handle_filesystem_set_information(librdp_sessio
                 break;
             case RDP_SESSION_FILE_MODE_INFORMATION:
                 io_status = rdp_session_apply_mode_information(file, request.buffer, request.length);
+                break;
+            case RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION:
+                io_status = rdp_session_apply_case_sensitive_information(request.buffer, request.length);
                 break;
             case RDP_SESSION_FILE_DISPOSITION_INFORMATION:
                 io_status = rdp_session_apply_disposition_information(file, request.buffer, request.length);
@@ -6565,6 +6584,8 @@ static uint32_t rdp_session_apply_printer_set_information(rdp_session_redirected
             return rdp_session_apply_position_information(job, request->buffer, request->length);
         case RDP_SESSION_FILE_MODE_INFORMATION:
             return rdp_session_apply_mode_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION:
+            return rdp_session_apply_case_sensitive_information(request->buffer, request->length);
         case RDP_SESSION_FILE_DISPOSITION_INFORMATION:
             return rdp_session_apply_disposition_information(job, request->buffer, request->length);
         case RDP_SESSION_FILE_END_OF_FILE_INFORMATION:
