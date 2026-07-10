@@ -681,6 +681,10 @@ librdp_status rdp_device_redirection_parse_device_list_announce(
             rdp_stream_read_u32_le(&stream, &device->data_len) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         memcpy(device->preferred_dos_name, name, sizeof(device->preferred_dos_name));
+        if (!rdp_device_redirection_valid_device_type(device->device_type) ||
+            !rdp_device_redirection_valid_preferred_name(device->device_type,
+                                                         device->preferred_dos_name))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (device->data_len > rdp_stream_remaining(&stream))
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_read_bytes(&stream, &device->data, device->data_len) != LIBRDP_STATUS_OK)

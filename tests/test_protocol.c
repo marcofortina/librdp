@@ -7481,6 +7481,14 @@ static int test_device_redirection_channel(void)
     PCHECK(memcmp(device_list.devices[0].preferred_dos_name, "C:", 3) == 0);
     PCHECK(device_list.devices[0].data_len == sizeof(drive_name_utf16));
     PCHECK(memcmp(device_list.devices[0].data, drive_name_utf16, sizeof(drive_name_utf16)) == 0);
+    buffer.data[8] = 0xffu;
+    PCHECK(rdp_device_redirection_parse_device_list_announce(buffer.data, buffer.length, &device_list) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[8] = RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM;
+    buffer.data[17] = '/';
+    PCHECK(rdp_device_redirection_parse_device_list_announce(buffer.data, buffer.length, &device_list) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[17] = ':';
     device.preferred_dos_name[0] = 'B';
     device.preferred_dos_name[1] = '/';
     device.preferred_dos_name[2] = 0;
