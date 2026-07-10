@@ -398,6 +398,8 @@ librdp_status rdp_smartcard_redirection_parse_device_control_request(
         rdp_stream_skip(&stream, 20u) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!rdp_smartcard_redirection_ioctl_valid(request->io_control_code) ||
+        request->output_buffer_len > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH ||
+        request->input_buffer_len > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH ||
         request->input_buffer_len != rdp_stream_remaining(&stream))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     request->input_len = rdp_stream_remaining(&stream);
@@ -637,6 +639,8 @@ librdp_status rdp_smartcard_redirection_write_device_control_request(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || (!input && input_len > 0) ||
+        output_buffer_len > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH ||
+        input_len > RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH ||
         !rdp_smartcard_redirection_ioctl_valid(io_control_code))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, output_buffer_len);

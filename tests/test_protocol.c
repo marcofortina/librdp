@@ -9580,6 +9580,18 @@ static int test_auth_smartcard_redirection_channels(void)
                &scard_message) == LIBRDP_STATUS_OK);
     PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_ESTABLISH_CONTEXT &&
            scard_message.body.establish_context.scope == RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM);
+    packet.data[0] = 0x01u;
+    packet.data[1] = 0x00u;
+    packet.data[2] = 0x40u;
+    packet.data[3] = 0x00u;
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request(packet.data,
+                                                                  packet.length,
+                                                                  &control_request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    packet.data[0] = 64u;
+    packet.data[1] = 0u;
+    packet.data[2] = 0u;
+    packet.data[3] = 0u;
     packet.data[8] = 0x0c;
     packet.data[9] = 0x01;
     PCHECK(rdp_smartcard_redirection_parse_device_control_request(packet.data,
@@ -9590,6 +9602,12 @@ static int test_auth_smartcard_redirection_channels(void)
                packet.data,
                packet.length,
                &scard_message) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH + 1u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_ESTABLISHCONTEXT,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
