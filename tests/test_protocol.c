@@ -10726,6 +10726,10 @@ static int test_auth_smartcard_redirection_channels(void)
                                                                    buffer.data,
                                                                    (uint32_t)buffer.length) ==
            LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_write_device_control_response(
+               &packet,
+               call_payload,
+               RDP_SMARTCARD_REDIRECTION_BUFFER_MAX_LENGTH + 1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_smartcard_redirection_parse_device_control_response(packet.data,
                                                                    packet.length,
                                                                    &control_response) ==
