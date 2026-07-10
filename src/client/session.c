@@ -21681,7 +21681,7 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
 
     if (!session || !order || !order->bitmap_data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (order->do_not_cache)
+    if (order->do_not_cache && !order->rev3)
     {
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -21715,7 +21715,17 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
 
     rdp_buffer_init(&pixels);
     rdp_buffer_init(&raw);
-    if (order->bits_per_pixel == 8u)
+    if (order->rev3 && order->codec_id == RDP_SURFACE_CODEC_NSCODEC)
+    {
+        status = rdp_nscodec_decode_bgra32(&session->surface_nscodec,
+                                           order->bitmap_data,
+                                           order->bitmap_data_len,
+                                           order->width,
+                                           order->height,
+                                           &pixels,
+                                           &stride);
+    }
+    else if (order->bits_per_pixel == 8u)
     {
         status = rdp_buffer_append(&raw, order->bitmap_data, order->bitmap_data_len);
     }
@@ -21810,7 +21820,8 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     if (header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED ||
         header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED ||
         header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2 ||
-        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2)
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2 ||
+        header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3)
     {
         status = rdp_gdi_parse_cache_bitmap_order(header, &bitmap);
         if (status == LIBRDP_STATUS_OK)

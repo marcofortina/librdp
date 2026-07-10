@@ -11580,6 +11580,29 @@ static int test_gdi_orders(void)
         8u,
         0x00u, 0x01u, 0x02u, 0x03u
     };
+    const uint8_t cache_bitmap_v3_payload[] = {
+        9u, 0u,
+        0x44u, 0x33u, 0x22u, 0x11u,
+        0x88u, 0x77u, 0x66u, 0x55u,
+        32u, 0u, 0u, RDP_SURFACE_CODEC_NONE,
+        2u, 0u,
+        2u, 0u,
+        16u, 0u, 0u, 0u,
+        0x30u, 0x40u, 0x50u, 0xffu,
+        0x31u, 0x41u, 0x51u, 0xffu,
+        0x32u, 0x42u, 0x52u, 0xffu,
+        0x33u, 0x43u, 0x53u, 0xffu
+    };
+    const uint8_t cache_bitmap_v3_wait_payload[] = {
+        0xffu, 0x7fu,
+        0x04u, 0x03u, 0x02u, 0x01u,
+        0x08u, 0x07u, 0x06u, 0x05u,
+        32u, 0u, 0u, RDP_SURFACE_CODEC_NONE,
+        1u, 0u,
+        1u, 0u,
+        4u, 0u, 0u, 0u,
+        0xaau, 0xbbu, 0xccu, 0xffu
+    };
     const uint8_t cache_glyph_v1_payload[] = {
         1u, 1u,
         2u, 0u,
@@ -12168,6 +12191,49 @@ static int test_gdi_orders(void)
            cache_bitmap.compressed &&
            !cache_bitmap.has_compression_header &&
            !cache_bitmap.bitmap_data_includes_compression_header &&
+           cache_bitmap.bitmap_data_len == 4);
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         (uint16_t)(2u | (6u << 3u) |
+                                                    (RDP_GDI_CBR3_IGNORABLE_FLAG << 7u)),
+                                         RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                         cache_bitmap_v3_payload,
+                                         sizeof(cache_bitmap_v3_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) == LIBRDP_STATUS_OK);
+    PCHECK(cache_bitmap.rev3 &&
+           cache_bitmap.cache_id == 2 &&
+           cache_bitmap.cache_index == 9 &&
+           cache_bitmap.key1 == 0x11223344u &&
+           cache_bitmap.key2 == 0x55667788u &&
+           cache_bitmap.bits_per_pixel == 32 &&
+           cache_bitmap.codec_id == RDP_SURFACE_CODEC_NONE &&
+           cache_bitmap.width == 2 &&
+           cache_bitmap.height == 2 &&
+           !cache_bitmap.compressed &&
+           cache_bitmap.bitmap_data_len == 16 &&
+           cache_bitmap.bitmap_data[0] == 0x30u);
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         (uint16_t)(2u | (6u << 3u) |
+                                                    ((RDP_GDI_CBR3_IGNORABLE_FLAG |
+                                                      RDP_GDI_CBR3_DO_NOT_CACHE) << 7u)),
+                                         RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                         cache_bitmap_v3_wait_payload,
+                                         sizeof(cache_bitmap_v3_wait_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) == LIBRDP_STATUS_OK);
+    PCHECK(cache_bitmap.rev3 &&
+           cache_bitmap.cache_id == 2 &&
+           cache_bitmap.cache_index == RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX &&
+           cache_bitmap.do_not_cache &&
+           cache_bitmap.codec_id == RDP_SURFACE_CODEC_NONE &&
            cache_bitmap.bitmap_data_len == 4);
     rdp_buffer_free(&payload);
     rdp_buffer_init(&payload);

@@ -91,6 +91,8 @@
 #define RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT 0x02u
 #define RDP_GDI_CBR2_NO_BITMAP_COMPRESSION_HEADER 0x08u
 #define RDP_GDI_CBR2_DO_NOT_CACHE 0x10u
+#define RDP_GDI_CBR3_IGNORABLE_FLAG 0x08u
+#define RDP_GDI_CBR3_DO_NOT_CACHE 0x10u
 #define RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX 0x7fffu
 #define RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_NINEGRID_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
@@ -174,6 +176,8 @@ typedef struct rdp_gdi_cache_bitmap_order
     uint32_t cache_index;
     uint8_t compressed;
     uint8_t do_not_cache;
+    uint8_t rev3;
+    uint8_t codec_id;
     uint8_t has_compression_header;
     uint8_t bitmap_data_includes_compression_header;
     uint8_t compression_header[8];
