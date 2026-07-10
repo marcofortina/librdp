@@ -469,17 +469,20 @@ librdp_status rdp_nscodec_decode_bgra32(rdp_nscodec_context* context,
     status = rdp_buffer_reserve(pixels, output_size);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    status = rdp_nscodec_decode_region_bgra32(context,
+                                              data,
+                                              length,
+                                              width,
+                                              height,
+                                              pixels->data,
+                                              output_stride,
+                                              0,
+                                              0,
+                                              width,
+                                              height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     pixels->length = output_size;
     *stride = output_stride;
-    return rdp_nscodec_decode_region_bgra32(context,
-                                            data,
-                                            length,
-                                            width,
-                                            height,
-                                            pixels->data,
-                                            output_stride,
-                                            0,
-                                            0,
-                                            width,
-                                            height);
+    return LIBRDP_STATUS_OK;
 }

@@ -4707,6 +4707,16 @@ static int test_path_security_license_channels(void)
                                     1,
                                     1,
                                     &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    nscodec_pixels.length = 5;
+    decoded_stride = 77;
+    PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
+                                     nscodec_invalid_stream,
+                                     sizeof(nscodec_invalid_stream),
+                                     1,
+                                     1,
+                                     &nscodec_pixels,
+                                     &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(nscodec_pixels.length == 5 && decoded_stride == 77);
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len - 1u, &bitmap_update) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_bitmap_parse_update(orders_update_payload, sizeof(orders_update_payload), &bitmap_update) ==
