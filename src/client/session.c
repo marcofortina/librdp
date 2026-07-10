@@ -4,6 +4,7 @@
 #include "channels/audio_format.h"
 #include "channels/audio_input.h"
 #include "channels/audio_output.h"
+#include "channels/auth_redirection.h"
 #include "channels/composited_remoting.h"
 #include "channels/core_input.h"
 #include "channels/device_redirection.h"
@@ -113,6 +114,7 @@
 #define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
 #define RDP_SESSION_GRAPHICS_PIPELINE_NAME "Microsoft::Windows::RDS::Graphics"
 #define RDP_SESSION_MOUSE_CURSOR_NAME "Microsoft::Windows::RDS::MouseCursor"
+#define RDP_SESSION_AUTH_REDIRECTION_NAME "Microsoft::Windows::RDS::AuthRedirection"
 #define RDP_SESSION_WEBAUTHN_CHANNEL_NAME "WebAuthN_Channel"
 #define RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME "urbdrc"
 #define RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT 16u
@@ -480,6 +482,11 @@ struct librdp_session
     uint32_t audio_input_version;
     uint32_t audio_input_selected_format_count;
     librdp_audio_format audio_input_selected_formats[RDP_SESSION_AUDIO_OUTPUT_FORMAT_LIMIT];
+    uint32_t auth_redirection_channel_id;
+    uint8_t auth_redirection_channel_id_bytes;
+    uint8_t auth_redirection_ready;
+    uint8_t credssp_security_ready;
+    rdp_ntlm_security_context credssp_security;
     uint32_t composited_channel_id;
     uint8_t composited_channel_id_bytes;
     uint8_t composited_ready;
@@ -623,6 +630,23 @@ static void rdp_session_video_capture_reset(librdp_session* session)
     session->video_capture_selected_stream = 0;
     session->video_capture_sample_reply_pending = 0;
     memset(&session->video_capture_media, 0, sizeof(session->video_capture_media));
+}
+
+static void rdp_session_auth_redirection_channel_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->auth_redirection_channel_id = 0;
+    session->auth_redirection_channel_id_bytes = 0;
+    session->auth_redirection_ready = 0;
+}
+
+static void rdp_session_credssp_security_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    OPENSSL_cleanse(&session->credssp_security, sizeof(session->credssp_security));
+    session->credssp_security_ready = 0;
 }
 
 static rdp_session_video_stream* rdp_session_video_stream_find(librdp_session* session,
@@ -10131,6 +10155,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_INPUT_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0 ||
            strcmp(name, RDP_SESSION_MOUSE_CURSOR_NAME) == 0 ||
+           strcmp(name, RDP_SESSION_AUTH_REDIRECTION_NAME) == 0 ||
            strcmp(name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_COMPOSITED_CHANNEL_NAME) == 0 ||
@@ -14601,6 +14626,154 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     return status;
 }
 
+static librdp_status rdp_session_auth_redirection_send_payload(librdp_session* session,
+                                                               uint32_t channel_id,
+                                                               uint8_t channel_id_bytes,
+                                                               uint32_t package,
+                                                               const void* payload,
+                                                               size_t payload_len)
+{
+    rdp_buffer encoded;
+    rdp_buffer encrypted;
+    rdp_buffer outer;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!payload && payload_len > 0) || !session->credssp_security_ready)
+        return LIBRDP_STATUS_STATE;
+    rdp_buffer_init(&encoded);
+    rdp_buffer_init(&encrypted);
+    rdp_buffer_init(&outer);
+    status = rdp_auth_redirection_write_encoded_payload(&encoded, package, payload, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_ntlm_wrap(&session->credssp_security,
+                                       encoded.data,
+                                       encoded.length,
+                                       &encrypted);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_outer_packet(&outer, encrypted.data, encrypted.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       channel_id,
+                                                       channel_id_bytes,
+                                                       outer.data,
+                                                       outer.length,
+                                                       "client.auth_redirection.response");
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.auth_redirection.response",
+                    "dvc_channel_id=%u package=%u payload_len=%u encrypted_len=%u outer_len=%u status=%s",
+                    channel_id,
+                    package,
+                    (unsigned)payload_len,
+                    (unsigned)encrypted.length,
+                    (unsigned)outer.length,
+                    librdp_status_string(status));
+    rdp_buffer_free(&outer);
+    rdp_buffer_free(&encrypted);
+    rdp_buffer_free(&encoded);
+    return status;
+}
+
+static librdp_status rdp_session_handle_auth_redirection_message(librdp_session* session,
+                                                                 uint32_t channel_id,
+                                                                 uint8_t channel_id_bytes,
+                                                                 const uint8_t* data,
+                                                                 size_t data_len)
+{
+    rdp_auth_redirection_outer_packet outer;
+    rdp_auth_redirection_encoded_payload encoded;
+    rdp_auth_redirection_call_message call;
+    rdp_buffer plain;
+    rdp_buffer response_payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t response_status = RDP_SESSION_HRESULT_NOTIMPL;
+
+    if (!session || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->credssp_security_ready)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.auth_redirection.no_security",
+                        "dvc_channel_id=%u payload_len=%u",
+                        channel_id,
+                        (unsigned)data_len);
+        return LIBRDP_STATUS_OK;
+    }
+
+    memset(&outer, 0, sizeof(outer));
+    memset(&encoded, 0, sizeof(encoded));
+    memset(&call, 0, sizeof(call));
+    rdp_buffer_init(&plain);
+    rdp_buffer_init(&response_payload);
+
+    status = rdp_auth_redirection_parse_outer_packet(data, data_len, &outer);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_ntlm_unwrap(&session->credssp_security,
+                                         outer.payload,
+                                         outer.payload_len,
+                                         &plain);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_parse_encoded_payload(plain.data, plain.length, &encoded);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.auth_redirection.pdu",
+                        "dvc_channel_id=%u package=%u encrypted_len=%u decoded_len=%u payload_len=%u",
+                        channel_id,
+                        encoded.package,
+                        (unsigned)outer.payload_len,
+                        (unsigned)plain.length,
+                        (unsigned)encoded.payload_len);
+        status = rdp_auth_redirection_parse_call_message(encoded.payload, encoded.payload_len, &call);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (call.kind == RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION)
+        {
+            response_status = 0;
+            status = rdp_auth_redirection_write_negotiate_version_response(&response_payload,
+                                                                           call.call.call_id,
+                                                                           response_status);
+        }
+        else
+        {
+            status = rdp_auth_redirection_write_response(&response_payload,
+                                                         call.call.call_id,
+                                                         response_status,
+                                                         NULL,
+                                                         0);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_session_auth_redirection_send_payload(session,
+                                                               channel_id,
+                                                               channel_id_bytes,
+                                                               encoded.package,
+                                                               response_payload.data,
+                                                               response_payload.length);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.auth_redirection.call",
+                        "dvc_channel_id=%u package=%u call_id=%u kind=%u response_status=%u status=%s",
+                        channel_id,
+                        encoded.package,
+                        call.call.call_id,
+                        call.kind,
+                        response_status,
+                        librdp_status_string(status));
+    }
+    else
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.auth_redirection.unsupported",
+                        "dvc_channel_id=%u payload_len=%u status=%s",
+                        channel_id,
+                        (unsigned)data_len,
+                        librdp_status_string(status));
+        status = LIBRDP_STATUS_OK;
+    }
+    rdp_buffer_free(&response_payload);
+    rdp_buffer_free(&plain);
+    return status;
+}
+
 static void rdp_session_usb_redirection_reset(librdp_session* session)
 {
     size_t i = 0;
@@ -17757,6 +17930,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         status = rdp_session_handle_webauthn_message(session, channel_id, channel_id_bytes, data, data_len);
     }
+    else if (strcmp(entry->name, RDP_SESSION_AUTH_REDIRECTION_NAME) == 0)
+    {
+        status = rdp_session_handle_auth_redirection_message(session, channel_id, channel_id_bytes, data, data_len);
+    }
     else if (strcmp(entry->name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0)
     {
         status = rdp_session_handle_usb_redirection_message(session, data, data_len);
@@ -17922,6 +18099,18 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                             "dvc_channel_id=%u enabled=%u",
                             request.channel_id,
                             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_WEBAUTHN) ? 1u : 0u);
+        }
+        else if (request.name_len == sizeof(RDP_SESSION_AUTH_REDIRECTION_NAME) - 1u &&
+                 memcmp(request.name, RDP_SESSION_AUTH_REDIRECTION_NAME, request.name_len) == 0)
+        {
+            session->auth_redirection_channel_id = request.channel_id;
+            session->auth_redirection_channel_id_bytes = request.channel_id_bytes;
+            session->auth_redirection_ready = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.auth_redirection.channel",
+                            "dvc_channel_id=%u nla_ready=%u",
+                            request.channel_id,
+                            session->credssp_security_ready ? 1u : 0u);
         }
         else if (request.name_len == sizeof(RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME, request.name_len) == 0)
@@ -18355,6 +18544,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->audio_input_selected_format_count = 0;
                 memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
             }
+            if (entry->channel_id == session->auth_redirection_channel_id)
+                rdp_session_auth_redirection_channel_reset(session);
             if (entry->channel_id == session->mouse_cursor_channel_id)
             {
                 session->mouse_cursor_channel_id = 0;
@@ -21008,6 +21199,8 @@ void librdp_session_free(librdp_session* session)
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_capture_reset(session);
+    rdp_session_auth_redirection_channel_reset(session);
+    rdp_session_credssp_security_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
@@ -21099,6 +21292,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
+    rdp_session_credssp_security_reset(session);
+    rdp_session_auth_redirection_channel_reset(session);
     session->share_id = 0;
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
@@ -21467,6 +21662,11 @@ librdp_status librdp_session_connect(librdp_session* session)
                                                                   librdp_settings_username(session->settings),
                                                                   rdp_settings_password_internal(session->settings),
                                                                   &auth_info);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                session->credssp_security = ntlm_security;
+                session->credssp_security_ready = 1;
+            }
             if (status == LIBRDP_STATUS_OK)
             {
                 rdp_buffer_free(&credssp_request);

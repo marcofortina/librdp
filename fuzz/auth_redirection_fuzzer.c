@@ -20,11 +20,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_auth_redirection_finalize_key_agreement_call finalize_call;
     rdp_auth_redirection_call_message call_message;
     rdp_auth_redirection_response_message response_message;
+    rdp_auth_redirection_encoded_payload encoded_payload;
     rdp_buffer buffer;
     uint32_t blob_len = 0;
 
     blob_len = (uint32_t)(size > 32u ? 32u : size);
     (void)rdp_auth_redirection_parse_outer_packet(data, size, &outer);
+    (void)rdp_auth_redirection_parse_encoded_payload(data, size, &encoded_payload);
     (void)rdp_auth_redirection_parse_inner_buffer(data, size, &inner);
     (void)rdp_auth_redirection_parse_call(data, size, &call);
     (void)rdp_auth_redirection_parse_call_message(data, size, &call_message);
@@ -65,6 +67,16 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     rdp_buffer_init(&buffer);
     (void)rdp_auth_redirection_write_outer_packet(&buffer, data, size);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_encoded_payload(&buffer,
+                                                     RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS,
+                                                     data,
+                                                     size);
+    buffer.length = 0;
+    (void)rdp_auth_redirection_write_encoded_payload(&buffer,
+                                                     RDP_AUTH_REDIRECTION_PACKAGE_NTLM,
+                                                     data,
+                                                     size);
     buffer.length = 0;
     (void)rdp_auth_redirection_write_inner_buffer(&buffer, data, size);
     buffer.length = 0;

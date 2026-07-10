@@ -8466,6 +8466,7 @@ static int test_auth_smartcard_redirection_channels(void)
     rdp_auth_redirection_compare_credentials_result compare_result;
     rdp_auth_redirection_inner_buffer inner;
     rdp_auth_redirection_outer_packet outer;
+    rdp_auth_redirection_encoded_payload encoded_payload;
     rdp_auth_redirection_octet_string auth_octet;
     rdp_auth_redirection_asn1_data auth_asn1;
     rdp_auth_redirection_finalize_key_agreement_call finalize_call;
@@ -8803,13 +8804,47 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(rdp_auth_redirection_parse_outer_packet(buffer.data, buffer.length, &outer) ==
            LIBRDP_STATUS_OK);
     PCHECK(outer.protocol_magic == RDP_AUTH_REDIRECTION_MAGIC &&
-           outer.length == buffer.length &&
+           outer.length == sizeof(call_payload) &&
            outer.payload_len == sizeof(call_payload));
     buffer.data[8] = 1;
     PCHECK(rdp_auth_redirection_parse_outer_packet(buffer.data, buffer.length, &outer) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_auth_redirection_write_encoded_payload(&buffer,
+                                                      RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS,
+                                                      call_payload,
+                                                      sizeof(call_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_encoded_payload(buffer.data,
+                                                      buffer.length,
+                                                      &encoded_payload) == LIBRDP_STATUS_OK);
+    PCHECK(encoded_payload.package == RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS &&
+           encoded_payload.package_name_len == 16u &&
+           encoded_payload.payload_len == sizeof(call_payload) &&
+           memcmp(encoded_payload.payload, call_payload, sizeof(call_payload)) == 0);
+    buffer.data[0] = 0x31;
+    PCHECK(rdp_auth_redirection_parse_encoded_payload(buffer.data,
+                                                      buffer.length,
+                                                      &encoded_payload) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_auth_redirection_write_encoded_payload(&buffer,
+                                                      RDP_AUTH_REDIRECTION_PACKAGE_NTLM,
+                                                      NULL,
+                                                      0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_encoded_payload(buffer.data,
+                                                      buffer.length,
+                                                      &encoded_payload) == LIBRDP_STATUS_OK);
+    PCHECK(encoded_payload.package == RDP_AUTH_REDIRECTION_PACKAGE_NTLM &&
+           encoded_payload.package_name_len == 8u &&
+           encoded_payload.payload_len == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_auth_redirection_write_encoded_payload(&buffer,
+                                                      RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN,
+                                                      NULL,
+                                                      0) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_smartcard_redirection_ioctl_valid(RDP_SMARTCARD_REDIRECTION_IOCTL_TRANSMIT));
     PCHECK(!rdp_smartcard_redirection_ioctl_valid(0x0009010cu));

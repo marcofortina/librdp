@@ -4,6 +4,108 @@
 
 #include <string.h>
 
+static const uint8_t rdp_auth_redirection_kerberos_name[] = {
+    'K', 0, 'e', 0, 'r', 0, 'b', 0, 'e', 0, 'r', 0, 'o', 0, 's', 0
+};
+static const uint8_t rdp_auth_redirection_ntlm_name[] = {'N', 0, 'T', 0, 'L', 0, 'M', 0};
+
+static librdp_status rdp_auth_redirection_read_der_length(const uint8_t* data,
+                                                          size_t length,
+                                                          size_t* offset,
+                                                          size_t* value)
+{
+    uint8_t first = 0;
+    size_t count = 0;
+    size_t result = 0;
+    size_t i = 0;
+
+    if (!data || !offset || !value || *offset >= length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    first = data[*offset];
+    *offset += 1u;
+    if ((first & 0x80u) == 0)
+    {
+        *value = first;
+        return LIBRDP_STATUS_OK;
+    }
+    count = first & 0x7fu;
+    if (count == 0 || count > sizeof(size_t) || count > length - *offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < count; i++)
+    {
+        if (result > (((size_t)-1) >> 8))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        result = (result << 8) | data[*offset + i];
+    }
+    if (result < 0x80u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *offset += count;
+    *value = result;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_auth_redirection_write_der_length(rdp_buffer* buffer, size_t length)
+{
+    uint8_t bytes[sizeof(size_t)];
+    size_t count = 0;
+    size_t value = length;
+    size_t i = 0;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length < 0x80u)
+        return rdp_buffer_append_u8(buffer, (uint8_t)length);
+    while (value > 0)
+    {
+        bytes[sizeof(bytes) - 1u - count] = (uint8_t)(value & 0xffu);
+        value >>= 8;
+        count++;
+    }
+    if (count > 0x7fu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_buffer_append_u8(buffer, (uint8_t)(0x80u | count)) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_NO_MEMORY;
+    for (i = sizeof(bytes) - count; i < sizeof(bytes); i++)
+    {
+        librdp_status status = rdp_buffer_append_u8(buffer, bytes[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static uint32_t rdp_auth_redirection_package_from_name(const uint8_t* data, size_t length)
+{
+    if (data && length == sizeof(rdp_auth_redirection_kerberos_name) &&
+        memcmp(data, rdp_auth_redirection_kerberos_name, length) == 0)
+        return RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS;
+    if (data && length == sizeof(rdp_auth_redirection_ntlm_name) &&
+        memcmp(data, rdp_auth_redirection_ntlm_name, length) == 0)
+        return RDP_AUTH_REDIRECTION_PACKAGE_NTLM;
+    return RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN;
+}
+
+static librdp_status rdp_auth_redirection_package_name(uint32_t package,
+                                                       const uint8_t** data,
+                                                       size_t* length)
+{
+    if (!data || !length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (package == RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS)
+    {
+        *data = rdp_auth_redirection_kerberos_name;
+        *length = sizeof(rdp_auth_redirection_kerberos_name);
+        return LIBRDP_STATUS_OK;
+    }
+    if (package == RDP_AUTH_REDIRECTION_PACKAGE_NTLM)
+    {
+        *data = rdp_auth_redirection_ntlm_name;
+        *length = sizeof(rdp_auth_redirection_ntlm_name);
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 static librdp_status rdp_auth_redirection_parse_u32_call(
     const void* data,
     size_t length,
@@ -285,7 +387,7 @@ librdp_status rdp_auth_redirection_parse_outer_packet(
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     packet->ts_pkg_context = ((uint64_t)context_high << 32) | context_low;
     if (packet->protocol_magic != RDP_AUTH_REDIRECTION_MAGIC ||
-        packet->length != (uint32_t)length ||
+        packet->length != length - RDP_AUTH_REDIRECTION_OUTER_HEADER_LENGTH ||
         packet->version != RDP_AUTH_REDIRECTION_VERSION ||
         packet->reserved != 0 ||
         packet->ts_pkg_context != 0)
@@ -307,7 +409,7 @@ librdp_status rdp_auth_redirection_write_outer_packet(
     if (!buffer || (!payload && payload_len > 0) ||
         payload_len > (size_t)UINT32_MAX - RDP_AUTH_REDIRECTION_OUTER_HEADER_LENGTH)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    length = (uint32_t)(payload_len + RDP_AUTH_REDIRECTION_OUTER_HEADER_LENGTH);
+    length = (uint32_t)payload_len;
     status = rdp_buffer_append_u32_le(buffer, RDP_AUTH_REDIRECTION_MAGIC);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -327,6 +429,90 @@ librdp_status rdp_auth_redirection_write_outer_packet(
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_buffer_append(buffer, payload, payload_len);
+}
+
+librdp_status rdp_auth_redirection_parse_encoded_payload(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_encoded_payload* payload)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t offset = 0;
+    size_t sequence_len = 0;
+    size_t sequence_end = 0;
+    size_t field_len = 0;
+
+    if (!data || !payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(payload, 0, sizeof(*payload));
+    if (length < 2u || bytes[offset++] != 0x30u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_auth_redirection_read_der_length(bytes, length, &offset, &sequence_len) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (sequence_len > length - offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    sequence_end = offset + sequence_len;
+    if (offset >= sequence_end || bytes[offset++] != 0x81u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_auth_redirection_read_der_length(bytes, sequence_end, &offset, &field_len) !=
+        LIBRDP_STATUS_OK ||
+        field_len > sequence_end - offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    payload->package_name = bytes + offset;
+    payload->package_name_len = field_len;
+    payload->package = rdp_auth_redirection_package_from_name(payload->package_name, payload->package_name_len);
+    offset += field_len;
+    if (offset >= sequence_end || bytes[offset++] != 0x82u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_auth_redirection_read_der_length(bytes, sequence_end, &offset, &field_len) !=
+        LIBRDP_STATUS_OK ||
+        field_len > sequence_end - offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    payload->payload = bytes + offset;
+    payload->payload_len = field_len;
+    offset += field_len;
+    if (offset != sequence_end || sequence_end != length || payload->package == RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_auth_redirection_write_encoded_payload(
+    rdp_buffer* buffer,
+    uint32_t package,
+    const void* payload,
+    size_t payload_len)
+{
+    rdp_buffer body;
+    const uint8_t* package_name = NULL;
+    size_t package_name_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!payload && payload_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_auth_redirection_package_name(package, &package_name, &package_name_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&body);
+    status = rdp_buffer_append_u8(&body, 0x81u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_der_length(&body, package_name_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&body, package_name, package_name_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&body, 0x82u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_der_length(&body, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&body, payload, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0x30u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_auth_redirection_write_der_length(buffer, body.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, body.data, body.length);
+    rdp_buffer_free(&body);
+    return status;
 }
 
 librdp_status rdp_auth_redirection_parse_inner_buffer(

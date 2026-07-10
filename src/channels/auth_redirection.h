@@ -65,6 +65,9 @@
 #define RDP_AUTH_REDIRECTION_MESSAGE_COMPARE_CREDENTIALS 7u
 #define RDP_AUTH_REDIRECTION_MESSAGE_ASN1_RESPONSE 8u
 #define RDP_AUTH_REDIRECTION_MESSAGE_OCTET_RESPONSE 9u
+#define RDP_AUTH_REDIRECTION_PACKAGE_UNKNOWN 0u
+#define RDP_AUTH_REDIRECTION_PACKAGE_KERBEROS 1u
+#define RDP_AUTH_REDIRECTION_PACKAGE_NTLM 2u
 
 typedef struct rdp_auth_redirection_outer_packet
 {
@@ -84,6 +87,15 @@ typedef struct rdp_auth_redirection_inner_buffer
     const uint8_t* payload;
     size_t payload_len;
 } rdp_auth_redirection_inner_buffer;
+
+typedef struct rdp_auth_redirection_encoded_payload
+{
+    uint32_t package;
+    const uint8_t* package_name;
+    size_t package_name_len;
+    const uint8_t* payload;
+    size_t payload_len;
+} rdp_auth_redirection_encoded_payload;
 
 typedef struct rdp_auth_redirection_call
 {
@@ -239,6 +251,15 @@ librdp_status rdp_auth_redirection_parse_outer_packet(
     rdp_auth_redirection_outer_packet* packet);
 librdp_status rdp_auth_redirection_write_outer_packet(
     rdp_buffer* buffer,
+    const void* payload,
+    size_t payload_len);
+librdp_status rdp_auth_redirection_parse_encoded_payload(
+    const void* data,
+    size_t length,
+    rdp_auth_redirection_encoded_payload* payload);
+librdp_status rdp_auth_redirection_write_encoded_payload(
+    rdp_buffer* buffer,
+    uint32_t package,
     const void* payload,
     size_t payload_len);
 librdp_status rdp_auth_redirection_parse_inner_buffer(
