@@ -12,10 +12,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_multitransport_data tunnel_data;
     rdp_buffer buffer;
     rdp_buffer subheader_bytes;
+    uint16_t subheader_count = 0;
     uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH] = {0};
 
     (void)rdp_multitransport_parse_header(data, size, &header);
     (void)rdp_multitransport_parse_subheader(data, size, &subheader);
+    (void)rdp_multitransport_count_subheaders(data, size, &subheader_count);
     (void)rdp_multitransport_parse_create_request(data, size, &request);
     (void)rdp_multitransport_parse_create_response(data, size, &response);
     (void)rdp_multitransport_parse_data(data, size, &tunnel_data);

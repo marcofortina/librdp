@@ -69,6 +69,9 @@ librdp_status rdp_multitransport_write_header(rdp_buffer* buffer,
 librdp_status rdp_multitransport_parse_subheader(const void* data,
                                                  size_t length,
                                                  rdp_multitransport_subheader* subheader);
+librdp_status rdp_multitransport_count_subheaders(const void* data,
+                                                  size_t length,
+                                                  uint16_t* subheader_count);
 librdp_status rdp_multitransport_write_subheader(rdp_buffer* buffer,
                                                  uint8_t type,
                                                  const void* data,

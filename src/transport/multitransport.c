@@ -18,6 +18,32 @@ static int rdp_multitransport_valid_subheader_type(uint8_t type)
            type == RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_RESPONSE;
 }
 
+librdp_status rdp_multitransport_count_subheaders(const void* data,
+                                                  size_t length,
+                                                  uint16_t* subheader_count)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t offset = 0;
+    uint16_t count = 0;
+
+    if ((!data && length > 0) || !subheader_count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    while (offset < length)
+    {
+        rdp_multitransport_subheader subheader;
+
+        if (rdp_multitransport_parse_subheader(bytes + offset, length - offset, &subheader) !=
+            LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (count == UINT16_MAX)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        count++;
+        offset += subheader.length;
+    }
+    *subheader_count = count;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_multitransport_parse_header(const void* data,
                                               size_t length,
                                               rdp_multitransport_header* header)
@@ -45,8 +71,14 @@ librdp_status rdp_multitransport_parse_header(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (header->header_length > RDP_MULTITRANSPORT_HEADER_LENGTH)
     {
+        uint16_t subheader_count = 0;
+
         header->subheaders_len = (size_t)header->header_length - RDP_MULTITRANSPORT_HEADER_LENGTH;
         if (rdp_stream_read_bytes(&stream, &header->subheaders, header->subheaders_len) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (rdp_multitransport_count_subheaders(header->subheaders,
+                                                header->subheaders_len,
+                                                &subheader_count) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     header->payload = (const uint8_t*)data + header->header_length;
