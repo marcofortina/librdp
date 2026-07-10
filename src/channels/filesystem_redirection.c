@@ -384,6 +384,8 @@ librdp_status rdp_filesystem_redirection_parse_query_directory_request(
     if (request->path_len != 0 &&
         !rdp_filesystem_utf16le_null_terminated(stream.data + stream.position, request->path_len))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (request->initial_query > 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &request->path, request->path_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
@@ -410,6 +412,8 @@ librdp_status rdp_filesystem_redirection_parse_notify_change_request(
         rdp_stream_read_u8(&stream, &request->watch_tree) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &request->completion_filter) != LIBRDP_STATUS_OK ||
         rdp_stream_skip(&stream, 27u) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (request->watch_tree > 1u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
