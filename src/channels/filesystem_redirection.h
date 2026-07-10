@@ -29,6 +29,22 @@
 #define RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA 0x000980c8u
 #define RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES 0x000940cfu
 
+#define RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_INFORMATION 1u
+#define RDP_FILESYSTEM_REDIRECTION_FS_LABEL_INFORMATION 2u
+#define RDP_FILESYSTEM_REDIRECTION_FS_SIZE_INFORMATION 3u
+#define RDP_FILESYSTEM_REDIRECTION_FS_DEVICE_INFORMATION 4u
+#define RDP_FILESYSTEM_REDIRECTION_FS_ATTRIBUTE_INFORMATION 5u
+#define RDP_FILESYSTEM_REDIRECTION_FS_CONTROL_INFORMATION 6u
+#define RDP_FILESYSTEM_REDIRECTION_FS_FULL_SIZE_INFORMATION 7u
+#define RDP_FILESYSTEM_REDIRECTION_FS_OBJECT_ID_INFORMATION 8u
+#define RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_FLAGS_INFORMATION 10u
+#define RDP_FILESYSTEM_REDIRECTION_FS_SECTOR_SIZE_INFORMATION 11u
+
+#define RDP_FILESYSTEM_REDIRECTION_FILE_CASE_SENSITIVE_SEARCH 0x00000001u
+#define RDP_FILESYSTEM_REDIRECTION_FILE_CASE_PRESERVED_NAMES 0x00000002u
+#define RDP_FILESYSTEM_REDIRECTION_FILE_UNICODE_ON_DISK 0x00000004u
+#define RDP_FILESYSTEM_REDIRECTION_FILE_DEVICE_DISK 0x00000007u
+
 #define RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION 0x00000001u
 #define RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION 0x00000002u
 #define RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION 0x00000004u
@@ -278,6 +294,16 @@ librdp_status rdp_filesystem_redirection_write_security_request(rdp_buffer* buff
                                                                 uint32_t data_len);
 
 int rdp_filesystem_redirection_fsctl_supported(uint32_t code);
+librdp_status rdp_filesystem_redirection_write_volume_information(rdp_buffer* buffer,
+                                                                  uint32_t information_class,
+                                                                  const char* volume_label,
+                                                                  const char* filesystem_name,
+                                                                  uint64_t creation_time,
+                                                                  uint32_t serial_number,
+                                                                  uint64_t total_units,
+                                                                  uint64_t available_units,
+                                                                  uint32_t sectors_per_unit,
+                                                                  uint32_t bytes_per_sector);
 librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buffer* buffer,
                                                                          uint32_t security_information,
                                                                          uint32_t owner_id,

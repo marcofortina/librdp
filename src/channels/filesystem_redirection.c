@@ -885,6 +885,196 @@ int rdp_filesystem_redirection_fsctl_supported(uint32_t code)
            code == RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES;
 }
 
+static librdp_status rdp_filesystem_append_utf16le_text(rdp_buffer* buffer,
+                                                        const char* text,
+                                                        uint32_t* bytes)
+{
+    size_t length = 0;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !text || !bytes)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    length = strlen(text);
+    if (length > (SIZE_MAX / 2u) - 1u || length > (UINT32_MAX / 2u) - 1u)
+        return LIBRDP_STATUS_NO_MEMORY;
+    for (i = 0; i < length; i++)
+    {
+        status = rdp_buffer_append_u8(buffer, (uint8_t)text[i]);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, 0);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *bytes = (uint32_t)((length + 1u) * 2u);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_filesystem_append_volume_object_id(rdp_buffer* buffer,
+                                                            uint32_t serial_number,
+                                                            uint64_t total_units,
+                                                            uint64_t available_units,
+                                                            uint32_t sectors_per_unit,
+                                                            uint32_t bytes_per_sector)
+{
+    uint32_t derived = serial_number ^ (uint32_t)total_units ^
+                       (uint32_t)(total_units >> 32u) ^ (uint32_t)available_units ^
+                       (uint32_t)(available_units >> 32u) ^ sectors_per_unit ^
+                       bytes_per_sector;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_buffer_append_u32_le(buffer, serial_number);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)total_units);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)available_units);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, derived);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_filesystem_append_zeroes(buffer, 48u);
+    return status;
+}
+
+librdp_status rdp_filesystem_redirection_write_volume_information(rdp_buffer* buffer,
+                                                                  uint32_t information_class,
+                                                                  const char* volume_label,
+                                                                  const char* filesystem_name,
+                                                                  uint64_t creation_time,
+                                                                  uint32_t serial_number,
+                                                                  uint64_t total_units,
+                                                                  uint64_t available_units,
+                                                                  uint32_t sectors_per_unit,
+                                                                  uint32_t bytes_per_sector)
+{
+    rdp_buffer text;
+    uint32_t text_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !volume_label || !filesystem_name || sectors_per_unit == 0 ||
+        bytes_per_sector == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&text);
+    switch (information_class)
+    {
+        case RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_INFORMATION:
+            status = rdp_filesystem_append_utf16le_text(&text, volume_label, &text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 17u + text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, creation_time);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, serial_number);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u8(buffer, 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append(buffer, text.data, text.length);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_LABEL_INFORMATION:
+            status = rdp_filesystem_append_utf16le_text(&text, volume_label, &text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 4u + text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append(buffer, text.data, text.length);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_SIZE_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 24u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, total_units);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, available_units);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, sectors_per_unit);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_DEVICE_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 8u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, RDP_FILESYSTEM_REDIRECTION_FILE_DEVICE_DISK);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 0);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_ATTRIBUTE_INFORMATION:
+            status = rdp_filesystem_append_utf16le_text(&text, filesystem_name, &text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 12u + text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer,
+                                                  RDP_FILESYSTEM_REDIRECTION_FILE_CASE_SENSITIVE_SEARCH |
+                                                      RDP_FILESYSTEM_REDIRECTION_FILE_CASE_PRESERVED_NAMES |
+                                                      RDP_FILESYSTEM_REDIRECTION_FILE_UNICODE_ON_DISK);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 255u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, text_len);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append(buffer, text.data, text.length);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_CONTROL_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 48u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_zeroes(buffer, 48u);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_FULL_SIZE_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 32u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, total_units);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, available_units);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_u64_le(buffer, available_units);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, sectors_per_unit);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_OBJECT_ID_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 64u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_filesystem_append_volume_object_id(buffer,
+                                                                serial_number,
+                                                                total_units,
+                                                                available_units,
+                                                                sectors_per_unit,
+                                                                bytes_per_sector);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_FLAGS_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 4u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 0);
+            break;
+        case RDP_FILESYSTEM_REDIRECTION_FS_SECTOR_SIZE_INFORMATION:
+            status = rdp_buffer_append_u32_le(buffer, 28u);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 0);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u32_le(buffer, 0);
+            break;
+        default:
+            status = LIBRDP_STATUS_UNSUPPORTED;
+            break;
+    }
+    rdp_buffer_free(&text);
+    return status;
+}
+
 static void rdp_filesystem_security_write_u16_le(uint8_t* data, size_t offset, uint16_t value)
 {
     data[offset] = (uint8_t)(value & 0xffu);

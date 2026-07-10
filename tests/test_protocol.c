@@ -78,6 +78,11 @@ static uint32_t test_read_u32_le(const uint8_t* data)
     return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
 }
 
+static uint64_t test_read_u64_le(const uint8_t* data)
+{
+    return (uint64_t)test_read_u32_le(data) | ((uint64_t)test_read_u32_le(data + 4u) << 32u);
+}
+
 static int test_append_rfx_block(rdp_buffer* out, uint16_t block_type, const rdp_buffer* payload)
 {
     uint32_t length = 0;
@@ -7659,6 +7664,126 @@ static int test_filesystem_redirection_channel(void)
                1000u,
                100u,
                0644u) == LIBRDP_STATUS_UNSUPPORTED);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0x0102030405060708ull,
+                                                               0x11223344u,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               512u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 29u);
+    PCHECK(test_read_u32_le(response.data) == 25u);
+    PCHECK(test_read_u64_le(response.data + 4u) == 0x0102030405060708ull);
+    PCHECK(test_read_u32_le(response.data + 12u) == 0x11223344u);
+    PCHECK(test_read_u32_le(response.data + 16u) == 8u);
+    PCHECK(response.data[20] == 0u && response.data[21] == 'V' && response.data[22] == 0u &&
+           response.data[23] == 'O' && response.data[24] == 0u && response.data[25] == 'L');
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_LABEL_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               0,
+                                                               0,
+                                                               1u,
+                                                               512u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 16u);
+    PCHECK(test_read_u32_le(response.data) == 12u && test_read_u32_le(response.data + 4u) == 8u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_CONTROL_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               512u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 52u && test_read_u32_le(response.data) == 48u);
+    PCHECK(test_read_u64_le(response.data + 4u) == 0u &&
+           test_read_u32_le(response.data + 48u) == 0u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_OBJECT_ID_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0x11223344u,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               512u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 68u);
+    PCHECK(test_read_u32_le(response.data) == 64u);
+    PCHECK(test_read_u32_le(response.data + 4u) == 0x11223344u);
+    PCHECK(test_read_u32_le(response.data + 8u) == 1000u);
+    PCHECK(test_read_u32_le(response.data + 12u) == 400u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_VOLUME_FLAGS_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               512u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 8u && test_read_u32_le(response.data) == 4u &&
+           test_read_u32_le(response.data + 4u) == 0u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_SECTOR_SIZE_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               4096u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 32u);
+    PCHECK(test_read_u32_le(response.data) == 28u &&
+           test_read_u32_le(response.data + 4u) == 4096u &&
+           test_read_u32_le(response.data + 16u) == 4096u &&
+           test_read_u32_le(response.data + 20u) == 0u);
+    rdp_buffer_free(&response);
+    rdp_buffer_init(&response);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               0xffu,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               1000u,
+                                                               400u,
+                                                               8u,
+                                                               512u) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_filesystem_redirection_write_volume_information(&response,
+                                                               RDP_FILESYSTEM_REDIRECTION_FS_SIZE_INFORMATION,
+                                                               "VOL",
+                                                               "POSIX",
+                                                               0,
+                                                               0,
+                                                               1000u,
+                                                               400u,
+                                                               0,
+                                                               512u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
 

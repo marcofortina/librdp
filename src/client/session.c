@@ -187,18 +187,9 @@
 #define RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION 37u
 #define RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION 38u
 #define RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION 39u
-#define RDP_SESSION_FILE_FS_VOLUME_INFORMATION 1u
-#define RDP_SESSION_FILE_FS_SIZE_INFORMATION 3u
-#define RDP_SESSION_FILE_FS_DEVICE_INFORMATION 4u
-#define RDP_SESSION_FILE_FS_ATTRIBUTE_INFORMATION 5u
-#define RDP_SESSION_FILE_FS_FULL_SIZE_INFORMATION 7u
 #define RDP_SESSION_FILE_ATTRIBUTE_READONLY 0x00000001u
 #define RDP_SESSION_FILE_ATTRIBUTE_DIRECTORY 0x00000010u
 #define RDP_SESSION_FILE_ATTRIBUTE_NORMAL 0x00000080u
-#define RDP_SESSION_FILE_CASE_SENSITIVE_SEARCH 0x00000001u
-#define RDP_SESSION_FILE_CASE_PRESERVED_NAMES 0x00000002u
-#define RDP_SESSION_FILE_UNICODE_ON_DISK 0x00000004u
-#define RDP_SESSION_FILE_DEVICE_DISK 0x00000007u
 #define RDP_SESSION_PORT_TYPE_NONE 0u
 #define RDP_SESSION_PORT_TYPE_SERIAL 1u
 #define RDP_SESSION_PORT_TYPE_PARALLEL 2u
@@ -3173,36 +3164,16 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     return status;
 }
 
-static librdp_status rdp_session_write_volume_label(rdp_buffer* buffer, const char* label, uint32_t* bytes)
-{
-    size_t start = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    if (!buffer || !label || !bytes)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    start = buffer->length;
-    status = rdp_session_utf8_to_utf16le(label, buffer, 1);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (buffer->length - start > UINT32_MAX)
-        return LIBRDP_STATUS_NO_MEMORY;
-    *bytes = (uint32_t)(buffer->length - start);
-    return LIBRDP_STATUS_OK;
-}
-
 static librdp_status rdp_session_write_volume_information(rdp_buffer* buffer,
                                                           uint32_t information_class,
                                                           const char* root)
 {
     struct stat st;
     struct statvfs vfs;
-    rdp_buffer text;
     uint64_t total_units = 0;
     uint64_t available_units = 0;
     uint32_t bytes_per_sector = 512;
     uint32_t sectors_per_unit = 1;
-    uint32_t text_len = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !root)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -3212,83 +3183,28 @@ static librdp_status rdp_session_write_volume_information(rdp_buffer* buffer,
         return LIBRDP_STATUS_STATE;
     if (statvfs(root, &vfs) == 0)
     {
+        unsigned long block_size = vfs.f_frsize != 0 ? vfs.f_frsize : vfs.f_bsize;
+
         total_units = (uint64_t)vfs.f_blocks;
         available_units = (uint64_t)vfs.f_bavail;
-        if (vfs.f_frsize >= 512u)
-            sectors_per_unit = (uint32_t)(vfs.f_frsize / 512u);
+        if (block_size > 0 && block_size < 512u)
+            bytes_per_sector = (uint32_t)block_size;
+        else if (block_size >= 512u)
+            sectors_per_unit = (uint32_t)(block_size / 512u);
+        if (sectors_per_unit == 0)
+            sectors_per_unit = 1;
     }
-
-    rdp_buffer_init(&text);
-    switch (information_class)
-    {
-        case RDP_SESSION_FILE_FS_VOLUME_INFORMATION:
-            status = rdp_session_write_volume_label(&text, "librdp", &text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, 17u + text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, rdp_session_stat_ctime(&st));
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, (uint32_t)((st.st_dev ^ st.st_ino) & 0xffffffffu));
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u8(buffer, 0);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append(buffer, text.data, text.length);
-            break;
-        case RDP_SESSION_FILE_FS_SIZE_INFORMATION:
-            status = rdp_buffer_append_u32_le(buffer, 24);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, total_units);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, available_units);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, sectors_per_unit);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
-            break;
-        case RDP_SESSION_FILE_FS_DEVICE_INFORMATION:
-            status = rdp_buffer_append_u32_le(buffer, 8);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, RDP_SESSION_FILE_DEVICE_DISK);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, 0);
-            break;
-        case RDP_SESSION_FILE_FS_ATTRIBUTE_INFORMATION:
-            status = rdp_session_write_volume_label(&text, "POSIX", &text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, 12u + text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer,
-                                                  RDP_SESSION_FILE_CASE_SENSITIVE_SEARCH |
-                                                      RDP_SESSION_FILE_CASE_PRESERVED_NAMES |
-                                                      RDP_SESSION_FILE_UNICODE_ON_DISK);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, 255);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, text_len);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append(buffer, text.data, text.length);
-            break;
-        case RDP_SESSION_FILE_FS_FULL_SIZE_INFORMATION:
-            status = rdp_buffer_append_u32_le(buffer, 32);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, total_units);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, available_units);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_session_append_u64_le(buffer, available_units);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, sectors_per_unit);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u32_le(buffer, bytes_per_sector);
-            break;
-        default:
-            status = LIBRDP_STATUS_UNSUPPORTED;
-            break;
-    }
-    rdp_buffer_free(&text);
-    return status;
+    return rdp_filesystem_redirection_write_volume_information(buffer,
+                                                              information_class,
+                                                              "librdp",
+                                                              "POSIX",
+                                                              rdp_session_stat_ctime(&st),
+                                                              (uint32_t)((st.st_dev ^ st.st_ino) &
+                                                                         0xffffffffu),
+                                                              total_units,
+                                                              available_units,
+                                                              sectors_per_unit,
+                                                              bytes_per_sector);
 }
 
 static char* rdp_session_strdup_range(const char* data, size_t length)
