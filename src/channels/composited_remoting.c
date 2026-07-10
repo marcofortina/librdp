@@ -281,12 +281,72 @@ static rdp_composited_render_resource* rdp_composited_render_tree_upsert(
 static void rdp_composited_render_tree_delete(rdp_composited_render_tree* tree, uint32_t resource)
 {
     rdp_composited_render_resource* entry = rdp_composited_render_tree_find_mutable(tree, resource);
+    uint32_t i = 0;
+    uint8_t changed = 0;
 
-    if (!entry)
-        return;
-    memset(entry, 0, sizeof(*entry));
-    if (tree->resource_count > 0)
-        tree->resource_count--;
+    if (entry)
+    {
+        memset(entry, 0, sizeof(*entry));
+        if (tree->resource_count > 0)
+            tree->resource_count--;
+        changed = 1;
+    }
+    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    {
+        rdp_composited_render_resource* current = &tree->resources[i];
+
+        if (!current->active)
+            continue;
+        if (current->duplicate_source == resource)
+        {
+            current->duplicate_source = 0;
+            current->duplicate_target_channel = 0;
+            changed = 1;
+        }
+        if (current->root_resource == resource)
+        {
+            current->root_resource = 0;
+            changed = 1;
+        }
+        if (current->sprite_image_resource == resource)
+        {
+            current->sprite_image_resource = 0;
+            changed = 1;
+        }
+        if (current->logical_surface_image_resource == resource)
+        {
+            current->logical_surface_image_resource = 0;
+            changed = 1;
+        }
+        if (current->sprite_clip_resource == resource)
+        {
+            current->sprite_clip_resource = 0;
+            current->sprite_clip_for_dirty_accum = 0;
+            changed = 1;
+        }
+        if (current->dx_clip_resource == resource)
+        {
+            current->dx_clip_resource = 0;
+            changed = 1;
+        }
+        if (current->transform_resource == resource)
+        {
+            current->transform_resource = 0;
+            changed = 1;
+        }
+        if (current->color_transform_resource == resource)
+        {
+            current->color_transform_resource = 0;
+            changed = 1;
+        }
+        if (current->filter_list_resource == resource)
+        {
+            current->filter_list_resource = 0;
+            changed = 1;
+        }
+    }
+    if (changed)
+        tree->invalidation_count++;
 }
 
 void rdp_composited_render_tree_init(rdp_composited_render_tree* tree)
