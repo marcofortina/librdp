@@ -218,6 +218,25 @@ typedef struct rdp_gdi_gdiplus_capability
     uint16_t image_cache_properties[3];
 } rdp_gdi_gdiplus_capability;
 
+typedef struct rdp_gdi_ninegrid_bitmap_info
+{
+    uint32_t flags;
+    uint32_t left_width;
+    uint32_t right_width;
+    uint32_t top_height;
+    uint32_t bottom_height;
+    uint32_t transparent_color;
+} rdp_gdi_ninegrid_bitmap_info;
+
+typedef struct rdp_gdi_create_ninegrid_bitmap_order
+{
+    uint32_t bits_per_pixel;
+    uint32_t bitmap_id;
+    uint32_t width;
+    uint32_t height;
+    rdp_gdi_ninegrid_bitmap_info info;
+} rdp_gdi_create_ninegrid_bitmap_order;
+
 librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update);
@@ -269,6 +288,10 @@ librdp_status rdp_gdi_write_altsec_order(rdp_buffer* buffer,
                                          uint8_t order_type,
                                          const void* payload,
                                          size_t payload_len);
+librdp_status rdp_gdi_parse_create_ninegrid_bitmap_order(const rdp_gdi_altsec_order_header* header,
+                                                         rdp_gdi_create_ninegrid_bitmap_order* order);
+librdp_status rdp_gdi_write_create_ninegrid_bitmap_order(rdp_buffer* buffer,
+                                                         const rdp_gdi_create_ninegrid_bitmap_order* order);
 librdp_status rdp_gdi_parse_bitmap_cache_error_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_bitmap_cache_error* error);

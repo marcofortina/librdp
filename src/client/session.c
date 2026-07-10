@@ -99,6 +99,7 @@
 #define RDP_SESSION_GDI_BITMAP_CACHE_SLOTS 4096u
 #define RDP_SESSION_GDI_BITMAP_CACHE_MAX_BYTES (64u * 1024u * 1024u)
 #define RDP_SESSION_GDI_COLOR_TABLE_SLOTS 256u
+#define RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS 256u
 #define RDP_SESSION_BITMAP_FLAG_COMPRESSED 0x0001u
 #define RDP_SESSION_GDI_SAVE_BITMAP_SLOTS 64u
 #define RDP_SESSION_GDI_SAVE_BITMAP_MAX_BYTES (8u * 1024u * 1024u)
@@ -341,6 +342,14 @@ typedef struct rdp_session_gdi_color_table_cache_entry
     rdp_palette_update palette;
 } rdp_session_gdi_color_table_cache_entry;
 
+typedef struct rdp_session_gdi_ninegrid_cache_entry
+{
+    uint8_t active;
+    uint32_t bitmap_id;
+    uint32_t bits_per_pixel;
+    rdp_gdi_ninegrid_bitmap_info info;
+} rdp_session_gdi_ninegrid_cache_entry;
+
 typedef struct rdp_session_progressive_tile_cache
 {
     uint8_t active;
@@ -523,6 +532,7 @@ struct librdp_session
     rdp_session_graphics_cache_entry graphics_cache[RDP_SESSION_GRAPHICS_CACHE_SLOTS];
     rdp_session_gdi_bitmap_cache_entry gdi_bitmap_cache[RDP_SESSION_GDI_BITMAP_CACHE_SLOTS];
     rdp_session_gdi_color_table_cache_entry gdi_color_table_cache[RDP_SESSION_GDI_COLOR_TABLE_SLOTS];
+    rdp_session_gdi_ninegrid_cache_entry gdi_ninegrid_cache[RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS];
     rdp_session_gdi_saved_bitmap gdi_saved_bitmaps[RDP_SESSION_GDI_SAVE_BITMAP_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
@@ -12005,11 +12015,54 @@ static void rdp_session_gdi_color_table_cache_clear(librdp_session* session)
     memset(session->gdi_color_table_cache, 0, sizeof(session->gdi_color_table_cache));
 }
 
+static void rdp_session_gdi_ninegrid_cache_clear(librdp_session* session)
+{
+    if (!session)
+        return;
+    memset(session->gdi_ninegrid_cache, 0, sizeof(session->gdi_ninegrid_cache));
+}
+
 static size_t rdp_session_gdi_bitmap_cache_entry_size(const rdp_session_gdi_bitmap_cache_entry* entry)
 {
     if (!entry || !entry->active)
         return 0;
     return entry->pixels.length + entry->raw.length;
+}
+
+static rdp_session_gdi_ninegrid_cache_entry* rdp_session_gdi_ninegrid_cache_find(librdp_session* session,
+                                                                                 uint32_t bitmap_id)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_ninegrid_cache_entry* entry = &session->gdi_ninegrid_cache[i];
+
+        if (entry->active && entry->bitmap_id == bitmap_id)
+            return entry;
+    }
+    return NULL;
+}
+
+static rdp_session_gdi_ninegrid_cache_entry* rdp_session_gdi_ninegrid_cache_slot(librdp_session* session,
+                                                                                 uint32_t bitmap_id)
+{
+    size_t i = 0;
+    rdp_session_gdi_ninegrid_cache_entry* entry =
+        rdp_session_gdi_ninegrid_cache_find(session, bitmap_id);
+
+    if (entry)
+        return entry;
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS; i++)
+    {
+        if (!session->gdi_ninegrid_cache[i].active)
+            return &session->gdi_ninegrid_cache[i];
+    }
+    return &session->gdi_ninegrid_cache[bitmap_id % RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS];
 }
 
 static const rdp_palette_update* rdp_session_gdi_color_table_find(const librdp_session* session,
@@ -18219,6 +18272,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             rdp_session_graphics_surfaces_clear(session);
             rdp_session_graphics_cache_clear(session);
             rdp_session_gdi_color_table_cache_clear(session);
+            rdp_session_gdi_ninegrid_cache_clear(session);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.channel",
                             "dvc_channel_id=%u",
@@ -18566,6 +18620,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 rdp_session_graphics_surfaces_clear(session);
                 rdp_session_graphics_cache_clear(session);
                 rdp_session_gdi_color_table_cache_clear(session);
+                rdp_session_gdi_ninegrid_cache_clear(session);
             }
             if (entry->channel_id == session->usb_redirection_channel_id)
                 rdp_session_usb_redirection_reset(session);
@@ -19901,6 +19956,201 @@ static librdp_status rdp_session_gdi_copy_rect(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+static rdp_session_gdi_bitmap_cache_entry* rdp_session_gdi_ninegrid_bitmap_find(librdp_session* session,
+                                                                                uint32_t bitmap_id)
+{
+    size_t i = 0;
+    rdp_session_gdi_bitmap_cache_entry* entry = NULL;
+
+    entry = rdp_session_gdi_bitmap_cache_find(session, 0, bitmap_id);
+    if (entry)
+        return entry;
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_BITMAP_CACHE_SLOTS; i++)
+    {
+        entry = &session->gdi_bitmap_cache[i];
+        if (entry->active && entry->cache_index == bitmap_id)
+        {
+            entry->last_used = ++session->gdi_bitmap_cache_clock;
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t rdp_session_gdi_min_u32(uint32_t a, uint32_t b)
+{
+    return a < b ? a : b;
+}
+
+static uint32_t rdp_session_gdi_ninegrid_axis(uint32_t pos,
+                                              uint32_t dst_len,
+                                              uint32_t src_start,
+                                              uint32_t src_len,
+                                              uint32_t src_leading,
+                                              uint32_t src_trailing,
+                                              uint32_t dst_leading,
+                                              uint32_t dst_trailing)
+{
+    uint32_t src_center = 0;
+    uint32_t dst_center = 0;
+
+    if (src_len == 0 || dst_len == 0)
+        return src_start;
+    if (pos < dst_leading)
+        return src_start + rdp_session_gdi_min_u32(pos, src_len - 1u);
+    if (pos >= dst_len - dst_trailing)
+    {
+        uint32_t tail = dst_len - 1u - pos;
+
+        return src_start + src_len - 1u - rdp_session_gdi_min_u32(tail, src_len - 1u);
+    }
+    src_center = src_len - src_leading - src_trailing;
+    dst_center = dst_len - dst_leading - dst_trailing;
+    if (src_center == 0 || dst_center == 0)
+        return src_start + rdp_session_gdi_min_u32(src_leading, src_len - 1u);
+    return src_start + src_leading + (uint32_t)(((uint64_t)(pos - dst_leading) * src_center) / dst_center);
+}
+
+static librdp_status rdp_session_gdi_draw_ninegrid(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    rdp_session_gdi_ninegrid_cache_entry* grid = NULL;
+    rdp_session_gdi_bitmap_cache_entry* bitmap = NULL;
+    rdp_session_gdi_region region;
+    uint8_t* dst_pixels = NULL;
+    const uint8_t* src_pixels = NULL;
+    size_t dst_stride = 0;
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    uint32_t src_left = 0;
+    uint32_t src_top = 0;
+    uint32_t src_right = 0;
+    uint32_t src_bottom = 0;
+    uint32_t src_width = 0;
+    uint32_t src_height = 0;
+    uint32_t src_left_band = 0;
+    uint32_t src_right_band = 0;
+    uint32_t src_top_band = 0;
+    uint32_t src_bottom_band = 0;
+    uint32_t dst_left_band = 0;
+    uint32_t dst_right_band = 0;
+    uint32_t dst_top_band = 0;
+    uint32_t dst_bottom_band = 0;
+    uint32_t y = 0;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    grid = rdp_session_gdi_ninegrid_cache_find(session, op->bitmap_id);
+    bitmap = rdp_session_gdi_ninegrid_bitmap_find(session, op->bitmap_id);
+    if (!grid || !bitmap || !bitmap->active || bitmap->pixels.length == 0 || bitmap->stride == 0)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.ninegrid.miss",
+                              "bitmap_id=%u has_grid=%u has_bitmap=%u x=%d y=%d width=%d height=%d",
+                              op->bitmap_id,
+                              grid ? 1u : 0u,
+                              bitmap ? 1u : 0u,
+                              op->rect.x,
+                              op->rect.y,
+                              op->rect.width,
+                              op->rect.height);
+        return LIBRDP_STATUS_OK;
+    }
+    if (op->src_left < 0 || op->src_top < 0 || op->src_right < op->src_left || op->src_bottom < op->src_top)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    src_left = (uint32_t)op->src_left;
+    src_top = (uint32_t)op->src_top;
+    src_right = (uint32_t)op->src_right;
+    src_bottom = (uint32_t)op->src_bottom;
+    if (src_left >= bitmap->width || src_top >= bitmap->height)
+        return LIBRDP_STATUS_OK;
+    if (src_right >= bitmap->width)
+        src_right = bitmap->width - 1u;
+    if (src_bottom >= bitmap->height)
+        src_bottom = bitmap->height - 1u;
+    if (src_right < src_left || src_bottom < src_top)
+        return LIBRDP_STATUS_OK;
+    src_width = src_right - src_left + 1u;
+    src_height = src_bottom - src_top + 1u;
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, &region))
+        return LIBRDP_STATUS_OK;
+    dst_pixels = librdp_surface_pixels_mut(session->surface);
+    src_pixels = bitmap->pixels.data;
+    dst_stride = librdp_surface_stride(session->surface);
+    if (!dst_pixels || !src_pixels || dst_stride == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    src_left_band = rdp_session_gdi_min_u32(grid->info.left_width, src_width);
+    src_right_band = rdp_session_gdi_min_u32(grid->info.right_width, src_width - src_left_band);
+    src_top_band = rdp_session_gdi_min_u32(grid->info.top_height, src_height);
+    src_bottom_band = rdp_session_gdi_min_u32(grid->info.bottom_height, src_height - src_top_band);
+    dst_left_band = rdp_session_gdi_min_u32(grid->info.left_width, (uint32_t)op->rect.width);
+    dst_right_band = rdp_session_gdi_min_u32(grid->info.right_width, (uint32_t)op->rect.width - dst_left_band);
+    dst_top_band = rdp_session_gdi_min_u32(grid->info.top_height, (uint32_t)op->rect.height);
+    dst_bottom_band = rdp_session_gdi_min_u32(grid->info.bottom_height, (uint32_t)op->rect.height - dst_top_band);
+    for (y = 0; y < region.height; y++)
+    {
+        uint32_t dst_abs_y = region.dst_y + y;
+        uint32_t dst_rel_y = (uint32_t)((int32_t)dst_abs_y - op->rect.y);
+        uint32_t sy = rdp_session_gdi_ninegrid_axis(dst_rel_y,
+                                                    (uint32_t)op->rect.height,
+                                                    src_top,
+                                                    src_height,
+                                                    src_top_band,
+                                                    src_bottom_band,
+                                                    dst_top_band,
+                                                    dst_bottom_band);
+        uint8_t* dst = dst_pixels + ((size_t)dst_abs_y * dst_stride) + ((size_t)region.dst_x * 4u);
+        uint32_t x = 0;
+
+        for (x = 0; x < region.width; x++)
+        {
+            uint32_t dst_abs_x = region.dst_x + x;
+            uint32_t dst_rel_x = (uint32_t)((int32_t)dst_abs_x - op->rect.x);
+            uint32_t sx = rdp_session_gdi_ninegrid_axis(dst_rel_x,
+                                                        (uint32_t)op->rect.width,
+                                                        src_left,
+                                                        src_width,
+                                                        src_left_band,
+                                                        src_right_band,
+                                                        dst_left_band,
+                                                        dst_right_band);
+            const uint8_t* src = src_pixels + ((size_t)sy * bitmap->stride) + ((size_t)sx * 4u);
+
+            if ((grid->info.flags & 0x01u) != 0 &&
+                (((uint32_t)src[0] | ((uint32_t)src[1] << 8u) | ((uint32_t)src[2] << 16u)) ==
+                 (grid->info.transparent_color & 0x00ffffffu)))
+            {
+                dst += 4u;
+                continue;
+            }
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 0xffu;
+            dst += 4u;
+        }
+    }
+    rdp_session_emit_surface_invalidated(session, region.dst_x, region.dst_y, region.width, region.height);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.ninegrid.blit",
+                          "bitmap_id=%u src=%u,%u,%u,%u x=%u y=%u width=%u height=%u",
+                          op->bitmap_id,
+                          src_left,
+                          src_top,
+                          src_right,
+                          src_bottom,
+                          region.dst_x,
+                          region.dst_y,
+                          region.width,
+                          region.height);
+    return LIBRDP_STATUS_OK;
+}
+
 static int32_t rdp_session_gdi_abs_i32(int32_t value)
 {
     return value < 0 ? -value : value;
@@ -20518,6 +20768,8 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
                               op->rop);
         return LIBRDP_STATUS_OK;
     }
+    if (op->kind == RDP_GDI_RENDER_OP_DRAW_NINEGRID)
+        return rdp_session_gdi_draw_ninegrid(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_LINE)
         return rdp_session_gdi_draw_line(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_POLYLINE)
@@ -20539,7 +20791,8 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
     if (op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
         op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT ||
         op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
-        op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
+        op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
+        op->kind == RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID)
     {
         uint32_t i = 0;
         librdp_status status = LIBRDP_STATUS_OK;
@@ -20558,12 +20811,14 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
                 single.kind = RDP_GDI_RENDER_OP_PATBLT;
             else if (op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT)
                 single.kind = RDP_GDI_RENDER_OP_OPAQUE_RECT;
-            else
+            else if (op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT)
             {
                 single.kind = RDP_GDI_RENDER_OP_SCRBLT;
                 single.src_x = op->src_x + (op->rects[i].x - op->rect.x);
                 single.src_y = op->src_y + (op->rects[i].y - op->rect.y);
             }
+            else
+                single.kind = RDP_GDI_RENDER_OP_DRAW_NINEGRID;
             status = rdp_session_apply_gdi_render_op(session, &single);
             if (status != LIBRDP_STATUS_OK)
                 return status;
@@ -20747,6 +21002,50 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
+                                                        const rdp_gdi_altsec_order_header* header)
+{
+    rdp_gdi_create_ninegrid_bitmap_order order;
+    rdp_session_gdi_ninegrid_cache_entry* entry = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !header)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type == RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP)
+    {
+        status = rdp_gdi_parse_create_ninegrid_bitmap_order(header, &order);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        entry = rdp_session_gdi_ninegrid_cache_slot(session, order.bitmap_id);
+        if (!entry)
+            return LIBRDP_STATUS_NO_MEMORY;
+        memset(entry, 0, sizeof(*entry));
+        entry->active = 1;
+        entry->bitmap_id = order.bitmap_id;
+        entry->bits_per_pixel = order.bits_per_pixel;
+        entry->info = order.info;
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.ninegrid.store",
+                              "bitmap_id=%u bpp=%u left=%u right=%u top=%u bottom=%u flags=%u",
+                              entry->bitmap_id,
+                              entry->bits_per_pixel,
+                              entry->info.left_width,
+                              entry->info.right_width,
+                              entry->info.top_height,
+                              entry->info.bottom_height,
+                              entry->info.flags);
+        return LIBRDP_STATUS_OK;
+    }
+    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "rdp.gdi.altsec.unsupported",
+                          "order_type=%u payload_len=%u",
+                          header->order_type,
+                          (unsigned)header->payload_len);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session, const rdp_gdi_orders_update* update)
 {
     size_t offset = 0;
@@ -20758,6 +21057,7 @@ static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session
     {
         rdp_gdi_render_op op;
         rdp_gdi_secondary_order_header secondary;
+        rdp_gdi_altsec_order_header altsec;
         size_t consumed = 0;
         librdp_status status = LIBRDP_STATUS_OK;
 
@@ -20775,6 +21075,19 @@ static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session
             if (status != LIBRDP_STATUS_OK)
                 return status;
             offset += secondary.actual_length;
+            continue;
+        }
+        if ((update->order_data[offset] & 0x03u) == RDP_GDI_TS_SECONDARY)
+        {
+            status = rdp_gdi_parse_altsec_order(update->order_data + offset,
+                                                update->order_data_len - offset,
+                                                &altsec);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_session_apply_gdi_altsec_order(session, &altsec);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            offset = update->order_data_len;
             continue;
         }
         status = rdp_gdi_decode_primary_render_order(&session->gdi_render,
@@ -21214,6 +21527,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
+    rdp_session_gdi_ninegrid_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -21386,6 +21700,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
+    rdp_session_gdi_ninegrid_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -23171,6 +23486,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
+    rdp_session_gdi_ninegrid_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);

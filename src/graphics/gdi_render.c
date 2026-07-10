@@ -11,6 +11,8 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
     {
         case RDP_GDI_ORDER_DSTBLT:
         case RDP_GDI_ORDER_SCRBLT:
+        case RDP_GDI_ORDER_DRAWNINEGRID:
+        case RDP_GDI_ORDER_MULTI_DRAWNINEGRID:
         case RDP_GDI_ORDER_OPAQUERECT:
         case RDP_GDI_ORDER_MULTIDSTBLT:
         case RDP_GDI_ORDER_POLYGON_SC:
@@ -1228,6 +1230,123 @@ static librdp_status rdp_gdi_render_decode_save_bitmap(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_render_rect_from_bounds_or_source(const rdp_gdi_render_op* op,
+                                                               int32_t src_left,
+                                                               int32_t src_top,
+                                                               int32_t src_right,
+                                                               int32_t src_bottom,
+                                                               rdp_gdi_render_rect* rect)
+{
+    if (!op || !rect || src_right < src_left || src_bottom < src_top)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (op->bounds.present)
+    {
+        if (op->bounds.right < op->bounds.left || op->bounds.bottom < op->bounds.top)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        rect->x = op->bounds.left;
+        rect->y = op->bounds.top;
+        rect->width = op->bounds.right - op->bounds.left + 1;
+        rect->height = op->bounds.bottom - op->bounds.top + 1;
+        return LIBRDP_STATUS_OK;
+    }
+    rect->x = src_left;
+    rect->y = src_top;
+    rect->width = src_right - src_left + 1;
+    rect->height = src_bottom - src_top + 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_draw_ninegrid(rdp_stream* stream,
+                                                         uint32_t flags,
+                                                         int delta,
+                                                         rdp_gdi_render_state* state,
+                                                         rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x01u)
+        status = rdp_gdi_render_read_coord(stream, delta, &state->nine_src_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x02u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->nine_src_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x04u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->nine_src_right);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x08u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->nine_src_bottom);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x10u))
+        status = rdp_gdi_render_read_u16(stream, &state->nine_bitmap_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    op->kind = RDP_GDI_RENDER_OP_DRAW_NINEGRID;
+    op->bitmap_id = state->nine_bitmap_id;
+    op->src_left = state->nine_src_left;
+    op->src_top = state->nine_src_top;
+    op->src_right = state->nine_src_right;
+    op->src_bottom = state->nine_src_bottom;
+    return rdp_gdi_render_rect_from_bounds_or_source(op,
+                                                     state->nine_src_left,
+                                                     state->nine_src_top,
+                                                     state->nine_src_right,
+                                                     state->nine_src_bottom,
+                                                     &op->rect);
+}
+
+static librdp_status rdp_gdi_render_decode_multi_draw_ninegrid(rdp_stream* stream,
+                                                               uint32_t flags,
+                                                               int delta,
+                                                               rdp_gdi_render_state* state,
+                                                               rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (flags & 0x01u)
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_nine_src_left);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x02u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_nine_src_top);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x04u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_nine_src_right);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x08u))
+        status = rdp_gdi_render_read_coord(stream, delta, &state->multi_nine_src_bottom);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x10u))
+        status = rdp_gdi_render_read_u16(stream, &state->multi_nine_bitmap_id);
+    if (status == LIBRDP_STATUS_OK && (flags & 0x20u))
+    {
+        uint8_t count = 0;
+
+        if (rdp_stream_read_u8(stream, &count) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            state->multi_nine_rect_count = count;
+    }
+    if (status == LIBRDP_STATUS_OK && (flags & 0x40u))
+    {
+        if (state->multi_nine_rect_count == 0 ||
+            state->multi_nine_rect_count > RDP_GDI_RENDER_MAX_RECTS)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+            status = rdp_gdi_render_read_rect_blob(stream,
+                                                   state->multi_nine_rect_count,
+                                                   state->multi_nine_rects);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (state->multi_nine_rect_count > RDP_GDI_RENDER_MAX_RECTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->kind = RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID;
+    op->bitmap_id = state->multi_nine_bitmap_id;
+    op->src_left = state->multi_nine_src_left;
+    op->src_top = state->multi_nine_src_top;
+    op->src_right = state->multi_nine_src_right;
+    op->src_bottom = state->multi_nine_src_bottom;
+    op->rect_count = state->multi_nine_rect_count;
+    memcpy(op->rects, state->multi_nine_rects, sizeof(op->rects[0]) * op->rect_count);
+    return rdp_gdi_render_rect_from_bounds_or_source(op,
+                                                     state->multi_nine_src_left,
+                                                     state->multi_nine_src_top,
+                                                     state->multi_nine_src_right,
+                                                     state->multi_nine_src_bottom,
+                                                     &op->rect);
+}
+
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
 {
     if (!state)
@@ -1318,6 +1437,12 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             break;
         case RDP_GDI_ORDER_MEM3BLT:
             status = rdp_gdi_render_decode_mem3blt(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_DRAWNINEGRID:
+            status = rdp_gdi_render_decode_draw_ninegrid(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_MULTI_DRAWNINEGRID:
+            status = rdp_gdi_render_decode_multi_draw_ninegrid(&stream, field_flags, delta, state, op);
             break;
         case RDP_GDI_ORDER_MULTIDSTBLT:
             status = rdp_gdi_render_decode_multi_dstblt(&stream, field_flags, delta, state, op);

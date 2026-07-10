@@ -11536,9 +11536,49 @@ static int test_gdi_orders(void)
         0x08u, 0x00u,
         0x00u
     };
+    const uint8_t render_draw_ninegrid[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_DRAWNINEGRID,
+        0x1fu,
+        0x0fu,
+        0x0au, 0x00u,
+        0x14u, 0x00u,
+        0x1du, 0x00u,
+        0x27u, 0x00u,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x08u, 0x00u,
+        0x09u, 0x00u,
+        0x34u, 0x12u
+    };
+    const uint8_t render_multi_draw_ninegrid[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MULTI_DRAWNINEGRID,
+        0x7fu,
+        0x00u, 0x00u,
+        0x01u, 0x00u,
+        0x08u, 0x00u,
+        0x09u, 0x00u,
+        0x78u, 0x56u,
+        2u,
+        9u, 0x00u,
+        0x00u,
+        1u, 2u, 3u, 4u,
+        5u, 6u, 7u, 8u
+    };
     const uint8_t render_unsupported[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
-        RDP_GDI_ORDER_DRAWNINEGRID
+        RDP_GDI_ORDER_FAST_INDEX
+    };
+    const uint8_t create_ninegrid_payload[] = {
+        32u,
+        0x34u, 0x12u,
+        0x01u, 0x00u, 0x00u, 0x00u,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0xccu, 0xbbu, 0xaau, 0x00u
     };
     const uint8_t bad_bounds[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
@@ -11568,6 +11608,7 @@ static int test_gdi_orders(void)
     rdp_gdi_bitmap_cache_error parsed_error;
     rdp_gdi_color_cache_capability color;
     rdp_gdi_ninegrid_capability ninegrid;
+    rdp_gdi_create_ninegrid_bitmap_order create_ninegrid;
     rdp_gdi_gdiplus_capability gdiplus;
     rdp_gdi_render_state render_state;
     rdp_gdi_render_op render_op;
@@ -12101,6 +12142,43 @@ static int test_gdi_orders(void)
            render_op.rect.width == 5 &&
            render_op.rect.height == 6);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_draw_ninegrid,
+                                               sizeof(render_draw_ninegrid),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_draw_ninegrid) &&
+           render_op.kind == RDP_GDI_RENDER_OP_DRAW_NINEGRID &&
+           render_op.bitmap_id == 0x1234u &&
+           render_op.src_left == 1 &&
+           render_op.src_top == 2 &&
+           render_op.src_right == 8 &&
+           render_op.src_bottom == 9 &&
+           render_op.rect.x == 10 &&
+           render_op.rect.y == 20 &&
+           render_op.rect.width == 20 &&
+           render_op.rect.height == 20);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_multi_draw_ninegrid,
+                                               sizeof(render_multi_draw_ninegrid),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_multi_draw_ninegrid) &&
+           render_op.kind == RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID &&
+           render_op.bitmap_id == 0x5678u &&
+           render_op.src_left == 0 &&
+           render_op.src_top == 1 &&
+           render_op.src_right == 8 &&
+           render_op.src_bottom == 9 &&
+           render_op.rect_count == 2 &&
+           render_op.rects[0].x == 1 &&
+           render_op.rects[0].y == 2 &&
+           render_op.rects[0].width == 3 &&
+           render_op.rects[0].height == 4 &&
+           render_op.rects[1].x == 6 &&
+           render_op.rects[1].y == 8 &&
+           render_op.rects[1].width == 7 &&
+           render_op.rects[1].height == 8);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_unsupported,
                                                sizeof(render_unsupported),
                                                &render_op,
@@ -12116,6 +12194,35 @@ static int test_gdi_orders(void)
                                       2u) == LIBRDP_STATUS_OK);
     PCHECK(payload.length == sizeof(altsec_order) &&
            memcmp(payload.data, altsec_order, sizeof(altsec_order)) == 0);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_altsec_order(&payload,
+                                      RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP,
+                                      create_ninegrid_payload,
+                                      sizeof(create_ninegrid_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_altsec_order(payload.data,
+                                      payload.length,
+                                      &altsec) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_create_ninegrid_bitmap_order(&altsec, &create_ninegrid) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(create_ninegrid.bits_per_pixel == 32 &&
+           create_ninegrid.bitmap_id == 0x1234u &&
+           create_ninegrid.info.flags == 1u &&
+           create_ninegrid.info.left_width == 2u &&
+           create_ninegrid.info.right_width == 3u &&
+           create_ninegrid.info.top_height == 4u &&
+           create_ninegrid.info.bottom_height == 5u &&
+           create_ninegrid.info.transparent_color == 0x00aabbccu);
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_create_ninegrid_bitmap_order(&payload, &create_ninegrid) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(payload.length == sizeof(create_ninegrid_payload) &&
+           memcmp(payload.data, create_ninegrid_payload, sizeof(create_ninegrid_payload)) == 0);
+    payload.data[0] = 0;
+    altsec.payload = payload.data;
+    altsec.payload_len = payload.length;
+    altsec.order_type = RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP;
+    PCHECK(rdp_gdi_parse_create_ninegrid_bitmap_order(&altsec, &create_ninegrid) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
     payload.length = 0;
 
     PCHECK(rdp_buffer_append(&mixed, secondary.data, secondary.length) == LIBRDP_STATUS_OK);

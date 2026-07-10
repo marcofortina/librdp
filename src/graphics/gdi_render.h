@@ -25,7 +25,9 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_POLYGON_CB = 14,
     RDP_GDI_RENDER_OP_ELLIPSE_CB = 15,
     RDP_GDI_RENDER_OP_MEMBLT = 16,
-    RDP_GDI_RENDER_OP_MEM3BLT = 17
+    RDP_GDI_RENDER_OP_MEM3BLT = 17,
+    RDP_GDI_RENDER_OP_DRAW_NINEGRID = 18,
+    RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID = 19
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -79,6 +81,10 @@ typedef struct rdp_gdi_render_op
     uint32_t cache_id;
     uint32_t color_index;
     uint32_t cache_index;
+    int32_t src_left;
+    int32_t src_top;
+    int32_t src_right;
+    int32_t src_bottom;
     uint32_t fill_mode;
     uint32_t point_count;
     rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS];
@@ -197,6 +203,18 @@ typedef struct rdp_gdi_render_state
     int32_t save_bitmap_right;
     int32_t save_bitmap_bottom;
     uint8_t save_bitmap_operation;
+    int32_t nine_src_left;
+    int32_t nine_src_top;
+    int32_t nine_src_right;
+    int32_t nine_src_bottom;
+    uint32_t nine_bitmap_id;
+    int32_t multi_nine_src_left;
+    int32_t multi_nine_src_top;
+    int32_t multi_nine_src_right;
+    int32_t multi_nine_src_bottom;
+    uint32_t multi_nine_bitmap_id;
+    uint32_t multi_nine_rect_count;
+    rdp_gdi_render_rect multi_nine_rects[RDP_GDI_RENDER_MAX_RECTS];
     uint32_t mem_cache_id;
     int32_t mem_left;
     int32_t mem_top;
