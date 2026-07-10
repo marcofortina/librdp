@@ -84,6 +84,7 @@
 
 #define RDP_GDI_BITMAP_CACHE_ERROR_FLUSH_CACHE 0x01u
 #define RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID 0x02u
+#define RDP_GDI_NO_BITMAP_COMPRESSION_HEADER 0x0400u
 #define RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_NINEGRID_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_GDIPLUS_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
@@ -143,6 +144,20 @@ typedef struct rdp_gdi_secondary_order_header
     const uint8_t* payload;
     size_t payload_len;
 } rdp_gdi_secondary_order_header;
+
+typedef struct rdp_gdi_cache_bitmap_order
+{
+    uint32_t cache_id;
+    uint32_t bits_per_pixel;
+    uint32_t width;
+    uint32_t height;
+    uint32_t cache_index;
+    uint8_t compressed;
+    uint8_t has_compression_header;
+    uint8_t compression_header[8];
+    const uint8_t* bitmap_data;
+    uint32_t bitmap_data_len;
+} rdp_gdi_cache_bitmap_order;
 
 typedef struct rdp_gdi_altsec_order_header
 {
@@ -227,6 +242,8 @@ librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
                                             uint8_t order_type,
                                             const void* payload,
                                             size_t payload_len);
+librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_header* header,
+                                               rdp_gdi_cache_bitmap_order* order);
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header);
