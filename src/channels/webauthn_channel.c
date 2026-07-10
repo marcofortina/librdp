@@ -15,6 +15,8 @@ typedef struct rdp_webauthn_cbor_item
     size_t header_len;
 } rdp_webauthn_cbor_item;
 
+#define RDP_WEBAUTHN_CBOR_INDEFINITE UINT64_MAX
+
 static int rdp_webauthn_key_equals(const uint8_t* data, size_t length, const char* value)
 {
     size_t value_len = value ? strlen(value) : 0;
@@ -34,6 +36,11 @@ static librdp_status rdp_webauthn_cbor_read_item(const uint8_t* data,
     item->major = (uint8_t)(data[0] >> 5);
     ai = (uint8_t)(data[0] & 0x1fu);
     item->header_len = 1;
+    if (ai == 31u)
+    {
+        item->value = RDP_WEBAUTHN_CBOR_INDEFINITE;
+        return LIBRDP_STATUS_OK;
+    }
     if (ai < 24u)
     {
         item->value = ai;
@@ -78,6 +85,11 @@ static librdp_status rdp_webauthn_cbor_read_item(const uint8_t* data,
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 
+static int rdp_webauthn_cbor_is_break(const uint8_t* data, size_t length)
+{
+    return data && length > 0 && data[0] == 0xffu;
+}
+
 static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
                                             size_t length,
                                             size_t* consumed,
@@ -91,6 +103,8 @@ static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_webauthn_cbor_read_item(data, length, &item) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (item.major == 7 && item.value == RDP_WEBAUTHN_CBOR_INDEFINITE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (item.major == 0 || item.major == 1 || item.major == 7)
     {
         *consumed = item.header_len;
@@ -98,6 +112,31 @@ static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
     }
     if (item.major == 2 || item.major == 3)
     {
+        if (item.value == RDP_WEBAUTHN_CBOR_INDEFINITE)
+        {
+            offset = item.header_len;
+            while (1)
+            {
+                rdp_webauthn_cbor_item chunk;
+
+                if (offset >= length)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                if (rdp_webauthn_cbor_is_break(data + offset, length - offset))
+                {
+                    *consumed = offset + 1u;
+                    return LIBRDP_STATUS_OK;
+                }
+                if (rdp_webauthn_cbor_read_item(data + offset, length - offset, &chunk) !=
+                        LIBRDP_STATUS_OK ||
+                    chunk.major != item.major ||
+                    chunk.value == RDP_WEBAUTHN_CBOR_INDEFINITE ||
+                    chunk.value > SIZE_MAX ||
+                    chunk.header_len > length - offset ||
+                    (size_t)chunk.value > length - offset - chunk.header_len)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                offset += chunk.header_len + (size_t)chunk.value;
+            }
+        }
         if (item.value > SIZE_MAX || item.header_len > length ||
             (size_t)item.value > length - item.header_len)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -107,6 +146,28 @@ static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
     if (item.major == 4)
     {
         offset = item.header_len;
+        if (item.value == RDP_WEBAUTHN_CBOR_INDEFINITE)
+        {
+            while (1)
+            {
+                size_t child = 0;
+
+                if (offset >= length)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                if (rdp_webauthn_cbor_is_break(data + offset, length - offset))
+                {
+                    *consumed = offset + 1u;
+                    return LIBRDP_STATUS_OK;
+                }
+                if (rdp_webauthn_cbor_skip(data + offset,
+                                           length - offset,
+                                           &child,
+                                           depth + 1u) != LIBRDP_STATUS_OK ||
+                    child > length - offset)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                offset += child;
+            }
+        }
         for (i = 0; i < item.value; i++)
         {
             size_t child = 0;
@@ -123,6 +184,37 @@ static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
     if (item.major == 5)
     {
         offset = item.header_len;
+        if (item.value == RDP_WEBAUTHN_CBOR_INDEFINITE)
+        {
+            while (1)
+            {
+                size_t key_len = 0;
+                size_t value_len = 0;
+
+                if (offset >= length)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                if (rdp_webauthn_cbor_is_break(data + offset, length - offset))
+                {
+                    *consumed = offset + 1u;
+                    return LIBRDP_STATUS_OK;
+                }
+                if (rdp_webauthn_cbor_skip(data + offset,
+                                           length - offset,
+                                           &key_len,
+                                           depth + 1u) != LIBRDP_STATUS_OK ||
+                    key_len > length - offset)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                offset += key_len;
+                if (offset > length ||
+                    rdp_webauthn_cbor_skip(data + offset,
+                                           length - offset,
+                                           &value_len,
+                                           depth + 1u) != LIBRDP_STATUS_OK ||
+                    value_len > length - offset)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                offset += value_len;
+            }
+        }
         for (i = 0; i < item.value; i++)
         {
             size_t key_len = 0;
@@ -177,6 +269,7 @@ static librdp_status rdp_webauthn_cbor_read_slice(const uint8_t* data,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (rdp_webauthn_cbor_read_item(data, length, &item) != LIBRDP_STATUS_OK ||
         item.major != expected_major ||
+        item.value == RDP_WEBAUTHN_CBOR_INDEFINITE ||
         item.value > SIZE_MAX ||
         item.header_len > length ||
         (size_t)item.value > length - item.header_len)
@@ -380,14 +473,27 @@ librdp_status rdp_webauthn_parse_request(const void* data,
     if (rdp_webauthn_cbor_read_item(input, length, &map) != LIBRDP_STATUS_OK ||
         map.major != 5)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (map.value != RDP_WEBAUTHN_CBOR_INDEFINITE &&
+        map.value > RDP_WEBAUTHN_MAX_MESSAGE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     offset = map.header_len;
-    for (i = 0; i < map.value; i++)
+    for (i = 0; map.value == RDP_WEBAUTHN_CBOR_INDEFINITE || i < map.value; i++)
     {
         const uint8_t* key = NULL;
         size_t key_len = 0;
         size_t key_consumed = 0;
         size_t value_consumed = 0;
 
+        if (map.value == RDP_WEBAUTHN_CBOR_INDEFINITE)
+        {
+            if (offset >= length)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            if (rdp_webauthn_cbor_is_break(input + offset, length - offset))
+            {
+                offset++;
+                break;
+            }
+        }
         if (offset > length ||
             rdp_webauthn_cbor_read_slice(input + offset,
                                          length - offset,

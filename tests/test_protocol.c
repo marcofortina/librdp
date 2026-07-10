@@ -610,6 +610,22 @@ static int test_webauthn_channel(void)
         0x67, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
         0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t request_with_indefinite_cbor[] = {
+        0xbfu,
+        0x67u, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
+        RDP_WEBAUTHN_COMMAND_API_VERSION,
+        0x67u, 'i', 'g', 'n', 'o', 'r', 'e', 'd',
+        0x9fu,
+        0x01u,
+        0x5fu, 0x42u, 'a', 'b', 0x40u, 0xffu,
+        0xffu,
+        0xffu
+    };
+    const uint8_t unterminated_indefinite_cbor[] = {
+        0xbfu,
+        0x67u, 'c', 'o', 'm', 'm', 'a', 'n', 'd',
+        RDP_WEBAUTHN_COMMAND_API_VERSION
+    };
     const uint8_t truncated_cbor[] = {0xa1, 0x63, 'k', 'e', 'y'};
     const uint8_t trailing_cbor[] = {0x01, 0x02};
     uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
@@ -685,6 +701,15 @@ static int test_webauthn_channel(void)
     PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
     PCHECK(rdp_webauthn_validate_cbor(request_with_u64_cbor, sizeof(request_with_u64_cbor)) ==
            LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_request(request_with_indefinite_cbor,
+                                      sizeof(request_with_indefinite_cbor),
+                                      &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.command == RDP_WEBAUTHN_COMMAND_API_VERSION);
+    PCHECK(rdp_webauthn_validate_cbor(request_with_indefinite_cbor,
+                                      sizeof(request_with_indefinite_cbor)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_webauthn_parse_request(unterminated_indefinite_cbor,
+                                      sizeof(unterminated_indefinite_cbor),
+                                      &request) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_webauthn_validate_cbor(truncated_cbor, sizeof(truncated_cbor)) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_webauthn_validate_cbor(trailing_cbor, sizeof(trailing_cbor)) ==
