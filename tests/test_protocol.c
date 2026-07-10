@@ -7528,6 +7528,10 @@ static int test_device_redirection_channel(void)
            LIBRDP_STATUS_OK);
     PCHECK(header.component == RDP_DEVICE_REDIRECTION_COMPONENT_CORE);
     PCHECK(header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_ANNOUNCE);
+    PCHECK(rdp_device_redirection_write_header(&buffer,
+                                               RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                               RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_device_redirection_parse_server_announce(server_announce,
                                                         sizeof(server_announce),
                                                         &announce) == LIBRDP_STATUS_OK);

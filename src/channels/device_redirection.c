@@ -48,6 +48,30 @@ static int rdp_device_redirection_valid_capability_type(uint16_t type)
            type == RDP_DEVICE_REDIRECTION_CAP_SMARTCARD;
 }
 
+static int rdp_device_redirection_valid_header_pair(uint16_t component, uint16_t packet_id)
+{
+    if (component == RDP_DEVICE_REDIRECTION_COMPONENT_CORE)
+    {
+        return packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_ANNOUNCE ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_NAME ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_REPLY ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_REMOVE ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_USER_LOGGEDON;
+    }
+    if (component == RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER)
+    {
+        return packet_id == RDP_DEVICE_REDIRECTION_PAKID_PRINTER_CACHE_DATA ||
+               packet_id == RDP_DEVICE_REDIRECTION_PAKID_PRINTER_USING_XPS;
+    }
+    return 0;
+}
+
 static librdp_status rdp_device_redirection_expect_header(const void* data,
                                                           size_t length,
                                                           uint16_t expected_component,
@@ -257,7 +281,7 @@ librdp_status rdp_device_redirection_write_header(rdp_buffer* buffer, uint16_t c
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer)
+    if (!buffer || !rdp_device_redirection_valid_header_pair(component, packet_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u16_le(buffer, component);
     if (status != LIBRDP_STATUS_OK)
