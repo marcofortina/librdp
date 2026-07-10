@@ -663,6 +663,67 @@ static librdp_status rdp_avc_apply_chroma_v1(rdp_avc_decoder* decoder,
     return LIBRDP_STATUS_OK;
 }
 
+static uint8_t rdp_avc_average_samples(const uint8_t* samples, uint32_t count, uint8_t fallback)
+{
+    uint32_t sum = 0;
+    uint32_t i = 0;
+
+    if (!samples || count == 0)
+        return fallback;
+    for (i = 0; i < count; i++)
+        sum += samples[i];
+    return (uint8_t)((sum + (count / 2u)) / count);
+}
+
+static void rdp_avc_fill_missing_chroma_sample(rdp_avc_decoder* decoder,
+                                               const rdp_graphics_rect16* rect,
+                                               uint32_t plane_index,
+                                               uint32_t x,
+                                               uint32_t y)
+{
+    uint8_t samples[4];
+    uint32_t count = 0;
+    uint8_t* plane = NULL;
+    size_t stride = 0;
+    uint8_t* dst = NULL;
+
+    if (!decoder || !rect || plane_index < 1u || plane_index > 2u)
+        return;
+    plane = decoder->yuv444[plane_index].data;
+    stride = decoder->yuv444_stride[plane_index];
+    if (!plane || stride == 0)
+        return;
+    dst = plane + ((size_t)y * stride) + x;
+    if (x + 1u < rect->right)
+        samples[count++] = *(dst + 1u);
+    if (y + 1u < rect->bottom)
+        samples[count++] = *(dst + stride);
+    if (x > rect->left)
+        samples[count++] = *(dst - 1u);
+    if (y > rect->top)
+        samples[count++] = *(dst - stride);
+    *dst = rdp_avc_average_samples(samples, count, *dst);
+}
+
+static void rdp_avc_fill_missing_chroma_even_even(rdp_avc_decoder* decoder,
+                                                  const rdp_graphics_rect16* rect)
+{
+    uint32_t y = 0;
+
+    if (!decoder || !rect)
+        return;
+    for (y = rect->top; y < rect->bottom; y += 2u)
+    {
+        uint32_t x = 0;
+
+        for (x = rect->left; x < rect->right; x += 2u)
+        {
+            rdp_avc_fill_missing_chroma_sample(decoder, rect, 1u, x, y);
+            rdp_avc_fill_missing_chroma_sample(decoder, rect, 2u, x, y);
+        }
+    }
+}
+
 static librdp_status rdp_avc_apply_chroma_v2(rdp_avc_decoder* decoder,
                                              const rdp_avc_yuv420* yuv,
                                              const rdp_graphics_rect16* rect)
@@ -803,6 +864,8 @@ static librdp_status rdp_avc_apply_regions_chroma(rdp_avc_decoder* decoder,
             status = rdp_avc_apply_chroma_v2(decoder, yuv, &rect);
         else if (status == LIBRDP_STATUS_OK)
             status = rdp_avc_apply_chroma_v1(decoder, yuv, &rect);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_avc_fill_missing_chroma_even_even(decoder, &rect);
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
