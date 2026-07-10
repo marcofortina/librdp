@@ -30,6 +30,8 @@
 #include "graphics/avc.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/gdi_orders.h"
+#include "graphics/gdi_render.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
 #include "licensing/licensing.h"
@@ -366,6 +368,7 @@ struct librdp_session
     uint8_t fastpath_fragmenting;
     uint8_t fastpath_fragment_update_code;
     rdp_buffer fastpath_fragment;
+    rdp_gdi_render_state gdi_render;
     uint8_t palette_valid;
     rdp_palette_update palette;
     uint32_t core_input_channel_id;
@@ -16697,6 +16700,331 @@ static librdp_status rdp_session_apply_palette_update(librdp_session* session, c
     return LIBRDP_STATUS_OK;
 }
 
+typedef struct rdp_session_gdi_region
+{
+    uint32_t dst_x;
+    uint32_t dst_y;
+    uint32_t src_x;
+    uint32_t src_y;
+    uint32_t width;
+    uint32_t height;
+} rdp_session_gdi_region;
+
+static uint8_t rdp_session_gdi_rop3(uint8_t rop, uint8_t source, uint8_t dest)
+{
+    uint8_t result = 0;
+    uint8_t bit = 0;
+
+    for (bit = 0; bit < 8u; bit++)
+    {
+        uint8_t index = (uint8_t)((((source >> bit) & 1u) << 1u) | ((dest >> bit) & 1u));
+
+        if ((rop >> index) & 1u)
+            result |= (uint8_t)(1u << bit);
+    }
+    return result;
+}
+
+static int rdp_session_gdi_clip_dest(const rdp_gdi_render_op* op,
+                                     uint32_t surface_width,
+                                     uint32_t surface_height,
+                                     rdp_session_gdi_region* region)
+{
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+    int64_t clip_left = 0;
+    int64_t clip_top = 0;
+    int64_t clip_right = surface_width;
+    int64_t clip_bottom = surface_height;
+
+    if (!op || !region || op->rect.width <= 0 || op->rect.height <= 0 || surface_width == 0 || surface_height == 0)
+        return 0;
+    left = op->rect.x;
+    top = op->rect.y;
+    right = (int64_t)op->rect.x + op->rect.width;
+    bottom = (int64_t)op->rect.y + op->rect.height;
+    if (op->bounds.present)
+    {
+        clip_left = op->bounds.left;
+        clip_top = op->bounds.top;
+        clip_right = (int64_t)op->bounds.right + 1;
+        clip_bottom = (int64_t)op->bounds.bottom + 1;
+    }
+    if (clip_left < 0)
+        clip_left = 0;
+    if (clip_top < 0)
+        clip_top = 0;
+    if (clip_right > (int64_t)surface_width)
+        clip_right = surface_width;
+    if (clip_bottom > (int64_t)surface_height)
+        clip_bottom = surface_height;
+    if (left < clip_left)
+        left = clip_left;
+    if (top < clip_top)
+        top = clip_top;
+    if (right > clip_right)
+        right = clip_right;
+    if (bottom > clip_bottom)
+        bottom = clip_bottom;
+    if (left >= right || top >= bottom)
+        return 0;
+    region->dst_x = (uint32_t)left;
+    region->dst_y = (uint32_t)top;
+    region->width = (uint32_t)(right - left);
+    region->height = (uint32_t)(bottom - top);
+    region->src_x = 0;
+    region->src_y = 0;
+    return 1;
+}
+
+static int rdp_session_gdi_clip_copy(const rdp_gdi_render_op* op,
+                                     uint32_t surface_width,
+                                     uint32_t surface_height,
+                                     rdp_session_gdi_region* region)
+{
+    int64_t src_x = 0;
+    int64_t src_y = 0;
+    int64_t shift = 0;
+
+    if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, region))
+        return 0;
+    src_x = (int64_t)op->src_x + ((int64_t)region->dst_x - op->rect.x);
+    src_y = (int64_t)op->src_y + ((int64_t)region->dst_y - op->rect.y);
+    if (src_x < 0)
+    {
+        shift = -src_x;
+        if (shift >= (int64_t)region->width)
+            return 0;
+        region->dst_x += (uint32_t)shift;
+        region->width -= (uint32_t)shift;
+        src_x = 0;
+    }
+    if (src_y < 0)
+    {
+        shift = -src_y;
+        if (shift >= (int64_t)region->height)
+            return 0;
+        region->dst_y += (uint32_t)shift;
+        region->height -= (uint32_t)shift;
+        src_y = 0;
+    }
+    if (src_x >= (int64_t)surface_width || src_y >= (int64_t)surface_height)
+        return 0;
+    if (region->width > surface_width - (uint32_t)src_x)
+        region->width = surface_width - (uint32_t)src_x;
+    if (region->height > surface_height - (uint32_t)src_y)
+        region->height = surface_height - (uint32_t)src_y;
+    if (region->width == 0 || region->height == 0)
+        return 0;
+    region->src_x = (uint32_t)src_x;
+    region->src_y = (uint32_t)src_y;
+    return 1;
+}
+
+static librdp_status rdp_session_gdi_fill_rect(librdp_session* session,
+                                               const rdp_gdi_render_op* op,
+                                               const rdp_session_gdi_region* region,
+                                               uint8_t rop,
+                                               uint32_t color,
+                                               int use_rop)
+{
+    uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t y = 0;
+    uint8_t b = (uint8_t)(color & 0xffu);
+    uint8_t g = (uint8_t)((color >> 8u) & 0xffu);
+    uint8_t r = (uint8_t)((color >> 16u) & 0xffu);
+
+    if (!session || !op || !region)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pixels = librdp_surface_pixels_mut(session->surface);
+    stride = librdp_surface_stride(session->surface);
+    if (!pixels || stride == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (y = 0; y < region->height; y++)
+    {
+        uint8_t* pixel = pixels + ((size_t)(region->dst_y + y) * stride) + ((size_t)region->dst_x * 4u);
+        uint32_t x = 0;
+
+        for (x = 0; x < region->width; x++)
+        {
+            if (use_rop)
+            {
+                pixel[0] = rdp_session_gdi_rop3(rop, 0, pixel[0]);
+                pixel[1] = rdp_session_gdi_rop3(rop, 0, pixel[1]);
+                pixel[2] = rdp_session_gdi_rop3(rop, 0, pixel[2]);
+            }
+            else
+            {
+                pixel[0] = b;
+                pixel[1] = g;
+                pixel[2] = r;
+            }
+            pixel[3] = 0xffu;
+            pixel += 4u;
+        }
+    }
+    rdp_session_emit_surface_invalidated(session, region->dst_x, region->dst_y, region->width, region->height);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.order.apply",
+                          "type=%u kind=%u x=%u y=%u width=%u height=%u rop=%u color=%06x",
+                          op->order_type,
+                          op->kind,
+                          region->dst_x,
+                          region->dst_y,
+                          region->width,
+                          region->height,
+                          rop,
+                          color & 0x00ffffffu);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_copy_rect(librdp_session* session,
+                                               const rdp_gdi_render_op* op,
+                                               const rdp_session_gdi_region* region)
+{
+    rdp_buffer temp;
+    const uint8_t* pixels = NULL;
+    uint8_t* mutable_pixels = NULL;
+    size_t stride = 0;
+    size_t row_stride = 0;
+    uint32_t y = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !op || !region)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pixels = librdp_surface_pixels(session->surface);
+    mutable_pixels = librdp_surface_pixels_mut(session->surface);
+    stride = librdp_surface_stride(session->surface);
+    if (!pixels || !mutable_pixels || stride == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    row_stride = (size_t)region->width * 4u;
+    rdp_buffer_init(&temp);
+    status = rdp_buffer_reserve(&temp, row_stride * (size_t)region->height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (y = 0; y < region->height; y++)
+    {
+        memcpy(temp.data + ((size_t)y * row_stride),
+               pixels + ((size_t)(region->src_y + y) * stride) + ((size_t)region->src_x * 4u),
+               row_stride);
+    }
+    temp.length = row_stride * (size_t)region->height;
+    for (y = 0; y < region->height; y++)
+    {
+        const uint8_t* src = temp.data + ((size_t)y * row_stride);
+        uint8_t* dst = mutable_pixels + ((size_t)(region->dst_y + y) * stride) + ((size_t)region->dst_x * 4u);
+        uint32_t x = 0;
+
+        for (x = 0; x < region->width; x++)
+        {
+            dst[0] = rdp_session_gdi_rop3(op->rop, src[0], dst[0]);
+            dst[1] = rdp_session_gdi_rop3(op->rop, src[1], dst[1]);
+            dst[2] = rdp_session_gdi_rop3(op->rop, src[2], dst[2]);
+            dst[3] = 0xffu;
+            src += 4u;
+            dst += 4u;
+        }
+    }
+    rdp_session_emit_surface_invalidated(session, region->dst_x, region->dst_y, region->width, region->height);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.order.apply",
+                          "type=%u kind=%u src_x=%u src_y=%u x=%u y=%u width=%u height=%u rop=%u",
+                          op->order_type,
+                          op->kind,
+                          region->src_x,
+                          region->src_y,
+                          region->dst_x,
+                          region->dst_y,
+                          region->width,
+                          region->height,
+                          op->rop);
+    rdp_buffer_free(&temp);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    rdp_session_gdi_region region;
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    memset(&region, 0, sizeof(region));
+    if (op->kind == RDP_GDI_RENDER_OP_OPAQUE_RECT)
+    {
+        if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, &region))
+            return LIBRDP_STATUS_OK;
+        return rdp_session_gdi_fill_rect(session, op, &region, 0, op->color, 0);
+    }
+    if (op->kind == RDP_GDI_RENDER_OP_DSTBLT)
+    {
+        if (op->rop == 0xaau)
+            return LIBRDP_STATUS_OK;
+        if (!rdp_session_gdi_clip_dest(op, surface_width, surface_height, &region))
+            return LIBRDP_STATUS_OK;
+        return rdp_session_gdi_fill_rect(session, op, &region, op->rop, 0, 1);
+    }
+    if (op->kind == RDP_GDI_RENDER_OP_SCRBLT)
+    {
+        if (!rdp_session_gdi_clip_copy(op, surface_width, surface_height, &region))
+            return LIBRDP_STATUS_OK;
+        return rdp_session_gdi_copy_rect(session, op, &region);
+    }
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session, const rdp_gdi_orders_update* update)
+{
+    size_t offset = 0;
+    uint16_t i = 0;
+
+    if (!session || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < update->number_orders; i++)
+    {
+        rdp_gdi_render_op op;
+        size_t consumed = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        status = rdp_gdi_decode_primary_render_order(&session->gdi_render,
+                                                     update->order_data + offset,
+                                                     update->order_data_len - offset,
+                                                     &op,
+                                                     &consumed);
+        if (status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.gdi.order.unsupported",
+                            "index=%u remaining=%u",
+                            i,
+                            (unsigned)(update->order_data_len - offset));
+            return status;
+        }
+        if (status != LIBRDP_STATUS_OK || consumed == 0 || consumed > update->order_data_len - offset)
+            return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_PROTOCOL_ERROR : status;
+        status = rdp_session_apply_gdi_render_op(session, &op);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        offset += consumed;
+    }
+    if (offset != update->order_data_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "rdp.gdi.orders",
+                    "count=%u payload_len=%u",
+                    update->number_orders,
+                    (unsigned)update->order_data_len);
+    return LIBRDP_STATUS_OK;
+}
+
 static void rdp_session_fastpath_fragment_reset(librdp_session* session)
 {
     if (!session)
@@ -16881,6 +17209,49 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                 rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.palette_update", "colors=%u", palette.count);
             }
         }
+        else if (update->update_code == RDP_FASTPATH_UPDATE_ORDERS)
+        {
+            rdp_gdi_orders_update orders;
+            const uint8_t* update_data = NULL;
+            size_t update_len = 0;
+            int complete = 0;
+            int from_fragment = 0;
+
+            status = rdp_session_fastpath_payload(session, update, &update_data, &update_len, &complete, &from_fragment);
+            if (status == LIBRDP_STATUS_UNSUPPORTED)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "rdp.fastpath.orders.unsupported",
+                                "fragmentation=%u compression=%u payload_len=%u",
+                                update->fragmentation,
+                                update->compression,
+                                (unsigned)update->data_len);
+            }
+            else if (status != LIBRDP_STATUS_OK)
+            {
+                goto out;
+            }
+            else if (complete)
+            {
+                status = rdp_gdi_parse_fast_orders_update_payload(update_data, update_len, &orders);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_session_apply_gdi_orders_update(session, &orders);
+                if (from_fragment)
+                    rdp_session_fastpath_fragment_reset(session);
+                if (status == LIBRDP_STATUS_UNSUPPORTED)
+                {
+                    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                    "rdp.fastpath.orders.unsupported",
+                                    "orders=%u payload_len=%u",
+                                    orders.number_orders,
+                                    (unsigned)orders.order_data_len);
+                    status = LIBRDP_STATUS_OK;
+                }
+                if (status != LIBRDP_STATUS_OK)
+                    goto out;
+                rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.fastpath.orders", "orders=%u", orders.number_orders);
+            }
+        }
         else if (update->update_code == RDP_FASTPATH_UPDATE_POINTER_NULL ||
                  update->update_code == RDP_FASTPATH_UPDATE_POINTER_DEFAULT ||
                  update->update_code == RDP_FASTPATH_UPDATE_POINTER_POSITION ||
@@ -16973,6 +17344,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_buffer_init(&session->fastpath_fragment);
+    rdp_gdi_render_state_init(&session->gdi_render);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
     rdp_composited_render_tree_init(&session->composited_tree);
@@ -17182,6 +17554,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_pointer_cache_clear(session);
+    rdp_gdi_render_state_init(&session->gdi_render);
     rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_redirected_files_clear(session);
@@ -18757,7 +19130,33 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                                           "update_type=%u payload_len=%u",
                                           update_type,
                                           (unsigned)data_pdu.payload_len);
-                    if (update_type == RDP_UPDATE_TYPE_BITMAP)
+                    if (update_type == RDP_GDI_UPDATE_TYPE_ORDERS)
+                    {
+                        rdp_gdi_orders_update orders;
+
+                        status = rdp_gdi_parse_slow_orders_update_payload(data_pdu.payload,
+                                                                          data_pdu.payload_len,
+                                                                          &orders);
+                        if (status == LIBRDP_STATUS_OK)
+                            status = rdp_session_apply_gdi_orders_update(session, &orders);
+                        if (status == LIBRDP_STATUS_UNSUPPORTED)
+                        {
+                            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                            "rdp.slowpath.orders.unsupported",
+                                            "orders=%u payload_len=%u",
+                                            orders.number_orders,
+                                            (unsigned)orders.order_data_len);
+                            status = LIBRDP_STATUS_OK;
+                        }
+                        if (status != LIBRDP_STATUS_OK)
+                        {
+                            rdp_buffer_free(&security_payload);
+                            rdp_buffer_free(&packet);
+                            return rdp_session_fail(session, status);
+                        }
+                        rdp_trace_event(RDP_TRACE_PROTOCOL, "rdp.slowpath.orders", "orders=%u", orders.number_orders);
+                    }
+                    else if (update_type == RDP_UPDATE_TYPE_BITMAP)
                     {
                         rdp_bitmap_update update;
 

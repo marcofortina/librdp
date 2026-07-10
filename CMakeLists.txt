@@ -62,6 +62,7 @@ add_library(librdp
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
     src/graphics/gdi_orders.c
+    src/graphics/gdi_render.c
     src/graphics/nscodec.c
     src/graphics/planar.c
     src/graphics/rfx_codec.c

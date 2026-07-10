@@ -34,6 +34,7 @@
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
 #include "graphics/gdi_orders.h"
+#include "graphics/gdi_render.h"
 #include "graphics/nscodec.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
@@ -9762,6 +9763,54 @@ static int test_gdi_orders(void)
         0xdeu,
         0xadu
     };
+    const uint8_t render_opaque[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_OPAQUERECT,
+        0x1fu,
+        0x02u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0x11u, 0x22u, 0x33u
+    };
+    const uint8_t render_opaque_delta[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_DELTA_COORDINATES,
+        0x03u,
+        0xfeu,
+        0x04u
+    };
+    const uint8_t render_scrblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SCRBLT,
+        0x7fu,
+        0x10u, 0x00u,
+        0x20u, 0x00u,
+        0x30u, 0x00u,
+        0x40u, 0x00u,
+        0xccu,
+        0x01u, 0x00u,
+        0x02u, 0x00u
+    };
+    const uint8_t render_dstblt_bounds[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE | RDP_GDI_TS_BOUNDS,
+        RDP_GDI_ORDER_DSTBLT,
+        0x1fu,
+        0x0fu,
+        0x01u, 0x00u,
+        0x02u, 0x00u,
+        0x08u, 0x00u,
+        0x09u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0x06u, 0x00u,
+        0x07u, 0x00u,
+        0xffu
+    };
+    const uint8_t render_patblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_PATBLT,
+        0x00u
+    };
     const uint8_t bad_bounds[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_BOUNDS | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_OPAQUERECT,
@@ -9789,6 +9838,9 @@ static int test_gdi_orders(void)
     rdp_gdi_color_cache_capability color;
     rdp_gdi_ninegrid_capability ninegrid;
     rdp_gdi_gdiplus_capability gdiplus;
+    rdp_gdi_render_state render_state;
+    rdp_gdi_render_op render_op;
+    size_t render_consumed = 0;
     uint32_t flags = 0;
     size_t i = 0;
 
@@ -9899,6 +9951,65 @@ static int test_gdi_orders(void)
                                        1u,
                                        NULL,
                                        0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_gdi_render_state_init(&render_state);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_opaque,
+                                               sizeof(render_opaque),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_opaque) &&
+           render_op.kind == RDP_GDI_RENDER_OP_OPAQUE_RECT &&
+           render_op.rect.x == 2 &&
+           render_op.rect.y == 3 &&
+           render_op.rect.width == 4 &&
+           render_op.rect.height == 5 &&
+           render_op.color == 0x00332211u);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_opaque_delta,
+                                               sizeof(render_opaque_delta),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_opaque_delta) &&
+           render_op.kind == RDP_GDI_RENDER_OP_OPAQUE_RECT &&
+           render_op.rect.x == 0 &&
+           render_op.rect.y == 7 &&
+           render_op.rect.width == 4 &&
+           render_op.rect.height == 5 &&
+           render_op.color == 0x00332211u);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_scrblt,
+                                               sizeof(render_scrblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_scrblt) &&
+           render_op.kind == RDP_GDI_RENDER_OP_SCRBLT &&
+           render_op.rop == 0xccu &&
+           render_op.src_x == 1 &&
+           render_op.src_y == 2 &&
+           render_op.rect.width == 48 &&
+           render_op.rect.height == 64);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_dstblt_bounds,
+                                               sizeof(render_dstblt_bounds),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_dstblt_bounds) &&
+           render_op.kind == RDP_GDI_RENDER_OP_DSTBLT &&
+           render_op.rop == 0xffu &&
+           render_op.bounds.present &&
+           render_op.bounds.left == 1 &&
+           render_op.bounds.top == 2 &&
+           render_op.bounds.right == 8 &&
+           render_op.bounds.bottom == 9 &&
+           render_op.rect.x == 4 &&
+           render_op.rect.y == 5 &&
+           render_op.rect.width == 6 &&
+           render_op.rect.height == 7);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_patblt,
+                                               sizeof(render_patblt),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_gdi_parse_altsec_order(altsec_order,
                                       sizeof(altsec_order),
                                       &altsec) == LIBRDP_STATUS_OK);
