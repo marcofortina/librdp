@@ -763,7 +763,7 @@ librdp_status rdp_clearcodec_parse_stream(const void* data, size_t length, rdp_c
     {
         stream->has_glyph_index = 1;
         if (rdp_stream_read_u16_le(&input, &stream->glyph_index) != LIBRDP_STATUS_OK ||
-            stream->glyph_index > 3999u)
+            stream->glyph_index >= RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     stream->payload_len = rdp_stream_remaining(&input);
