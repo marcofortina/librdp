@@ -378,6 +378,7 @@ static int test_multitransport_protocol(void)
     uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
     const uint8_t autodetect[] = {0xaa, 0xbb};
     const uint8_t payload[] = {1, 2, 3, 4, 5};
+    const uint8_t bad_subheader[] = {0x01u, RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST};
     rdp_buffer buffer;
     rdp_buffer subheader;
     rdp_multitransport_header header;
@@ -431,6 +432,11 @@ static int test_multitransport_protocol(void)
     TCHECK(subheader_count == 2u);
     TCHECK(rdp_multitransport_write_subheader(&buffer, 0xffu, autodetect, sizeof(autodetect)) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_multitransport_write_data(&buffer,
+                                         bad_subheader,
+                                         sizeof(bad_subheader),
+                                         payload,
+                                         sizeof(payload)) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     TCHECK(rdp_multitransport_write_data(&buffer,
                                          subheader.data,

@@ -101,6 +101,14 @@ librdp_status rdp_multitransport_write_header(rdp_buffer* buffer,
         header_len > UINT8_MAX ||
         payload_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (subheaders_len > 0)
+    {
+        uint16_t subheader_count = 0;
+
+        if (rdp_multitransport_count_subheaders(subheaders, subheaders_len, &subheader_count) !=
+            LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
     action_flags = action;
     status = rdp_buffer_append_u8(buffer, action_flags);
     if (status != LIBRDP_STATUS_OK)
