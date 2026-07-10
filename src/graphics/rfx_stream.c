@@ -50,6 +50,12 @@ static librdp_status rdp_rfx_stream_parse_sync(rdp_rfx_stream_state* state, rdp_
 
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (state->summary.sync_seen ||
+        state->summary.codec_versions_seen ||
+        state->summary.channels_seen ||
+        state->summary.context_seen ||
+        state->frame_active)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u32_le(stream, &magic) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &version) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -68,6 +74,12 @@ static librdp_status rdp_rfx_stream_parse_codec_versions(rdp_rfx_stream_state* s
 
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!state->summary.sync_seen ||
+        state->summary.codec_versions_seen ||
+        state->summary.channels_seen ||
+        state->summary.context_seen ||
+        state->frame_active)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u8(stream, &count) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u8(stream, &codec_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &version) != LIBRDP_STATUS_OK)
@@ -85,6 +97,11 @@ static librdp_status rdp_rfx_stream_parse_channels(rdp_rfx_stream_state* state, 
 
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!state->summary.codec_versions_seen ||
+        state->summary.channels_seen ||
+        state->summary.context_seen ||
+        state->frame_active)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u8(stream, &count) != LIBRDP_STATUS_OK || count == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(stream) < (size_t)count * 5u)
@@ -122,6 +139,10 @@ static librdp_status rdp_rfx_stream_parse_context(rdp_rfx_stream_state* state, r
 
     if (!state || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!state->summary.channels_seen ||
+        state->summary.context_seen ||
+        state->frame_active)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u8(stream, &context_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &tile_size) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &properties) != LIBRDP_STATUS_OK)
@@ -351,6 +372,7 @@ static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
         quant_count == 0 ||
         quant_count > RDP_RFX_STREAM_MAX_QUANTS ||
         tile_size != RDP_RFX_STREAM_TILE_SIZE ||
+        tile_count == 0 ||
         tile_count > RDP_RFX_STREAM_MAX_TILES)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(stream) < (size_t)quant_count * 5u ||

@@ -4444,6 +4444,19 @@ static int test_path_security_license_channels(void)
            rfx_stream_capture.first_a == 0xff);
     rdp_buffer_free(&rfx_bad_stream);
     rdp_buffer_init(&rfx_bad_stream);
+    dyn_response.length = 0;
+    PCHECK(rdp_buffer_append(&rfx_bad_stream, rfx_stream.data, rfx_stream.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&dyn_response, 0xCACCACCAu) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&dyn_response, 0x0100u) == LIBRDP_STATUS_OK);
+    PCHECK(test_append_rfx_block(&rfx_bad_stream, 0xCCC0u, &dyn_response));
+    PCHECK(rdp_rfx_stream_decode(rfx_bad_stream.data,
+                                 rfx_bad_stream.length,
+                                 test_rfx_stream_tile,
+                                 &rfx_stream_capture,
+                                 &rfx_stream_summary) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    dyn_response.length = 0;
+    rdp_buffer_free(&rfx_bad_stream);
+    rdp_buffer_init(&rfx_bad_stream);
     memset(&rfx_stream_capture, 0, sizeof(rfx_stream_capture));
     PCHECK(test_build_rfx_stream_counted(&rfx_bad_stream, 0, 0, 2));
     PCHECK(rdp_rfx_stream_decode(rfx_bad_stream.data,
@@ -5675,6 +5688,7 @@ static int test_path_security_license_channels(void)
            rdp_dynamic_channel_data_first_pdu_header_size(1, 0xffu) == 3 &&
            rdp_dynamic_channel_data_first_pdu_header_size(1, 0x100u) == 4 &&
            rdp_dynamic_channel_data_first_pdu_header_size(1, 0x10000u) == 6);
+    dyn_response.length = 0;
     PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 1) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 1);
     dyn_response.length = 0;
