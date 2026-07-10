@@ -245,6 +245,15 @@
 #define RDP_SESSION_GDI_PEN_DASHDOTDOT 4u
 #define RDP_SESSION_GDI_PEN_NULL 5u
 #define RDP_SESSION_GDI_PEN_INSIDEFRAME 6u
+#define RDP_SESSION_GDI_BRUSH_SOLID 0u
+#define RDP_SESSION_GDI_BRUSH_NULL 1u
+#define RDP_SESSION_GDI_BRUSH_HATCHED 2u
+#define RDP_SESSION_GDI_BRUSH_PATTERN 3u
+#define RDP_SESSION_GDI_BRUSH_INDEXED 4u
+#define RDP_SESSION_GDI_BRUSH_DIBPATTERN 5u
+#define RDP_SESSION_GDI_BRUSH_DIBPATTERNPT 6u
+#define RDP_SESSION_GDI_BRUSH_PATTERN8X8 7u
+#define RDP_SESSION_GDI_BRUSH_DIBPATTERN8X8 8u
 #define RDP_SESSION_USB_URB_HEADER_LENGTH 8u
 
 typedef struct rdp_session_file_lock_range
@@ -25400,6 +25409,22 @@ static int rdp_session_gdi_pattern_bit(const rdp_gdi_render_op* op, uint32_t x, 
     return ((pattern[py] >> (7u - px)) & 1u) != 0;
 }
 
+static int rdp_session_gdi_brush_style_is_pattern(uint8_t style)
+{
+    switch (style & (uint8_t)~RDP_GDI_CACHED_BRUSH)
+    {
+        case RDP_SESSION_GDI_BRUSH_PATTERN:
+        case RDP_SESSION_GDI_BRUSH_INDEXED:
+        case RDP_SESSION_GDI_BRUSH_DIBPATTERN:
+        case RDP_SESSION_GDI_BRUSH_DIBPATTERNPT:
+        case RDP_SESSION_GDI_BRUSH_PATTERN8X8:
+        case RDP_SESSION_GDI_BRUSH_DIBPATTERN8X8:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static const rdp_session_gdi_brush_cache_entry*
 rdp_session_gdi_cached_brush_find(const librdp_session* session, const rdp_gdi_render_op* op)
 {
@@ -25471,9 +25496,9 @@ static void rdp_session_gdi_brush_bgr(const librdp_session* session,
 
     if (cached && rdp_session_gdi_cached_brush_bgr(cached, op, x, y, b, g, r))
         return;
-    if (op && op->brush_style == 2u)
+    if (op && op->brush_style == RDP_SESSION_GDI_BRUSH_HATCHED)
         foreground = rdp_session_gdi_hatch_bit(op->brush_hatch, x, y);
-    else if (op && (op->brush_style == 3u || op->brush_style == 7u))
+    else if (op && rdp_session_gdi_brush_style_is_pattern(op->brush_style))
         foreground = rdp_session_gdi_pattern_bit(op, x, y);
     if (!foreground && op)
         color = op->back_color;
@@ -25630,7 +25655,7 @@ static librdp_status rdp_session_gdi_patblt(librdp_session* session,
 
     if (!session || !op || !region)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (op->brush_style == 1u)
+    if (op->brush_style == RDP_SESSION_GDI_BRUSH_NULL)
         return LIBRDP_STATUS_OK;
     if ((op->brush_style & RDP_GDI_CACHED_BRUSH) != 0 &&
         !rdp_session_gdi_cached_brush_find(session, op))
@@ -25645,8 +25670,9 @@ static librdp_status rdp_session_gdi_patblt(librdp_session* session,
         return LIBRDP_STATUS_OK;
     }
     if ((op->brush_style & RDP_GDI_CACHED_BRUSH) == 0 &&
-        op->brush_style != 0u && op->brush_style != 2u &&
-        op->brush_style != 3u && op->brush_style != 7u)
+        op->brush_style != RDP_SESSION_GDI_BRUSH_SOLID &&
+        op->brush_style != RDP_SESSION_GDI_BRUSH_HATCHED &&
+        !rdp_session_gdi_brush_style_is_pattern(op->brush_style))
         return LIBRDP_STATUS_UNSUPPORTED;
     pixels = librdp_surface_pixels_mut(session->surface);
     stride = librdp_surface_stride(session->surface);
@@ -25677,9 +25703,9 @@ static librdp_status rdp_session_gdi_patblt(librdp_session* session,
                 rdp_session_gdi_brush_bgr(session, op, absolute_x, absolute_y, &b, &g, &r);
                 foreground = 1;
             }
-            else if (op->brush_style == 2u)
+            else if (op->brush_style == RDP_SESSION_GDI_BRUSH_HATCHED)
                 foreground = rdp_session_gdi_hatch_bit(op->brush_hatch, absolute_x, absolute_y);
-            else if (op->brush_style == 3u || op->brush_style == 7u)
+            else if (rdp_session_gdi_brush_style_is_pattern(op->brush_style))
                 foreground = rdp_session_gdi_pattern_bit(op, absolute_x, absolute_y);
             if (!foreground)
             {
@@ -26482,7 +26508,7 @@ static int rdp_session_gdi_shape_color(const librdp_session* session,
         *color = op->color;
         return 1;
     }
-    if (op->brush_style == 1u)
+    if (op->brush_style == RDP_SESSION_GDI_BRUSH_NULL)
         return 0;
     if ((op->brush_style & RDP_GDI_CACHED_BRUSH) != 0)
     {
@@ -26496,11 +26522,11 @@ static int rdp_session_gdi_shape_color(const librdp_session* session,
         *color = (uint32_t)b | ((uint32_t)g << 8u) | ((uint32_t)r << 16u);
         return 1;
     }
-    if (op->brush_style == 2u)
+    if (op->brush_style == RDP_SESSION_GDI_BRUSH_HATCHED)
         foreground = rdp_session_gdi_hatch_bit(op->brush_hatch, x, y);
-    else if (op->brush_style == 3u || op->brush_style == 7u)
+    else if (rdp_session_gdi_brush_style_is_pattern(op->brush_style))
         foreground = rdp_session_gdi_pattern_bit(op, x, y);
-    else if (op->brush_style != 0u)
+    else if (op->brush_style != RDP_SESSION_GDI_BRUSH_SOLID)
         return 0;
     if (!foreground && op->transparent_background)
         return 0;
