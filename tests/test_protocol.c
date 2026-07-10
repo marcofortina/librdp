@@ -6394,6 +6394,23 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_input_channel_parse_touch_event(channel_packet.data,
                                                channel_packet.length,
                                                &input_touch_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    memset(&input_touch_frame, 0, sizeof(input_touch_frame));
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0, &input_touch_frame, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_header(&channel_packet, RDP_INPUT_CHANNEL_EVENT_TOUCH, 22) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&channel_packet, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_parse_touch_event(channel_packet.data,
+                                               channel_packet.length,
+                                               &input_touch_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
     input_touch_contact.contact_rect_left = 5;
     input_touch_contact.contact_rect_right = 2;
     PCHECK(rdp_input_channel_write_touch_contact(&dyn_response, &input_touch_contact) ==
@@ -6457,6 +6474,23 @@ static int test_path_security_license_channels(void)
     channel_packet.data[3] = (uint8_t)((channel_packet.length >> 8) & 0xffu);
     channel_packet.data[4] = (uint8_t)((channel_packet.length >> 16) & 0xffu);
     channel_packet.data[5] = (uint8_t)((channel_packet.length >> 24) & 0xffu);
+    PCHECK(rdp_input_channel_parse_pen_event(channel_packet.data,
+                                             channel_packet.length,
+                                             &input_pen_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    memset(&input_pen_frame, 0, sizeof(input_pen_frame));
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0, &input_pen_frame, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_header(&channel_packet, RDP_INPUT_CHANNEL_EVENT_PEN, 22) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&channel_packet, 1) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u16_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
     PCHECK(rdp_input_channel_parse_pen_event(channel_packet.data,
                                              channel_packet.length,
                                              &input_pen_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
