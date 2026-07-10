@@ -1312,6 +1312,7 @@ static int test_audio_channels(void)
     uint32_t result = 0;
     uint32_t new_format = 0;
     size_t consumed = 0;
+    uint8_t invalid_audio_format[sizeof(pcm_format)];
 
     memset(&pcm, 0, sizeof(pcm));
     rdp_buffer_init(&out);
@@ -1323,6 +1324,23 @@ static int test_audio_channels(void)
     PCHECK(pcm.block_align == 4 && pcm.bits_per_sample == 16 && pcm.extra_data_len == 0);
     PCHECK(rdp_audio_format_write(&out, &pcm) == LIBRDP_STATUS_OK);
     PCHECK(out.length == sizeof(pcm_format) && memcmp(out.data, pcm_format, sizeof(pcm_format)) == 0);
+    memcpy(invalid_audio_format, pcm_format, sizeof(invalid_audio_format));
+    invalid_audio_format[2] = 0;
+    invalid_audio_format[3] = 0;
+    PCHECK(rdp_audio_format_parse(invalid_audio_format,
+                                  sizeof(invalid_audio_format),
+                                  &parsed_pcm,
+                                  &consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    memcpy(invalid_audio_format, pcm_format, sizeof(invalid_audio_format));
+    invalid_audio_format[12] = 0;
+    invalid_audio_format[13] = 0;
+    PCHECK(rdp_audio_format_parse(invalid_audio_format,
+                                  sizeof(invalid_audio_format),
+                                  &parsed_pcm,
+                                  &consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    parsed_pcm = pcm;
+    parsed_pcm.channels = 0;
+    PCHECK(rdp_audio_format_write(&out, &parsed_pcm) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_audio_format_parse(bad_extensible, sizeof(bad_extensible), &parsed_pcm, &consumed) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
 

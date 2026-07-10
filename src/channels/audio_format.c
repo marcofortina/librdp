@@ -42,6 +42,8 @@ librdp_status rdp_audio_format_parse(const void* data,
     format->extra_data_len = extra_len;
     if (format->format_tag == RDP_AUDIO_FORMAT_EXTENSIBLE && extra_len != 22u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (format->channels == 0 || format->samples_per_sec == 0 || format->block_align == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (consumed)
         *consumed = RDP_AUDIO_FORMAT_MIN_SIZE + (size_t)extra_len;
     return LIBRDP_STATUS_OK;
@@ -102,6 +104,7 @@ librdp_status rdp_audio_format_write(rdp_buffer* buffer, const rdp_audio_format*
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !format || (!format->extra_data && format->extra_data_len > 0) ||
+        format->channels == 0 || format->samples_per_sec == 0 || format->block_align == 0 ||
         format->extra_data_len > 0xffffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (format->format_tag == RDP_AUDIO_FORMAT_EXTENSIBLE && format->extra_data_len != 22u)
