@@ -11,6 +11,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(OpenSSL 3.0 REQUIRED)
+find_package(Iconv REQUIRED)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_FFMPEG_AVC QUIET IMPORTED_TARGET libavcodec libavutil libswscale)
@@ -58,6 +59,7 @@ add_library(librdp
     src/channels/xps_print.c
     src/clipboard/clipboard.c
     src/common/buffer.c
+    src/common/charset.c
     src/common/stream.c
     src/common/trace.c
     src/graphics/avc.c
@@ -100,7 +102,7 @@ target_include_directories(librdp
 )
 
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
-target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
 if(LIBRDP_FFMPEG_AVC_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_FFMPEG_AVC=1)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)

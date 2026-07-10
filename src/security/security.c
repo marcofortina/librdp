@@ -1,5 +1,6 @@
 #include "security/security.h"
 
+#include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
 #include "protocol/mcs.h"
@@ -58,28 +59,35 @@ bool rdp_security_protocol_supported(uint32_t selected_protocol)
            selected_protocol == RDP_X224_PROTOCOL_NLA;
 }
 
-static size_t rdp_ascii_len(const char* text)
+static librdp_status rdp_utf16le_text_len(const char* text, uint16_t* out)
 {
-    return text ? strlen(text) : 0;
+    rdp_buffer converted;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&converted);
+    status = rdp_charset_utf8_to_utf16le_buffer(text ? text : "", 0, &converted);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&converted);
+        return status;
+    }
+    if (converted.length > UINT16_MAX)
+    {
+        rdp_buffer_free(&converted);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    *out = (uint16_t)converted.length;
+    rdp_buffer_free(&converted);
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_write_utf16le_text(rdp_buffer* buffer, const char* text)
 {
-    size_t i = 0;
-    size_t length = rdp_ascii_len(text);
-
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (length > 0x7fffu)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-
-    for (i = 0; i < length; i++)
-    {
-        librdp_status status = rdp_buffer_append_u16_le(buffer, (uint16_t)(uint8_t)text[i]);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    return rdp_buffer_append_u16_le(buffer, 0);
+    return rdp_charset_utf8_to_utf16le_buffer(text ? text : "", 1, buffer);
 }
 
 static librdp_status rdp_security_write_extended_info(rdp_buffer* buffer)
@@ -421,19 +429,29 @@ librdp_status rdp_security_write_client_info_pdu(rdp_buffer* buffer, const rdp_c
 
 librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_client_info* info)
 {
-    const size_t domain_len = info ? rdp_ascii_len(info->domain) : 0;
-    const size_t username_len = info ? rdp_ascii_len(info->username) : 0;
-    const size_t password_len = info ? rdp_ascii_len(info->password) : 0;
-    const size_t shell_len = info ? rdp_ascii_len(info->alternate_shell) : 0;
-    const size_t work_len = info ? rdp_ascii_len(info->working_dir) : 0;
+    uint16_t domain_len = 0;
+    uint16_t username_len = 0;
+    uint16_t password_len = 0;
+    uint16_t shell_len = 0;
+    uint16_t work_len = 0;
     uint32_t flags = RDP_INFO_MOUSE | RDP_INFO_UNICODE | RDP_INFO_LOGON_ERRORS | RDP_INFO_MAXIMIZE_SHELL |
                      RDP_INFO_ENABLE_WINDOWS_KEY | RDP_INFO_DISABLE_CTRL_ALT_DEL | RDP_INFO_MOUSE_HAS_WHEEL |
                      RDP_INFO_FORCE_ENCRYPTED_CS_PDU;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || domain_len > 0x7fffu || username_len > 0x7fffu || password_len > 0x7fffu ||
-        shell_len > 0x7fffu || work_len > 0x7fffu)
+    if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_utf16le_text_len(info ? info->domain : NULL, &domain_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_utf16le_text_len(info ? info->username : NULL, &username_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_utf16le_text_len(info ? info->password : NULL, &password_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_utf16le_text_len(info ? info->alternate_shell : NULL, &shell_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_utf16le_text_len(info ? info->working_dir : NULL, &work_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     if (info && info->password)
         flags |= RDP_INFO_AUTOLOGON;
@@ -442,15 +460,15 @@ librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, flags);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(domain_len * 2u));
+        status = rdp_buffer_append_u16_le(buffer, domain_len);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(username_len * 2u));
+        status = rdp_buffer_append_u16_le(buffer, username_len);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(password_len * 2u));
+        status = rdp_buffer_append_u16_le(buffer, password_len);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(shell_len * 2u));
+        status = rdp_buffer_append_u16_le(buffer, shell_len);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u16_le(buffer, (uint16_t)(work_len * 2u));
+        status = rdp_buffer_append_u16_le(buffer, work_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_write_utf16le_text(buffer, info ? info->domain : NULL);
     if (status == LIBRDP_STATUS_OK)

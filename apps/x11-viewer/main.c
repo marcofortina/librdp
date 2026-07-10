@@ -2,6 +2,7 @@
 
 #include "audio_pipewire.h"
 #include "camera_v4l2.h"
+#include "common/charset.h"
 #include "common/trace.h"
 #include "device_backends.h"
 
@@ -924,117 +925,26 @@ static int x11_clipboard_store_utf8(x11_app* app, const uint8_t* data, size_t le
 
 static size_t utf8_to_utf16le_bytes(const uint8_t* data, size_t length, uint8_t** out)
 {
-    uint8_t* result = NULL;
-    size_t offset = 0;
-    const char* cursor = (const char*)data;
-    const char* end = data ? (const char*)data + length : NULL;
-    uint32_t codepoint = 0;
+    size_t out_len = 0;
 
     if (!out || (!data && length > 0) || length > X11_CLIPBOARD_MAX_BYTES)
         return 0;
-    result = (uint8_t*)malloc((length * 2u) + 2u);
-    if (!result)
+    if (rdp_charset_utf8_bytes_to_utf16le_alloc(data, length, 1, out, &out_len) != LIBRDP_STATUS_OK)
         return 0;
-    while (cursor && cursor < end && utf8_next(&cursor, end, &codepoint))
-    {
-        if (codepoint > 0x10ffffu || (codepoint >= 0xd800u && codepoint <= 0xdfffu))
-            continue;
-        if (codepoint <= 0xffffu)
-        {
-            result[offset++] = (uint8_t)(codepoint & 0xffu);
-            result[offset++] = (uint8_t)((codepoint >> 8) & 0xffu);
-        }
-        else
-        {
-            uint32_t value = codepoint - 0x10000u;
-            uint16_t high = (uint16_t)(0xd800u | ((value >> 10) & 0x3ffu));
-            uint16_t low = (uint16_t)(0xdc00u | (value & 0x3ffu));
-
-            result[offset++] = (uint8_t)(high & 0xffu);
-            result[offset++] = (uint8_t)((high >> 8) & 0xffu);
-            result[offset++] = (uint8_t)(low & 0xffu);
-            result[offset++] = (uint8_t)((low >> 8) & 0xffu);
-        }
-    }
-    result[offset++] = 0;
-    result[offset++] = 0;
-    *out = result;
-    return offset;
-}
-
-static int append_utf8_codepoint(uint8_t* out, size_t capacity, size_t* offset, uint32_t codepoint)
-{
-    if (!out || !offset || *offset >= capacity)
-        return 0;
-    if (codepoint <= 0x7fu)
-    {
-        out[(*offset)++] = (uint8_t)codepoint;
-        return 1;
-    }
-    if (codepoint <= 0x7ffu && *offset + 2u <= capacity)
-    {
-        out[(*offset)++] = (uint8_t)(0xc0u | (codepoint >> 6));
-        out[(*offset)++] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        return 1;
-    }
-    if (codepoint <= 0xffffu && *offset + 3u <= capacity)
-    {
-        out[(*offset)++] = (uint8_t)(0xe0u | (codepoint >> 12));
-        out[(*offset)++] = (uint8_t)(0x80u | ((codepoint >> 6) & 0x3fu));
-        out[(*offset)++] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        return 1;
-    }
-    if (codepoint <= 0x10ffffu && *offset + 4u <= capacity)
-    {
-        out[(*offset)++] = (uint8_t)(0xf0u | (codepoint >> 18));
-        out[(*offset)++] = (uint8_t)(0x80u | ((codepoint >> 12) & 0x3fu));
-        out[(*offset)++] = (uint8_t)(0x80u | ((codepoint >> 6) & 0x3fu));
-        out[(*offset)++] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        return 1;
-    }
-    return 0;
+    return out_len;
 }
 
 static size_t utf16le_to_utf8_bytes(const uint8_t* data, size_t length, uint8_t** out)
 {
-    uint8_t* result = NULL;
-    size_t capacity = 0;
-    size_t offset = 0;
-    size_t i = 0;
+    char* text = NULL;
+    size_t text_len = 0;
 
     if (!out || (!data && length > 0) || (length & 1u) != 0 || length > X11_CLIPBOARD_MAX_BYTES)
         return 0;
-    capacity = ((length / 2u) * 3u) + 1u;
-    result = (uint8_t*)malloc(capacity);
-    if (!result)
+    if (rdp_charset_utf16le_to_utf8_alloc(data, length, 1, &text, &text_len) != LIBRDP_STATUS_OK)
         return 0;
-    while (i + 1u < length)
-    {
-        uint16_t unit = (uint16_t)data[i] | ((uint16_t)data[i + 1u] << 8);
-        uint32_t codepoint = unit;
-
-        i += 2u;
-        if (unit == 0)
-            break;
-        if (unit >= 0xd800u && unit <= 0xdbffu && i + 1u < length)
-        {
-            uint16_t low = (uint16_t)data[i] | ((uint16_t)data[i + 1u] << 8);
-
-            if (low >= 0xdc00u && low <= 0xdfffu)
-            {
-                codepoint = 0x10000u + (((uint32_t)unit - 0xd800u) << 10) + ((uint32_t)low - 0xdc00u);
-                i += 2u;
-            }
-            else
-                codepoint = 0xfffdu;
-        }
-        else if (unit >= 0xdc00u && unit <= 0xdfffu)
-            codepoint = 0xfffdu;
-        (void)append_utf8_codepoint(result, capacity, &offset, codepoint);
-    }
-    result[offset] = 0;
-    *out = result;
-    return offset;
+    *out = (uint8_t*)text;
+    return text_len;
 }
 
 static void x11_clipboard_init(x11_app* app)

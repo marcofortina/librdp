@@ -26,6 +26,7 @@
 #include "channels/webauthn_channel.h"
 #include "client/settings_internal.h"
 #include "clipboard/clipboard.h"
+#include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
 #include "graphics/avc.h"
@@ -2234,48 +2235,28 @@ static uint32_t rdp_session_parallel_port_index_from_device_id(const librdp_sess
 static librdp_status rdp_session_utf16le_path_to_utf8(const uint8_t* data, uint32_t data_len, char** out)
 {
     char* text = NULL;
-    size_t chars = 0;
-    size_t position = 0;
-    size_t written = 0;
+    size_t text_len = 0;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !out || data_len < 2u || (data_len & 1u) != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *out = NULL;
-    chars = data_len / 2u;
     if (data[data_len - 2u] != 0 || data[data_len - 1u] != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    text = (char*)malloc(chars * 3u + 1u);
-    if (!text)
-        return LIBRDP_STATUS_NO_MEMORY;
-    while (position + 1u < chars)
+    for (i = 0; i + 3u < data_len; i += 2u)
     {
-        uint32_t ch = (uint32_t)data[position * 2u] | ((uint32_t)data[position * 2u + 1u] << 8);
-
-        if (ch == 0)
-        {
-            free(text);
+        if (data[i] == 0 && data[i + 1u] == 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        }
-        if (ch == '\\')
-            ch = '/';
-        if (ch < 0x80u)
-        {
-            text[written++] = (char)ch;
-        }
-        else if (ch < 0x800u)
-        {
-            text[written++] = (char)(0xc0u | (ch >> 6));
-            text[written++] = (char)(0x80u | (ch & 0x3fu));
-        }
-        else
-        {
-            text[written++] = (char)(0xe0u | (ch >> 12));
-            text[written++] = (char)(0x80u | ((ch >> 6) & 0x3fu));
-            text[written++] = (char)(0x80u | (ch & 0x3fu));
-        }
-        position++;
     }
-    text[written] = '\0';
+    status = rdp_charset_utf16le_to_utf8_alloc(data, data_len, 1, &text, &text_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (i = 0; i < text_len; i++)
+    {
+        if (text[i] == '\\')
+            text[i] = '/';
+    }
     *out = text;
     return LIBRDP_STATUS_OK;
 }
@@ -2301,51 +2282,6 @@ static int rdp_session_volume_label_codepoint_valid(uint32_t ch)
     }
 }
 
-static librdp_status rdp_session_append_utf8_codepoint(char* out,
-                                                       size_t out_len,
-                                                       size_t* written,
-                                                       uint32_t ch)
-{
-    size_t needed = 0;
-
-    if (!out || !written || ch > 0x10ffffu)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (ch < 0x80u)
-        needed = 1;
-    else if (ch < 0x800u)
-        needed = 2;
-    else if (ch < 0x10000u)
-        needed = 3;
-    else
-        needed = 4;
-    if (*written + needed >= out_len)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (needed == 1)
-    {
-        out[(*written)++] = (char)ch;
-    }
-    else if (needed == 2)
-    {
-        out[(*written)++] = (char)(0xc0u | (ch >> 6u));
-        out[(*written)++] = (char)(0x80u | (ch & 0x3fu));
-    }
-    else if (needed == 3)
-    {
-        out[(*written)++] = (char)(0xe0u | (ch >> 12u));
-        out[(*written)++] = (char)(0x80u | ((ch >> 6u) & 0x3fu));
-        out[(*written)++] = (char)(0x80u | (ch & 0x3fu));
-    }
-    else
-    {
-        out[(*written)++] = (char)(0xf0u | (ch >> 18u));
-        out[(*written)++] = (char)(0x80u | ((ch >> 12u) & 0x3fu));
-        out[(*written)++] = (char)(0x80u | ((ch >> 6u) & 0x3fu));
-        out[(*written)++] = (char)(0x80u | (ch & 0x3fu));
-    }
-    out[*written] = '\0';
-    return LIBRDP_STATUS_OK;
-}
-
 static librdp_status rdp_session_utf16le_volume_label_to_utf8(const uint8_t* data,
                                                               uint32_t data_len,
                                                               char* out,
@@ -2354,7 +2290,9 @@ static librdp_status rdp_session_utf16le_volume_label_to_utf8(const uint8_t* dat
     uint32_t units = 0;
     uint32_t position = 0;
     uint32_t chars = 0;
-    size_t written = 0;
+    char* converted = NULL;
+    size_t converted_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if ((!data && data_len > 0) || !out || out_len == 0 || (data_len & 1u) != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -2386,9 +2324,17 @@ static librdp_status rdp_session_utf16le_volume_label_to_utf8(const uint8_t* dat
         chars++;
         if (chars > RDP_SESSION_VOLUME_LABEL_MAX_CHARS)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (rdp_session_append_utf8_codepoint(out, out_len, &written, ch) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
+    status = rdp_charset_utf16le_to_utf8_alloc(data, data_len, 0, &converted, &converted_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (converted_len >= out_len)
+    {
+        free(converted);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    memcpy(out, converted, converted_len + 1u);
+    free(converted);
     return LIBRDP_STATUS_OK;
 }
 
@@ -2727,65 +2673,9 @@ static uint32_t rdp_session_stat_attributes(const struct stat* st)
 
 static librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* out, uint8_t append_null)
 {
-    const unsigned char* p = (const unsigned char*)text;
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!text || !out)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    while (*p)
-    {
-        uint32_t cp = 0;
-
-        if (*p < 0x80u)
-        {
-            cp = *p++;
-        }
-        else if ((*p & 0xe0u) == 0xc0u && (p[1] & 0xc0u) == 0x80u)
-        {
-            cp = ((uint32_t)(p[0] & 0x1fu) << 6) | (uint32_t)(p[1] & 0x3fu);
-            p += 2;
-        }
-        else if ((*p & 0xf0u) == 0xe0u && (p[1] & 0xc0u) == 0x80u && (p[2] & 0xc0u) == 0x80u)
-        {
-            cp = ((uint32_t)(p[0] & 0x0fu) << 12) | ((uint32_t)(p[1] & 0x3fu) << 6) |
-                 (uint32_t)(p[2] & 0x3fu);
-            p += 3;
-        }
-        else if ((*p & 0xf8u) == 0xf0u && (p[1] & 0xc0u) == 0x80u &&
-                 (p[2] & 0xc0u) == 0x80u && (p[3] & 0xc0u) == 0x80u)
-        {
-            cp = ((uint32_t)(p[0] & 0x07u) << 18) | ((uint32_t)(p[1] & 0x3fu) << 12) |
-                 ((uint32_t)(p[2] & 0x3fu) << 6) | (uint32_t)(p[3] & 0x3fu);
-            p += 4;
-        }
-        else
-        {
-            cp = '?';
-            p++;
-        }
-
-        if (cp > 0x10ffffu)
-            cp = '?';
-        if (cp <= 0xffffu)
-        {
-            status = rdp_buffer_append_u16_le(out, (uint16_t)cp);
-        }
-        else
-        {
-            uint32_t value = cp - 0x10000u;
-            uint16_t high = (uint16_t)(0xd800u | (value >> 10));
-            uint16_t low = (uint16_t)(0xdc00u | (value & 0x3ffu));
-
-            status = rdp_buffer_append_u16_le(out, high);
-            if (status == LIBRDP_STATUS_OK)
-                status = rdp_buffer_append_u16_le(out, low);
-        }
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    if (append_null)
-        return rdp_buffer_append_u16_le(out, 0);
-    return LIBRDP_STATUS_OK;
+    return rdp_charset_utf8_to_utf16le_buffer(text, append_null != 0, out);
 }
 
 static librdp_status rdp_session_send_remote_programs_startup(librdp_session* session)
@@ -7128,208 +7018,41 @@ static uint32_t rdp_session_smartcard_u32_from_dword(DWORD value)
     return value > UINT32_MAX ? UINT32_MAX : (uint32_t)value;
 }
 
-static int rdp_session_smartcard_utf8_decode(const uint8_t* data, size_t length, size_t* offset, uint32_t* cp)
-{
-    uint8_t b0 = 0;
-
-    if (!data || !offset || !cp || *offset >= length)
-        return 0;
-    b0 = data[*offset];
-    if (b0 < 0x80u)
-    {
-        *cp = b0;
-        *offset += 1u;
-        return 1;
-    }
-    if ((b0 & 0xe0u) == 0xc0u && *offset + 1u < length)
-    {
-        uint8_t b1 = data[*offset + 1u];
-
-        if ((b1 & 0xc0u) == 0x80u)
-        {
-            uint32_t value = ((uint32_t)(b0 & 0x1fu) << 6) | (uint32_t)(b1 & 0x3fu);
-
-            if (value >= 0x80u)
-            {
-                *cp = value;
-                *offset += 2u;
-                return 1;
-            }
-        }
-    }
-    if ((b0 & 0xf0u) == 0xe0u && *offset + 2u < length)
-    {
-        uint8_t b1 = data[*offset + 1u];
-        uint8_t b2 = data[*offset + 2u];
-
-        if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u)
-        {
-            uint32_t value = ((uint32_t)(b0 & 0x0fu) << 12) |
-                             ((uint32_t)(b1 & 0x3fu) << 6) |
-                             (uint32_t)(b2 & 0x3fu);
-
-            if (value >= 0x800u && (value < 0xd800u || value > 0xdfffu))
-            {
-                *cp = value;
-                *offset += 3u;
-                return 1;
-            }
-        }
-    }
-    if ((b0 & 0xf8u) == 0xf0u && *offset + 3u < length)
-    {
-        uint8_t b1 = data[*offset + 1u];
-        uint8_t b2 = data[*offset + 2u];
-        uint8_t b3 = data[*offset + 3u];
-
-        if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u && (b3 & 0xc0u) == 0x80u)
-        {
-            uint32_t value = ((uint32_t)(b0 & 0x07u) << 18) |
-                             ((uint32_t)(b1 & 0x3fu) << 12) |
-                             ((uint32_t)(b2 & 0x3fu) << 6) |
-                             (uint32_t)(b3 & 0x3fu);
-
-            if (value >= 0x10000u && value <= 0x10ffffu)
-            {
-                *cp = value;
-                *offset += 4u;
-                return 1;
-            }
-        }
-    }
-    *cp = '?';
-    *offset += 1u;
-    return 1;
-}
-
-static void rdp_session_smartcard_append_u16le(uint8_t* data, size_t* offset, uint16_t value)
-{
-    data[*offset] = (uint8_t)(value & 0xffu);
-    data[*offset + 1u] = (uint8_t)((value >> 8) & 0xffu);
-    *offset += 2u;
-}
-
 static uint8_t* rdp_session_smartcard_utf8_multisz_to_utf16le(const char* text,
                                                               uint32_t text_len,
                                                               uint32_t* out_len)
 {
-    const uint8_t* input = (const uint8_t*)text;
-    size_t input_offset = 0;
-    size_t output_offset = 0;
-    size_t capacity = 0;
     uint8_t* output = NULL;
+    size_t output_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!text || !out_len || text_len > (UINT32_MAX / 2u) - 2u)
+    if (!text || !out_len)
         return NULL;
-    capacity = ((size_t)text_len * 2u) + 2u;
-    output = (uint8_t*)calloc(1u, capacity);
-    if (!output)
-        return NULL;
-    while (input_offset < text_len)
+    status = rdp_charset_utf8_bytes_to_utf16le_alloc((const uint8_t*)text,
+                                                     text_len,
+                                                     0,
+                                                     &output,
+                                                     &output_len);
+    if (status != LIBRDP_STATUS_OK || output_len > UINT32_MAX)
     {
-        uint32_t cp = 0;
-
-        if (!rdp_session_smartcard_utf8_decode(input, text_len, &input_offset, &cp))
-            break;
-        if (cp <= 0xffffu)
-        {
-            rdp_session_smartcard_append_u16le(output, &output_offset, (uint16_t)cp);
-        }
-        else
-        {
-            uint32_t value = cp - 0x10000u;
-
-            rdp_session_smartcard_append_u16le(output,
-                                               &output_offset,
-                                               (uint16_t)(0xd800u + (value >> 10)));
-            rdp_session_smartcard_append_u16le(output,
-                                               &output_offset,
-                                               (uint16_t)(0xdc00u + (value & 0x3ffu)));
-        }
+        free(output);
+        return NULL;
     }
-    *out_len = output_offset > UINT32_MAX ? UINT32_MAX : (uint32_t)output_offset;
+    *out_len = (uint32_t)output_len;
     return output;
-}
-
-static int rdp_session_smartcard_utf8_append(uint8_t* data, size_t capacity, size_t* offset, uint32_t cp)
-{
-    if (!data || !offset || *offset >= capacity)
-        return 0;
-    if (cp < 0x80u)
-    {
-        data[(*offset)++] = (uint8_t)cp;
-        return 1;
-    }
-    if (cp < 0x800u)
-    {
-        if (capacity - *offset < 2u)
-            return 0;
-        data[(*offset)++] = (uint8_t)(0xc0u | (cp >> 6));
-        data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
-        return 1;
-    }
-    if (cp < 0x10000u)
-    {
-        if (capacity - *offset < 3u)
-            return 0;
-        data[(*offset)++] = (uint8_t)(0xe0u | (cp >> 12));
-        data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 6) & 0x3fu));
-        data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
-        return 1;
-    }
-    if (capacity - *offset < 4u)
-        return 0;
-    data[(*offset)++] = (uint8_t)(0xf0u | (cp >> 18));
-    data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 12) & 0x3fu));
-    data[(*offset)++] = (uint8_t)(0x80u | ((cp >> 6) & 0x3fu));
-    data[(*offset)++] = (uint8_t)(0x80u | (cp & 0x3fu));
-    return 1;
 }
 
 static char* rdp_session_smartcard_utf16le_to_utf8_multisz(const uint8_t* text, uint32_t text_len)
 {
-    size_t input_offset = 0;
-    size_t output_offset = 0;
-    size_t capacity = 0;
-    uint8_t* output = NULL;
+    char* output = NULL;
+    size_t output_len = 0;
 
     if (!text || text_len > (UINT32_MAX / 2u) || (text_len % 2u) != 0)
         return NULL;
-    capacity = ((size_t)text_len * 2u) + 1u;
-    output = (uint8_t*)calloc(1u, capacity);
-    if (!output)
+    if (rdp_charset_utf16le_to_utf8_alloc(text, text_len, 0, &output, &output_len) != LIBRDP_STATUS_OK)
         return NULL;
-    while (input_offset + 1u < text_len)
-    {
-        uint32_t cp = (uint32_t)text[input_offset] | ((uint32_t)text[input_offset + 1u] << 8);
-
-        input_offset += 2u;
-        if (cp >= 0xd800u && cp <= 0xdbffu && input_offset + 1u < text_len)
-        {
-            uint32_t low = (uint32_t)text[input_offset] | ((uint32_t)text[input_offset + 1u] << 8);
-
-            if (low >= 0xdc00u && low <= 0xdfffu)
-            {
-                input_offset += 2u;
-                cp = 0x10000u + ((cp - 0xd800u) << 10) + (low - 0xdc00u);
-            }
-            else
-            {
-                cp = '?';
-            }
-        }
-        else if (cp >= 0xdc00u && cp <= 0xdfffu)
-        {
-            cp = '?';
-        }
-        if (!rdp_session_smartcard_utf8_append(output, capacity, &output_offset, cp))
-        {
-            free(output);
-            return NULL;
-        }
-    }
-    output[output_offset] = '\0';
-    return (char*)output;
+    (void)output_len;
+    return output;
 }
 
 static const SCARD_IO_REQUEST* rdp_session_smartcard_pci_from_protocol(uint32_t protocol)
@@ -10314,19 +10037,33 @@ static librdp_status rdp_session_write_device_redirection_client_name(rdp_buffer
     return rdp_device_redirection_write_client_name_utf16le(buffer, utf16, (uint32_t)sizeof(utf16));
 }
 
-static void rdp_session_drive_name_to_utf16le(const char* name, uint8_t* out, size_t out_len)
+static librdp_status rdp_session_drive_name_to_utf16le(const char* name,
+                                                       uint8_t* out,
+                                                       size_t out_len,
+                                                       uint32_t* written)
 {
-    size_t i = 0;
-    size_t length = 0;
+    rdp_buffer buffer;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!name || !out || out_len < 2u)
-        return;
+    if (!name || !out || out_len < 2u || !written)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(out, 0, out_len);
-    length = strlen(name);
-    if ((length + 1u) * 2u > out_len)
-        length = out_len / 2u - 1u;
-    for (i = 0; i < length; i++)
-        out[i * 2u] = (uint8_t)name[i];
+    rdp_buffer_init(&buffer);
+    status = rdp_charset_utf8_to_utf16le_buffer(name, 1, &buffer);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&buffer);
+        return status;
+    }
+    if (buffer.length > out_len || buffer.length > UINT32_MAX)
+    {
+        rdp_buffer_free(&buffer);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    memcpy(out, buffer.data, buffer.length);
+    *written = (uint32_t)buffer.length;
+    rdp_buffer_free(&buffer);
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_session_send_device_redirection_device_list(librdp_session* session)
@@ -10376,9 +10113,10 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
         devices[count].device_type = RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM;
         devices[count].device_id = rdp_settings_drive_device_id_internal(session->settings, i);
         memcpy(devices[count].preferred_dos_name, name, name_len + 1u);
-        rdp_session_drive_name_to_utf16le(name, names[i], sizeof(names[i]));
+        status = rdp_session_drive_name_to_utf16le(name, names[i], sizeof(names[i]), &devices[count].data_len);
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
         devices[count].data = names[i];
-        devices[count].data_len = (uint32_t)((name_len + 1u) * 2u);
         count++;
     }
     for (i = 0; i < serial_count; i++)

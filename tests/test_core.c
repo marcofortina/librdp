@@ -1,6 +1,7 @@
 #include <librdp/librdp.h>
 
 #include "common/buffer.h"
+#include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
 #include "input/input.h"
@@ -863,6 +864,41 @@ static int test_buffer_stream(void)
     return 0;
 }
 
+static int test_charset(void)
+{
+    static const uint8_t utf16_expected[] = {
+        0x41, 0x00, 0xe9, 0x00, 0x3d, 0xd8, 0x00, 0xde, 0x00, 0x00
+    };
+    static const uint8_t utf16_input[] = {
+        0x41, 0x00, 0xe9, 0x00, 0x3d, 0xd8, 0x00, 0xde, 0x00, 0x00, 0x42, 0x00
+    };
+    rdp_buffer buffer;
+    char* utf8 = NULL;
+    size_t utf8_len = 0;
+    uint8_t* utf16 = NULL;
+    size_t utf16_len = 0;
+
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_charset_utf8_to_utf16le_buffer("A\303\251\360\237\230\200", 1, &buffer) ==
+          LIBRDP_STATUS_OK);
+    CHECK(buffer.length == sizeof(utf16_expected));
+    CHECK(memcmp(buffer.data, utf16_expected, sizeof(utf16_expected)) == 0);
+    rdp_buffer_free(&buffer);
+
+    CHECK(rdp_charset_utf16le_to_utf8_alloc(utf16_input, sizeof(utf16_input), 1, &utf8, &utf8_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(utf8_len == 7);
+    CHECK(memcmp(utf8, "A\303\251\360\237\230\200", utf8_len) == 0);
+    free(utf8);
+
+    CHECK(rdp_charset_utf8_bytes_to_utf16le_alloc((const uint8_t*)"AB", 2, 0, &utf16, &utf16_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(utf16_len == 4);
+    CHECK(utf16[0] == 'A' && utf16[1] == 0 && utf16[2] == 'B' && utf16[3] == 0);
+    free(utf16);
+    return 0;
+}
+
 static int test_pointer_decode(void)
 {
     rdp_pointer_update update;
@@ -1363,6 +1399,8 @@ int main(void)
     if (test_trace() != 0)
         return 1;
     if (test_buffer_stream() != 0)
+        return 1;
+    if (test_charset() != 0)
         return 1;
     if (test_pointer_decode() != 0)
         return 1;
