@@ -540,6 +540,201 @@ const rdp_composited_render_resource* rdp_composited_render_tree_find(
     return NULL;
 }
 
+static const rdp_composited_render_resource* rdp_composited_render_tree_resolve_resource(
+    const rdp_composited_render_tree* tree,
+    uint32_t resource,
+    uint32_t* duplicate_resolved)
+{
+    uint32_t visited[RDP_COMPOSITED_RENDER_RESOURCE_LIMIT];
+    uint32_t visited_count = 0;
+    const rdp_composited_render_resource* entry = NULL;
+
+    if (duplicate_resolved)
+        *duplicate_resolved = 0;
+    if (!tree || resource == 0)
+        return NULL;
+    entry = rdp_composited_render_tree_find(tree, resource);
+    while (entry && entry->duplicate_source != 0)
+    {
+        uint32_t i = 0;
+        const rdp_composited_render_resource* source = NULL;
+
+        for (i = 0; i < visited_count; i++)
+        {
+            if (visited[i] == entry->resource)
+                return entry;
+        }
+        if (visited_count >= RDP_COMPOSITED_RENDER_RESOURCE_LIMIT)
+            return entry;
+        visited[visited_count++] = entry->resource;
+        source = rdp_composited_render_tree_find(tree, entry->duplicate_source);
+        if (!source)
+            return entry;
+        if (duplicate_resolved)
+            *duplicate_resolved = 1;
+        entry = source;
+    }
+    return entry;
+}
+
+static const rdp_composited_render_invalidation* rdp_composited_render_tree_find_invalidation(
+    const rdp_composited_render_tree* tree,
+    uint32_t resource)
+{
+    uint32_t i = 0;
+
+    if (!tree || resource == 0)
+        return NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree->invalidations[i].active && tree->invalidations[i].resource == resource)
+            return &tree->invalidations[i];
+    }
+    return NULL;
+}
+
+static uint32_t rdp_composited_render_resource_source_ref(
+    const rdp_composited_render_resource* entry)
+{
+    if (!entry)
+        return 0;
+    if (entry->logical_surface_image_resource != 0)
+        return entry->logical_surface_image_resource;
+    if (entry->sprite_image_resource != 0)
+        return entry->sprite_image_resource;
+    switch (entry->resource_type)
+    {
+        case RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP:
+        case RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET:
+        case RDP_COMPOSITED_RESOURCE_RENDERDATA:
+        case RDP_COMPOSITED_RESOURCE_GLYPH_RUN:
+            return entry->resource;
+        default:
+            return 0;
+    }
+}
+
+static void rdp_composited_resolved_view_consider_invalidation(
+    const rdp_composited_render_tree* tree,
+    uint32_t resource,
+    rdp_composited_resolved_view* view,
+    uint32_t* generation)
+{
+    const rdp_composited_render_invalidation* invalidation =
+        rdp_composited_render_tree_find_invalidation(tree, resource);
+
+    if (!invalidation || !view || !generation || invalidation->generation < *generation)
+        return;
+    view->invalid_rect = invalidation->rect;
+    view->invalid_rect_valid = 1;
+    *generation = invalidation->generation;
+}
+
+librdp_status rdp_composited_render_tree_resolve_view(
+    const rdp_composited_render_tree* tree,
+    uint32_t target_resource,
+    rdp_composited_resolved_view* view)
+{
+    uint32_t duplicate = 0;
+    uint32_t invalidation_generation = 0;
+    uint32_t source_ref = 0;
+    const rdp_composited_render_resource* target = NULL;
+    const rdp_composited_render_resource* root = NULL;
+    const rdp_composited_render_resource* source = NULL;
+
+    if (!tree || !view || target_resource == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(view, 0, sizeof(*view));
+    view->target_resource = target_resource;
+    target = rdp_composited_render_tree_resolve_resource(tree, target_resource, &duplicate);
+    if (!target)
+        return LIBRDP_STATUS_STATE;
+    view->flags |= RDP_COMPOSITED_VIEW_TARGET_PRESENT;
+    if (duplicate)
+        view->flags |= RDP_COMPOSITED_VIEW_TARGET_DUPLICATE;
+    view->target_resource = target->resource;
+    view->target_type = target->resource_type;
+    view->width = target->width;
+    view->height = target->height;
+    view->dxgi_format = target->dxgi_format;
+    view->capture_count = target->capture_count;
+    view->capture_x = target->capture_x;
+    view->capture_y = target->capture_y;
+    view->capture_width = target->capture_width;
+    view->capture_height = target->capture_height;
+    memcpy(view->clear_color, target->clear_color, sizeof(view->clear_color));
+    memcpy(view->color_key, target->color_key, sizeof(view->color_key));
+    if (target->capture_count != 0)
+        view->flags |= RDP_COMPOSITED_VIEW_TARGET_CAPTURE;
+    view->target_rect_valid = (uint8_t)rdp_composited_resource_rect(target, &view->target_rect);
+    rdp_composited_resolved_view_consider_invalidation(tree,
+                                                       target->resource,
+                                                       view,
+                                                       &invalidation_generation);
+
+    root = rdp_composited_render_tree_resolve_resource(tree, target->root_resource, &duplicate);
+    if (root)
+    {
+        view->flags |= RDP_COMPOSITED_VIEW_ROOT_PRESENT;
+        if (duplicate)
+            view->flags |= RDP_COMPOSITED_VIEW_ROOT_DUPLICATE;
+        view->root_resource = root->resource;
+        view->root_type = root->resource_type;
+        view->sprite_id = root->sprite_id;
+        view->window_id = root->window_id;
+        view->logical_surface_id = root->logical_surface_id;
+        if (root->detached)
+            view->flags |= RDP_COMPOSITED_VIEW_ROOT_DETACHED;
+        if (root->protected_content)
+            view->flags |= RDP_COMPOSITED_VIEW_PROTECTED;
+        if (root->compose_once)
+            view->flags |= RDP_COMPOSITED_VIEW_COMPOSE_ONCE;
+        view->root_rect_valid = (uint8_t)rdp_composited_resource_rect(root, &view->root_rect);
+        rdp_composited_resolved_view_consider_invalidation(tree,
+                                                           root->resource,
+                                                           view,
+                                                           &invalidation_generation);
+    }
+
+    source_ref = rdp_composited_render_resource_source_ref(root ? root : target);
+    source = rdp_composited_render_tree_resolve_resource(tree, source_ref, &duplicate);
+    if (source)
+    {
+        view->flags |= RDP_COMPOSITED_VIEW_SOURCE_PRESENT;
+        if (duplicate)
+            view->flags |= RDP_COMPOSITED_VIEW_SOURCE_DUPLICATE;
+        view->source_resource = source->resource;
+        view->source_type = source->resource_type;
+        if (source->width != 0)
+            view->width = source->width;
+        if (source->height != 0)
+            view->height = source->height;
+        if (source->dxgi_format != 0)
+            view->dxgi_format = source->dxgi_format;
+        view->surface_count = source->surface_count;
+        view->texture_width = source->texture_width;
+        view->texture_height = source->texture_height;
+        view->meta_capture_count = source->meta_capture_count;
+        view->meta_capture_update_id = source->meta_capture_update_id;
+        view->sprite_dirty_count = source->sprite_dirty_count;
+        view->sprite_dirty_flags = source->sprite_dirty_flags;
+        view->sprite_dirty_cookie = source->sprite_dirty_cookie;
+        view->logical_surface_id = source->logical_surface_id;
+        if (source->meta_capture_count != 0)
+            view->flags |= RDP_COMPOSITED_VIEW_META_CAPTURE;
+        if (source->sprite_dirty_count != 0)
+            view->flags |= RDP_COMPOSITED_VIEW_SOURCE_DIRTY;
+        if (source->sprite_unmapped)
+            view->flags |= RDP_COMPOSITED_VIEW_SOURCE_UNMAPPED;
+        view->source_rect_valid = (uint8_t)rdp_composited_resource_rect(source, &view->source_rect);
+        rdp_composited_resolved_view_consider_invalidation(tree,
+                                                           source->resource,
+                                                           view,
+                                                           &invalidation_generation);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_composited_render_apply_u32(rdp_composited_render_tree* tree,
                                                      const rdp_composited_channel_message* message)
 {
@@ -670,6 +865,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->duplicate_source = duplicate.original;
             entry->duplicate_target_channel = duplicate.target_channel;
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_RENDERDATA:
@@ -686,6 +882,7 @@ librdp_status rdp_composited_render_tree_apply_message(
                 return LIBRDP_STATUS_NO_MEMORY;
             entry->render_data_length = render_data.data_size;
             entry->render_instruction_count = render_data.data_size / 4u;
+            rdp_composited_render_tree_invalidate_graph(tree, entry);
             break;
         }
         case RDP_COMPOSITED_CMD_WINDOW_NODE_CREATE:

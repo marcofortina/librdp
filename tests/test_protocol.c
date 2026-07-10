@@ -10374,6 +10374,7 @@ static int test_composited_remoting_channel(void)
     rdp_composited_batch_reader reader;
     rdp_composited_channel_message message;
     rdp_composited_render_tree tree;
+    rdp_composited_resolved_view view;
     const rdp_composited_render_resource* render_resource = NULL;
     const rdp_composited_render_invalidation* invalidation = NULL;
     const rdp_composited_rect_i rect = {1, 2, 301, 402};
@@ -11215,6 +11216,25 @@ static int test_composited_remoting_channel(void)
            invalidation->generation > before_invalidations &&
            invalidation->rect.left == 0 &&
            invalidation->rect.right == 640);
+    PCHECK(rdp_composited_render_tree_resolve_view(&tree, 0x40u, &view) ==
+           LIBRDP_STATUS_OK);
+    PCHECK((view.flags & RDP_COMPOSITED_VIEW_TARGET_PRESENT) != 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_ROOT_PRESENT) != 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_SOURCE_PRESENT) != 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_TARGET_CAPTURE) != 0 &&
+           (view.flags & RDP_COMPOSITED_VIEW_SOURCE_DIRTY) != 0);
+    PCHECK(view.target_resource == 0x40u &&
+           view.root_resource == 0x44u &&
+           view.source_resource == 0x16u &&
+           view.width == 640u &&
+           view.height == 480u &&
+           view.capture_count == 1u &&
+           view.capture_width == 320u &&
+           view.sprite_dirty_cookie == 0x0102030405060708ull &&
+           view.target_rect_valid &&
+           view.root_rect_valid &&
+           view.invalid_rect_valid &&
+           view.invalid_rect.right == 640);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -11226,6 +11246,12 @@ static int test_composited_remoting_channel(void)
     PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
     render_resource = rdp_composited_render_tree_find(&tree, 0x16u);
     PCHECK(render_resource && render_resource->sprite_unmapped == 1u);
+    PCHECK(rdp_composited_render_tree_resolve_view(&tree, 0x40u, &view) ==
+           LIBRDP_STATUS_OK);
+    PCHECK((view.flags & RDP_COMPOSITED_VIEW_SOURCE_UNMAPPED) != 0 &&
+           view.source_resource == 0x16u);
+    PCHECK(rdp_composited_render_tree_resolve_view(&tree, 0xf0u, &view) ==
+           LIBRDP_STATUS_STATE);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

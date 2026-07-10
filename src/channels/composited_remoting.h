@@ -97,6 +97,19 @@
 #define RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP 0x00000038u
 #define RDP_COMPOSITED_RENDER_RESOURCE_LIMIT 512u
 #define RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT 512u
+#define RDP_COMPOSITED_VIEW_TARGET_PRESENT 0x00000001u
+#define RDP_COMPOSITED_VIEW_ROOT_PRESENT 0x00000002u
+#define RDP_COMPOSITED_VIEW_SOURCE_PRESENT 0x00000004u
+#define RDP_COMPOSITED_VIEW_TARGET_DUPLICATE 0x00000008u
+#define RDP_COMPOSITED_VIEW_ROOT_DUPLICATE 0x00000010u
+#define RDP_COMPOSITED_VIEW_SOURCE_DUPLICATE 0x00000020u
+#define RDP_COMPOSITED_VIEW_TARGET_CAPTURE 0x00000040u
+#define RDP_COMPOSITED_VIEW_META_CAPTURE 0x00000080u
+#define RDP_COMPOSITED_VIEW_SOURCE_DIRTY 0x00000100u
+#define RDP_COMPOSITED_VIEW_ROOT_DETACHED 0x00000200u
+#define RDP_COMPOSITED_VIEW_SOURCE_UNMAPPED 0x00000400u
+#define RDP_COMPOSITED_VIEW_PROTECTED 0x00000800u
+#define RDP_COMPOSITED_VIEW_COMPOSE_ONCE 0x00001000u
 
 typedef struct rdp_composited_control
 {
@@ -423,6 +436,46 @@ typedef struct rdp_composited_render_invalidation
     rdp_composited_rect_i rect;
 } rdp_composited_render_invalidation;
 
+typedef struct rdp_composited_resolved_view
+{
+    uint32_t target_resource;
+    uint32_t target_type;
+    uint32_t root_resource;
+    uint32_t root_type;
+    uint32_t source_resource;
+    uint32_t source_type;
+    uint32_t flags;
+    uint32_t width;
+    uint32_t height;
+    uint32_t dxgi_format;
+    uint32_t surface_count;
+    uint32_t texture_width;
+    uint32_t texture_height;
+    uint32_t capture_count;
+    uint32_t capture_x;
+    uint32_t capture_y;
+    uint32_t capture_width;
+    uint32_t capture_height;
+    uint32_t meta_capture_count;
+    uint32_t sprite_dirty_count;
+    uint32_t sprite_dirty_flags;
+    uint64_t sprite_id;
+    uint64_t window_id;
+    uint64_t logical_surface_id;
+    uint64_t meta_capture_update_id;
+    uint64_t sprite_dirty_cookie;
+    rdp_composited_rect_i target_rect;
+    rdp_composited_rect_i root_rect;
+    rdp_composited_rect_i source_rect;
+    rdp_composited_rect_i invalid_rect;
+    uint8_t clear_color[16];
+    uint8_t color_key[16];
+    uint8_t target_rect_valid;
+    uint8_t root_rect_valid;
+    uint8_t source_rect_valid;
+    uint8_t invalid_rect_valid;
+} rdp_composited_resolved_view;
+
 typedef struct rdp_composited_render_tree
 {
     rdp_composited_render_resource resources[RDP_COMPOSITED_RENDER_RESOURCE_LIMIT];
@@ -445,6 +498,10 @@ void rdp_composited_render_tree_reset(rdp_composited_render_tree* tree);
 const rdp_composited_render_resource* rdp_composited_render_tree_find(
     const rdp_composited_render_tree* tree,
     uint32_t resource);
+librdp_status rdp_composited_render_tree_resolve_view(
+    const rdp_composited_render_tree* tree,
+    uint32_t target_resource,
+    rdp_composited_resolved_view* view);
 librdp_status rdp_composited_render_tree_apply_message(
     rdp_composited_render_tree* tree,
     const rdp_composited_channel_message* message);
