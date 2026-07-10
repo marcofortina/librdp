@@ -1417,8 +1417,31 @@ librdp_status rdp_composited_render_tree_apply_message(
         case RDP_COMPOSITED_CMD_REGISTER_NOTIFICATIONS:
             tree->notification_registration_count++;
             break;
+        case RDP_COMPOSITED_CMD_BITMAP_PIXELS:
+            tree->bitmap_pixels_count++;
+            break;
+        case RDP_COMPOSITED_CMD_BITMAP_COMPRESSED_PIXELS:
+            tree->bitmap_compressed_pixels_count++;
+            break;
+        case RDP_COMPOSITED_CMD_VISUAL_GROUP:
+            tree->visual_group_count++;
+            break;
+        case RDP_COMPOSITED_CMD_GLYPH_CACHE_ADD_BITMAPS:
+            tree->glyph_cache_add_count++;
+            break;
+        case RDP_COMPOSITED_CMD_GLYPH_CACHE_REMOVE_BITMAPS:
+            tree->glyph_cache_remove_count++;
+            break;
+        case RDP_COMPOSITED_CMD_GLYPH_RUN_ADD_REALIZATION:
+            tree->glyph_realization_add_count++;
+            break;
+        case RDP_COMPOSITED_CMD_GLYPH_RUN_REMOVE_REALIZATION:
+            tree->glyph_realization_remove_count++;
+            break;
         default:
-            tree->skipped_known_count++;
+            tree->extension_command_count++;
+            tree->last_extension_command = message->control_code;
+            tree->last_extension_payload_len = (uint32_t)message->payload_len;
             break;
     }
     return LIBRDP_STATUS_OK;

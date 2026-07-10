@@ -12615,6 +12615,95 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_BITMAP_PIXELS,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.bitmap_pixels_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_BITMAP_COMPRESSED_PIXELS,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.bitmap_compressed_pixels_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_VISUAL_GROUP,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.visual_group_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_GLYPH_CACHE_ADD_BITMAPS,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.glyph_cache_add_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_GLYPH_CACHE_REMOVE_BITMAPS,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.glyph_cache_remove_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_GLYPH_RUN_ADD_REALIZATION,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.glyph_realization_add_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer,
+                                                RDP_COMPOSITED_CMD_GLYPH_RUN_REMOVE_REALIZATION,
+                                                NULL,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.glyph_realization_remove_count == 1u && tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_channel_message(&buffer, 0x12u, update_param, 4u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    PCHECK(tree.extension_command_count == 1u &&
+           tree.last_extension_command == 0x12u &&
+           tree.last_extension_payload_len == 4u &&
+           tree.skipped_known_count == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_resource_order(&buffer,
                                                RDP_COMPOSITED_CMD_DELETE_RESOURCE,
                                                0x10u,

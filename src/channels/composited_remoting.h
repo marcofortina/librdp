@@ -486,6 +486,16 @@ typedef struct rdp_composited_render_tree
     uint32_t roundtrip_count;
     uint32_t tier_request_count;
     uint32_t notification_registration_count;
+    uint32_t bitmap_pixels_count;
+    uint32_t bitmap_compressed_pixels_count;
+    uint32_t visual_group_count;
+    uint32_t glyph_cache_add_count;
+    uint32_t glyph_cache_remove_count;
+    uint32_t glyph_realization_add_count;
+    uint32_t glyph_realization_remove_count;
+    uint32_t extension_command_count;
+    uint32_t last_extension_command;
+    uint32_t last_extension_payload_len;
     uint32_t invalidation_count;
     uint32_t skipped_known_count;
 } rdp_composited_render_tree;

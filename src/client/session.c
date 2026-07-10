@@ -20567,7 +20567,7 @@ static librdp_status rdp_session_handle_composited_message(librdp_session* sessi
                 rdp_session_emit_composited_invalidations(session, before_invalidations);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.cr2.render.batch",
-                            "dvc_channel_id=%u channel=%u payload_len=%u status=%s commands=%u resources=%u resource_delta=%d invalidations=%u skipped=%u",
+                            "dvc_channel_id=%u channel=%u payload_len=%u status=%s commands=%u resources=%u resource_delta=%d invalidations=%u bitmap_pixels=%u bitmap_compressed=%u glyph_cache_add=%u glyph_cache_remove=%u glyph_realization_add=%u glyph_realization_remove=%u visual_group=%u extension_commands=%u skipped=%u",
                             channel_id,
                             control.word0,
                             (unsigned)control.payload_len,
@@ -20576,6 +20576,14 @@ static librdp_status rdp_session_handle_composited_message(librdp_session* sessi
                             session->composited_tree.resource_count,
                             (int)session->composited_tree.resource_count - (int)before_resources,
                             session->composited_tree.invalidation_count,
+                            session->composited_tree.bitmap_pixels_count,
+                            session->composited_tree.bitmap_compressed_pixels_count,
+                            session->composited_tree.glyph_cache_add_count,
+                            session->composited_tree.glyph_cache_remove_count,
+                            session->composited_tree.glyph_realization_add_count,
+                            session->composited_tree.glyph_realization_remove_count,
+                            session->composited_tree.visual_group_count,
+                            session->composited_tree.extension_command_count,
                             session->composited_tree.skipped_known_count);
             return status;
         }
