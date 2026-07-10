@@ -1449,6 +1449,8 @@ librdp_status rdp_filesystem_redirection_parse_posix_security_descriptor(
         rdp_filesystem_security_sid sid;
         size_t sid_size = 0;
 
+        if (owner_offset == 0)
+            return LIBRDP_STATUS_UNSUPPORTED;
         status = rdp_filesystem_security_parse_sid(bytes, length, owner_offset, &sid, &sid_size);
         if (status != LIBRDP_STATUS_OK)
             return status;
@@ -1461,6 +1463,8 @@ librdp_status rdp_filesystem_redirection_parse_posix_security_descriptor(
         rdp_filesystem_security_sid sid;
         size_t sid_size = 0;
 
+        if (group_offset == 0)
+            return LIBRDP_STATUS_UNSUPPORTED;
         status = rdp_filesystem_security_parse_sid(bytes, length, group_offset, &sid, &sid_size);
         if (status != LIBRDP_STATUS_OK)
             return status;

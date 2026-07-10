@@ -8088,6 +8088,26 @@ static int test_filesystem_redirection_channel(void)
         PCHECK(parsed_security.owner_present == 1u && parsed_security.owner_id == 1000u);
         PCHECK(parsed_security.group_present == 1u && parsed_security.group_id == 100u);
         PCHECK(parsed_security.mode_present == 1u && parsed_security.mode == 0640u);
+        response.data[4] = 0u;
+        response.data[5] = 0u;
+        response.data[6] = 0u;
+        response.data[7] = 0u;
+        PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(
+                   response.data,
+                   response.length,
+                   RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION,
+                   &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
+        response.data[4] = 20u;
+        response.data[8] = 0u;
+        response.data[9] = 0u;
+        response.data[10] = 0u;
+        response.data[11] = 0u;
+        PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(
+                   response.data,
+                   response.length,
+                   RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION,
+                   &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
+        response.data[8] = 36u;
         PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(response.data,
                                                                           19u,
                                                                           RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
