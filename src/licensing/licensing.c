@@ -764,18 +764,18 @@ librdp_status rdp_license_parse_error_alert(const void* data, size_t length, rdp
     if (rdp_license_parse_preamble(data, length, &preamble) != LIBRDP_STATUS_OK ||
         preamble.message_type != RDP_LICENSE_MESSAGE_ERROR_ALERT)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u8(&stream, &alert->message_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &alert->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &alert->length) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &alert->error_code) != LIBRDP_STATUS_OK ||
+    alert->message_type = preamble.message_type;
+    alert->flags = preamble.version;
+    alert->length = preamble.length;
+    rdp_stream_init(&stream, preamble.payload, preamble.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &alert->error_code) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &alert->state_transition) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &alert->blob_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &alert->blob_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (alert->length < 16u || alert->length > length ||
+    if (alert->length < 16u ||
         !rdp_license_valid_blob_type(alert->blob_type) ||
-        rdp_stream_remaining(&stream) < alert->blob_length)
+        rdp_stream_remaining(&stream) != alert->blob_length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &alert->blob, alert->blob_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
