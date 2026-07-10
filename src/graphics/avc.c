@@ -656,6 +656,43 @@ static librdp_status rdp_avc_validate_rect(const rdp_avc_yuv420* yuv,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* meta,
+                                          uint32_t index,
+                                          rdp_graphics_rect16* rect);
+
+static librdp_status rdp_avc_validate_surface_rect(uint32_t surface_width,
+                                                   uint32_t surface_height,
+                                                   const rdp_graphics_rect16* rect)
+{
+    if (!rect || surface_width == 0 || surface_height == 0 ||
+        rect->left >= rect->right || rect->top >= rect->bottom ||
+        rect->right > surface_width || rect->bottom > surface_height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_validate_metablock_regions(const rdp_graphics_avc420_metablock* meta,
+                                                        uint32_t surface_width,
+                                                        uint32_t surface_height)
+{
+    uint32_t i = 0;
+
+    if (!meta || meta->rect_count == 0 ||
+        meta->rects_len < (size_t)meta->rect_count * 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < meta->rect_count; i++)
+    {
+        rdp_graphics_rect16 rect;
+        librdp_status status = rdp_avc_parse_region(meta, i, &rect);
+
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_validate_surface_rect(surface_width, surface_height, &rect);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view)
 {
     uint32_t width = 0;
@@ -840,8 +877,6 @@ static librdp_status rdp_avc_apply_luma(rdp_avc_decoder* decoder,
             }
         }
     }
-    decoder->yuv444_luma_valid = 1;
-    decoder->yuv444_chroma_valid = 1;
     return LIBRDP_STATUS_OK;
 }
 
@@ -908,6 +943,8 @@ static librdp_status rdp_avc_apply_regions_luma(rdp_avc_decoder* decoder,
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
+    decoder->yuv444_luma_valid = 0;
+    decoder->yuv444_chroma_valid = 0;
     for (i = 0; i < meta->rect_count; i++)
     {
         rdp_graphics_rect16 rect;
@@ -920,6 +957,8 @@ static librdp_status rdp_avc_apply_regions_luma(rdp_avc_decoder* decoder,
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
+    decoder->yuv444_luma_valid = 1;
+    decoder->yuv444_chroma_valid = 1;
     return LIBRDP_STATUS_OK;
 }
 
@@ -933,6 +972,7 @@ static librdp_status rdp_avc_apply_regions_chroma(rdp_avc_decoder* decoder,
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
+    decoder->yuv444_chroma_valid = 0;
     for (i = 0; i < meta->rect_count; i++)
     {
         rdp_graphics_rect16 rect;
@@ -1216,6 +1256,9 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!stream->bitstream || stream->bitstream_len == 0 || surface_width == 0 || surface_height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_avc_validate_metablock_regions(&stream->meta, surface_width, surface_height) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1275,6 +1318,13 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
         (!stream->has_stream2 || !stream->stream2.bitstream || stream->stream2.bitstream_len == 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (stream->lc != RDP_GRAPHICS_AVC444_LC_BOTH && stream->has_stream2)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_avc_validate_metablock_regions(&stream->stream1.meta, surface_width, surface_height) !=
+        LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (stream->has_stream2 &&
+        rdp_avc_validate_metablock_regions(&stream->stream2.meta, surface_width, surface_height) !=
+            LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;

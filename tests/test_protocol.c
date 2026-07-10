@@ -2244,6 +2244,10 @@ static int test_path_security_license_channels(void)
         0x00, 0x00, 0x00, 0x00,
         0x10, 0x00, 0x10, 0x00
     };
+    const uint8_t graphics_avc_rect_oob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x20, 0x00, 0x10, 0x00
+    };
     const uint8_t graphics_avc_quant_quality[] = {0x45, 0x64};
     const uint8_t graphics_avc_quant_bad_qp[] = {0x34, 0x64};
     const uint8_t graphics_avc_quant_bad_quality[] = {0x45, 0x65};
@@ -2859,6 +2863,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_avc420_quant_quality graphics_bad_quant;
     rdp_graphics_avc420_metablock graphics_avc_meta;
     rdp_graphics_avc420_stream graphics_avc420;
+    rdp_graphics_avc420_stream graphics_avc420_edge;
     rdp_graphics_avc444_stream graphics_avc444;
     rdp_graphics_avc444_stream graphics_avc444_edge;
     rdp_graphics_avc444_stream graphics_avc444_valid;
@@ -6299,6 +6304,21 @@ static int test_path_security_license_channels(void)
     avc_decoder = rdp_avc_decoder_new();
     PCHECK(avc_decoder != NULL);
     rdp_avc_frame_init(&avc_frame);
+    graphics_avc420_edge = graphics_avc420;
+    graphics_avc420_edge.meta.rect_count = 0;
+    PCHECK(rdp_avc_decode_420(avc_decoder,
+                              &graphics_avc420_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    graphics_avc420_edge = graphics_avc420;
+    graphics_avc420_edge.meta.rects = graphics_avc_rect_oob;
+    graphics_avc420_edge.meta.rects_len = sizeof(graphics_avc_rect_oob);
+    PCHECK(rdp_avc_decode_420(avc_decoder,
+                              &graphics_avc420_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_avc_decode_420(avc_decoder,
                               &graphics_avc420,
                               0,
@@ -6354,6 +6374,23 @@ static int test_path_security_license_channels(void)
     graphics_avc444_valid.stream1.meta.quant_quality_len = sizeof(graphics_avc_quant_quality);
     graphics_avc444_valid.stream1.bitstream = graphics_avc_red_h264;
     graphics_avc444_valid.stream1.bitstream_len = sizeof(graphics_avc_red_h264);
+    graphics_avc444_edge = graphics_avc444_valid;
+    graphics_avc444_edge.stream1.meta.rect_count = 0;
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    graphics_avc444_edge = graphics_avc444_valid;
+    graphics_avc444_edge.stream1.meta.rects = graphics_avc_rect_oob;
+    graphics_avc444_edge.stream1.meta.rects_len = sizeof(graphics_avc_rect_oob);
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444V2,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
     graphics_avc_status = rdp_avc_decode_444(avc_decoder,
                                              RDP_GRAPHICS_CODECID_AVC444,
                                              &graphics_avc444_valid,
