@@ -2,6 +2,7 @@
 
 #include "common/stream.h"
 
+#include <openssl/asn1.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -58,81 +59,71 @@ librdp_status rdp_credssp_begin(bool enabled, rdp_credssp_state* state)
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_der_write_length(rdp_buffer* buffer, size_t length)
+static int rdp_asn1_tag_class(uint8_t tag)
 {
-    uint8_t bytes[sizeof(size_t)];
-    size_t count = 0;
-    size_t value = length;
-    size_t i = 0;
+    return tag & 0xc0u;
+}
 
-    if (!buffer)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (length < 0x80u)
-        return rdp_buffer_append_u8(buffer, (uint8_t)length);
+static int rdp_asn1_tag_constructed(uint8_t tag)
+{
+    return (tag & 0x20u) != 0;
+}
 
-    while (value > 0)
-    {
-        bytes[sizeof(bytes) - 1u - count] = (uint8_t)(value & 0xffu);
-        value >>= 8;
-        count++;
-    }
-    if (count > 0x7fu)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (rdp_buffer_append_u8(buffer, (uint8_t)(0x80u | count)) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_NO_MEMORY;
-    for (i = sizeof(bytes) - count; i < sizeof(bytes); i++)
-    {
-        librdp_status status = rdp_buffer_append_u8(buffer, bytes[i]);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    return LIBRDP_STATUS_OK;
+static int rdp_asn1_tag_number(uint8_t tag)
+{
+    return tag & 0x1fu;
 }
 
 static librdp_status rdp_der_wrap(rdp_buffer* output, uint8_t tag, const rdp_buffer* body)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t header[16];
+    unsigned char* p = header;
+    size_t header_len = 0;
+    int xclass = V_ASN1_UNIVERSAL;
 
     if (!output || !body)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_buffer_append_u8(output, tag);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_der_write_length(output, body->length);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append(output, body->data, body->length);
-    return status;
+    if (rdp_asn1_tag_number(tag) == 0x1f || body->length > INT_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_asn1_tag_class(tag) == 0x40)
+        xclass = V_ASN1_APPLICATION;
+    else if (rdp_asn1_tag_class(tag) == 0x80)
+        xclass = V_ASN1_CONTEXT_SPECIFIC;
+    else if (rdp_asn1_tag_class(tag) == 0xc0)
+        xclass = V_ASN1_PRIVATE;
+    ASN1_put_object(&p,
+                    rdp_asn1_tag_constructed(tag),
+                    (int)body->length,
+                    rdp_asn1_tag_number(tag),
+                    xclass);
+    header_len = (size_t)(p - header);
+    if (header_len == 0 || header_len > sizeof(header))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_buffer_append(output, header, header_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_NO_MEMORY;
+    return rdp_buffer_append(output, body->data, body->length);
 }
 
 static librdp_status rdp_der_write_integer(rdp_buffer* output, uint32_t value)
 {
-    rdp_buffer body;
-    uint8_t bytes[5];
-    size_t first = 0;
-    size_t length = 4;
-    librdp_status status = LIBRDP_STATUS_OK;
+    ASN1_INTEGER* integer = NULL;
+    unsigned char* encoded = NULL;
+    int encoded_len = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rdp_buffer_init(&body);
-    bytes[0] = (uint8_t)((value >> 24) & 0xffu);
-    bytes[1] = (uint8_t)((value >> 16) & 0xffu);
-    bytes[2] = (uint8_t)((value >> 8) & 0xffu);
-    bytes[3] = (uint8_t)(value & 0xffu);
-    while (first < 3u && bytes[first] == 0 && (bytes[first + 1u] & 0x80u) == 0)
-        first++;
-    if ((bytes[first] & 0x80u) != 0)
+    if (!output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    integer = ASN1_INTEGER_new();
+    if (!integer)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (ASN1_INTEGER_set_uint64(integer, value) == 1)
     {
-        memmove(bytes + 1, bytes + first, 4u - first);
-        bytes[0] = 0;
-        length = 5u - first;
-        first = 0;
+        encoded_len = i2d_ASN1_INTEGER(integer, &encoded);
+        if (encoded_len > 0)
+            status = rdp_buffer_append(output, encoded, (size_t)encoded_len);
     }
-    else
-    {
-        length = 4u - first;
-    }
-    status = rdp_buffer_append(&body, bytes + first, length);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_der_wrap(output, 0x02, &body);
-    rdp_buffer_free(&body);
+    OPENSSL_free(encoded);
+    ASN1_INTEGER_free(integer);
     return status;
 }
 
@@ -1074,61 +1065,75 @@ librdp_status rdp_credssp_write_negotiate_request(rdp_buffer* buffer, const char
     return status;
 }
 
-static librdp_status rdp_der_read_length(rdp_stream* stream, size_t* length)
-{
-    uint8_t first = 0;
-    uint8_t count = 0;
-    size_t value = 0;
-    uint8_t i = 0;
-
-    if (!stream || !length)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((first & 0x80u) == 0)
-    {
-        *length = first;
-        return LIBRDP_STATUS_OK;
-    }
-    count = (uint8_t)(first & 0x7fu);
-    if (count == 0 || count > sizeof(size_t) || rdp_stream_remaining(stream) < count)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    for (i = 0; i < count; i++)
-    {
-        uint8_t byte = 0;
-        if (rdp_stream_read_u8(stream, &byte) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        value = (value << 8) | byte;
-    }
-    *length = value;
-    return LIBRDP_STATUS_OK;
-}
-
 static librdp_status rdp_der_read_tlv(rdp_stream* stream, uint8_t* tag, const uint8_t** value, size_t* length)
 {
+    const unsigned char* p = NULL;
+    long parsed_len = 0;
+    int parsed_tag = 0;
+    int xclass = 0;
+    int flags = 0;
+    uint8_t encoded_tag = 0;
+    size_t remaining = 0;
+    size_t header_len = 0;
+
     if (!stream || !tag || !value || !length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (rdp_stream_read_u8(stream, tag) != LIBRDP_STATUS_OK ||
-        rdp_der_read_length(stream, length) != LIBRDP_STATUS_OK)
+    remaining = rdp_stream_remaining(stream);
+    if (remaining > LONG_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (*length > rdp_stream_remaining(stream))
+    p = stream->data + stream->position;
+    flags = ASN1_get_object(&p, &parsed_len, &parsed_tag, &xclass, (long)remaining);
+    if ((flags & 0x81) != 0 || parsed_len < 0 || parsed_tag > 30)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    header_len = (size_t)(p - (stream->data + stream->position));
+    if (header_len > remaining || (size_t)parsed_len > remaining - header_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (xclass == V_ASN1_APPLICATION)
+        encoded_tag = 0x40u;
+    else if (xclass == V_ASN1_CONTEXT_SPECIFIC)
+        encoded_tag = 0x80u;
+    else if (xclass == V_ASN1_PRIVATE)
+        encoded_tag = 0xc0u;
+    else if (xclass != V_ASN1_UNIVERSAL)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & V_ASN1_CONSTRUCTED) != 0)
+        encoded_tag |= 0x20u;
+    encoded_tag |= (uint8_t)parsed_tag;
+    stream->position += header_len;
+    *tag = encoded_tag;
+    *length = (size_t)parsed_len;
     return rdp_stream_read_bytes(stream, value, *length);
 }
 
 static librdp_status rdp_der_parse_integer(const uint8_t* data, size_t length, uint32_t* value)
 {
-    size_t i = 0;
-    uint32_t out = 0;
+    rdp_buffer body;
+    rdp_buffer encoded;
+    const unsigned char* p = NULL;
+    ASN1_INTEGER* integer = NULL;
+    uint64_t parsed = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    if (!data || !value || length == 0 || length > 5)
+    if (!data || !value || length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (length == 5 && data[0] != 0)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    for (i = (length == 5 ? 1u : 0u); i < length; i++)
-        out = (out << 8) | data[i];
-    *value = out;
-    return LIBRDP_STATUS_OK;
+    rdp_buffer_init(&body);
+    rdp_buffer_init(&encoded);
+    if (rdp_buffer_append(&body, data, length) == LIBRDP_STATUS_OK &&
+        rdp_der_wrap(&encoded, V_ASN1_INTEGER, &body) == LIBRDP_STATUS_OK)
+    {
+        p = encoded.data;
+        integer = d2i_ASN1_INTEGER(NULL, &p, (long)encoded.length);
+        if (integer && p == encoded.data + encoded.length &&
+            ASN1_INTEGER_get_uint64(&parsed, integer) == 1 && parsed <= UINT32_MAX)
+        {
+            *value = (uint32_t)parsed;
+            status = LIBRDP_STATUS_OK;
+        }
+    }
+    ASN1_INTEGER_free(integer);
+    rdp_buffer_free(&encoded);
+    rdp_buffer_free(&body);
+    return status;
 }
 
 static librdp_status rdp_credssp_parse_nego_tokens(const uint8_t* data,
