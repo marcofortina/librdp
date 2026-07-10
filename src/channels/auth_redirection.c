@@ -31,6 +31,8 @@ static librdp_status rdp_auth_redirection_read_der_length(const uint8_t* data,
     count = first & 0x7fu;
     if (count == 0 || count > sizeof(size_t) || count > length - *offset)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (count > 1u && data[*offset] == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     for (i = 0; i < count; i++)
     {
         if (result > (((size_t)-1) >> 8))

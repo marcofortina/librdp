@@ -9317,6 +9317,18 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(rdp_auth_redirection_parse_encoded_payload(buffer.data,
                                                       buffer.length,
                                                       &encoded_payload) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const uint8_t bad_der_payload[] = {
+            0x30u, 0x82u, 0x00u, 0x0cu,
+            0x81u, 0x08u, 'N', 0, 'T', 0, 'L', 0, 'M', 0,
+            0x82u, 0x00u
+        };
+
+        PCHECK(rdp_auth_redirection_parse_encoded_payload(bad_der_payload,
+                                                          sizeof(bad_der_payload),
+                                                          &encoded_payload) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     PCHECK(rdp_auth_redirection_write_encoded_payload(&buffer,
