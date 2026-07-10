@@ -6021,15 +6021,11 @@ static int test_path_security_license_channels(void)
     if (graphics_avc_status == LIBRDP_STATUS_OK)
     {
         const uint8_t* pixel = avc_frame.pixels.data;
-        int bg = (int)pixel[0] - (int)pixel[1];
-        int gr = (int)pixel[1] - (int)pixel[2];
+        int red_delta_bg = (int)pixel[2] - (int)pixel[0];
+        int red_delta_gr = (int)pixel[2] - (int)pixel[1];
 
-        if (bg < 0)
-            bg = -bg;
-        if (gr < 0)
-            gr = -gr;
         PCHECK(avc_frame.width == 16 && avc_frame.height == 16 && avc_frame.stride >= 64u);
-        PCHECK(bg <= 4 && gr <= 4 && pixel[3] == 0xffu);
+        PCHECK(red_delta_bg > 8 && red_delta_gr > 8 && pixel[3] == 0xffu);
     }
     rdp_avc_frame_free(&avc_frame);
     rdp_avc_decoder_free(avc_decoder);
