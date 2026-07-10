@@ -201,6 +201,36 @@ typedef struct rdp_license_platform_challenge_response
     uint8_t mac[16];
 } rdp_license_platform_challenge_response;
 
+typedef enum rdp_license_direction
+{
+    RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT = 0,
+    RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER = 1
+} rdp_license_direction;
+
+typedef enum rdp_license_client_state_id
+{
+    RDP_LICENSE_CLIENT_STATE_INITIAL = 0,
+    RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED = 1,
+    RDP_LICENSE_CLIENT_STATE_CLIENT_REQUEST_SENT = 2,
+    RDP_LICENSE_CLIENT_STATE_CLIENT_INFO_SENT = 3,
+    RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RECEIVED = 4,
+    RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RESPONSE_SENT = 5,
+    RDP_LICENSE_CLIENT_STATE_COMPLETED = 6,
+    RDP_LICENSE_CLIENT_STATE_FAILED = 7
+} rdp_license_client_state_id;
+
+typedef struct rdp_license_client_state
+{
+    rdp_license_client_state_id state;
+    uint8_t last_message_type;
+    uint8_t last_direction;
+} rdp_license_client_state;
+
+void rdp_license_client_state_init(rdp_license_client_state* state);
+librdp_status rdp_license_classify_message(const void* data, size_t length, uint8_t* message_type);
+librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
+                                            rdp_license_direction direction,
+                                            uint8_t message_type);
 librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble);
 librdp_status rdp_license_write_preamble(rdp_buffer* buffer,
                                          uint8_t message_type,

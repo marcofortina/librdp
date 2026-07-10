@@ -121,6 +121,102 @@ static librdp_status rdp_license_append_version_info(rdp_buffer* buffer,
     return rdp_buffer_append_u32_le(buffer, info->flags);
 }
 
+void rdp_license_client_state_init(rdp_license_client_state* state)
+{
+    if (!state)
+        return;
+    memset(state, 0, sizeof(*state));
+    state->state = RDP_LICENSE_CLIENT_STATE_INITIAL;
+}
+
+static int rdp_license_message_from_server(uint8_t message_type)
+{
+    return message_type == RDP_LICENSE_MESSAGE_REQUEST ||
+           message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE ||
+           message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE ||
+           message_type == RDP_LICENSE_MESSAGE_UPGRADE_LICENSE ||
+           message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT;
+}
+
+static int rdp_license_message_from_client(uint8_t message_type)
+{
+    return message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST ||
+           message_type == RDP_LICENSE_MESSAGE_INFO ||
+           message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE;
+}
+
+librdp_status rdp_license_classify_message(const void* data, size_t length, uint8_t* message_type)
+{
+    rdp_license_preamble preamble;
+
+    if (!message_type)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_license_parse_preamble(data, length, &preamble) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *message_type = preamble.message_type;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
+                                            rdp_license_direction direction,
+                                            uint8_t message_type)
+{
+    rdp_license_client_state_id next_state = RDP_LICENSE_CLIENT_STATE_FAILED;
+
+    if (!state || !rdp_license_valid_message_type(message_type) ||
+        (direction != RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+         direction != RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+         !rdp_license_message_from_server(message_type)) ||
+        (direction == RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER &&
+         !rdp_license_message_from_client(message_type)))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+        message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT)
+        next_state = RDP_LICENSE_CLIENT_STATE_FAILED;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_INITIAL &&
+             direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+             message_type == RDP_LICENSE_MESSAGE_REQUEST)
+        next_state = RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_INITIAL &&
+             direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+             message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE)
+        next_state = RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RECEIVED;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED &&
+             direction == RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER &&
+             message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE_REQUEST)
+        next_state = RDP_LICENSE_CLIENT_STATE_CLIENT_REQUEST_SENT;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED &&
+             direction == RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER &&
+             message_type == RDP_LICENSE_MESSAGE_INFO)
+        next_state = RDP_LICENSE_CLIENT_STATE_CLIENT_INFO_SENT;
+    else if ((state->state == RDP_LICENSE_CLIENT_STATE_CLIENT_REQUEST_SENT ||
+              state->state == RDP_LICENSE_CLIENT_STATE_CLIENT_INFO_SENT) &&
+             direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+             message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE)
+        next_state = RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RECEIVED;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RECEIVED &&
+             direction == RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER &&
+             message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE)
+        next_state = RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RESPONSE_SENT;
+    else if ((state->state == RDP_LICENSE_CLIENT_STATE_CLIENT_REQUEST_SENT ||
+              state->state == RDP_LICENSE_CLIENT_STATE_CLIENT_INFO_SENT ||
+              state->state == RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RESPONSE_SENT) &&
+             direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+             (message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE ||
+              message_type == RDP_LICENSE_MESSAGE_UPGRADE_LICENSE))
+        next_state = RDP_LICENSE_CLIENT_STATE_COMPLETED;
+    else
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    state->state = next_state;
+    state->last_message_type = message_type;
+    state->last_direction = (uint8_t)direction;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble)
 {
     rdp_stream stream;

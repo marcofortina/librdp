@@ -20,9 +20,11 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_license_client_new_license_request client_request;
     rdp_license_client_info client_info;
     rdp_license_platform_challenge_response challenge_response;
+    rdp_license_client_state state;
     rdp_buffer buffer;
     rdp_license_binary_blob encrypted;
     uint8_t random[32] = {0};
+    uint8_t message_type = 0;
 
     (void)rdp_license_parse_preamble(data, size, &preamble);
     (void)rdp_license_parse_binary_blob(data, size, &blob);
@@ -39,6 +41,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_license_parse_client_new_license_request(data, size, &client_request);
     (void)rdp_license_parse_client_info(data, size, &client_info);
     (void)rdp_license_parse_platform_challenge_response(data, size, &challenge_response);
+    if (rdp_license_classify_message(data, size, &message_type) == LIBRDP_STATUS_OK)
+    {
+        rdp_license_client_state_init(&state);
+        (void)rdp_license_client_state_step(&state, RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT, message_type);
+        (void)rdp_license_client_state_step(&state, RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER, message_type);
+    }
 
     rdp_buffer_init(&buffer);
     (void)rdp_license_write_error_alert(&buffer,
