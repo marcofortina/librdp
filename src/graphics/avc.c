@@ -202,8 +202,8 @@ librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* 
 
     width = (uint32_t)(view->rect.right - view->rect.left);
     height = (uint32_t)(view->rect.bottom - view->rect.top);
-    half_source_width = (size_t)view->aux_width / 2u;
-    quarter_source_width = (size_t)view->aux_width / 4u;
+    half_source_width = ((size_t)view->aux_width + 1u) / 2u;
+    quarter_source_width = ((size_t)view->aux_width + 3u) / 4u;
     odd_column_count = width / 2u;
     quarter_column_count0 = (width + 3u) / 4u;
     quarter_column_count2 = (width + 1u) / 4u;
