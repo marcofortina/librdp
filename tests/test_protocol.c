@@ -2321,6 +2321,12 @@ static int test_path_security_license_channels(void)
         0x00, 0x00, 0x03, 0x00,
         0x01, 0x00, 0x00, 0x00
     };
+    const uint8_t input_sc_ready_v300_no_pen[] = {
+        0x01, 0x00,
+        0x0e, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x03, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
     const uint8_t input_sc_ready_v200[] = {
         0x01, 0x00,
         0x0a, 0x00, 0x00, 0x00,
@@ -6045,11 +6051,29 @@ static int test_path_security_license_channels(void)
            input_negotiation.supports_pen &&
            input_negotiation.disables_timestamp_injection &&
            input_negotiation.max_touch_contacts == 10);
+    PCHECK(rdp_input_channel_parse_sc_ready(input_sc_ready_v300_no_pen,
+                                            sizeof(input_sc_ready_v300_no_pen),
+                                            &input_sc_ready) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_negotiate_client_ready(&input_sc_ready,
+                                                    10,
+                                                    0,
+                                                    &input_negotiation) == LIBRDP_STATUS_OK);
+    PCHECK(input_negotiation.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 &&
+           input_negotiation.supports_touch &&
+           !input_negotiation.supports_pen &&
+           (input_negotiation.flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) == 0);
     PCHECK(rdp_input_channel_parse_sc_ready(input_sc_ready_v200,
                                             sizeof(input_sc_ready_v200),
                                             &input_sc_ready) == LIBRDP_STATUS_OK);
     PCHECK(input_sc_ready.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
            !input_sc_ready.has_supported_features);
+    PCHECK(rdp_input_channel_negotiate_client_ready(&input_sc_ready,
+                                                    10,
+                                                    0,
+                                                    &input_negotiation) == LIBRDP_STATUS_OK);
+    PCHECK(input_negotiation.supports_touch &&
+           !input_negotiation.supports_pen &&
+           (input_negotiation.flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) == 0);
     PCHECK(rdp_input_channel_parse_sc_ready(input_sc_ready_v300,
                                             sizeof(input_sc_ready_v300) - 1u,
                                             &input_sc_ready) == LIBRDP_STATUS_PROTOCOL_ERROR);

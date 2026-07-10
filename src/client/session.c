@@ -647,6 +647,8 @@ struct librdp_session
     uint8_t input_channel_suspended;
     uint32_t input_channel_protocol_version;
     uint32_t input_channel_supported_features;
+    uint16_t input_channel_max_touch_contacts;
+    uint8_t input_channel_supports_pen;
     uint32_t display_control_channel_id;
     uint8_t display_control_channel_id_bytes;
     uint8_t display_control_ready;
@@ -16497,6 +16499,10 @@ static librdp_status rdp_session_send_input_channel_ready(librdp_session* sessio
                                                        "client.input_channel.ready");
     rdp_buffer_free(&response);
     if (status == LIBRDP_STATUS_OK)
+    {
+        session->input_channel_protocol_version = negotiation.protocol_version;
+        session->input_channel_max_touch_contacts = negotiation.max_touch_contacts;
+        session->input_channel_supports_pen = negotiation.supports_pen;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.input_channel.ready",
                         "dvc_channel_id=%u protocol_version=%u flags=%u max_contacts=%u touch=%u pen=%u timestamp_disabled=%u",
@@ -16507,6 +16513,7 @@ static librdp_status rdp_session_send_input_channel_ready(librdp_session* sessio
                         negotiation.supports_touch,
                         negotiation.supports_pen,
                         negotiation.disables_timestamp_injection);
+    }
     return status;
 }
 
@@ -23832,6 +23839,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             session->input_channel_suspended = 0;
             session->input_channel_protocol_version = 0;
             session->input_channel_supported_features = 0;
+            session->input_channel_max_touch_contacts = 0;
+            session->input_channel_supports_pen = 0;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.input_channel.channel",
                             "dvc_channel_id=%u",
@@ -24320,6 +24329,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 session->input_channel_suspended = 0;
                 session->input_channel_protocol_version = 0;
                 session->input_channel_supported_features = 0;
+                session->input_channel_max_touch_contacts = 0;
+                session->input_channel_supports_pen = 0;
             }
             if (entry->channel_id == session->audio_input_channel_id)
             {
@@ -28147,6 +28158,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->input_channel_suspended = 0;
     session->input_channel_protocol_version = 0;
     session->input_channel_supported_features = 0;
+    session->input_channel_max_touch_contacts = 0;
+    session->input_channel_supports_pen = 0;
     session->display_control_channel_id = 0;
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
@@ -30042,6 +30055,8 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->input_channel_suspended = 0;
     session->input_channel_protocol_version = 0;
     session->input_channel_supported_features = 0;
+    session->input_channel_max_touch_contacts = 0;
+    session->input_channel_supports_pen = 0;
     session->display_control_channel_id = 0;
     session->display_control_channel_id_bytes = 0;
     session->display_control_ready = 0;
@@ -30702,6 +30717,38 @@ static void rdp_session_copy_pen_contact(const librdp_pen_contact* in,
     out->tilt_y = in->tilt_y;
 }
 
+static librdp_status rdp_session_validate_touch_frames(const librdp_touch_frame* frames,
+                                                       uint16_t frame_count,
+                                                       uint16_t max_touch_contacts)
+{
+    uint16_t i = 0;
+
+    if (!frames || frame_count == 0 || max_touch_contacts == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < frame_count; i++)
+    {
+        if (!frames[i].contacts ||
+            frames[i].contact_count == 0 ||
+            frames[i].contact_count > max_touch_contacts)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_validate_pen_frames(const librdp_pen_frame* frames, uint16_t frame_count)
+{
+    uint16_t i = 0;
+
+    if (!frames || frame_count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; i < frame_count; i++)
+    {
+        if (!frames[i].contacts || frames[i].contact_count == 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
 {
     uint16_t flags = 0;
@@ -30886,6 +30933,14 @@ librdp_status librdp_session_send_touch(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_input_channel(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_session_validate_touch_frames(frames,
+                                               frame_count,
+                                               session->input_channel_max_touch_contacts);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     internal_frames = (rdp_input_channel_touch_frame*)calloc(frame_count, sizeof(*internal_frames));
     contact_buffers = (rdp_buffer*)calloc(frame_count, sizeof(*contact_buffers));
@@ -30901,11 +30956,6 @@ librdp_status librdp_session_send_touch(librdp_session* session,
         uint16_t j = 0;
 
         rdp_buffer_init(&contact_buffers[i]);
-        if (!frames[i].contacts || frames[i].contact_count == 0)
-        {
-            status = LIBRDP_STATUS_INVALID_ARGUMENT;
-            break;
-        }
         for (j = 0; status == LIBRDP_STATUS_OK && j < frames[i].contact_count; j++)
         {
             rdp_input_channel_touch_contact contact;
@@ -30919,8 +30969,6 @@ librdp_status librdp_session_send_touch(librdp_session* session,
         internal_frames[i].contacts_len = contact_buffers[i].length;
     }
 
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_require_input_channel(session);
     rdp_buffer_init(&input);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_write_touch_event(&input, encode_time, internal_frames, frame_count);
@@ -30956,6 +31004,14 @@ librdp_status librdp_session_send_pen(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_input_channel(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!session->input_channel_supports_pen)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    status = rdp_session_validate_pen_frames(frames, frame_count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     internal_frames = (rdp_input_channel_pen_frame*)calloc(frame_count, sizeof(*internal_frames));
     contact_buffers = (rdp_buffer*)calloc(frame_count, sizeof(*contact_buffers));
@@ -30971,11 +31027,6 @@ librdp_status librdp_session_send_pen(librdp_session* session,
         uint16_t j = 0;
 
         rdp_buffer_init(&contact_buffers[i]);
-        if (!frames[i].contacts || frames[i].contact_count == 0)
-        {
-            status = LIBRDP_STATUS_INVALID_ARGUMENT;
-            break;
-        }
         for (j = 0; status == LIBRDP_STATUS_OK && j < frames[i].contact_count; j++)
         {
             rdp_input_channel_pen_contact contact;
@@ -30989,11 +31040,6 @@ librdp_status librdp_session_send_pen(librdp_session* session,
         internal_frames[i].contacts_len = contact_buffers[i].length;
     }
 
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_session_require_input_channel(session);
-    if (status == LIBRDP_STATUS_OK &&
-        session->input_channel_protocol_version < RDP_INPUT_CHANNEL_PROTOCOL_V300)
-        status = LIBRDP_STATUS_UNSUPPORTED;
     rdp_buffer_init(&input);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_write_pen_event(&input, encode_time, internal_frames, frame_count);
