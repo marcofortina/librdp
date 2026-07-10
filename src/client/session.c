@@ -6717,6 +6717,8 @@ static uint32_t rdp_session_apply_printer_set_information(rdp_session_redirected
             return rdp_session_apply_case_sensitive_information(request->buffer, request->length);
         case RDP_SESSION_FILE_DISPOSITION_INFORMATION:
             return rdp_session_apply_disposition_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_DISPOSITION_INFORMATION_EX:
+            return rdp_session_apply_disposition_information_ex(job, request->buffer, request->length);
         case RDP_SESSION_FILE_END_OF_FILE_INFORMATION:
         case RDP_SESSION_FILE_ALLOCATION_INFORMATION:
             return rdp_session_apply_size_information(job, request->buffer, request->length);
