@@ -4795,6 +4795,49 @@ static librdp_status rdp_session_handle_filesystem_set_volume(librdp_session* se
     return status;
 }
 
+static uint32_t rdp_session_apply_filesystem_security(
+    rdp_session_redirected_file* file,
+    const rdp_filesystem_redirection_security_request* request)
+{
+    rdp_filesystem_redirection_posix_security security;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!file || file->fd < 0 || !request)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    status = rdp_filesystem_redirection_parse_posix_security_descriptor(request->buffer,
+                                                                        request->length,
+                                                                        request->security_information,
+                                                                        &security);
+    if (status == LIBRDP_STATUS_UNSUPPORTED)
+        return RDP_SESSION_DEVICE_ACCESS_DENIED;
+    if (status != LIBRDP_STATUS_OK)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+
+    if (security.owner_present || security.group_present)
+    {
+        uid_t owner = (uid_t)-1;
+        gid_t group = (gid_t)-1;
+
+        if (security.owner_present)
+        {
+            owner = (uid_t)security.owner_id;
+            if ((uint32_t)owner != security.owner_id)
+                return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+        }
+        if (security.group_present)
+        {
+            group = (gid_t)security.group_id;
+            if ((uint32_t)group != security.group_id)
+                return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+        }
+        if (fchown(file->fd, owner, group) != 0)
+            return rdp_session_errno_to_device_status(errno);
+    }
+    if (security.mode_present && fchmod(file->fd, (mode_t)(security.mode & 0777u)) != 0)
+        return rdp_session_errno_to_device_status(errno);
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
 static librdp_status rdp_session_handle_filesystem_security(librdp_session* session,
                                                             const uint8_t* data,
                                                             size_t data_len,
@@ -4860,7 +4903,7 @@ static librdp_status rdp_session_handle_filesystem_security(librdp_session* sess
         }
     }
     else
-        io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
+        io_status = rdp_session_apply_filesystem_security(file, &request);
 
     payload_len = (uint32_t)payload.length;
     rdp_buffer_init(&response);

@@ -137,6 +137,16 @@ typedef struct rdp_filesystem_redirection_security_request
     const uint8_t* buffer;
 } rdp_filesystem_redirection_security_request;
 
+typedef struct rdp_filesystem_redirection_posix_security
+{
+    uint8_t owner_present;
+    uint8_t group_present;
+    uint8_t mode_present;
+    uint32_t owner_id;
+    uint32_t group_id;
+    uint32_t mode;
+} rdp_filesystem_redirection_posix_security;
+
 typedef struct rdp_filesystem_redirection_create_response
 {
     rdp_device_redirection_io_completion io;
@@ -309,6 +319,11 @@ librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buf
                                                                          uint32_t owner_id,
                                                                          uint32_t group_id,
                                                                          uint32_t mode);
+librdp_status rdp_filesystem_redirection_parse_posix_security_descriptor(
+    const void* data,
+    size_t length,
+    uint32_t security_information,
+    rdp_filesystem_redirection_posix_security* security);
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,
