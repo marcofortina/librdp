@@ -41,6 +41,7 @@
 #include "graphics/surface_commands.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
+#include "platform/socket.h"
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
@@ -53,13 +54,17 @@
 #include "input/input.h"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/provider.h>
 #include <openssl/rand.h>
 
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <limits.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -67,6 +72,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -494,6 +500,10 @@ struct librdp_session
     uint8_t audio_output_pending_wave;
     uint8_t audio_output_udp_active;
     uint8_t audio_output_udp_block_no;
+    uint8_t audio_output_udp_peer_valid;
+    uint8_t audio_output_crypt_seed_valid;
+    int audio_output_udp_fd;
+    uint16_t audio_output_udp_port;
     uint32_t audio_output_fragment_expected;
     uint16_t audio_output_server_version;
     uint16_t audio_output_client_version;
@@ -507,6 +517,9 @@ struct librdp_session
     rdp_buffer audio_output_fragment;
     rdp_buffer audio_output_pending_data;
     rdp_buffer audio_output_udp_data;
+    struct sockaddr_storage audio_output_udp_peer;
+    socklen_t audio_output_udp_peer_len;
+    uint8_t audio_output_crypt_seed[32];
     uint16_t device_redirection_channel_id;
     uint8_t device_redirection_ready;
     uint8_t device_redirection_fragmenting;
@@ -10639,6 +10652,10 @@ static void rdp_session_emit_audio_input_open(librdp_session* session, const rdp
     rdp_session_emit(session, &event);
 }
 
+static librdp_status rdp_session_send_audio_output_wave_confirm(librdp_session* session,
+                                                                uint16_t timestamp,
+                                                                uint8_t block_no);
+
 static librdp_status rdp_session_send_audio_output_packet(librdp_session* session,
                                                           const rdp_buffer* payload,
                                                           const char* event)
@@ -10646,6 +10663,249 @@ static librdp_status rdp_session_send_audio_output_packet(librdp_session* sessio
     if (!session || !payload || !event || session->audio_output_channel_id == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_session_write_channel_pdu(session, session->audio_output_channel_id, payload, event);
+}
+
+static void rdp_session_audio_output_udp_close(librdp_session* session)
+{
+    if (!session)
+        return;
+    if (session->audio_output_udp_fd >= 0)
+        (void)rdp_socket_close(session->audio_output_udp_fd);
+    session->audio_output_udp_fd = -1;
+    session->audio_output_udp_port = 0;
+    session->audio_output_udp_peer_valid = 0;
+    session->audio_output_udp_peer_len = 0;
+    memset(&session->audio_output_udp_peer, 0, sizeof(session->audio_output_udp_peer));
+}
+
+static librdp_status rdp_session_audio_output_udp_open(librdp_session* session)
+{
+    int fd = -1;
+    struct sockaddr_in addr;
+    socklen_t addr_len = 0;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->audio_output_udp_fd >= 0)
+        return LIBRDP_STATUS_OK;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = 0;
+    if (bind(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0)
+    {
+        (void)rdp_socket_close(fd);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (rdp_socket_set_nonblocking(fd, 1) != 0)
+    {
+        (void)rdp_socket_close(fd);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    addr_len = (socklen_t)sizeof(addr);
+    if (getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0)
+    {
+        (void)rdp_socket_close(fd);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    session->audio_output_udp_fd = fd;
+    session->audio_output_udp_port = ntohs(addr.sin_port);
+    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                    "transport.udp.bind.done",
+                    "component=rdpsnd port=%u",
+                    session->audio_output_udp_port);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_send_audio_output_udp_payload(librdp_session* session,
+                                                               const void* data,
+                                                               size_t data_len,
+                                                               const char* event)
+{
+    ssize_t sent = 0;
+
+    if (!session || (!data && data_len > 0) || !event || session->audio_output_udp_fd < 0 ||
+        !session->audio_output_udp_peer_valid || session->audio_output_udp_peer_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > (size_t)SSIZE_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    do
+    {
+        sent = sendto(session->audio_output_udp_fd,
+                      data,
+                      data_len,
+                      0,
+                      (const struct sockaddr*)&session->audio_output_udp_peer,
+                      session->audio_output_udp_peer_len);
+    } while (sent < 0 && errno == EINTR);
+    if (sent < 0 || (size_t)sent != data_len)
+        return LIBRDP_STATUS_IO_ERROR;
+
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.udp.write.done",
+                          "component=rdpsnd event=%s bytes=%u",
+                          event,
+                          (unsigned)data_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_send_audio_output_wave_confirm_udp(librdp_session* session,
+                                                                    uint16_t timestamp,
+                                                                    uint8_t block_no)
+{
+    rdp_buffer confirm;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&confirm);
+    status = rdp_audio_output_write_wave_confirm(&confirm, timestamp, block_no);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_audio_output_udp_payload(session,
+                                                           confirm.data,
+                                                           confirm.length,
+                                                           "client.rdpsnd.wave_confirm");
+    rdp_buffer_free(&confirm);
+    return status;
+}
+
+static librdp_status rdp_session_send_audio_output_wave_confirm_route(librdp_session* session,
+                                                                      uint16_t timestamp,
+                                                                      uint8_t block_no,
+                                                                      int use_udp)
+{
+    if (use_udp)
+        return rdp_session_send_audio_output_wave_confirm_udp(session, timestamp, block_no);
+    return rdp_session_send_audio_output_wave_confirm(session, timestamp, block_no);
+}
+
+static CRYPTO_ONCE rdp_session_audio_output_provider_once = CRYPTO_ONCE_STATIC_INIT;
+static OSSL_PROVIDER* rdp_session_audio_output_default_provider;
+static OSSL_PROVIDER* rdp_session_audio_output_legacy_provider;
+static int rdp_session_audio_output_legacy_ready;
+
+static void rdp_session_audio_output_provider_init(void)
+{
+    rdp_session_audio_output_default_provider = OSSL_PROVIDER_load(NULL, "default");
+    rdp_session_audio_output_legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
+    rdp_session_audio_output_legacy_ready = rdp_session_audio_output_legacy_provider != NULL;
+}
+
+static librdp_status rdp_session_audio_output_legacy_ensure(void)
+{
+    if (CRYPTO_THREAD_run_once(&rdp_session_audio_output_provider_once,
+                               rdp_session_audio_output_provider_init) != 1)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_session_audio_output_legacy_ready ? LIBRDP_STATUS_OK : LIBRDP_STATUS_UNSUPPORTED;
+}
+
+static librdp_status rdp_session_audio_output_sha1(const uint8_t* first,
+                                                   size_t first_len,
+                                                   const uint8_t* second,
+                                                   size_t second_len,
+                                                   uint8_t output[20])
+{
+    EVP_MD_CTX* context = NULL;
+    unsigned int got = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if ((!first && first_len > 0) || (!second && second_len > 0) || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    context = EVP_MD_CTX_new();
+    if (!context)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (EVP_DigestInit_ex(context, EVP_sha1(), NULL) != 1)
+        goto out;
+    if (first_len > 0 && EVP_DigestUpdate(context, first, first_len) != 1)
+        goto out;
+    if (second_len > 0 && EVP_DigestUpdate(context, second, second_len) != 1)
+        goto out;
+    if (EVP_DigestFinal_ex(context, output, &got) != 1 || got != 20u)
+        goto out;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MD_CTX_free(context);
+    return status;
+}
+
+static librdp_status rdp_session_audio_output_rc4(uint8_t key[20], uint8_t* data, size_t data_len)
+{
+    EVP_CIPHER* cipher = NULL;
+    EVP_CIPHER_CTX* context = NULL;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!key || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_audio_output_legacy_ensure();
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    cipher = EVP_CIPHER_fetch(NULL, "RC4", "provider=legacy");
+    if (!cipher)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    context = EVP_CIPHER_CTX_new();
+    if (!context)
+    {
+        EVP_CIPHER_free(cipher);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    if (EVP_DecryptInit_ex(context, cipher, NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_set_key_length(context, 20) != 1 ||
+        EVP_DecryptInit_ex(context, NULL, NULL, key, NULL) != 1)
+        goto out;
+    while (data_len > 0)
+    {
+        int out_len = 0;
+        int chunk = data_len > (size_t)INT_MAX ? INT_MAX : (int)data_len;
+
+        if (EVP_DecryptUpdate(context, data, &out_len, data, chunk) != 1 || out_len != chunk)
+            goto out;
+        data += chunk;
+        data_len -= (size_t)chunk;
+    }
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_CIPHER_CTX_free(context);
+    EVP_CIPHER_free(cipher);
+    return status;
+}
+
+static librdp_status rdp_session_audio_output_decrypt_wave(librdp_session* session,
+                                                           const rdp_audio_output_wave_encrypt* wave,
+                                                           rdp_buffer* decrypted)
+{
+    uint8_t nonce[36];
+    uint8_t key[20];
+    uint8_t signature[20];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !wave || !decrypted)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(nonce, 0, sizeof(nonce));
+    if (session->audio_output_crypt_seed_valid)
+        memcpy(nonce, session->audio_output_crypt_seed, sizeof(session->audio_output_crypt_seed));
+    nonce[32] = wave->block_no;
+
+    status = rdp_session_audio_output_sha1(nonce, sizeof(nonce), NULL, 0, key);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (wave->signature_len == 8u)
+    {
+        status = rdp_session_audio_output_sha1(nonce, sizeof(nonce), wave->data, wave->data_len, signature);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (memcmp(wave->signature, signature, 8u) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    status = rdp_buffer_append(decrypted, wave->data, wave->data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_session_audio_output_rc4(key, decrypted->data, decrypted->length);
 }
 
 static librdp_status rdp_session_send_audio_input_packet(librdp_session* session,
@@ -10890,14 +11150,27 @@ static librdp_status rdp_session_handle_audio_output_formats(librdp_session* ses
     if (status == LIBRDP_STATUS_OK)
     {
         uint32_t flags = selected_count > 0 ? RDP_AUDIO_OUTPUT_CAP_ALIVE : 0;
+        uint16_t datagram_port = 0;
 
         session->audio_output_server_version = server_formats.version;
         session->audio_output_client_version = client_version;
+        if (selected_count > 0)
+        {
+            librdp_status udp_status = rdp_session_audio_output_udp_open(session);
+
+            if (udp_status == LIBRDP_STATUS_OK)
+                datagram_port = session->audio_output_udp_port;
+            else
+                rdp_trace_event(RDP_TRACE_TRANSPORT,
+                                "transport.udp.bind.failed",
+                                "component=rdpsnd status=%s",
+                                librdp_status_string(udp_status));
+        }
         status = rdp_audio_output_write_client_formats(&response,
                                                        flags,
                                                        0xffffffffu,
                                                        0x00010000u,
-                                                       0,
+                                                       datagram_port,
                                                        server_formats.last_block_confirmed,
                                                        client_version,
                                                        selected,
@@ -11006,7 +11279,8 @@ static librdp_status rdp_session_handle_audio_output_udp_wave(librdp_session* se
 
 static librdp_status rdp_session_handle_audio_output_udp_wave_last(librdp_session* session,
                                                                    const uint8_t* data,
-                                                                   size_t data_len)
+                                                                   size_t data_len,
+                                                                   int use_udp)
 {
     rdp_audio_output_udp_wave_last wave;
     const uint8_t* audio_data = NULL;
@@ -11037,14 +11311,17 @@ static librdp_status rdp_session_handle_audio_output_udp_wave_last(librdp_sessio
     }
     if (wave.total_size != 0 && audio_len > wave.total_size)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_session_emit_audio_output_data(session,
-                                       wave.timestamp,
-                                       wave.format_no,
-                                       wave.block_no,
-                                       0,
-                                       audio_data,
-                                       audio_len);
-    status = rdp_session_send_audio_output_wave_confirm(session, wave.timestamp, wave.block_no);
+    status = rdp_session_send_audio_output_wave_confirm_route(session, wave.timestamp, wave.block_no, use_udp);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_session_emit_audio_output_data(session,
+                                           wave.timestamp,
+                                           wave.format_no,
+                                           wave.block_no,
+                                           0,
+                                           audio_data,
+                                           audio_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_audio_output_wave_confirm_route(session, wave.timestamp, wave.block_no, use_udp);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpsnd.udp_wave_last",
@@ -11055,6 +11332,65 @@ static librdp_status rdp_session_handle_audio_output_udp_wave_last(librdp_sessio
                         wave.total_size,
                         (unsigned)audio_len);
     rdp_session_audio_output_udp_reset(session);
+    return status;
+}
+
+static librdp_status rdp_session_handle_audio_output_wave_encrypt(librdp_session* session,
+                                                                  const uint8_t* data,
+                                                                  size_t data_len,
+                                                                  int use_udp)
+{
+    rdp_audio_output_wave_encrypt wave;
+    rdp_buffer decrypted;
+    int expect_signature = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&decrypted);
+    expect_signature = session->audio_output_server_version >= 5u && session->audio_output_client_version >= 5u;
+    status = rdp_audio_output_parse_wave_encrypt(data, data_len, expect_signature, &wave);
+    if (status != LIBRDP_STATUS_OK)
+        status = rdp_audio_output_parse_wave_encrypt(data, data_len, expect_signature ? 0 : 1, &wave);
+    if (status == LIBRDP_STATUS_OK && !rdp_session_audio_output_format_valid(session, wave.format_no))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_audio_output_decrypt_wave(session, &wave, &decrypted);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpsnd.wave_encrypt.failed",
+                        "channel_id=%u status=%s use_udp=%u",
+                        session->audio_output_channel_id,
+                        librdp_status_string(status),
+                        use_udp ? 1u : 0u);
+        rdp_buffer_free(&decrypted);
+        return LIBRDP_STATUS_OK;
+    }
+
+    status = rdp_session_send_audio_output_wave_confirm_route(session, wave.timestamp, wave.block_no, use_udp);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_session_emit_audio_output_data(session,
+                                           wave.timestamp,
+                                           wave.format_no,
+                                           wave.block_no,
+                                           0,
+                                           decrypted.data,
+                                           decrypted.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_audio_output_wave_confirm_route(session, wave.timestamp, wave.block_no, use_udp);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpsnd.wave_encrypt",
+                        "channel_id=%u format_no=%u block_no=%u signature_len=%u encrypted_len=%u delivered=1 use_udp=%u",
+                        session->audio_output_channel_id,
+                        wave.format_no,
+                        wave.block_no,
+                        (unsigned)wave.signature_len,
+                        (unsigned)wave.data_len,
+                        use_udp ? 1u : 0u);
+    rdp_buffer_free(&decrypted);
     return status;
 }
 
@@ -11113,7 +11449,7 @@ static librdp_status rdp_session_handle_audio_output_message(librdp_session* ses
     if (data_len > 0 && data[0] == RDP_AUDIO_OUTPUT_UDPWAVE)
         return rdp_session_handle_audio_output_udp_wave(session, data, data_len);
     if (data_len > 0 && data[0] == RDP_AUDIO_OUTPUT_UDPWAVELAST)
-        return rdp_session_handle_audio_output_udp_wave_last(session, data, data_len);
+        return rdp_session_handle_audio_output_udp_wave_last(session, data, data_len, 0);
 
     status = rdp_audio_output_parse_header(data, data_len, &header);
     if (status != LIBRDP_STATUS_OK)
@@ -11273,34 +11609,23 @@ static librdp_status rdp_session_handle_audio_output_message(librdp_session* ses
 
         status = rdp_audio_output_parse_crypt_key(data, data_len, &crypt_key);
         if (status == LIBRDP_STATUS_OK)
+        {
+            if (crypt_key.seed_len == sizeof(session->audio_output_crypt_seed))
+            {
+                memcpy(session->audio_output_crypt_seed, crypt_key.seed, sizeof(session->audio_output_crypt_seed));
+                session->audio_output_crypt_seed_valid = 1;
+            }
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.rdpsnd.crypt_key",
-                            "channel_id=%u seed_len=%u",
+                            "channel_id=%u seed_len=%u stored=%u",
                             session->audio_output_channel_id,
-                            (unsigned)crypt_key.seed_len);
+                            (unsigned)crypt_key.seed_len,
+                            session->audio_output_crypt_seed_valid ? 1u : 0u);
+        }
     }
     else if (header.msg_type == RDP_AUDIO_OUTPUT_WAVEENCRYPT)
     {
-        rdp_audio_output_wave_encrypt wave;
-
-        status = rdp_audio_output_parse_wave_encrypt(data, data_len, 1, &wave);
-        if (status != LIBRDP_STATUS_OK)
-            status = rdp_audio_output_parse_wave_encrypt(data, data_len, 0, &wave);
-        if (status == LIBRDP_STATUS_OK && !rdp_session_audio_output_format_valid(session, wave.format_no))
-            status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_session_send_audio_output_wave_confirm(session, wave.timestamp, wave.block_no);
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_session_send_audio_output_wave_confirm(session, wave.timestamp, wave.block_no);
-        if (status == LIBRDP_STATUS_OK)
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.rdpsnd.wave_encrypt",
-                            "channel_id=%u format_no=%u block_no=%u signature_len=%u data_len=%u delivered=0",
-                            session->audio_output_channel_id,
-                            wave.format_no,
-                            wave.block_no,
-                            (unsigned)wave.signature_len,
-                            (unsigned)wave.data_len);
+        status = rdp_session_handle_audio_output_wave_encrypt(session, data, data_len, 0);
     }
     else
     {
@@ -11311,6 +11636,108 @@ static librdp_status rdp_session_handle_audio_output_message(librdp_session* ses
                               session->audio_output_channel_id,
                               header.msg_type,
                               header.body_size);
+    }
+    return status;
+}
+
+static librdp_status rdp_session_handle_audio_output_udp_datagram(librdp_session* session)
+{
+    uint8_t packet[65536];
+    struct sockaddr_storage peer;
+    socklen_t peer_len = 0;
+    ssize_t got = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || session->audio_output_udp_fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(&peer, 0, sizeof(peer));
+    peer_len = (socklen_t)sizeof(peer);
+    do
+    {
+        got = recvfrom(session->audio_output_udp_fd,
+                       packet,
+                       sizeof(packet),
+                       0,
+                       (struct sockaddr*)&peer,
+                       &peer_len);
+    } while (got < 0 && errno == EINTR);
+    if (got < 0)
+        return (errno == EAGAIN || errno == EWOULDBLOCK) ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
+    if (got == 0)
+        return LIBRDP_STATUS_OK;
+
+    session->audio_output_udp_peer = peer;
+    session->audio_output_udp_peer_len = peer_len;
+    session->audio_output_udp_peer_valid = 1;
+    rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "transport.udp.read.done",
+                          "component=rdpsnd bytes=%u",
+                          (unsigned)got);
+
+    if (packet[0] == RDP_AUDIO_OUTPUT_UDPWAVE)
+    {
+        status = rdp_session_handle_audio_output_udp_wave(session, packet, (size_t)got);
+    }
+    else if (packet[0] == RDP_AUDIO_OUTPUT_UDPWAVELAST)
+    {
+        status = rdp_session_handle_audio_output_udp_wave_last(session, packet, (size_t)got, 1);
+    }
+    else
+    {
+        rdp_audio_output_header header;
+
+        status = rdp_audio_output_parse_header(packet, (size_t)got, &header);
+        if (status == LIBRDP_STATUS_OK && header.msg_type == RDP_AUDIO_OUTPUT_TRAINING)
+        {
+            rdp_audio_output_training training;
+            rdp_buffer confirm;
+
+            rdp_buffer_init(&confirm);
+            status = rdp_audio_output_parse_training(packet, (size_t)got, &training);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_audio_output_write_training_confirm(&confirm,
+                                                                 training.timestamp,
+                                                                 training.packet_size);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_session_send_audio_output_udp_payload(session,
+                                                                   confirm.data,
+                                                                   confirm.length,
+                                                                   "client.rdpsnd.training_confirm");
+            rdp_buffer_free(&confirm);
+            if (status == LIBRDP_STATUS_OK)
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.rdpsnd.training",
+                                "channel_id=%u timestamp=%u packet_size=%u data_len=%u use_udp=1",
+                                session->audio_output_channel_id,
+                                training.timestamp,
+                                training.packet_size,
+                                (unsigned)training.data_len);
+        }
+        else if (status == LIBRDP_STATUS_OK && header.msg_type == RDP_AUDIO_OUTPUT_WAVEENCRYPT)
+        {
+            status = rdp_session_handle_audio_output_wave_encrypt(session, packet, (size_t)got, 1);
+        }
+        else
+        {
+            rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "client.rdpsnd.udp_pdu",
+                                  "status=%s bytes=%u",
+                                  librdp_status_string(status),
+                                  (unsigned)got);
+            status = LIBRDP_STATUS_OK;
+        }
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpsnd.udp_pdu.failed",
+                        "status=%s bytes=%u",
+                        librdp_status_string(status),
+                        (unsigned)got);
+        status = LIBRDP_STATUS_OK;
     }
     return status;
 }
@@ -24921,6 +25348,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
     rdp_transport_init(&session->transport);
+    session->audio_output_udp_fd = -1;
     rdp_buffer_init(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_pending_data);
     rdp_buffer_init(&session->audio_output_udp_data);
@@ -24968,6 +25396,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_dynamic_channels_clear(session);
     rdp_session_clipboard_clear(session);
     rdp_session_clipboard_local_clear(session);
+    rdp_session_audio_output_udp_close(session);
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
     rdp_buffer_free(&session->audio_output_udp_data);
@@ -25068,12 +25497,17 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
+    rdp_session_audio_output_udp_close(session);
     session->audio_output_channel_id = 0;
     session->audio_output_ready = 0;
     session->audio_output_fragmenting = 0;
     session->audio_output_pending_wave = 0;
     session->audio_output_udp_active = 0;
     session->audio_output_udp_block_no = 0;
+    session->audio_output_udp_peer_valid = 0;
+    session->audio_output_crypt_seed_valid = 0;
+    session->audio_output_udp_fd = -1;
+    session->audio_output_udp_port = 0;
     session->audio_output_fragment_expected = 0;
     session->audio_output_server_version = 0;
     session->audio_output_client_version = 0;
@@ -25082,8 +25516,11 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->audio_output_pending_expected_len = 0;
     session->audio_output_pending_block_no = 0;
     session->audio_output_udp_next_fragment_no = 0;
+    session->audio_output_udp_peer_len = 0;
     session->audio_output_selected_format_count = 0;
     memset(session->audio_output_selected_formats, 0, sizeof(session->audio_output_selected_formats));
+    memset(&session->audio_output_udp_peer, 0, sizeof(session->audio_output_udp_peer));
+    memset(session->audio_output_crypt_seed, 0, sizeof(session->audio_output_crypt_seed));
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
@@ -25939,6 +26376,7 @@ librdp_status librdp_session_connect(librdp_session* session)
 
 fail:
     rdp_transport_close(&session->transport);
+    rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
     session->clipboard_channel_id = 0;
@@ -25949,6 +26387,10 @@ fail:
     session->audio_output_pending_wave = 0;
     session->audio_output_udp_active = 0;
     session->audio_output_udp_block_no = 0;
+    session->audio_output_udp_peer_valid = 0;
+    session->audio_output_crypt_seed_valid = 0;
+    session->audio_output_udp_fd = -1;
+    session->audio_output_udp_port = 0;
     session->audio_output_fragment_expected = 0;
     session->audio_output_server_version = 0;
     session->audio_output_client_version = 0;
@@ -25957,8 +26399,11 @@ fail:
     session->audio_output_pending_expected_len = 0;
     session->audio_output_pending_block_no = 0;
     session->audio_output_udp_next_fragment_no = 0;
+    session->audio_output_udp_peer_len = 0;
     session->audio_output_selected_format_count = 0;
     memset(session->audio_output_selected_formats, 0, sizeof(session->audio_output_selected_formats));
+    memset(&session->audio_output_udp_peer, 0, sizeof(session->audio_output_udp_peer));
+    memset(session->audio_output_crypt_seed, 0, sizeof(session->audio_output_crypt_seed));
     session->audio_input_channel_id = 0;
     session->audio_input_channel_id_bytes = 0;
     session->audio_input_ready = 0;
@@ -26036,7 +26481,57 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
     if (session->state == LIBRDP_SESSION_CONNECTED)
         rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
 
-    status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
+    if (session->audio_output_udp_fd >= 0)
+    {
+        struct pollfd pfds[2];
+        int rc = 0;
+
+        memset(pfds, 0, sizeof(pfds));
+        pfds[0].fd = session->transport.fd;
+        pfds[0].events = POLLIN;
+        pfds[1].fd = session->audio_output_udp_fd;
+        pfds[1].events = POLLIN;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.wait.start",
+                              "timeout_ms=%d fds=2",
+                              timeout_ms);
+        do
+        {
+            rc = poll(pfds, 2, timeout_ms);
+        } while (rc < 0 && errno == EINTR);
+        if (rc == 0)
+            status = LIBRDP_STATUS_TIMEOUT;
+        else if (rc < 0)
+            status = LIBRDP_STATUS_IO_ERROR;
+        else
+        {
+            status = LIBRDP_STATUS_OK;
+            revents = pfds[0].revents;
+            rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                                  RDP_TRACE_LEVEL_DEBUG,
+                                  "transport.wait.done",
+                                  "tcp_revents=%d udp_revents=%d",
+                                  (int)pfds[0].revents,
+                                  (int)pfds[1].revents);
+            if ((pfds[1].revents & POLLIN) != 0)
+                status = rdp_session_handle_audio_output_udp_datagram(session);
+            if ((pfds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            {
+                rdp_trace_event(RDP_TRACE_TRANSPORT,
+                                "transport.udp.closed",
+                                "component=rdpsnd revents=%d",
+                                (int)pfds[1].revents);
+                rdp_session_audio_output_udp_close(session);
+            }
+            if (status == LIBRDP_STATUS_OK && (pfds[0].revents & POLLIN) == 0)
+                goto done;
+        }
+    }
+    else
+    {
+        status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
+    }
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
         rdp_trace_event_level(RDP_TRACE_CLIENT,
@@ -26869,6 +27364,7 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
     rdp_session_graphics_dirty_reset(session);
     rdp_transport_close(&session->transport);
+    rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
     session->clipboard_channel_id = 0;
@@ -26879,6 +27375,10 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->audio_output_pending_wave = 0;
     session->audio_output_udp_active = 0;
     session->audio_output_udp_block_no = 0;
+    session->audio_output_udp_peer_valid = 0;
+    session->audio_output_crypt_seed_valid = 0;
+    session->audio_output_udp_fd = -1;
+    session->audio_output_udp_port = 0;
     session->audio_output_fragment_expected = 0;
     session->audio_output_server_version = 0;
     session->audio_output_client_version = 0;
@@ -26887,8 +27387,11 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->audio_output_pending_expected_len = 0;
     session->audio_output_pending_block_no = 0;
     session->audio_output_udp_next_fragment_no = 0;
+    session->audio_output_udp_peer_len = 0;
     session->audio_output_selected_format_count = 0;
     memset(session->audio_output_selected_formats, 0, sizeof(session->audio_output_selected_formats));
+    memset(&session->audio_output_udp_peer, 0, sizeof(session->audio_output_udp_peer));
+    memset(session->audio_output_crypt_seed, 0, sizeof(session->audio_output_crypt_seed));
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
