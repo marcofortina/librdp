@@ -35,6 +35,7 @@
 #include "graphics/nscodec.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
+#include "graphics/rfx_stream.h"
 #include "graphics/surface_commands.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
@@ -17876,6 +17877,92 @@ static librdp_status rdp_session_apply_surface_bits_nscodec(librdp_session* sess
     return status;
 }
 
+typedef struct rdp_session_rfx_surface_context
+{
+    librdp_session* session;
+    const rdp_surface_bits* bits;
+    uint16_t tiles;
+} rdp_session_rfx_surface_context;
+
+static librdp_status rdp_session_rfx_surface_tile(const rdp_rfx_stream_tile* tile, void* user)
+{
+    rdp_session_rfx_surface_context* context = (rdp_session_rfx_surface_context*)user;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t dest_x = 0;
+    uint32_t dest_y = 0;
+
+    if (!tile || !context || !context->session || !context->bits)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (tile->x >= context->bits->width || tile->y >= context->bits->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    width = tile->width;
+    height = tile->height;
+    if (width > context->bits->width - tile->x)
+        width = context->bits->width - tile->x;
+    if (height > context->bits->height - tile->y)
+        height = context->bits->height - tile->y;
+    if (width == 0 || height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    dest_x = (uint32_t)context->bits->dest_left + tile->x;
+    dest_y = (uint32_t)context->bits->dest_top + tile->y;
+    if (dest_x > librdp_surface_width(context->session->surface) ||
+        dest_y > librdp_surface_height(context->session->surface) ||
+        width > librdp_surface_width(context->session->surface) - dest_x ||
+        height > librdp_surface_height(context->session->surface) - dest_y)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (context->tiles < UINT16_MAX)
+        context->tiles++;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.surface.rfx.tile",
+                          "x=%u y=%u width=%u height=%u tile_x=%u tile_y=%u",
+                          dest_x,
+                          dest_y,
+                          width,
+                          height,
+                          tile->x_idx,
+                          tile->y_idx);
+    return librdp_surface_blit_bgra32(context->session->surface,
+                                      dest_x,
+                                      dest_y,
+                                      width,
+                                      height,
+                                      tile->pixels.bgra,
+                                      tile->pixels.stride);
+}
+
+static librdp_status rdp_session_apply_surface_bits_rfx(librdp_session* session,
+                                                        const rdp_surface_bits* bits)
+{
+    rdp_session_rfx_surface_context context;
+    rdp_rfx_stream_summary summary;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !bits)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&context, 0, sizeof(context));
+    memset(&summary, 0, sizeof(summary));
+    context.session = session;
+    context.bits = bits;
+    status = rdp_rfx_stream_decode(bits->bitmap_data,
+                                   bits->bitmap_data_length,
+                                   rdp_session_rfx_surface_tile,
+                                   &context,
+                                   &summary);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.surface.rfx.blit",
+                        "frame_id=%u width=%u height=%u tiles=%u rects=%u blitted=%u",
+                        summary.frame_id,
+                        summary.width,
+                        summary.height,
+                        summary.tile_count,
+                        summary.rect_count,
+                        context.tiles);
+    return status;
+}
+
 static librdp_status rdp_session_apply_surface_bits(librdp_session* session,
                                                     const rdp_surface_bits* bits)
 {
@@ -17900,6 +17987,9 @@ static librdp_status rdp_session_apply_surface_bits(librdp_session* session,
         status = rdp_session_apply_surface_bits_raw(session, bits);
     else if (bits->codec_id == RDP_SURFACE_CODEC_NSCODEC)
         status = rdp_session_apply_surface_bits_nscodec(session, bits);
+    else if (bits->codec_id == RDP_SURFACE_CODEC_REMOTEFX ||
+             bits->codec_id == RDP_SURFACE_CODEC_IMAGE_REMOTEFX)
+        status = rdp_session_apply_surface_bits_rfx(session, bits);
     else
         status = LIBRDP_STATUS_UNSUPPORTED;
 
