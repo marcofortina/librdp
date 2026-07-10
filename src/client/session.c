@@ -156,8 +156,12 @@
 #define RDP_SESSION_SCARD_E_NO_SERVICE 0x8010001du
 #define RDP_SESSION_SCARD_E_NO_MEMORY 0x80100006u
 #define RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE 0x8010001fu
+#define RDP_SESSION_SCARD_E_FILE_NOT_FOUND 0x80100024u
 #define RDP_SESSION_MAX_SMARTCARD_CONTEXTS 8u
 #define RDP_SESSION_MAX_SMARTCARD_HANDLES 32u
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+#define RDP_SESSION_MAX_SMARTCARD_CACHE_ENTRIES 32u
+#endif
 #define RDP_SESSION_SMARTCARD_BLOB_BYTES 8u
 #define RDP_SESSION_SMARTCARD_MAX_IO_BYTES 65536u
 #define RDP_SESSION_MAX_REDIRECTED_FILES 256u
@@ -252,6 +256,19 @@ typedef struct rdp_session_smartcard_handle
     DWORD active_protocol;
     uint32_t transmit_count;
 } rdp_session_smartcard_handle;
+
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+typedef struct rdp_session_smartcard_cache_entry
+{
+    uint8_t active;
+    uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH];
+    uint32_t freshness_counter;
+    char* lookup_name;
+    uint8_t* data;
+    uint32_t data_len;
+    uint64_t clock;
+} rdp_session_smartcard_cache_entry;
+#endif
 #endif
 
 typedef struct rdp_session_dynamic_channel
@@ -557,6 +574,9 @@ struct librdp_session
 #ifdef RDP_HAVE_PCSC
     rdp_session_smartcard_context smartcard_contexts[RDP_SESSION_MAX_SMARTCARD_CONTEXTS];
     rdp_session_smartcard_handle smartcard_handles[RDP_SESSION_MAX_SMARTCARD_HANDLES];
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+    rdp_session_smartcard_cache_entry smartcard_cache[RDP_SESSION_MAX_SMARTCARD_CACHE_ENTRIES];
+#endif
 #endif
 #ifdef RDP_HAVE_LIBUSB
     libusb_context* usb_libusb;
@@ -566,6 +586,9 @@ struct librdp_session
 #ifdef RDP_HAVE_PCSC
     uint32_t next_smartcard_context_id;
     uint32_t next_smartcard_handle_id;
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+    uint64_t smartcard_cache_clock;
+#endif
 #endif
     uint64_t progressive_tile_clock;
     size_t graphics_cache_bytes;
@@ -6660,6 +6683,151 @@ static void rdp_session_smartcard_reader_common_from_pcsc(
         memcpy(out->atr, atr, out->atr_len);
 }
 
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+static void rdp_session_smartcard_cache_entry_clear(rdp_session_smartcard_cache_entry* entry)
+{
+    if (!entry)
+        return;
+    free(entry->lookup_name);
+    free(entry->data);
+    memset(entry, 0, sizeof(*entry));
+}
+
+static void rdp_session_smartcard_cache_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    for (uint32_t i = 0; i < RDP_SESSION_MAX_SMARTCARD_CACHE_ENTRIES; i++)
+        rdp_session_smartcard_cache_entry_clear(&session->smartcard_cache[i]);
+    session->smartcard_cache_clock = 0;
+}
+
+static uint64_t rdp_session_smartcard_cache_next_clock(librdp_session* session)
+{
+    if (!session)
+        return 0;
+    session->smartcard_cache_clock++;
+    if (session->smartcard_cache_clock == 0)
+        session->smartcard_cache_clock = 1;
+    return session->smartcard_cache_clock;
+}
+
+static rdp_session_smartcard_cache_entry* rdp_session_smartcard_cache_find(
+    librdp_session* session,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    const char* lookup_name)
+{
+    if (!session || !card_identifier || !lookup_name)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SESSION_MAX_SMARTCARD_CACHE_ENTRIES; i++)
+    {
+        rdp_session_smartcard_cache_entry* entry = &session->smartcard_cache[i];
+
+        if (entry->active &&
+            memcmp(entry->card_identifier,
+                   card_identifier,
+                   RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH) == 0 &&
+            entry->lookup_name && strcmp(entry->lookup_name, lookup_name) == 0)
+            return entry;
+    }
+    return NULL;
+}
+
+static rdp_session_smartcard_cache_entry* rdp_session_smartcard_cache_alloc(
+    librdp_session* session,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    const char* lookup_name)
+{
+    rdp_session_smartcard_cache_entry* candidate = NULL;
+
+    if (!session || !card_identifier || !lookup_name)
+        return NULL;
+    candidate = rdp_session_smartcard_cache_find(session, card_identifier, lookup_name);
+    if (candidate)
+        return candidate;
+    for (uint32_t i = 0; i < RDP_SESSION_MAX_SMARTCARD_CACHE_ENTRIES; i++)
+    {
+        if (!session->smartcard_cache[i].active)
+            return &session->smartcard_cache[i];
+        if (!candidate || session->smartcard_cache[i].clock < candidate->clock)
+            candidate = &session->smartcard_cache[i];
+    }
+    rdp_session_smartcard_cache_entry_clear(candidate);
+    return candidate;
+}
+
+static LONG rdp_session_smartcard_cache_write(
+    librdp_session* session,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    uint32_t freshness_counter,
+    const char* lookup_name,
+    const uint8_t* data,
+    uint32_t data_len)
+{
+    rdp_session_smartcard_cache_entry* entry = NULL;
+    char* stored_name = NULL;
+    uint8_t* stored_data = NULL;
+
+    if (!session || !card_identifier || !lookup_name || (!data && data_len > 0) ||
+        data_len > RDP_SESSION_SMARTCARD_MAX_IO_BYTES)
+        return (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+    entry = rdp_session_smartcard_cache_alloc(session, card_identifier, lookup_name);
+    if (!entry)
+        return (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+    stored_name = rdp_session_strdup_range(lookup_name, strlen(lookup_name));
+    if (!stored_name)
+        return (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+    if (data_len > 0)
+    {
+        stored_data = (uint8_t*)malloc(data_len);
+        if (!stored_data)
+        {
+            free(stored_name);
+            return (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
+        }
+        memcpy(stored_data, data, data_len);
+    }
+    rdp_session_smartcard_cache_entry_clear(entry);
+    entry->active = 1u;
+    memcpy(entry->card_identifier,
+           card_identifier,
+           RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH);
+    entry->freshness_counter = freshness_counter;
+    entry->lookup_name = stored_name;
+    entry->data = stored_data;
+    entry->data_len = data_len;
+    entry->clock = rdp_session_smartcard_cache_next_clock(session);
+    return SCARD_S_SUCCESS;
+}
+
+static LONG rdp_session_smartcard_cache_read(
+    librdp_session* session,
+    const uint8_t card_identifier[RDP_SMARTCARD_REDIRECTION_CARD_IDENTIFIER_LENGTH],
+    uint32_t freshness_counter,
+    const char* lookup_name,
+    uint8_t* data,
+    DWORD* data_len)
+{
+    rdp_session_smartcard_cache_entry* entry = NULL;
+
+    if (!session || !card_identifier || !lookup_name || !data_len)
+        return (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+    entry = rdp_session_smartcard_cache_find(session, card_identifier, lookup_name);
+    if (!entry || entry->freshness_counter < freshness_counter)
+        return (LONG)RDP_SESSION_SCARD_E_FILE_NOT_FOUND;
+    if (*data_len < entry->data_len)
+    {
+        *data_len = entry->data_len;
+        return SCARD_E_INSUFFICIENT_BUFFER;
+    }
+    if (entry->data_len > 0 && data)
+        memcpy(data, entry->data, entry->data_len);
+    *data_len = entry->data_len;
+    entry->clock = rdp_session_smartcard_cache_next_clock(session);
+    return SCARD_S_SUCCESS;
+}
+#endif
+
 static void rdp_session_smartcard_reset(librdp_session* session)
 {
     if (!session)
@@ -6684,6 +6852,9 @@ static void rdp_session_smartcard_reset(librdp_session* session)
             memset(context, 0, sizeof(*context));
         }
     }
+#ifndef RDP_HAVE_WINPR_SMARTCARD
+    rdp_session_smartcard_cache_reset(session);
+#endif
 }
 
 static librdp_status rdp_session_smartcard_handle_establish(librdp_session* session,
@@ -8019,6 +8190,66 @@ static librdp_status rdp_session_smartcard_handle_cache(
             {
                 pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
             }
+        }
+        free(lookup_name);
+    }
+#else
+    {
+        rdp_session_smartcard_context* context = NULL;
+        char* lookup_name = NULL;
+        const uint8_t* card_identifier = NULL;
+        uint32_t freshness_counter = 0;
+        int wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_READCACHEW ||
+                   message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_WRITECACHEW;
+
+        if (message->kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_READ_CACHE)
+        {
+            context = rdp_session_smartcard_context_find(session,
+                                                         message->body.read_cache.context.data,
+                                                         message->body.read_cache.context.length);
+            card_identifier = message->body.read_cache.card_identifier;
+            freshness_counter = message->body.read_cache.freshness_counter;
+            data_len = message->body.read_cache.data_len;
+            if (data_len > sizeof(data))
+                data_len = sizeof(data);
+            if (context)
+                lookup_name =
+                    rdp_session_smartcard_string_to_utf8(&message->body.read_cache.lookup_name,
+                                                         wide);
+            if (!context)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+            else if (!lookup_name)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+            else
+                pcsc_status = rdp_session_smartcard_cache_read(session,
+                                                               card_identifier,
+                                                               freshness_counter,
+                                                               lookup_name,
+                                                               data,
+                                                               &data_len);
+        }
+        else
+        {
+            context = rdp_session_smartcard_context_find(session,
+                                                         message->body.write_cache.context.data,
+                                                         message->body.write_cache.context.length);
+            card_identifier = message->body.write_cache.card_identifier;
+            freshness_counter = message->body.write_cache.freshness_counter;
+            if (context)
+                lookup_name =
+                    rdp_session_smartcard_string_to_utf8(&message->body.write_cache.lookup_name,
+                                                         wide);
+            if (!context)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
+            else if (!lookup_name)
+                pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_PARAMETER;
+            else
+                pcsc_status = rdp_session_smartcard_cache_write(session,
+                                                                card_identifier,
+                                                                freshness_counter,
+                                                                lookup_name,
+                                                                message->body.write_cache.data,
+                                                                message->body.write_cache.data_len);
         }
         free(lookup_name);
     }
