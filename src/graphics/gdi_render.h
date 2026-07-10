@@ -27,7 +27,8 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_MEMBLT = 16,
     RDP_GDI_RENDER_OP_MEM3BLT = 17,
     RDP_GDI_RENDER_OP_DRAW_NINEGRID = 18,
-    RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID = 19
+    RDP_GDI_RENDER_OP_MULTI_DRAW_NINEGRID = 19,
+    RDP_GDI_RENDER_OP_GLYPH = 20
 } rdp_gdi_render_op_kind;
 
 #define RDP_GDI_RENDER_MAX_POINTS 256u
@@ -91,6 +92,22 @@ typedef struct rdp_gdi_render_op
     uint32_t rect_count;
     rdp_gdi_render_rect rects[RDP_GDI_RENDER_MAX_RECTS];
     rdp_gdi_render_bounds bounds;
+    uint32_t glyph_flags;
+    uint32_t glyph_char_inc;
+    uint8_t glyph_opaque;
+    rdp_gdi_render_rect glyph_back_rect;
+    int32_t glyph_x;
+    int32_t glyph_y;
+    const uint8_t* glyph_data;
+    uint32_t glyph_data_len;
+    uint8_t inline_glyph_present;
+    uint32_t inline_glyph_cache_index;
+    int32_t inline_glyph_x;
+    int32_t inline_glyph_y;
+    uint32_t inline_glyph_width;
+    uint32_t inline_glyph_height;
+    const uint8_t* inline_glyph_bitmap;
+    uint32_t inline_glyph_bitmap_len;
 } rdp_gdi_render_op;
 
 typedef struct rdp_gdi_render_state
@@ -240,6 +257,24 @@ typedef struct rdp_gdi_render_state
     uint8_t mem3_brush_hatch;
     uint8_t mem3_brush_extra[7];
     uint32_t mem3_cache_index;
+    uint32_t glyph_cache_id;
+    uint32_t glyph_flags;
+    uint32_t glyph_char_inc;
+    uint32_t glyph_opaque;
+    uint32_t glyph_back_color;
+    uint32_t glyph_fore_color;
+    int32_t glyph_back_left;
+    int32_t glyph_back_top;
+    int32_t glyph_back_right;
+    int32_t glyph_back_bottom;
+    int32_t glyph_op_left;
+    int32_t glyph_op_top;
+    int32_t glyph_op_right;
+    int32_t glyph_op_bottom;
+    int32_t glyph_x;
+    int32_t glyph_y;
+    const uint8_t* glyph_data;
+    uint32_t glyph_data_len;
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);

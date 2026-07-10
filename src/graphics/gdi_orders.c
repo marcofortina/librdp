@@ -154,6 +154,57 @@ static librdp_status rdp_gdi_read_2byte_unsigned(rdp_stream* stream, uint32_t* v
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_read_2byte_signed(rdp_stream* stream, int32_t* value)
+{
+    uint8_t first = 0;
+    uint8_t second = 0;
+    uint32_t raw = 0;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((first & 0x80u) == 0)
+    {
+        raw = (uint32_t)(first & 0x7fu);
+        if (raw & 0x40u)
+            raw |= 0xffffff80u;
+        *value = (int32_t)raw;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    raw = (((uint32_t)first & 0x7fu) << 8u) | second;
+    if (raw & 0x4000u)
+        raw |= 0xffff8000u;
+    *value = (int32_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_glyph_bitmap_padded_len(uint32_t width,
+                                                     uint32_t height,
+                                                     uint32_t* length)
+{
+    uint32_t stride = 0;
+    uint32_t total = 0;
+
+    if (!length || width == 0 || height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (width > UINT32_MAX - 7u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    stride = (width + 7u) / 8u;
+    if (height > UINT32_MAX / stride)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = stride * height;
+    if (total > UINT32_MAX - 3u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = (total + 3u) & ~3u;
+    if (total == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *length = total;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_read_4byte_unsigned(rdp_stream* stream, uint32_t* value)
 {
     uint8_t first = 0;
@@ -647,6 +698,140 @@ librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_orde
         (void)pad;
     }
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_gdi_parse_cache_glyph_v1(const rdp_gdi_secondary_order_header* header,
+                                                  rdp_gdi_cache_glyph_order* order)
+{
+    rdp_stream stream;
+    uint8_t cache_id = 0;
+    uint8_t glyph_count = 0;
+    uint32_t i = 0;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u8(&stream, &cache_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &glyph_count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (cache_id > 9u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(order, 0, sizeof(*order));
+    order->cache_id = cache_id;
+    order->flags = header->extra_flags;
+    order->version = 1;
+    order->glyph_count = glyph_count;
+    for (i = 0; i < glyph_count; i++)
+    {
+        rdp_gdi_glyph_bitmap* glyph = &order->glyphs[i];
+        uint16_t raw = 0;
+
+        if (rdp_stream_read_u16_le(&stream, &raw) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->cache_index = raw;
+        if (glyph->cache_index >= RDP_GDI_MAX_CACHE_GLYPHS)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (rdp_stream_read_u16_le(&stream, &raw) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->x = (int16_t)raw;
+        if (rdp_stream_read_u16_le(&stream, &raw) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->y = (int16_t)raw;
+        if (rdp_stream_read_u16_le(&stream, &raw) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->width = raw;
+        if (rdp_stream_read_u16_le(&stream, &raw) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->height = raw;
+        if (rdp_gdi_glyph_bitmap_padded_len(glyph->width,
+                                            glyph->height,
+                                            &glyph->bitmap_len) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_bytes(&stream, &glyph->bitmap, glyph->bitmap_len) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if ((header->extra_flags & RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT) != 0)
+    {
+        for (i = 0; i < glyph_count; i++)
+        {
+            if (rdp_stream_read_u16_le(&stream, &order->glyphs[i].unicode_codepoint) !=
+                LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            order->glyphs[i].has_unicode = 1;
+        }
+    }
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_gdi_parse_cache_glyph_v2(const rdp_gdi_secondary_order_header* header,
+                                                  rdp_gdi_cache_glyph_order* order)
+{
+    rdp_stream stream;
+    uint32_t i = 0;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(order, 0, sizeof(*order));
+    order->cache_id = header->extra_flags & 0x000fu;
+    order->flags = (header->extra_flags & 0x00f0u) >> 4u;
+    order->version = 2;
+    order->glyph_count = (header->extra_flags & 0xff00u) >> 8u;
+    if (order->cache_id > 9u || order->glyph_count > RDP_GDI_MAX_CACHE_GLYPHS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    for (i = 0; i < order->glyph_count; i++)
+    {
+        rdp_gdi_glyph_bitmap* glyph = &order->glyphs[i];
+        uint8_t cache_index = 0;
+
+        if (rdp_stream_read_u8(&stream, &cache_index) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        glyph->cache_index = cache_index;
+        if (rdp_gdi_read_2byte_signed(&stream, &glyph->x) != LIBRDP_STATUS_OK ||
+            rdp_gdi_read_2byte_signed(&stream, &glyph->y) != LIBRDP_STATUS_OK ||
+            rdp_gdi_read_2byte_unsigned(&stream, &glyph->width) != LIBRDP_STATUS_OK ||
+            rdp_gdi_read_2byte_unsigned(&stream, &glyph->height) != LIBRDP_STATUS_OK ||
+            rdp_gdi_glyph_bitmap_padded_len(glyph->width,
+                                            glyph->height,
+                                            &glyph->bitmap_len) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_bytes(&stream, &glyph->bitmap, glyph->bitmap_len) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if ((header->extra_flags & RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT) != 0)
+    {
+        for (i = 0; i < order->glyph_count; i++)
+        {
+            if (rdp_stream_read_u16_le(&stream, &order->glyphs[i].unicode_codepoint) !=
+                LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            order->glyphs[i].has_unicode = 1;
+        }
+    }
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+librdp_status rdp_gdi_parse_cache_glyph_order(const rdp_gdi_secondary_order_header* header,
+                                              rdp_gdi_cache_glyph_order* order)
+{
+    librdp_status primary = LIBRDP_STATUS_OK;
+    librdp_status fallback = LIBRDP_STATUS_OK;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_SECONDARY_CACHE_GLYPH)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if ((header->extra_flags & 0xff00u) != 0)
+    {
+        primary = rdp_gdi_parse_cache_glyph_v2(header, order);
+        if (primary == LIBRDP_STATUS_OK)
+            return primary;
+        fallback = rdp_gdi_parse_cache_glyph_v1(header, order);
+        return fallback == LIBRDP_STATUS_OK ? fallback : primary;
+    }
+    primary = rdp_gdi_parse_cache_glyph_v1(header, order);
+    if (primary == LIBRDP_STATUS_OK)
+        return primary;
+    fallback = rdp_gdi_parse_cache_glyph_v2(header, order);
+    return fallback == LIBRDP_STATUS_OK ? fallback : primary;
 }
 
 librdp_status rdp_gdi_parse_altsec_order(const void* data,

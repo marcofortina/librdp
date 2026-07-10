@@ -11386,6 +11386,25 @@ static int test_gdi_orders(void)
         8u,
         0x00u, 0x01u, 0x02u, 0x03u
     };
+    const uint8_t cache_glyph_v1_payload[] = {
+        1u, 1u,
+        2u, 0u,
+        0u, 0u,
+        0u, 0u,
+        8u, 0u,
+        2u, 0u,
+        0x80u, 0x40u, 0u, 0u,
+        'A', 0u
+    };
+    const uint8_t cache_glyph_v2_payload[] = {
+        3u,
+        1u,
+        2u,
+        8u,
+        1u,
+        0x80u, 0u, 0u, 0u,
+        'B', 0u
+    };
     const uint8_t primary_order[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_DSTBLT,
@@ -11734,9 +11753,79 @@ static int test_gdi_orders(void)
         1u, 2u, 3u, 4u,
         5u, 6u, 7u, 8u
     };
+    const uint8_t render_glyph_index[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_GLYPH_INDEX,
+        0xffu, 0x3fu, 0x38u,
+        1u,
+        RDP_GDI_GLYPH_SO_HORIZONTAL,
+        0u,
+        0u,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        1u, 0u,
+        2u, 0u,
+        1u,
+        2u
+    };
+    const uint8_t render_fast_index[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_FAST_INDEX,
+        0xffu, 0x7fu,
+        1u,
+        5u, RDP_GDI_GLYPH_SO_HORIZONTAL,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        1u, 0u,
+        2u, 0u,
+        1u,
+        2u
+    };
+    const uint8_t render_fast_glyph[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_FAST_GLYPH,
+        0xffu, 0x7fu,
+        1u,
+        5u, RDP_GDI_GLYPH_SO_HORIZONTAL,
+        0x01u, 0x02u, 0x03u,
+        0x04u, 0x05u, 0x06u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        0u, 0u,
+        0u, 0u,
+        20u, 0u,
+        10u, 0u,
+        1u, 0u,
+        2u, 0u,
+        9u,
+        4u,
+        0u,
+        0u,
+        8u,
+        1u,
+        0x80u, 0u, 0u, 0u
+    };
     const uint8_t render_unsupported[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
-        RDP_GDI_ORDER_FAST_INDEX
+        0x1fu
     };
     const uint8_t create_ninegrid_payload[] = {
         32u,
@@ -11771,6 +11860,7 @@ static int test_gdi_orders(void)
     rdp_gdi_secondary_order_header secondary_header;
     rdp_gdi_cache_bitmap_order cache_bitmap;
     rdp_gdi_cache_color_table_order cache_color_table;
+    rdp_gdi_cache_glyph_order cache_glyph;
     rdp_gdi_altsec_order_header altsec;
     rdp_gdi_bitmap_cache_error bitmap_error;
     rdp_gdi_bitmap_cache_error parsed_error;
@@ -11913,6 +12003,53 @@ static int test_gdi_orders(void)
            cache_color_table.palette.entries[3].blue == 3u &&
            cache_color_table.palette.entries[3].green == 252u &&
            cache_color_table.palette.entries[3].red == 0x56u);
+
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT,
+                                         RDP_GDI_SECONDARY_CACHE_GLYPH,
+                                         cache_glyph_v1_payload,
+                                         sizeof(cache_glyph_v1_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_glyph_order(&secondary_header, &cache_glyph) == LIBRDP_STATUS_OK);
+    PCHECK(cache_glyph.version == 1 &&
+           cache_glyph.cache_id == 1 &&
+           cache_glyph.glyph_count == 1 &&
+           cache_glyph.glyphs[0].cache_index == 2 &&
+           cache_glyph.glyphs[0].width == 8 &&
+           cache_glyph.glyphs[0].height == 2 &&
+           cache_glyph.glyphs[0].bitmap_len == 4 &&
+           cache_glyph.glyphs[0].bitmap[1] == 0x40u &&
+           cache_glyph.glyphs[0].has_unicode &&
+           cache_glyph.glyphs[0].unicode_codepoint == 'A');
+
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         (uint16_t)(1u |
+                                                    RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT |
+                                                    (1u << 8u)),
+                                         RDP_GDI_SECONDARY_CACHE_GLYPH,
+                                         cache_glyph_v2_payload,
+                                         sizeof(cache_glyph_v2_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_glyph_order(&secondary_header, &cache_glyph) == LIBRDP_STATUS_OK);
+    PCHECK(cache_glyph.version == 2 &&
+           cache_glyph.cache_id == 1 &&
+           cache_glyph.glyph_count == 1 &&
+           cache_glyph.glyphs[0].cache_index == 3 &&
+           cache_glyph.glyphs[0].x == 1 &&
+           cache_glyph.glyphs[0].y == 2 &&
+           cache_glyph.glyphs[0].width == 8 &&
+           cache_glyph.glyphs[0].height == 1 &&
+           cache_glyph.glyphs[0].bitmap_len == 4 &&
+           cache_glyph.glyphs[0].has_unicode &&
+           cache_glyph.glyphs[0].unicode_codepoint == 'B');
 
     PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
                                                     1,
@@ -12346,6 +12483,50 @@ static int test_gdi_orders(void)
            render_op.rects[1].y == 8 &&
            render_op.rects[1].width == 7 &&
            render_op.rects[1].height == 8);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_glyph_index,
+                                               sizeof(render_glyph_index),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_glyph_index) &&
+           render_op.kind == RDP_GDI_RENDER_OP_GLYPH &&
+           render_op.order_type == RDP_GDI_ORDER_GLYPH_INDEX &&
+           render_op.cache_id == 1 &&
+           render_op.glyph_flags == RDP_GDI_GLYPH_SO_HORIZONTAL &&
+           render_op.glyph_data_len == 1 &&
+           render_op.glyph_data[0] == 2u &&
+           render_op.glyph_back_rect.width == 21 &&
+           render_op.rect.height == 11 &&
+           render_op.color == 0x00060504u &&
+           render_op.back_color == 0x00030201u);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_fast_index,
+                                               sizeof(render_fast_index),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_fast_index) &&
+           render_op.kind == RDP_GDI_RENDER_OP_GLYPH &&
+           render_op.order_type == RDP_GDI_ORDER_FAST_INDEX &&
+           render_op.cache_id == 1 &&
+           render_op.glyph_char_inc == 5 &&
+           render_op.glyph_data_len == 1 &&
+           render_op.glyph_data[0] == 2u &&
+           !render_op.inline_glyph_present);
+    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                               render_fast_glyph,
+                                               sizeof(render_fast_glyph),
+                                               &render_op,
+                                               &render_consumed) == LIBRDP_STATUS_OK);
+    PCHECK(render_consumed == sizeof(render_fast_glyph) &&
+           render_op.kind == RDP_GDI_RENDER_OP_GLYPH &&
+           render_op.order_type == RDP_GDI_ORDER_FAST_GLYPH &&
+           render_op.inline_glyph_present &&
+           render_op.inline_glyph_cache_index == 4 &&
+           render_op.inline_glyph_width == 8 &&
+           render_op.inline_glyph_height == 1 &&
+           render_op.inline_glyph_bitmap_len == 4 &&
+           render_op.glyph_data_len == 1 &&
+           render_op.glyph_data[0] == 4u);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_unsupported,
                                                sizeof(render_unsupported),

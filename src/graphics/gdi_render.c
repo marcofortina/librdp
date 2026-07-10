@@ -27,7 +27,9 @@ static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_MULTIPATBLT:
         case RDP_GDI_ORDER_MULTISCRBLT:
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
+        case RDP_GDI_ORDER_FAST_INDEX:
         case RDP_GDI_ORDER_POLYGON_CB:
+        case RDP_GDI_ORDER_FAST_GLYPH:
         case RDP_GDI_ORDER_ELLIPSE_CB:
             *bytes = 2;
             return 1;
@@ -64,6 +66,75 @@ static librdp_status rdp_gdi_render_read_u32(rdp_stream* stream, uint32_t* value
 {
     if (rdp_stream_read_u32_le(stream, value) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_read_2byte_unsigned(rdp_stream* stream, uint32_t* value)
+{
+    uint8_t first = 0;
+    uint8_t second = 0;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((first & 0x80u) == 0)
+    {
+        *value = first & 0x7fu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *value = (((uint32_t)first & 0x7fu) << 8u) | second;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_read_2byte_signed(rdp_stream* stream, int32_t* value)
+{
+    uint8_t first = 0;
+    uint8_t second = 0;
+    uint32_t raw = 0;
+
+    if (!stream || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((first & 0x80u) == 0)
+    {
+        raw = first & 0x7fu;
+        if (raw & 0x40u)
+            raw |= 0xffffff80u;
+        *value = (int32_t)raw;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    raw = (((uint32_t)first & 0x7fu) << 8u) | second;
+    if (raw & 0x4000u)
+        raw |= 0xffff8000u;
+    *value = (int32_t)raw;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_glyph_bitmap_padded_len(uint32_t width,
+                                                            uint32_t height,
+                                                            uint32_t* length)
+{
+    uint32_t stride = 0;
+    uint32_t total = 0;
+
+    if (!length || width == 0 || height == 0 || width > UINT32_MAX - 7u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    stride = (width + 7u) / 8u;
+    if (height > UINT32_MAX / stride)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = stride * height;
+    if (total > UINT32_MAX - 3u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = (total + 3u) & ~3u;
+    if (total == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *length = total;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1347,6 +1418,272 @@ static librdp_status rdp_gdi_render_decode_multi_draw_ninegrid(rdp_stream* strea
                                                      &op->rect);
 }
 
+static void rdp_gdi_render_rect_from_edges(int32_t left,
+                                           int32_t top,
+                                           int32_t right,
+                                           int32_t bottom,
+                                           rdp_gdi_render_rect* rect)
+{
+    if (!rect)
+        return;
+    rect->x = left;
+    rect->y = top;
+    rect->width = right >= left ? right - left + 1 : 0;
+    rect->height = bottom >= top ? bottom - top + 1 : 0;
+}
+
+static librdp_status rdp_gdi_render_read_glyph_index_data(rdp_stream* stream,
+                                                          rdp_gdi_render_state* state,
+                                                          rdp_gdi_render_op* op)
+{
+    uint8_t length = 0;
+    const uint8_t* data = NULL;
+
+    if (rdp_stream_read_u8(stream, &length) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(stream, &data, length) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    state->glyph_data = data;
+    state->glyph_data_len = length;
+    op->glyph_data = data;
+    op->glyph_data_len = length;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_inline_glyph(rdp_gdi_render_op* op)
+{
+    rdp_stream stream;
+    uint8_t cache_index = 0;
+    uint32_t bitmap_len = 0;
+
+    if (!op || !op->glyph_data || op->glyph_data_len <= 1u)
+        return LIBRDP_STATUS_OK;
+    rdp_stream_init(&stream, op->glyph_data, op->glyph_data_len);
+    if (rdp_stream_read_u8(&stream, &cache_index) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->inline_glyph_cache_index = cache_index;
+    if (rdp_gdi_render_read_2byte_signed(&stream, &op->inline_glyph_x) != LIBRDP_STATUS_OK ||
+        rdp_gdi_render_read_2byte_signed(&stream, &op->inline_glyph_y) != LIBRDP_STATUS_OK ||
+        rdp_gdi_render_read_2byte_unsigned(&stream, &op->inline_glyph_width) != LIBRDP_STATUS_OK ||
+        rdp_gdi_render_read_2byte_unsigned(&stream, &op->inline_glyph_height) != LIBRDP_STATUS_OK ||
+        rdp_gdi_render_glyph_bitmap_padded_len(op->inline_glyph_width,
+                                               op->inline_glyph_height,
+                                               &bitmap_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != bitmap_len ||
+        rdp_stream_read_bytes(&stream, &op->inline_glyph_bitmap, bitmap_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->inline_glyph_bitmap_len = bitmap_len;
+    op->inline_glyph_present = 1;
+    op->glyph_data_len = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_glyph_index(rdp_stream* stream,
+                                                       uint32_t flags,
+                                                       int delta,
+                                                       rdp_gdi_render_state* state,
+                                                       rdp_gdi_render_op* op)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t ignored = 0;
+    const uint8_t* ignored_extra = NULL;
+
+    (void)delta;
+    if (flags & 0x000001u)
+    {
+        uint8_t value = 0;
+
+        if (rdp_stream_read_u8(stream, &value) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_cache_id = value;
+    }
+    if (flags & 0x000002u)
+    {
+        if (rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_flags = ignored;
+    }
+    if (flags & 0x000004u)
+    {
+        if (rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_char_inc = ignored;
+    }
+    if (flags & 0x000008u)
+    {
+        if (rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_opaque = ignored;
+    }
+    if ((flags & 0x000010u) &&
+        rdp_gdi_render_read_color(stream, &state->glyph_back_color) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000020u) &&
+        rdp_gdi_render_read_color(stream, &state->glyph_fore_color) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000040u) && rdp_gdi_render_read_i16(stream, &state->glyph_back_left) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000080u) && rdp_gdi_render_read_i16(stream, &state->glyph_back_top) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000100u) && rdp_gdi_render_read_i16(stream, &state->glyph_back_right) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000200u) && rdp_gdi_render_read_i16(stream, &state->glyph_back_bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000400u) && rdp_gdi_render_read_i16(stream, &state->glyph_op_left) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x000800u) && rdp_gdi_render_read_i16(stream, &state->glyph_op_top) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x001000u) && rdp_gdi_render_read_i16(stream, &state->glyph_op_right) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x002000u) && rdp_gdi_render_read_i16(stream, &state->glyph_op_bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x004000u) && rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x008000u) && rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x010000u) && rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x020000u) && rdp_stream_read_u8(stream, &ignored) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x040000u) &&
+        rdp_stream_read_bytes(stream, &ignored_extra, 7u) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x080000u) && rdp_gdi_render_read_i16(stream, &state->glyph_x) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x100000u) && rdp_gdi_render_read_i16(stream, &state->glyph_y) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->glyph_data = state->glyph_data;
+    op->glyph_data_len = state->glyph_data_len;
+    if (flags & 0x200000u)
+    {
+        status = rdp_gdi_render_read_glyph_index_data(stream, state, op);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    op->kind = RDP_GDI_RENDER_OP_GLYPH;
+    op->cache_id = state->glyph_cache_id;
+    op->glyph_flags = state->glyph_flags;
+    op->glyph_char_inc = state->glyph_char_inc;
+    op->glyph_opaque = state->glyph_opaque != 0;
+    op->back_color = state->glyph_back_color;
+    op->color = state->glyph_fore_color;
+    op->glyph_x = state->glyph_x;
+    op->glyph_y = state->glyph_y;
+    rdp_gdi_render_rect_from_edges(state->glyph_op_left,
+                                   state->glyph_op_top,
+                                   state->glyph_op_right,
+                                   state->glyph_op_bottom,
+                                   &op->rect);
+    rdp_gdi_render_rect_from_edges(state->glyph_back_left,
+                                   state->glyph_back_top,
+                                   state->glyph_back_right,
+                                   state->glyph_back_bottom,
+                                   &op->glyph_back_rect);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_render_decode_fast_glyph_common(rdp_stream* stream,
+                                                            uint32_t flags,
+                                                            int delta,
+                                                            rdp_gdi_render_state* state,
+                                                            rdp_gdi_render_op* op,
+                                                            int inline_glyph)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t value = 0;
+
+    if (flags & 0x0001u)
+    {
+        if (rdp_stream_read_u8(stream, &value) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_cache_id = value;
+    }
+    if (flags & 0x0002u)
+    {
+        uint8_t char_inc = 0;
+        uint8_t accel = 0;
+
+        if (rdp_stream_read_u8(stream, &char_inc) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(stream, &accel) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->glyph_char_inc = char_inc;
+        state->glyph_flags = accel;
+    }
+    if ((flags & 0x0004u) &&
+        rdp_gdi_render_read_color(stream, &state->glyph_back_color) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0008u) &&
+        rdp_gdi_render_read_color(stream, &state->glyph_fore_color) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0010u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_back_left) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0020u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_back_top) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0040u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_back_right) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0080u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_back_bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0100u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_op_left) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0200u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_op_top) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0400u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_op_right) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x0800u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_op_bottom) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x1000u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_x) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if ((flags & 0x2000u) && rdp_gdi_render_read_coord(stream, delta, &state->glyph_y) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    op->glyph_data = state->glyph_data;
+    op->glyph_data_len = state->glyph_data_len;
+    if (flags & 0x4000u)
+    {
+        status = rdp_gdi_render_read_glyph_index_data(stream, state, op);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    op->kind = RDP_GDI_RENDER_OP_GLYPH;
+    op->cache_id = state->glyph_cache_id;
+    op->glyph_flags = state->glyph_flags;
+    op->glyph_char_inc = state->glyph_char_inc;
+    op->glyph_opaque = 0;
+    op->back_color = state->glyph_back_color;
+    op->color = state->glyph_fore_color;
+    op->glyph_x = state->glyph_x == -32768 ? state->glyph_back_left : state->glyph_x;
+    op->glyph_y = state->glyph_y == -32768 ? state->glyph_back_top : state->glyph_y;
+    if (state->glyph_op_bottom == -32768)
+    {
+        uint8_t special = (uint8_t)(state->glyph_op_top & 0x0f);
+
+        if (special & 0x01u)
+            state->glyph_op_bottom = state->glyph_back_bottom;
+        if (special & 0x02u)
+            state->glyph_op_right = state->glyph_back_right;
+        if (special & 0x04u)
+            state->glyph_op_top = state->glyph_back_top;
+        if (special & 0x08u)
+            state->glyph_op_left = state->glyph_back_left;
+    }
+    if (state->glyph_op_left == 0)
+        state->glyph_op_left = state->glyph_back_left;
+    if (state->glyph_op_right == 0)
+        state->glyph_op_right = state->glyph_back_right;
+    rdp_gdi_render_rect_from_edges(state->glyph_op_left,
+                                   state->glyph_op_top,
+                                   state->glyph_op_right,
+                                   state->glyph_op_bottom,
+                                   &op->rect);
+    rdp_gdi_render_rect_from_edges(state->glyph_back_left,
+                                   state->glyph_back_top,
+                                   state->glyph_back_right,
+                                   state->glyph_back_bottom,
+                                   &op->glyph_back_rect);
+    if (inline_glyph)
+        return rdp_gdi_render_decode_inline_glyph(op);
+    return LIBRDP_STATUS_OK;
+}
+
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
 {
     if (!state)
@@ -1482,6 +1819,15 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             break;
         case RDP_GDI_ORDER_SAVEBITMAP:
             status = rdp_gdi_render_decode_save_bitmap(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_GLYPH_INDEX:
+            status = rdp_gdi_render_decode_glyph_index(&stream, field_flags, delta, state, op);
+            break;
+        case RDP_GDI_ORDER_FAST_INDEX:
+            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, state, op, 0);
+            break;
+        case RDP_GDI_ORDER_FAST_GLYPH:
+            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, state, op, 1);
             break;
         default:
             status = LIBRDP_STATUS_UNSUPPORTED;

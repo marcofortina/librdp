@@ -100,6 +100,10 @@
 #define RDP_SESSION_GDI_BITMAP_CACHE_MAX_BYTES (64u * 1024u * 1024u)
 #define RDP_SESSION_GDI_COLOR_TABLE_SLOTS 256u
 #define RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS 256u
+#define RDP_SESSION_GDI_GLYPH_CACHE_IDS 10u
+#define RDP_SESSION_GDI_GLYPH_CACHE_SLOTS 256u
+#define RDP_SESSION_GDI_GLYPH_FRAGMENT_SLOTS 256u
+#define RDP_SESSION_GDI_GLYPH_MAX_BYTES (4u * 1024u * 1024u)
 #define RDP_SESSION_BITMAP_FLAG_COMPRESSED 0x0001u
 #define RDP_SESSION_GDI_SAVE_BITMAP_SLOTS 64u
 #define RDP_SESSION_GDI_SAVE_BITMAP_MAX_BYTES (8u * 1024u * 1024u)
@@ -341,6 +345,24 @@ typedef struct rdp_session_gdi_ninegrid_cache_entry
     rdp_gdi_ninegrid_bitmap_info info;
 } rdp_session_gdi_ninegrid_cache_entry;
 
+typedef struct rdp_session_gdi_glyph_cache_entry
+{
+    uint8_t active;
+    uint32_t cache_id;
+    uint32_t cache_index;
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    rdp_buffer bitmap;
+} rdp_session_gdi_glyph_cache_entry;
+
+typedef struct rdp_session_gdi_glyph_fragment
+{
+    uint8_t active;
+    rdp_buffer data;
+} rdp_session_gdi_glyph_fragment;
+
 typedef struct rdp_session_progressive_tile_cache
 {
     uint8_t active;
@@ -524,6 +546,8 @@ struct librdp_session
     rdp_session_gdi_bitmap_cache_entry gdi_bitmap_cache[RDP_SESSION_GDI_BITMAP_CACHE_SLOTS];
     rdp_session_gdi_color_table_cache_entry gdi_color_table_cache[RDP_SESSION_GDI_COLOR_TABLE_SLOTS];
     rdp_session_gdi_ninegrid_cache_entry gdi_ninegrid_cache[RDP_SESSION_GDI_NINEGRID_CACHE_SLOTS];
+    rdp_session_gdi_glyph_cache_entry gdi_glyph_cache[RDP_SESSION_GDI_GLYPH_CACHE_IDS][RDP_SESSION_GDI_GLYPH_CACHE_SLOTS];
+    rdp_session_gdi_glyph_fragment gdi_glyph_fragments[RDP_SESSION_GDI_GLYPH_FRAGMENT_SLOTS];
     rdp_session_gdi_saved_bitmap gdi_saved_bitmaps[RDP_SESSION_GDI_SAVE_BITMAP_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
@@ -547,6 +571,7 @@ struct librdp_session
     size_t graphics_cache_bytes;
     uint64_t gdi_bitmap_cache_clock;
     size_t gdi_bitmap_cache_bytes;
+    size_t gdi_glyph_cache_bytes;
     size_t gdi_saved_bitmap_bytes;
     uint32_t graphics_current_frame_id;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
@@ -11938,6 +11963,120 @@ static void rdp_session_gdi_ninegrid_cache_clear(librdp_session* session)
     memset(session->gdi_ninegrid_cache, 0, sizeof(session->gdi_ninegrid_cache));
 }
 
+static void rdp_session_gdi_glyph_cache_clear(librdp_session* session)
+{
+    size_t id = 0;
+    size_t index = 0;
+
+    if (!session)
+        return;
+    for (id = 0; id < RDP_SESSION_GDI_GLYPH_CACHE_IDS; id++)
+    {
+        for (index = 0; index < RDP_SESSION_GDI_GLYPH_CACHE_SLOTS; index++)
+            rdp_buffer_free(&session->gdi_glyph_cache[id][index].bitmap);
+    }
+    memset(session->gdi_glyph_cache, 0, sizeof(session->gdi_glyph_cache));
+    session->gdi_glyph_cache_bytes = 0;
+}
+
+static void rdp_session_gdi_glyph_fragment_cache_clear(librdp_session* session)
+{
+    size_t index = 0;
+
+    if (!session)
+        return;
+    for (index = 0; index < RDP_SESSION_GDI_GLYPH_FRAGMENT_SLOTS; index++)
+        rdp_buffer_free(&session->gdi_glyph_fragments[index].data);
+    memset(session->gdi_glyph_fragments, 0, sizeof(session->gdi_glyph_fragments));
+}
+
+static rdp_session_gdi_glyph_cache_entry* rdp_session_gdi_glyph_cache_find(librdp_session* session,
+                                                                           uint32_t cache_id,
+                                                                           uint32_t cache_index)
+{
+    if (!session || cache_id >= RDP_SESSION_GDI_GLYPH_CACHE_IDS ||
+        cache_index >= RDP_SESSION_GDI_GLYPH_CACHE_SLOTS)
+        return NULL;
+    if (!session->gdi_glyph_cache[cache_id][cache_index].active)
+        return NULL;
+    return &session->gdi_glyph_cache[cache_id][cache_index];
+}
+
+static librdp_status rdp_session_gdi_glyph_cache_store(librdp_session* session,
+                                                       uint32_t cache_id,
+                                                       const rdp_gdi_glyph_bitmap* glyph)
+{
+    rdp_session_gdi_glyph_cache_entry* entry = NULL;
+    size_t old_size = 0;
+
+    if (!session || !glyph || !glyph->bitmap || glyph->bitmap_len == 0 ||
+        cache_id >= RDP_SESSION_GDI_GLYPH_CACHE_IDS ||
+        glyph->cache_index >= RDP_SESSION_GDI_GLYPH_CACHE_SLOTS ||
+        glyph->bitmap_len > RDP_SESSION_GDI_GLYPH_MAX_BYTES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    entry = &session->gdi_glyph_cache[cache_id][glyph->cache_index];
+    old_size = entry->bitmap.length;
+    if (session->gdi_glyph_cache_bytes >= old_size)
+        session->gdi_glyph_cache_bytes -= old_size;
+    else
+        session->gdi_glyph_cache_bytes = 0;
+    if (session->gdi_glyph_cache_bytes > RDP_SESSION_GDI_GLYPH_MAX_BYTES - glyph->bitmap_len)
+    {
+        rdp_session_gdi_glyph_cache_clear(session);
+        entry = &session->gdi_glyph_cache[cache_id][glyph->cache_index];
+    }
+    if (rdp_buffer_reserve(&entry->bitmap, glyph->bitmap_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memcpy(entry->bitmap.data, glyph->bitmap, glyph->bitmap_len);
+    entry->bitmap.length = glyph->bitmap_len;
+    entry->active = 1;
+    entry->cache_id = cache_id;
+    entry->cache_index = glyph->cache_index;
+    entry->x = glyph->x;
+    entry->y = glyph->y;
+    entry->width = glyph->width;
+    entry->height = glyph->height;
+    session->gdi_glyph_cache_bytes += glyph->bitmap_len;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.glyph_cache.store",
+                          "cache_id=%u cache_index=%u x=%d y=%d width=%u height=%u bytes=%u total_bytes=%u",
+                          cache_id,
+                          glyph->cache_index,
+                          glyph->x,
+                          glyph->y,
+                          glyph->width,
+                          glyph->height,
+                          glyph->bitmap_len,
+                          (unsigned)session->gdi_glyph_cache_bytes);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_glyph_fragment_store(librdp_session* session,
+                                                          uint8_t fragment_id,
+                                                          const uint8_t* data,
+                                                          uint32_t length)
+{
+    rdp_session_gdi_glyph_fragment* fragment = NULL;
+
+    if (!session || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    fragment = &session->gdi_glyph_fragments[fragment_id];
+    if (rdp_buffer_reserve(&fragment->data, length) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (length > 0)
+        memcpy(fragment->data.data, data, length);
+    fragment->data.length = length;
+    fragment->active = 1;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.glyph_fragment.store",
+                          "fragment_id=%u bytes=%u",
+                          fragment_id,
+                          length);
+    return LIBRDP_STATUS_OK;
+}
+
 static size_t rdp_session_gdi_bitmap_cache_entry_size(const rdp_session_gdi_bitmap_cache_entry* entry)
 {
     if (!entry || !entry->active)
@@ -18189,6 +18328,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             rdp_session_graphics_cache_clear(session);
             rdp_session_gdi_color_table_cache_clear(session);
             rdp_session_gdi_ninegrid_cache_clear(session);
+            rdp_session_gdi_glyph_cache_clear(session);
+            rdp_session_gdi_glyph_fragment_cache_clear(session);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.channel",
                             "dvc_channel_id=%u",
@@ -18537,6 +18678,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 rdp_session_graphics_cache_clear(session);
                 rdp_session_gdi_color_table_cache_clear(session);
                 rdp_session_gdi_ninegrid_cache_clear(session);
+                rdp_session_gdi_glyph_cache_clear(session);
+                rdp_session_gdi_glyph_fragment_cache_clear(session);
             }
             if (entry->channel_id == session->usb_redirection_channel_id)
                 rdp_session_usb_redirection_reset(session);
@@ -19872,6 +20015,357 @@ static librdp_status rdp_session_gdi_copy_rect(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+static int rdp_session_gdi_glyph_bit(const rdp_session_gdi_glyph_cache_entry* glyph,
+                                     uint32_t x,
+                                     uint32_t y)
+{
+    size_t row_stride = 0;
+    size_t offset = 0;
+    uint8_t mask = 0;
+
+    if (!glyph || !glyph->active || !glyph->bitmap.data ||
+        x >= glyph->width || y >= glyph->height)
+        return 0;
+    row_stride = (size_t)(glyph->width + 7u) / 8u;
+    offset = (size_t)y * row_stride + (x / 8u);
+    if (offset >= glyph->bitmap.length)
+        return 0;
+    mask = (uint8_t)(0x80u >> (x & 7u));
+    return (glyph->bitmap.data[offset] & mask) != 0;
+}
+
+static void rdp_session_gdi_glyph_advance(const uint8_t* data,
+                                          uint32_t length,
+                                          uint32_t* index,
+                                          int32_t* x,
+                                          int32_t* y,
+                                          uint32_t char_inc,
+                                          uint32_t flags)
+{
+    uint32_t offset = 0;
+
+    if (!data || !index || !x || !y)
+        return;
+    if (char_inc != 0u)
+        return;
+    if ((flags & RDP_GDI_GLYPH_SO_CHAR_INC_EQUAL_BM_BASE) != 0)
+        return;
+    if (*index >= length)
+        return;
+    offset = data[(*index)++];
+    if ((offset & 0x80u) != 0)
+    {
+        if (*index + 2u > length)
+            return;
+        offset = data[(*index)++];
+        offset |= (uint32_t)data[(*index)++] << 8u;
+    }
+    if ((flags & RDP_GDI_GLYPH_SO_VERTICAL) != 0)
+        *y += (int32_t)offset;
+    if ((flags & RDP_GDI_GLYPH_SO_HORIZONTAL) != 0 ||
+        (flags & RDP_GDI_GLYPH_SO_VERTICAL) == 0)
+        *x += (int32_t)offset;
+}
+
+static void rdp_session_gdi_glyph_post_advance(const rdp_session_gdi_glyph_cache_entry* glyph,
+                                               int32_t* x,
+                                               int32_t* y,
+                                               uint32_t char_inc,
+                                               uint32_t flags)
+{
+    int32_t amount = 0;
+
+    if (!glyph || !x || !y)
+        return;
+    if ((flags & RDP_GDI_GLYPH_SO_CHAR_INC_EQUAL_BM_BASE) != 0)
+        amount = (int32_t)glyph->width;
+    else if (char_inc != 0u)
+        amount = (int32_t)char_inc;
+    else
+        return;
+    if ((flags & RDP_GDI_GLYPH_SO_VERTICAL) != 0)
+        *y += amount;
+    else
+        *x += amount;
+}
+
+static librdp_status rdp_session_gdi_draw_cached_glyph(librdp_session* session,
+                                                       const rdp_gdi_render_op* op,
+                                                       const rdp_session_gdi_glyph_cache_entry* glyph,
+                                                       int32_t* pen_x,
+                                                       int32_t* pen_y)
+{
+    uint8_t* pixels = NULL;
+    size_t stride = 0;
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+    int64_t clip_left = 0;
+    int64_t clip_top = 0;
+    int64_t clip_right = 0;
+    int64_t clip_bottom = 0;
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    uint32_t y = 0;
+    uint8_t b = 0;
+    uint8_t g = 0;
+    uint8_t r = 0;
+
+    if (!session || !op || !glyph || !pen_x || !pen_y)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!glyph->active || glyph->width == 0 || glyph->height == 0)
+        return LIBRDP_STATUS_OK;
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    left = (int64_t)*pen_x + glyph->x;
+    top = (int64_t)*pen_y + glyph->y;
+    right = left + glyph->width;
+    bottom = top + glyph->height;
+    clip_right = surface_width;
+    clip_bottom = surface_height;
+    if (op->glyph_back_rect.width > 0 && op->glyph_back_rect.height > 0)
+    {
+        clip_left = op->glyph_back_rect.x;
+        clip_top = op->glyph_back_rect.y;
+        clip_right = (int64_t)op->glyph_back_rect.x + op->glyph_back_rect.width;
+        clip_bottom = (int64_t)op->glyph_back_rect.y + op->glyph_back_rect.height;
+    }
+    if (clip_left < 0)
+        clip_left = 0;
+    if (clip_top < 0)
+        clip_top = 0;
+    if (clip_right > (int64_t)surface_width)
+        clip_right = surface_width;
+    if (clip_bottom > (int64_t)surface_height)
+        clip_bottom = surface_height;
+    if (left < clip_left)
+        left = clip_left;
+    if (top < clip_top)
+        top = clip_top;
+    if (right > clip_right)
+        right = clip_right;
+    if (bottom > clip_bottom)
+        bottom = clip_bottom;
+    if (right <= left || bottom <= top)
+    {
+        rdp_session_gdi_glyph_post_advance(glyph, pen_x, pen_y, op->glyph_char_inc, op->glyph_flags);
+        return LIBRDP_STATUS_OK;
+    }
+    pixels = librdp_surface_pixels_mut(session->surface);
+    stride = librdp_surface_stride(session->surface);
+    if (!pixels || stride == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    b = (uint8_t)(op->color & 0xffu);
+    g = (uint8_t)((op->color >> 8u) & 0xffu);
+    r = (uint8_t)((op->color >> 16u) & 0xffu);
+    for (y = (uint32_t)top; y < (uint32_t)bottom; y++)
+    {
+        uint32_t x = 0;
+        uint8_t* dst = pixels + ((size_t)y * stride) + ((size_t)left * 4u);
+
+        for (x = (uint32_t)left; x < (uint32_t)right; x++)
+        {
+            uint32_t gx = (uint32_t)((int64_t)x - ((int64_t)*pen_x + glyph->x));
+            uint32_t gy = (uint32_t)((int64_t)y - ((int64_t)*pen_y + glyph->y));
+
+            if (rdp_session_gdi_glyph_bit(glyph, gx, gy))
+            {
+                dst[0] = b;
+                dst[1] = g;
+                dst[2] = r;
+                dst[3] = 0xffu;
+            }
+            dst += 4u;
+        }
+    }
+    rdp_session_emit_surface_invalidated(session,
+                                         (uint32_t)left,
+                                         (uint32_t)top,
+                                         (uint32_t)(right - left),
+                                         (uint32_t)(bottom - top));
+    rdp_session_gdi_glyph_post_advance(glyph, pen_x, pen_y, op->glyph_char_inc, op->glyph_flags);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_process_glyph_bytes(librdp_session* session,
+                                                         const rdp_gdi_render_op* op,
+                                                         const uint8_t* data,
+                                                         uint32_t length,
+                                                         int32_t* pen_x,
+                                                         int32_t* pen_y);
+
+static librdp_status rdp_session_gdi_process_glyph_fragment(librdp_session* session,
+                                                            const rdp_gdi_render_op* op,
+                                                            uint8_t fragment_id,
+                                                            int32_t* pen_x,
+                                                            int32_t* pen_y)
+{
+    rdp_session_gdi_glyph_fragment* fragment = NULL;
+
+    if (!session || !op || !pen_x || !pen_y)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    fragment = &session->gdi_glyph_fragments[fragment_id];
+    if (!fragment->active)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.glyph_fragment.miss",
+                              "fragment_id=%u",
+                              fragment_id);
+        return LIBRDP_STATUS_OK;
+    }
+    return rdp_session_gdi_process_glyph_bytes(session,
+                                               op,
+                                               fragment->data.data,
+                                               (uint32_t)fragment->data.length,
+                                               pen_x,
+                                               pen_y);
+}
+
+static librdp_status rdp_session_gdi_process_glyph_bytes(librdp_session* session,
+                                                         const rdp_gdi_render_op* op,
+                                                         const uint8_t* data,
+                                                         uint32_t length,
+                                                         int32_t* pen_x,
+                                                         int32_t* pen_y)
+{
+    uint32_t index = 0;
+
+    if (!session || !op || (!data && length > 0) || !pen_x || !pen_y)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    while (index < length)
+    {
+        uint8_t token = data[index++];
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (token == RDP_GDI_GLYPH_FRAGMENT_USE)
+        {
+            if (index >= length)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_session_gdi_process_glyph_fragment(session, op, data[index++], pen_x, pen_y);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            continue;
+        }
+        if (token == RDP_GDI_GLYPH_FRAGMENT_ADD)
+        {
+            uint8_t fragment_id = 0;
+            uint8_t fragment_len = 0;
+
+            if (index + 2u > length)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            fragment_id = data[index++];
+            fragment_len = data[index++];
+            if (index + fragment_len > length)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_session_gdi_glyph_fragment_store(session, fragment_id, data + index, fragment_len);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            index += fragment_len;
+            continue;
+        }
+        rdp_session_gdi_glyph_advance(data,
+                                      length,
+                                      &index,
+                                      pen_x,
+                                      pen_y,
+                                      op->glyph_char_inc,
+                                      op->glyph_flags);
+        {
+            const rdp_session_gdi_glyph_cache_entry* glyph =
+                rdp_session_gdi_glyph_cache_find(session, op->cache_id, token);
+
+            if (!glyph)
+            {
+                if (op->glyph_char_inc != 0u)
+                {
+                    if ((op->glyph_flags & RDP_GDI_GLYPH_SO_VERTICAL) != 0)
+                        *pen_y += (int32_t)op->glyph_char_inc;
+                    else
+                        *pen_x += (int32_t)op->glyph_char_inc;
+                }
+                rdp_trace_event_level(RDP_TRACE_CLIENT,
+                                      RDP_TRACE_LEVEL_DEBUG,
+                                      "client.gdi.glyph_cache.miss",
+                                      "cache_id=%u cache_index=%u",
+                                      op->cache_id,
+                                      token);
+                continue;
+            }
+            status = rdp_session_gdi_draw_cached_glyph(session, op, glyph, pen_x, pen_y);
+        }
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_draw_glyphs(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    rdp_session_gdi_region region;
+    rdp_gdi_render_op fill_op;
+    int32_t pen_x = 0;
+    int32_t pen_y = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (op->inline_glyph_present)
+    {
+        rdp_gdi_glyph_bitmap glyph;
+
+        memset(&glyph, 0, sizeof(glyph));
+        glyph.cache_index = op->inline_glyph_cache_index;
+        glyph.x = op->inline_glyph_x;
+        glyph.y = op->inline_glyph_y;
+        glyph.width = op->inline_glyph_width;
+        glyph.height = op->inline_glyph_height;
+        glyph.bitmap = op->inline_glyph_bitmap;
+        glyph.bitmap_len = op->inline_glyph_bitmap_len;
+        status = rdp_session_gdi_glyph_cache_store(session, op->cache_id, &glyph);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    if (!op->glyph_opaque && op->rect.width > 0 && op->rect.height > 0)
+    {
+        memset(&region, 0, sizeof(region));
+        fill_op = *op;
+        fill_op.kind = RDP_GDI_RENDER_OP_OPAQUE_RECT;
+        if (rdp_session_gdi_clip_dest(&fill_op,
+                                      librdp_surface_width(session->surface),
+                                      librdp_surface_height(session->surface),
+                                      &region))
+        {
+            status = rdp_session_gdi_fill_rect(session, &fill_op, &region, 0, op->back_color, 0);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    pen_x = op->glyph_x;
+    pen_y = op->glyph_y;
+    status = rdp_session_gdi_process_glyph_bytes(session,
+                                                 op,
+                                                 op->glyph_data,
+                                                 op->glyph_data_len,
+                                                 &pen_x,
+                                                 &pen_y);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.glyph.draw",
+                              "cache_id=%u x=%d y=%d bytes=%u fore=%06x back=%06x",
+                              op->cache_id,
+                              op->glyph_x,
+                              op->glyph_y,
+                              op->glyph_data_len,
+                              op->color & 0x00ffffffu,
+                              op->back_color & 0x00ffffffu);
+    }
+    return status;
+}
+
 static rdp_session_gdi_bitmap_cache_entry* rdp_session_gdi_ninegrid_bitmap_find(librdp_session* session,
                                                                                 uint32_t bitmap_id)
 {
@@ -20686,6 +21180,8 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
     }
     if (op->kind == RDP_GDI_RENDER_OP_DRAW_NINEGRID)
         return rdp_session_gdi_draw_ninegrid(session, op);
+    if (op->kind == RDP_GDI_RENDER_OP_GLYPH)
+        return rdp_session_gdi_draw_glyphs(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_LINE)
         return rdp_session_gdi_draw_line(session, op);
     if (op->kind == RDP_GDI_RENDER_OP_POLYLINE)
@@ -20888,7 +21384,9 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
 {
     rdp_gdi_cache_bitmap_order bitmap;
     rdp_gdi_cache_color_table_order color_table;
+    rdp_gdi_cache_glyph_order glyphs;
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t i = 0;
 
     if (!session || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -20908,6 +21406,27 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_gdi_color_table_store(session, &color_table);
         return status;
+    }
+    if (header->order_type == RDP_GDI_SECONDARY_CACHE_GLYPH)
+    {
+        status = rdp_gdi_parse_cache_glyph_order(header, &glyphs);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        for (i = 0; i < glyphs.glyph_count; i++)
+        {
+            status = rdp_session_gdi_glyph_cache_store(session, glyphs.cache_id, &glyphs.glyphs[i]);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.glyph_cache.order",
+                              "cache_id=%u version=%u glyphs=%u flags=%u",
+                              glyphs.cache_id,
+                              glyphs.version,
+                              glyphs.glyph_count,
+                              glyphs.flags);
+        return LIBRDP_STATUS_OK;
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -21444,6 +21963,8 @@ void librdp_session_free(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
     rdp_session_gdi_ninegrid_cache_clear(session);
+    rdp_session_gdi_glyph_cache_clear(session);
+    rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -21617,6 +22138,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
     rdp_session_gdi_ninegrid_cache_clear(session);
+    rdp_session_gdi_glyph_cache_clear(session);
+    rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);
@@ -23403,6 +23926,8 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
     rdp_session_gdi_ninegrid_cache_clear(session);
+    rdp_session_gdi_glyph_cache_clear(session);
+    rdp_session_gdi_glyph_fragment_cache_clear(session);
     rdp_session_gdi_bitmap_cache_clear(session);
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_pointer_cache_clear(session);

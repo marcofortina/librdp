@@ -85,6 +85,7 @@
 
 #define RDP_GDI_BITMAP_CACHE_ERROR_FLUSH_CACHE 0x01u
 #define RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID 0x02u
+#define RDP_GDI_CACHE_GLYPH_UNICODE_PRESENT 0x0010u
 #define RDP_GDI_NO_BITMAP_COMPRESSION_HEADER 0x0400u
 #define RDP_GDI_CBR2_HEIGHT_SAME_AS_WIDTH 0x01u
 #define RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT 0x02u
@@ -94,9 +95,20 @@
 #define RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_NINEGRID_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
 #define RDP_GDI_GDIPLUS_CACHE_ERROR_FLUSH_AND_DISABLE 0x00000001u
+#define RDP_GDI_GLYPH_FRAGMENT_NOP 0x00u
+#define RDP_GDI_GLYPH_FRAGMENT_USE 0xfeu
+#define RDP_GDI_GLYPH_FRAGMENT_ADD 0xffu
+#define RDP_GDI_GLYPH_SO_FLAG_DEFAULT_PLACEMENT 0x01u
+#define RDP_GDI_GLYPH_SO_HORIZONTAL 0x02u
+#define RDP_GDI_GLYPH_SO_VERTICAL 0x04u
+#define RDP_GDI_GLYPH_SO_REVERSED 0x08u
+#define RDP_GDI_GLYPH_SO_ZERO_BEARINGS 0x10u
+#define RDP_GDI_GLYPH_SO_CHAR_INC_EQUAL_BM_BASE 0x20u
+#define RDP_GDI_GLYPH_SO_MAXEXT_EQUAL_BM_SIDE 0x40u
 
 #define RDP_GDI_MAX_ORDERS 256u
 #define RDP_GDI_MAX_BITMAP_CACHE_ERROR_INFO 16u
+#define RDP_GDI_MAX_CACHE_GLYPHS 256u
 
 typedef enum rdp_gdi_order_kind
 {
@@ -174,6 +186,28 @@ typedef struct rdp_gdi_cache_color_table_order
     uint32_t cache_index;
     rdp_palette_update palette;
 } rdp_gdi_cache_color_table_order;
+
+typedef struct rdp_gdi_glyph_bitmap
+{
+    uint32_t cache_index;
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    const uint8_t* bitmap;
+    uint32_t bitmap_len;
+    uint16_t unicode_codepoint;
+    uint8_t has_unicode;
+} rdp_gdi_glyph_bitmap;
+
+typedef struct rdp_gdi_cache_glyph_order
+{
+    uint32_t cache_id;
+    uint32_t flags;
+    uint8_t version;
+    uint32_t glyph_count;
+    rdp_gdi_glyph_bitmap glyphs[RDP_GDI_MAX_CACHE_GLYPHS];
+} rdp_gdi_cache_glyph_order;
 
 typedef struct rdp_gdi_altsec_order_header
 {
@@ -281,6 +315,8 @@ librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_hea
                                                rdp_gdi_cache_bitmap_order* order);
 librdp_status rdp_gdi_parse_cache_color_table_order(const rdp_gdi_secondary_order_header* header,
                                                     rdp_gdi_cache_color_table_order* order);
+librdp_status rdp_gdi_parse_cache_glyph_order(const rdp_gdi_secondary_order_header* header,
+                                              rdp_gdi_cache_glyph_order* order);
 librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header);
