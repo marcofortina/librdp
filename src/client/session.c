@@ -17323,6 +17323,18 @@ static void rdp_session_gdi_line_plot(librdp_session* session,
     }
 }
 
+static void rdp_session_gdi_plot_rop2_pixel(uint8_t* pixel, const rdp_gdi_render_op* op)
+{
+    uint8_t b = (uint8_t)(op->color & 0xffu);
+    uint8_t g = (uint8_t)((op->color >> 8u) & 0xffu);
+    uint8_t r = (uint8_t)((op->color >> 16u) & 0xffu);
+
+    pixel[0] = rdp_session_gdi_rop2(op->rop, b, pixel[0]);
+    pixel[1] = rdp_session_gdi_rop2(op->rop, g, pixel[1]);
+    pixel[2] = rdp_session_gdi_rop2(op->rop, r, pixel[2]);
+    pixel[3] = 0xffu;
+}
+
 static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rdp_gdi_render_op* op)
 {
     uint32_t surface_width = 0;
@@ -17409,6 +17421,272 @@ static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rd
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_session_gdi_draw_polyline(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    uint32_t i = 0;
+    int32_t x = 0;
+    int32_t y = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (op->point_count > RDP_GDI_RENDER_MAX_POINTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    x = op->rect.x;
+    y = op->rect.y;
+    for (i = 0; i < op->point_count; i++)
+    {
+        rdp_gdi_render_op segment = *op;
+
+        segment.kind = RDP_GDI_RENDER_OP_LINE;
+        segment.rect.x = x;
+        segment.rect.y = y;
+        x += op->points[i].x;
+        y += op->points[i].y;
+        segment.end_x = x;
+        segment.end_y = y;
+        segment.pen_width = 1;
+        status = rdp_session_gdi_draw_line(session, &segment);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.order.apply",
+                          "type=%u kind=%u x=%d y=%d points=%u rop2=%u color=%06x",
+                          op->order_type,
+                          op->kind,
+                          op->rect.x,
+                          op->rect.y,
+                          op->point_count,
+                          op->rop,
+                          op->color & 0x00ffffffu);
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_session_gdi_shape_point_visible(const rdp_gdi_render_op* op,
+                                               int32_t x,
+                                               int32_t y,
+                                               uint32_t width,
+                                               uint32_t height)
+{
+    return rdp_session_gdi_line_point_visible(op, x, y, width, height);
+}
+
+static int rdp_session_gdi_polygon_inside(const rdp_gdi_render_point* points,
+                                          uint32_t count,
+                                          int32_t x,
+                                          int32_t y,
+                                          uint32_t fill_mode)
+{
+    uint32_t i = 0;
+    uint32_t j = 0;
+    int alternate = 0;
+    int winding = 0;
+    int64_t px2 = ((int64_t)x * 2) + 1;
+    int64_t py2 = ((int64_t)y * 2) + 1;
+
+    if (!points || count < 3)
+        return 0;
+    j = count - 1u;
+    for (i = 0; i < count; i++)
+    {
+        int64_t xi2 = (int64_t)points[i].x * 2;
+        int64_t yi2 = (int64_t)points[i].y * 2;
+        int64_t xj2 = (int64_t)points[j].x * 2;
+        int64_t yj2 = (int64_t)points[j].y * 2;
+
+        if ((yi2 > py2) != (yj2 > py2))
+        {
+            int64_t lhs = (px2 - xi2) * (yj2 - yi2);
+            int64_t rhs = (xj2 - xi2) * (py2 - yi2);
+            int crosses = yj2 > yi2 ? lhs < rhs : lhs > rhs;
+
+            if (crosses)
+            {
+                alternate = !alternate;
+                winding += yj2 > yi2 ? 1 : -1;
+            }
+        }
+        j = i;
+    }
+    if (fill_mode == 2u)
+        return winding != 0;
+    return alternate;
+}
+
+static librdp_status rdp_session_gdi_fill_polygon(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS + 1u];
+    uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    uint32_t count = 0;
+    uint32_t i = 0;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t min_x = INT32_MAX;
+    int32_t min_y = INT32_MAX;
+    int32_t max_x = INT32_MIN;
+    int32_t max_y = INT32_MIN;
+    uint32_t dirty_left = UINT32_MAX;
+    uint32_t dirty_top = UINT32_MAX;
+    uint32_t dirty_right = 0;
+    uint32_t dirty_bottom = 0;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (op->point_count == 0 || op->point_count > RDP_GDI_RENDER_MAX_POINTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    pixels = librdp_surface_pixels_mut(session->surface);
+    stride = librdp_surface_stride(session->surface);
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    if (!pixels || stride == 0 || surface_width == 0 || surface_height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    x = op->rect.x;
+    y = op->rect.y;
+    points[0].x = x;
+    points[0].y = y;
+    count = op->point_count + 1u;
+    for (i = 0; i < op->point_count; i++)
+    {
+        x += op->points[i].x;
+        y += op->points[i].y;
+        points[i + 1u].x = x;
+        points[i + 1u].y = y;
+    }
+    for (i = 0; i < count; i++)
+    {
+        if (points[i].x < min_x)
+            min_x = points[i].x;
+        if (points[i].x > max_x)
+            max_x = points[i].x;
+        if (points[i].y < min_y)
+            min_y = points[i].y;
+        if (points[i].y > max_y)
+            max_y = points[i].y;
+    }
+    if (min_x < 0)
+        min_x = 0;
+    if (min_y < 0)
+        min_y = 0;
+    if (max_x >= (int32_t)surface_width)
+        max_x = (int32_t)surface_width - 1;
+    if (max_y >= (int32_t)surface_height)
+        max_y = (int32_t)surface_height - 1;
+    if (min_x > max_x || min_y > max_y)
+        return LIBRDP_STATUS_OK;
+    for (y = min_y; y <= max_y; y++)
+    {
+        for (x = min_x; x <= max_x; x++)
+        {
+            uint8_t* pixel = NULL;
+
+            if (!rdp_session_gdi_shape_point_visible(op, x, y, surface_width, surface_height) ||
+                !rdp_session_gdi_polygon_inside(points, count, x, y, op->fill_mode))
+                continue;
+            pixel = pixels + ((size_t)(uint32_t)y * stride) + ((size_t)(uint32_t)x * 4u);
+            rdp_session_gdi_plot_rop2_pixel(pixel, op);
+            if ((uint32_t)x < dirty_left)
+                dirty_left = (uint32_t)x;
+            if ((uint32_t)y < dirty_top)
+                dirty_top = (uint32_t)y;
+            if ((uint32_t)x + 1u > dirty_right)
+                dirty_right = (uint32_t)x + 1u;
+            if ((uint32_t)y + 1u > dirty_bottom)
+                dirty_bottom = (uint32_t)y + 1u;
+        }
+    }
+    if (dirty_left < dirty_right && dirty_top < dirty_bottom)
+        rdp_session_emit_surface_invalidated(session,
+                                             dirty_left,
+                                             dirty_top,
+                                             dirty_right - dirty_left,
+                                             dirty_bottom - dirty_top);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.order.apply",
+                          "type=%u kind=%u x=%d y=%d points=%u fill_mode=%u rop2=%u color=%06x dirty=%u",
+                          op->order_type,
+                          op->kind,
+                          op->rect.x,
+                          op->rect.y,
+                          op->point_count,
+                          op->fill_mode,
+                          op->rop,
+                          op->color & 0x00ffffffu,
+                          dirty_left < dirty_right);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_fill_ellipse(librdp_session* session, const rdp_gdi_render_op* op)
+{
+    uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t surface_width = 0;
+    uint32_t surface_height = 0;
+    rdp_session_gdi_region region;
+    uint32_t x = 0;
+    uint32_t y = 0;
+    double width = 0.0;
+    double height = 0.0;
+
+    if (!session || !op)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_session_gdi_clip_dest(op,
+                                   librdp_surface_width(session->surface),
+                                   librdp_surface_height(session->surface),
+                                   &region))
+        return LIBRDP_STATUS_OK;
+    pixels = librdp_surface_pixels_mut(session->surface);
+    stride = librdp_surface_stride(session->surface);
+    surface_width = librdp_surface_width(session->surface);
+    surface_height = librdp_surface_height(session->surface);
+    if (!pixels || stride == 0 || surface_width == 0 || surface_height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    width = (double)op->rect.width;
+    height = (double)op->rect.height;
+    for (y = 0; y < region.height; y++)
+    {
+        for (x = 0; x < region.width; x++)
+        {
+            uint32_t absolute_x = region.dst_x + x;
+            uint32_t absolute_y = region.dst_y + y;
+            double dx = (((double)(int32_t)absolute_x - (double)op->rect.x) + 0.5) * 2.0 - width;
+            double dy = (((double)(int32_t)absolute_y - (double)op->rect.y) + 0.5) * 2.0 - height;
+            uint8_t* pixel = NULL;
+
+            if (!rdp_session_gdi_shape_point_visible(op,
+                                                     (int32_t)absolute_x,
+                                                     (int32_t)absolute_y,
+                                                     surface_width,
+                                                     surface_height) ||
+                ((dx * dx) / (width * width) + (dy * dy) / (height * height)) > 0.25)
+                continue;
+            pixel = pixels + ((size_t)absolute_y * stride) + ((size_t)absolute_x * 4u);
+            rdp_session_gdi_plot_rop2_pixel(pixel, op);
+        }
+    }
+    rdp_session_emit_surface_invalidated(session, region.dst_x, region.dst_y, region.width, region.height);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.order.apply",
+                          "type=%u kind=%u x=%u y=%u width=%u height=%u fill_mode=%u rop2=%u color=%06x",
+                          op->order_type,
+                          op->kind,
+                          region.dst_x,
+                          region.dst_y,
+                          region.width,
+                          region.height,
+                          op->fill_mode,
+                          op->rop,
+                          op->color & 0x00ffffffu);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_session_gdi_region region;
@@ -17448,6 +17726,12 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
     }
     if (op->kind == RDP_GDI_RENDER_OP_LINE)
         return rdp_session_gdi_draw_line(session, op);
+    if (op->kind == RDP_GDI_RENDER_OP_POLYLINE)
+        return rdp_session_gdi_draw_polyline(session, op);
+    if (op->kind == RDP_GDI_RENDER_OP_POLYGON_SC)
+        return rdp_session_gdi_fill_polygon(session, op);
+    if (op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC)
+        return rdp_session_gdi_fill_ellipse(session, op);
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 

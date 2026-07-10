@@ -13,8 +13,19 @@ typedef enum rdp_gdi_render_op_kind
     RDP_GDI_RENDER_OP_DSTBLT = 2,
     RDP_GDI_RENDER_OP_SCRBLT = 3,
     RDP_GDI_RENDER_OP_PATBLT = 4,
-    RDP_GDI_RENDER_OP_LINE = 5
+    RDP_GDI_RENDER_OP_LINE = 5,
+    RDP_GDI_RENDER_OP_POLYLINE = 6,
+    RDP_GDI_RENDER_OP_POLYGON_SC = 7,
+    RDP_GDI_RENDER_OP_ELLIPSE_SC = 8
 } rdp_gdi_render_op_kind;
+
+#define RDP_GDI_RENDER_MAX_POINTS 256u
+
+typedef struct rdp_gdi_render_point
+{
+    int32_t x;
+    int32_t y;
+} rdp_gdi_render_point;
 
 typedef struct rdp_gdi_render_rect
 {
@@ -52,6 +63,9 @@ typedef struct rdp_gdi_render_op
     uint8_t brush_style;
     uint8_t brush_hatch;
     uint8_t brush_extra[7];
+    uint32_t fill_mode;
+    uint32_t point_count;
+    rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS];
     rdp_gdi_render_bounds bounds;
 } rdp_gdi_render_op;
 
@@ -101,6 +115,27 @@ typedef struct rdp_gdi_render_state
     uint8_t line_pen_style;
     uint8_t line_pen_width;
     uint32_t line_pen_color;
+    int32_t polyline_start_x;
+    int32_t polyline_start_y;
+    uint8_t polyline_rop2;
+    uint32_t polyline_unused;
+    uint32_t polyline_pen_color;
+    uint32_t polyline_point_count;
+    rdp_gdi_render_point polyline_points[RDP_GDI_RENDER_MAX_POINTS];
+    int32_t polygon_start_x;
+    int32_t polygon_start_y;
+    uint8_t polygon_rop2;
+    uint8_t polygon_fill_mode;
+    uint32_t polygon_color;
+    uint32_t polygon_point_count;
+    rdp_gdi_render_point polygon_points[RDP_GDI_RENDER_MAX_POINTS];
+    int32_t ellipse_left;
+    int32_t ellipse_top;
+    int32_t ellipse_right;
+    int32_t ellipse_bottom;
+    uint8_t ellipse_rop2;
+    uint8_t ellipse_fill_mode;
+    uint32_t ellipse_color;
 } rdp_gdi_render_state;
 
 void rdp_gdi_render_state_init(rdp_gdi_render_state* state);
