@@ -159,6 +159,12 @@ static int test_udp_transport_protocols(void)
     TCHECK(rdp_udp_parse_fec_payload_header(buffer.data, buffer.length, &fec_payload) ==
            LIBRDP_STATUS_OK);
     TCHECK(fec_payload.coded_sequence == 1 && fec_payload.source_start == 2);
+    buffer.data[10] = 1;
+    TCHECK(rdp_udp_parse_fec_payload_header(buffer.data, buffer.length, &fec_payload) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[10] = 0;
+    fec_payload.padding = 1;
+    TCHECK(rdp_udp_write_fec_payload_header(&buffer, &fec_payload) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

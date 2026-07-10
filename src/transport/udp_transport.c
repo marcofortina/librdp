@@ -93,7 +93,7 @@ librdp_status rdp_udp_parse_fec_payload_header(const void* data,
         rdp_stream_read_u8(&stream, &header->fec_index) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &header->padding) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return LIBRDP_STATUS_OK;
+    return header->padding == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 librdp_status rdp_udp_write_fec_payload_header(rdp_buffer* buffer,
@@ -101,7 +101,7 @@ librdp_status rdp_udp_write_fec_payload_header(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || !header)
+    if (!buffer || !header || header->padding != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_buffer_append_u32_le(buffer, header->coded_sequence);
     if (status != LIBRDP_STATUS_OK)
