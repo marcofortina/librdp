@@ -7954,6 +7954,8 @@ static int test_printer_redirection_channel(void)
     rdp_printer_redirection_cache_event event;
     rdp_printer_redirection_xps_mode mode;
     rdp_device_redirection_io_completion printer_completion;
+    const uint8_t* printer_payload = NULL;
+    uint32_t printer_payload_len = 0;
     uint32_t printer_value = 0;
     rdp_buffer buffer;
     rdp_buffer packet;
@@ -8071,12 +8073,38 @@ static int test_printer_redirection_channel(void)
                                                         &printer_completion) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
+    PCHECK(rdp_printer_redirection_write_read_response(&packet, 1, 2, 0, cache, sizeof(cache)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_parse_read_response(packet.data,
+                                                       packet.length,
+                                                       &printer_completion,
+                                                       &printer_payload,
+                                                       &printer_payload_len) == LIBRDP_STATUS_OK);
+    PCHECK(printer_completion.device_id == 1u &&
+           printer_payload_len == sizeof(cache) &&
+           memcmp(printer_payload, cache, sizeof(cache)) == 0);
+    packet.data[19] = 0xff;
+    PCHECK(rdp_printer_redirection_parse_read_response(packet.data,
+                                                       packet.length,
+                                                       &printer_completion,
+                                                       &printer_payload,
+                                                       &printer_payload_len) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
     PCHECK(rdp_printer_redirection_write_write_response(&packet, 1, 2, 0, 4) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_write_response(packet.data,
                                                         packet.length,
                                                         &printer_completion,
                                                         &printer_value) == LIBRDP_STATUS_OK);
     PCHECK(printer_value == 4u);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_printer_redirection_write_length_response(&packet, 1, 2, 0, 9) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_printer_redirection_parse_length_response(packet.data,
+                                                         packet.length,
+                                                         &printer_completion,
+                                                         &printer_value) == LIBRDP_STATUS_OK);
+    PCHECK(printer_value == 9u);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
     PCHECK(rdp_printer_redirection_write_device_control_response(&packet, 1, 2, 0) == LIBRDP_STATUS_OK);

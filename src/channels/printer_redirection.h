@@ -122,6 +122,18 @@ librdp_status rdp_printer_redirection_parse_close_response(
     const void* data,
     size_t length,
     rdp_device_redirection_io_completion* response);
+librdp_status rdp_printer_redirection_write_read_response(rdp_buffer* buffer,
+                                                          uint32_t device_id,
+                                                          uint32_t completion_id,
+                                                          uint32_t io_status,
+                                                          const void* data,
+                                                          uint32_t data_len);
+librdp_status rdp_printer_redirection_parse_read_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response,
+    const uint8_t** payload,
+    uint32_t* payload_len);
 librdp_status rdp_printer_redirection_write_write_response(rdp_buffer* buffer,
                                                            uint32_t device_id,
                                                            uint32_t completion_id,
@@ -132,6 +144,16 @@ librdp_status rdp_printer_redirection_parse_write_response(
     size_t length,
     rdp_device_redirection_io_completion* response,
     uint32_t* written);
+librdp_status rdp_printer_redirection_write_length_response(rdp_buffer* buffer,
+                                                            uint32_t device_id,
+                                                            uint32_t completion_id,
+                                                            uint32_t io_status,
+                                                            uint32_t value);
+librdp_status rdp_printer_redirection_parse_length_response(
+    const void* data,
+    size_t length,
+    rdp_device_redirection_io_completion* response,
+    uint32_t* value);
 librdp_status rdp_printer_redirection_write_device_control_response(rdp_buffer* buffer,
                                                                     uint32_t device_id,
                                                                     uint32_t completion_id,
