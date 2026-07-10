@@ -2494,10 +2494,12 @@ static int test_path_security_license_channels(void)
     rdp_rfx_component_quant rfx_decode_quant;
     rdp_rfx_progressive_quant rfx_progressive_quant;
     rdp_rfx_component_quant rfx_added_quant;
+    rdp_rfx_component_quant rfx_bad_quant;
     rdp_rfx_component_quant rfx_zero_delta;
     rdp_rfx_tile_pixels rfx_pixels;
     rdp_rfx_tile_pixels rfx_upgrade_pixels;
     rdp_rfx_progressive_tile_state rfx_progressive_state;
+    rdp_rfx_progressive_tile_state rfx_saved_state;
     rdp_license_error_alert alert;
     rdp_license_preamble license_preamble;
     rdp_license_binary_blob license_blob;
@@ -3544,6 +3546,56 @@ static int test_path_security_license_channels(void)
     PCHECK(rfx_progressive_state.pass == 3 &&
            rfx_progressive_state.y.current[0] == 64 &&
            rfx_progressive_state.y.sign[0] == 1);
+    rfx_saved_state = rfx_progressive_state;
+    rfx_bad_quant = rfx_decode_quant;
+    rfx_bad_quant.ll3 = 0;
+    PCHECK(rdp_rfx_decode_progressive_upgrade_tile(NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   &rfx_bad_quant,
+                                                   &rfx_zero_delta,
+                                                   &rfx_decode_quant,
+                                                   &rfx_zero_delta,
+                                                   &rfx_decode_quant,
+                                                   &rfx_zero_delta,
+                                                   1,
+                                                   &rfx_progressive_state,
+                                                   &rfx_upgrade_pixels) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rfx_progressive_state.pass == rfx_saved_state.pass &&
+           rfx_progressive_state.y.current[0] == rfx_saved_state.y.current[0] &&
+           rfx_progressive_state.y.sign[0] == rfx_saved_state.y.sign[0]);
+    rfx_progressive_state.pass = UINT16_MAX;
+    PCHECK(rdp_rfx_decode_progressive_upgrade_tile(NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   NULL,
+                                                   0,
+                                                   &rfx_decode_quant,
+                                                   &rfx_zero_delta,
+                                                   &rfx_decode_quant,
+                                                   &rfx_zero_delta,
+                                                   &rfx_decode_quant,
+                                                   &rfx_zero_delta,
+                                                   1,
+                                                   &rfx_progressive_state,
+                                                   &rfx_upgrade_pixels) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rfx_progressive_state.pass == UINT16_MAX);
     memset(&rfx_progressive_state, 0, sizeof(rfx_progressive_state));
     PCHECK(rdp_rfx_decode_progressive_upgrade_tile(NULL,
                                                    0,
