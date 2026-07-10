@@ -375,7 +375,9 @@ static librdp_status rdp_gdi_parse_cache_bitmap_order_rev3(rdp_stream* stream,
         bitmap_length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (order->codec_id != RDP_SURFACE_CODEC_NONE &&
-        order->codec_id != RDP_SURFACE_CODEC_NSCODEC)
+        order->codec_id != RDP_SURFACE_CODEC_NSCODEC &&
+        order->codec_id != RDP_SURFACE_CODEC_REMOTEFX &&
+        order->codec_id != RDP_SURFACE_CODEC_IMAGE_REMOTEFX)
         return LIBRDP_STATUS_UNSUPPORTED;
     if (rdp_stream_remaining(stream) < bitmap_length ||
         rdp_stream_read_bytes(stream, &bitmap, bitmap_length) != LIBRDP_STATUS_OK)

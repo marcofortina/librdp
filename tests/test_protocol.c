@@ -13627,6 +13627,16 @@ static int test_gdi_orders(void)
         4u, 0u, 0u, 0u,
         0xaau, 0xbbu, 0xccu, 0xffu
     };
+    const uint8_t cache_bitmap_v3_rfx_payload[] = {
+        10u, 0u,
+        0x14u, 0x13u, 0x12u, 0x11u,
+        0x18u, 0x17u, 0x16u, 0x15u,
+        32u, 0u, 0u, RDP_SURFACE_CODEC_REMOTEFX,
+        64u, 0u,
+        64u, 0u,
+        4u, 0u, 0u, 0u,
+        0xc0u, 0xccu, 0x06u, 0x00u
+    };
     const uint8_t cache_brush_mono_payload[] = {
         3u, RDP_GDI_BMF_1BPP, 8u, 8u, 0u, 8u,
         0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
@@ -14355,6 +14365,28 @@ static int test_gdi_orders(void)
            cache_bitmap.cache_index == RDP_GDI_BITMAP_CACHE_WAITING_LIST_INDEX &&
            cache_bitmap.do_not_cache &&
            cache_bitmap.codec_id == RDP_SURFACE_CODEC_NONE &&
+           cache_bitmap.bitmap_data_len == 4);
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         (uint16_t)(2u | (6u << 3u) |
+                                                    (RDP_GDI_CBR3_IGNORABLE_FLAG << 7u)),
+                                         RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                         cache_bitmap_v3_rfx_payload,
+                                         sizeof(cache_bitmap_v3_rfx_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) == LIBRDP_STATUS_OK);
+    PCHECK(cache_bitmap.rev3 &&
+           cache_bitmap.cache_id == 2 &&
+           cache_bitmap.cache_index == 10 &&
+           cache_bitmap.key1 == 0x11121314u &&
+           cache_bitmap.key2 == 0x15161718u &&
+           cache_bitmap.codec_id == RDP_SURFACE_CODEC_REMOTEFX &&
+           cache_bitmap.compressed &&
+           cache_bitmap.width == 64 &&
+           cache_bitmap.height == 64 &&
            cache_bitmap.bitmap_data_len == 4);
     rdp_buffer_free(&payload);
     rdp_buffer_init(&payload);

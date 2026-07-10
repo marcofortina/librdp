@@ -27079,6 +27079,95 @@ static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, co
     return status;
 }
 
+typedef struct rdp_session_gdi_rfx_cache_context
+{
+    rdp_buffer* pixels;
+    uint32_t width;
+    uint32_t height;
+    size_t stride;
+    uint16_t tiles;
+} rdp_session_gdi_rfx_cache_context;
+
+static librdp_status rdp_session_gdi_rfx_cache_tile(const rdp_rfx_stream_tile* tile, void* user)
+{
+    rdp_session_gdi_rfx_cache_context* context = (rdp_session_gdi_rfx_cache_context*)user;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t y = 0;
+
+    if (!tile || !context || !context->pixels || !context->pixels->data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (tile->x >= context->width || tile->y >= context->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    width = tile->width;
+    height = tile->height;
+    if (width > context->width - tile->x)
+        width = context->width - tile->x;
+    if (height > context->height - tile->y)
+        height = context->height - tile->y;
+    if (width == 0 || height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (y = 0; y < height; y++)
+    {
+        memcpy(context->pixels->data + (((size_t)(tile->y + y) * context->stride) + ((size_t)tile->x * 4u)),
+               tile->pixels.bgra + ((size_t)y * tile->pixels.stride),
+               (size_t)width * 4u);
+    }
+    if (context->tiles < UINT16_MAX)
+        context->tiles++;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_decode_rfx_cache_bitmap(const rdp_gdi_cache_bitmap_order* order,
+                                                             rdp_buffer* pixels,
+                                                             size_t* stride)
+{
+    rdp_session_gdi_rfx_cache_context context;
+    rdp_rfx_stream_summary summary;
+    size_t length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!order || !pixels || !stride || !order->bitmap_data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->width == 0 || order->height == 0 || order->width > UINT16_MAX ||
+        order->height > UINT16_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *stride = (size_t)order->width * 4u;
+    length = *stride * (size_t)order->height;
+    status = rdp_buffer_reserve(pixels, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    memset(pixels->data, 0, length);
+    pixels->length = length;
+    memset(&context, 0, sizeof(context));
+    memset(&summary, 0, sizeof(summary));
+    context.pixels = pixels;
+    context.width = order->width;
+    context.height = order->height;
+    context.stride = *stride;
+    status = rdp_rfx_stream_decode(order->bitmap_data,
+                                   order->bitmap_data_len,
+                                   rdp_session_gdi_rfx_cache_tile,
+                                   &context,
+                                   &summary);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (context.tiles == 0 || summary.tile_count == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.bitmap_cache.rfx_decode",
+                          "cache_id=%u cache_index=%u width=%u height=%u frame_id=%u tiles=%u decoded_tiles=%u",
+                          order->cache_id,
+                          order->cache_index,
+                          order->width,
+                          order->height,
+                          summary.frame_id,
+                          summary.tile_count,
+                          context.tiles);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
                                                         const rdp_gdi_cache_bitmap_order* order)
 {
@@ -27137,6 +27226,12 @@ static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
                                            order->height,
                                            &pixels,
                                            &stride);
+    }
+    else if (order->rev3 &&
+             (order->codec_id == RDP_SURFACE_CODEC_REMOTEFX ||
+              order->codec_id == RDP_SURFACE_CODEC_IMAGE_REMOTEFX))
+    {
+        status = rdp_session_gdi_decode_rfx_cache_bitmap(order, &pixels, &stride);
     }
     else if (order->bits_per_pixel == 8u)
     {
