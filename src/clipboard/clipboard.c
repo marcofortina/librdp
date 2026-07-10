@@ -466,6 +466,44 @@ librdp_status rdp_clipboard_parse_file_contents_request(const rdp_clipboard_pack
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_clipboard_write_file_contents_request(rdp_buffer* buffer,
+                                                        uint32_t stream_id,
+                                                        int32_t lindex,
+                                                        uint32_t flags,
+                                                        uint64_t position,
+                                                        uint32_t requested,
+                                                        const uint32_t* clip_data_id)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (flags != RDP_CLIPBOARD_FILECONTENTS_SIZE && flags != RDP_CLIPBOARD_FILECONTENTS_RANGE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (flags == RDP_CLIPBOARD_FILECONTENTS_SIZE && (position != 0 || requested != 8u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_clipboard_write_header(buffer,
+                                        RDP_CLIPBOARD_CB_FILECONTENTS_REQUEST,
+                                        0,
+                                        clip_data_id ? 28u : 24u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, stream_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)lindex);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)(position & 0xffffffffu));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, (uint32_t)(position >> 32));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, requested);
+    if (status == LIBRDP_STATUS_OK && clip_data_id)
+        status = rdp_buffer_append_u32_le(buffer, *clip_data_id);
+    return status;
+}
+
 librdp_status rdp_clipboard_write_file_contents_response(rdp_buffer* buffer,
                                                         int ok,
                                                         uint32_t stream_id,

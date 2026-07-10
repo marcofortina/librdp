@@ -53,6 +53,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     out.length = 0;
     (void)rdp_clipboard_write_file_contents_response(&out, 1, (uint32_t)size, data, size > 32u ? 32u : size);
     out.length = 0;
+    (void)rdp_clipboard_write_file_contents_request(&out,
+                                                    (uint32_t)size,
+                                                    (int32_t)(size & 7u),
+                                                    RDP_CLIPBOARD_FILECONTENTS_RANGE,
+                                                    size,
+                                                    (uint32_t)(size > 4096u ? 4096u : size),
+                                                    NULL);
+    out.length = 0;
     (void)rdp_clipboard_write_hdrop(&out, &file_desc, 1);
     out.length = 0;
     (void)rdp_clipboard_write_file_group_descriptor_w(&out, &file_desc, 1);

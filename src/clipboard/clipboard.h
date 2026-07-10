@@ -160,6 +160,13 @@ librdp_status rdp_clipboard_parse_format_data_response(const rdp_clipboard_packe
                                                        rdp_clipboard_format_data_response* response);
 librdp_status rdp_clipboard_parse_file_contents_request(const rdp_clipboard_packet* packet,
                                                         rdp_clipboard_file_contents_request* request);
+librdp_status rdp_clipboard_write_file_contents_request(rdp_buffer* buffer,
+                                                        uint32_t stream_id,
+                                                        int32_t lindex,
+                                                        uint32_t flags,
+                                                        uint64_t position,
+                                                        uint32_t requested,
+                                                        const uint32_t* clip_data_id);
 librdp_status rdp_clipboard_write_file_contents_response(rdp_buffer* buffer,
                                                         int ok,
                                                         uint32_t stream_id,

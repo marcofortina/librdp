@@ -127,6 +127,7 @@
 #define RDP_SESSION_VIDEO_CAPTURE_DEFAULT_FPS 30u
 #define RDP_SESSION_CLIPBOARD_MAX_FORMATS 64u
 #define RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES 64u
+#define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
 #define RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX (4u * 1024u * 1024u)
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
@@ -483,6 +484,16 @@ typedef struct rdp_session_clipboard_file_entry
     rdp_buffer name_utf16;
 } rdp_session_clipboard_file_entry;
 
+typedef struct rdp_session_clipboard_file_request
+{
+    uint8_t active;
+    uint32_t stream_id;
+    int32_t file_index;
+    uint32_t flags;
+    uint64_t position;
+    uint32_t requested;
+} rdp_session_clipboard_file_request;
+
 static librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* out, uint8_t append_null);
 
 struct librdp_session
@@ -505,6 +516,7 @@ struct librdp_session
     uint8_t clipboard_local_files_available;
     uint32_t clipboard_local_file_count;
     rdp_session_clipboard_file_entry clipboard_local_files[RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES];
+    rdp_session_clipboard_file_request clipboard_file_requests[RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS];
     uint32_t clipboard_remote_formats[RDP_SESSION_CLIPBOARD_MAX_FORMATS];
     uint32_t clipboard_remote_format_count;
     uint16_t audio_output_channel_id;
@@ -10695,6 +10707,65 @@ static librdp_status rdp_session_clipboard_write_file_contents(librdp_session* s
     return status;
 }
 
+static void rdp_session_clipboard_file_requests_clear(librdp_session* session)
+{
+    if (!session)
+        return;
+    memset(session->clipboard_file_requests, 0, sizeof(session->clipboard_file_requests));
+}
+
+static rdp_session_clipboard_file_request* rdp_session_clipboard_file_request_find(librdp_session* session,
+                                                                                  uint32_t stream_id)
+{
+    uint32_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS; i++)
+    {
+        if (session->clipboard_file_requests[i].active &&
+            session->clipboard_file_requests[i].stream_id == stream_id)
+            return &session->clipboard_file_requests[i];
+    }
+    return NULL;
+}
+
+static librdp_status rdp_session_clipboard_file_request_store(librdp_session* session,
+                                                              uint32_t stream_id,
+                                                              int32_t file_index,
+                                                              uint32_t flags,
+                                                              uint64_t position,
+                                                              uint32_t requested)
+{
+    uint32_t i = 0;
+    rdp_session_clipboard_file_request* slot = NULL;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    slot = rdp_session_clipboard_file_request_find(session, stream_id);
+    if (!slot)
+    {
+        for (i = 0; i < RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS; i++)
+        {
+            if (!session->clipboard_file_requests[i].active)
+            {
+                slot = &session->clipboard_file_requests[i];
+                break;
+            }
+        }
+    }
+    if (!slot)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memset(slot, 0, sizeof(*slot));
+    slot->active = 1;
+    slot->stream_id = stream_id;
+    slot->file_index = file_index;
+    slot->flags = flags;
+    slot->position = position;
+    slot->requested = requested;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_session_send_clipboard_format_list(librdp_session* session)
 {
     rdp_buffer packet;
@@ -12153,6 +12224,7 @@ static void rdp_session_clipboard_clear(librdp_session* session)
     session->clipboard_general_flags = 0;
     session->clipboard_pending_request_format_id = 0;
     session->clipboard_remote_format_count = 0;
+    rdp_session_clipboard_file_requests_clear(session);
 }
 
 static void rdp_session_clipboard_files_clear(librdp_session* session)
@@ -16475,16 +16547,43 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
     else if (packet.type == RDP_CLIPBOARD_CB_FILECONTENTS_RESPONSE)
     {
         rdp_clipboard_file_contents_response file_response;
+        rdp_session_clipboard_file_request pending;
+        rdp_session_clipboard_file_request* request = NULL;
+        librdp_event event;
 
         status = rdp_clipboard_parse_file_contents_response(&packet, &file_response);
         if (status == LIBRDP_STATUS_OK)
+        {
+            memset(&pending, 0, sizeof(pending));
+            request = rdp_session_clipboard_file_request_find(session, file_response.stream_id);
+            if (request)
+            {
+                pending = *request;
+                memset(request, 0, sizeof(*request));
+            }
+            memset(&event, 0, sizeof(event));
+            event.type = LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS;
+            event.data.clipboard_file_contents.stream_id = file_response.stream_id;
+            event.data.clipboard_file_contents.file_index = pending.file_index;
+            event.data.clipboard_file_contents.flags = pending.flags;
+            event.data.clipboard_file_contents.position = pending.position;
+            event.data.clipboard_file_contents.requested = pending.requested;
+            event.data.clipboard_file_contents.data = file_response.data;
+            event.data.clipboard_file_contents.data_len = file_response.data_len;
+            event.data.clipboard_file_contents.ok =
+                file_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1 : 0;
+            rdp_session_emit(session, &event);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.clipboard.filecontents_response",
-                            "channel_id=%u ok=%u stream_id=%u data_len=%u",
+                            "channel_id=%u ok=%u stream_id=%u index=%d flags=%u data_len=%u pending=%u",
                             session->clipboard_channel_id,
                             file_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1u : 0u,
                             file_response.stream_id,
-                            (unsigned)file_response.data_len);
+                            pending.file_index,
+                            pending.flags,
+                            (unsigned)file_response.data_len,
+                            request ? 1u : 0u);
+        }
     }
     else if (packet.type == RDP_CLIPBOARD_CB_LOCK_CLIPDATA)
     {
@@ -28033,6 +28132,88 @@ librdp_status librdp_session_clipboard_request_data(librdp_session* session, uin
                         format_id);
     }
     return status;
+}
+
+static librdp_status rdp_session_clipboard_request_file(librdp_session* session,
+                                                        uint32_t stream_id,
+                                                        int32_t file_index,
+                                                        uint32_t flags,
+                                                        uint64_t position,
+                                                        uint32_t requested)
+{
+    rdp_buffer request;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || stream_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (flags == RDP_CLIPBOARD_FILECONTENTS_RANGE &&
+        (requested == 0 || requested > RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->clipboard_ready || session->clipboard_channel_id == 0)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_buffer_init(&request);
+    status = rdp_clipboard_write_file_contents_request(&request,
+                                                       stream_id,
+                                                       file_index,
+                                                       flags,
+                                                       position,
+                                                       requested,
+                                                       NULL);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_clipboard_file_request_store(session,
+                                                          stream_id,
+                                                          file_index,
+                                                          flags,
+                                                          position,
+                                                          requested);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_clipboard_packet(session, &request, "client.clipboard.filecontents_request");
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_clipboard_file_request* pending =
+            rdp_session_clipboard_file_request_find(session, stream_id);
+
+        if (pending)
+            memset(pending, 0, sizeof(*pending));
+    }
+    rdp_buffer_free(&request);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.clipboard.request_file",
+                        "stream_id=%u index=%d flags=%u position=%llu requested=%u",
+                        stream_id,
+                        file_index,
+                        flags,
+                        (unsigned long long)position,
+                        requested);
+    return status;
+}
+
+librdp_status librdp_session_clipboard_request_file_size(librdp_session* session,
+                                                         uint32_t stream_id,
+                                                         int32_t file_index)
+{
+    return rdp_session_clipboard_request_file(session,
+                                              stream_id,
+                                              file_index,
+                                              RDP_CLIPBOARD_FILECONTENTS_SIZE,
+                                              0,
+                                              8);
+}
+
+librdp_status librdp_session_clipboard_request_file_range(librdp_session* session,
+                                                          uint32_t stream_id,
+                                                          int32_t file_index,
+                                                          uint64_t position,
+                                                          uint32_t requested)
+{
+    return rdp_session_clipboard_request_file(session,
+                                              stream_id,
+                                              file_index,
+                                              RDP_CLIPBOARD_FILECONTENTS_RANGE,
+                                              position,
+                                              requested);
 }
 
 static librdp_status rdp_session_require_input_channel(const librdp_session* session)

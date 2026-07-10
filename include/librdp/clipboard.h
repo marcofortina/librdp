@@ -40,6 +40,14 @@ librdp_status librdp_session_clipboard_set_files(librdp_session* session,
                                                  uint32_t count);
 librdp_status librdp_session_clipboard_clear(librdp_session* session);
 librdp_status librdp_session_clipboard_request_data(librdp_session* session, uint32_t format_id);
+librdp_status librdp_session_clipboard_request_file_size(librdp_session* session,
+                                                         uint32_t stream_id,
+                                                         int32_t file_index);
+librdp_status librdp_session_clipboard_request_file_range(librdp_session* session,
+                                                          uint32_t stream_id,
+                                                          int32_t file_index,
+                                                          uint64_t position,
+                                                          uint32_t requested);
 
 #ifdef __cplusplus
 }

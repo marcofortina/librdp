@@ -7429,6 +7429,32 @@ static int test_path_security_license_channels(void)
            cb_file_request.requested == 0x40 &&
            cb_file_request.has_clip_data_id &&
            cb_file_request.clip_data_id == 0x99);
+    dyn_response.length = 0;
+    error_info = 0x99u;
+    PCHECK(rdp_clipboard_write_file_contents_request(&dyn_response,
+                                                     0x2233u,
+                                                     2,
+                                                     RDP_CLIPBOARD_FILECONTENTS_RANGE,
+                                                     0x0000000112345678ull,
+                                                     0x40,
+                                                     &error_info) == LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data, clip_file_range_request, sizeof(clip_file_range_request)) == 0);
+    dyn_response.length = 0;
+    PCHECK(rdp_clipboard_write_file_contents_request(&dyn_response,
+                                                     0x1122u,
+                                                     -1,
+                                                     RDP_CLIPBOARD_FILECONTENTS_SIZE,
+                                                     0,
+                                                     8,
+                                                     NULL) == LIBRDP_STATUS_OK);
+    PCHECK(memcmp(dyn_response.data, clip_file_size_request, sizeof(clip_file_size_request)) == 0);
+    PCHECK(rdp_clipboard_write_file_contents_request(&dyn_response,
+                                                     0x1122u,
+                                                     -1,
+                                                     RDP_CLIPBOARD_FILECONTENTS_SIZE,
+                                                     1,
+                                                     8,
+                                                     NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_clipboard_parse_packet(clip_file_bad_request,
                                       sizeof(clip_file_bad_request),
                                       &cb) == LIBRDP_STATUS_OK);

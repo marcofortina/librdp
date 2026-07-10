@@ -38,7 +38,8 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_AUDIO_INPUT_OPEN = 18,
     LIBRDP_EVENT_VIDEO_CAPTURE_OPEN = 19,
     LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST = 20,
-    LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE = 21
+    LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE = 21,
+    LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS = 22
 } librdp_event_type;
 
 typedef enum librdp_pointer_update_type
@@ -92,6 +93,18 @@ typedef struct librdp_clipboard_request_event
 {
     uint32_t format_id;
 } librdp_clipboard_request_event;
+
+typedef struct librdp_clipboard_file_contents_event
+{
+    uint32_t stream_id;
+    int32_t file_index;
+    uint32_t flags;
+    uint64_t position;
+    uint32_t requested;
+    const uint8_t* data;
+    size_t data_len;
+    int ok;
+} librdp_clipboard_file_contents_event;
 
 typedef struct librdp_channel_open_event
 {
@@ -185,6 +198,7 @@ typedef struct librdp_event
         librdp_clipboard_formats_event clipboard_formats;
         librdp_clipboard_data_event clipboard_data;
         librdp_clipboard_request_event clipboard_request;
+        librdp_clipboard_file_contents_event clipboard_file_contents;
         librdp_channel_open_event channel_open;
         librdp_channel_data_event channel_data;
         librdp_channel_close_event channel_close;

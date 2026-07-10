@@ -40,6 +40,7 @@ typedef struct event_counter
     int clipboard_formats;
     int clipboard_data;
     int clipboard_requests;
+    int clipboard_file_contents;
     int channel_open;
     int channel_data;
     int channel_close;
@@ -90,6 +91,9 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_CLIPBOARD_REQUEST:
             counter->clipboard_requests++;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS:
+            counter->clipboard_file_contents++;
             break;
         case LIBRDP_EVENT_CHANNEL_OPEN:
             counter->channel_open++;
@@ -1262,6 +1266,12 @@ static int test_settings_surface_input_session(void)
     }
     CHECK(librdp_session_clipboard_request_data(session,
                                                 LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_clipboard_request_file_size(session, 1, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_clipboard_request_file_range(session, 2, 0, 4, 16) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_clipboard_request_file_size(NULL, 1, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_request_file_size(session, 0, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_request_file_range(session, 2, 0, 0, 0) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_clipboard_clear(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_clipboard_set_data(NULL,
                                             LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
