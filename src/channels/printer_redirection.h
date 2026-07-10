@@ -20,6 +20,14 @@
 #define RDP_PRINTER_REDIRECTION_CACHE_DELETE 0x00000003u
 #define RDP_PRINTER_REDIRECTION_CACHE_RENAME 0x00000004u
 
+#define RDP_PRINTER_REDIRECTION_FORMAT_RAW "application/vnd.cups-raw"
+#define RDP_PRINTER_REDIRECTION_FORMAT_PDF "application/pdf"
+#define RDP_PRINTER_REDIRECTION_FORMAT_POSTSCRIPT "application/postscript"
+#define RDP_PRINTER_REDIRECTION_FORMAT_XPS "application/vnd.ms-xpsdocument"
+#define RDP_PRINTER_REDIRECTION_FORMAT_PNG "image/png"
+#define RDP_PRINTER_REDIRECTION_FORMAT_JPEG "image/jpeg"
+#define RDP_PRINTER_REDIRECTION_FORMAT_PCL "application/vnd.hp-PCL"
+
 typedef struct rdp_printer_redirection_announce
 {
     uint32_t flags;
@@ -61,6 +69,10 @@ typedef struct rdp_printer_redirection_xps_mode
 librdp_status rdp_printer_redirection_write_announce_data(
     rdp_buffer* buffer,
     const rdp_printer_redirection_announce* announce);
+librdp_status rdp_printer_redirection_detect_document_format(
+    const void* data,
+    size_t length,
+    const char** format);
 librdp_status rdp_printer_redirection_parse_announce_data(
     const void* data,
     size_t length,

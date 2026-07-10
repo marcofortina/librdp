@@ -139,6 +139,35 @@ librdp_status rdp_printer_redirection_write_announce_data(
     return rdp_buffer_append(buffer, announce->cached_fields, announce->cached_fields_len);
 }
 
+librdp_status rdp_printer_redirection_detect_document_format(
+    const void* data,
+    size_t length,
+    const char** format)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+
+    if (!format)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *format = RDP_PRINTER_REDIRECTION_FORMAT_RAW;
+    if (!bytes || length == 0)
+        return LIBRDP_STATUS_OK;
+    if (length >= 4u && memcmp(bytes, "%PDF", 4u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PDF;
+    else if (length >= 2u && memcmp(bytes, "%!", 2u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_POSTSCRIPT;
+    else if (length >= 4u && memcmp(bytes, "PK\003\004", 4u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_XPS;
+    else if (length >= 8u && memcmp(bytes, "\211PNG\r\n\032\n", 8u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PNG;
+    else if (length >= 3u && bytes[0] == 0xffu && bytes[1] == 0xd8u && bytes[2] == 0xffu)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_JPEG;
+    else if (length >= 2u && bytes[0] == 0x1bu && bytes[1] == 'E')
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
+    else if (length >= 9u && memcmp(bytes, "\033%-12345X", 9u) == 0)
+        *format = RDP_PRINTER_REDIRECTION_FORMAT_PCL;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_printer_redirection_parse_announce_data(
     const void* data,
     size_t length,

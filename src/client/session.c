@@ -5189,9 +5189,11 @@ static librdp_status rdp_session_make_print_temp_path(librdp_session* session,
                                                       uint32_t file_id,
                                                       char** path)
 {
+    const char* tmpdir = NULL;
     const char* name = NULL;
     char safe[128];
     int needed = 0;
+    size_t tmpdir_len = 0;
     size_t i = 0;
 
     if (!session || !path)
@@ -5203,17 +5205,35 @@ static librdp_status rdp_session_make_print_temp_path(librdp_session* session,
     for (i = 0; i + 1u < sizeof(safe) && name[i]; i++)
         safe[i] = rdp_session_print_path_char(name[i]);
     safe[i] = '\0';
-    needed = snprintf(NULL, 0, "/tmp/librdp-print-%s-%08x-XXXXXX", safe, file_id);
+    tmpdir = getenv("TMPDIR");
+    if (!tmpdir || tmpdir[0] != '/')
+        tmpdir = "/tmp";
+    tmpdir_len = strlen(tmpdir);
+    needed = snprintf(NULL,
+                      0,
+                      "%s%slibrdp-print-%s-%08x-XXXXXX",
+                      tmpdir,
+                      tmpdir_len > 0 && tmpdir[tmpdir_len - 1u] == '/' ? "" : "/",
+                      safe,
+                      file_id);
     if (needed <= 0)
         return LIBRDP_STATUS_NO_MEMORY;
     *path = (char*)malloc((size_t)needed + 1u);
     if (!*path)
         return LIBRDP_STATUS_NO_MEMORY;
-    (void)snprintf(*path, (size_t)needed + 1u, "/tmp/librdp-print-%s-%08x-XXXXXX", safe, file_id);
+    (void)snprintf(*path,
+                   (size_t)needed + 1u,
+                   "%s%slibrdp-print-%s-%08x-XXXXXX",
+                   tmpdir,
+                   tmpdir_len > 0 && tmpdir[tmpdir_len - 1u] == '/' ? "" : "/",
+                   safe,
+                   file_id);
     return LIBRDP_STATUS_OK;
 }
 
 #ifdef RDP_HAVE_CUPS
+#define RDP_SESSION_PRINTER_FORMAT_PROBE 512u
+
 static const char* rdp_session_printer_cups_destination(librdp_session* session, uint32_t printer_index)
 {
     const char* output = NULL;
@@ -5250,11 +5270,33 @@ static uint32_t rdp_session_validate_cups_printer(librdp_session* session, uint3
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
+static const char* rdp_session_printer_cups_document_format(const char* path)
+{
+    uint8_t prefix[RDP_SESSION_PRINTER_FORMAT_PROBE];
+    const char* format = RDP_PRINTER_REDIRECTION_FORMAT_RAW;
+    FILE* fp = NULL;
+    size_t read_len = 0;
+
+    if (!path)
+        return format;
+    fp = fopen(path, "rb");
+    if (!fp)
+        return format;
+    read_len = fread(prefix, 1u, sizeof(prefix), fp);
+    fclose(fp);
+    if (rdp_printer_redirection_detect_document_format(prefix, read_len, &format) != LIBRDP_STATUS_OK)
+        format = RDP_PRINTER_REDIRECTION_FORMAT_RAW;
+    return format;
+}
+
 static uint32_t rdp_session_submit_cups_print_job(librdp_session* session,
                                                   rdp_session_redirected_file* job)
 {
     const char* destination = NULL;
+    const char* format = NULL;
     const char* title = NULL;
+    cups_option_t* options = NULL;
+    int option_count = 0;
     int cups_job_id = 0;
 
     if (!session || !job || !job->path)
@@ -5265,13 +5307,21 @@ static uint32_t rdp_session_submit_cups_print_job(librdp_session* session,
     title = librdp_settings_printer_name(session->settings, job->printer_index);
     if (!destination || destination[0] == '\0')
         return RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
-    cups_job_id = cupsPrintFile(destination, job->path, title ? title : "RDP print job", 0, NULL);
+    format = rdp_session_printer_cups_document_format(job->path);
+    option_count = cupsAddOption("document-format", format, option_count, &options);
+    cups_job_id = cupsPrintFile(destination,
+                                job->path,
+                                title ? title : "RDP print job",
+                                option_count,
+                                options);
+    cupsFreeOptions(option_count, options);
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.rdpdr.printer.cups.submit",
-                    "printer_index=%u destination=%s job_id=%d path=%s",
+                    "printer_index=%u destination=%s job_id=%d format=%s path=%s",
                     job->printer_index,
                     destination,
                     cups_job_id,
+                    format,
                     job->path);
     return cups_job_id > 0 ? RDP_DEVICE_REDIRECTION_STATUS_SUCCESS : RDP_SESSION_DEVICE_UNSUCCESSFUL;
 }
@@ -9097,7 +9147,9 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
             status = rdp_session_utf8_to_utf16le(printer_name, &printer, 1);
         if (status == LIBRDP_STATUS_OK)
         {
-            announce.flags = i == 0 ? RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_DEFAULT : 0u;
+            announce.flags = RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_XPS;
+            if (i == 0)
+                announce.flags |= RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_DEFAULT;
             announce.driver_name = driver.data;
             announce.driver_name_len = (uint32_t)driver.length;
             announce.printer_name = printer.data;

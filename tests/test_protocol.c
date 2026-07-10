@@ -8223,6 +8223,42 @@ static int test_printer_redirection_channel(void)
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
 
+    {
+        const char* format = NULL;
+        const uint8_t pdf[] = {'%', 'P', 'D', 'F', '-'};
+        const uint8_t ps[] = {'%', '!', 'P', 'S'};
+        const uint8_t xps[] = {'P', 'K', 3, 4, 20, 0};
+        const uint8_t png[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+        const uint8_t jpg[] = {0xff, 0xd8, 0xff, 0xe0};
+        const uint8_t pcl[] = {0x1b, '%', '-', '1', '2', '3', '4', '5', 'X'};
+
+        PCHECK(rdp_printer_redirection_detect_document_format(pdf, sizeof(pdf), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PDF) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(ps, sizeof(ps), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_POSTSCRIPT) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(xps, sizeof(xps), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_XPS) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(png, sizeof(png), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PNG) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(jpg, sizeof(jpg), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_JPEG) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(pcl, sizeof(pcl), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_PCL) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(cache, sizeof(cache), &format) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_RAW) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(NULL, 0, &format) == LIBRDP_STATUS_OK);
+        PCHECK(strcmp(format, RDP_PRINTER_REDIRECTION_FORMAT_RAW) == 0);
+        PCHECK(rdp_printer_redirection_detect_document_format(NULL, 0, NULL) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
+
     PCHECK(rdp_printer_redirection_write_create_response(&packet, 1, 2, 0, 3) == LIBRDP_STATUS_OK);
     PCHECK(rdp_printer_redirection_parse_create_response(packet.data,
                                                          packet.length,
