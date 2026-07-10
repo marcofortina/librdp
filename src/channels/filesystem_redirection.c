@@ -876,6 +876,15 @@ librdp_status rdp_filesystem_redirection_write_security_request(rdp_buffer* buff
     return LIBRDP_STATUS_OK;
 }
 
+int rdp_filesystem_redirection_fsctl_supported(uint32_t code)
+{
+    return code == RDP_FILESYSTEM_REDIRECTION_FSCTL_GET_COMPRESSION ||
+           code == RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_COMPRESSION ||
+           code == RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_SPARSE ||
+           code == RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA ||
+           code == RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES;
+}
+
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,

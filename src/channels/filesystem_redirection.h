@@ -23,6 +23,12 @@
 #define RDP_FILESYSTEM_REDIRECTION_CREATE_FILE_OVERWRITTEN 0x03u
 #define RDP_FILESYSTEM_REDIRECTION_MAX_LOCKS 64u
 
+#define RDP_FILESYSTEM_REDIRECTION_FSCTL_GET_COMPRESSION 0x0009003cu
+#define RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_COMPRESSION 0x0009c040u
+#define RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_SPARSE 0x000900c4u
+#define RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA 0x000980c8u
+#define RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES 0x000940cfu
+
 typedef struct rdp_filesystem_redirection_create_request
 {
     rdp_device_redirection_io_request io;
@@ -263,6 +269,7 @@ librdp_status rdp_filesystem_redirection_write_security_request(rdp_buffer* buff
                                                                 const void* data,
                                                                 uint32_t data_len);
 
+int rdp_filesystem_redirection_fsctl_supported(uint32_t code);
 librdp_status rdp_filesystem_redirection_write_create_response(rdp_buffer* buffer,
                                                                uint32_t device_id,
                                                                uint32_t completion_id,

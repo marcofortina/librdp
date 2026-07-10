@@ -7269,6 +7269,56 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_free(&request);
     rdp_buffer_init(&request);
 
+    PCHECK(rdp_filesystem_redirection_fsctl_supported(RDP_FILESYSTEM_REDIRECTION_FSCTL_GET_COMPRESSION));
+    PCHECK(rdp_filesystem_redirection_fsctl_supported(RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_COMPRESSION));
+    PCHECK(rdp_filesystem_redirection_fsctl_supported(RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_SPARSE));
+    PCHECK(rdp_filesystem_redirection_fsctl_supported(RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA));
+    PCHECK(rdp_filesystem_redirection_fsctl_supported(
+        RDP_FILESYSTEM_REDIRECTION_FSCTL_QUERY_ALLOCATED_RANGES));
+    PCHECK(!rdp_filesystem_redirection_fsctl_supported(0xffffffffu));
+
+    PCHECK(rdp_filesystem_redirection_write_control_request(
+               &request,
+               1,
+               2,
+               3,
+               2u,
+               RDP_FILESYSTEM_REDIRECTION_FSCTL_GET_COMPRESSION,
+               NULL,
+               0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_filesystem_redirection_parse_control_request(request.data,
+                                                            request.length,
+                                                            &control_request) == LIBRDP_STATUS_OK);
+    PCHECK(control_request.output_buffer_length == 2u &&
+           control_request.input_buffer_length == 0u &&
+           control_request.io_control_code == RDP_FILESYSTEM_REDIRECTION_FSCTL_GET_COMPRESSION);
+    rdp_buffer_free(&request);
+    rdp_buffer_init(&request);
+
+    {
+        const uint8_t zero_range[16] = {
+            0x10, 0, 0, 0, 0, 0, 0, 0,
+            0x20, 0, 0, 0, 0, 0, 0, 0};
+
+        PCHECK(rdp_filesystem_redirection_write_control_request(
+                   &request,
+                   1,
+                   2,
+                   3,
+                   0,
+                   RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA,
+                   zero_range,
+                   sizeof(zero_range)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_filesystem_redirection_parse_control_request(request.data,
+                                                                request.length,
+                                                                &control_request) == LIBRDP_STATUS_OK);
+        PCHECK(control_request.input_buffer_length == sizeof(zero_range) &&
+               control_request.io_control_code == RDP_FILESYSTEM_REDIRECTION_FSCTL_SET_ZERO_DATA &&
+               memcmp(control_request.input_buffer, zero_range, sizeof(zero_range)) == 0);
+        rdp_buffer_free(&request);
+        rdp_buffer_init(&request);
+    }
+
     PCHECK(test_append_device_io_request(&request,
                                          1,
                                          2,
