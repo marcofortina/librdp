@@ -19,6 +19,7 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
     pkg_check_modules(LIBRDP_FIDO2 QUIET IMPORTED_TARGET libfido2)
     pkg_check_modules(LIBRDP_CBOR QUIET IMPORTED_TARGET libcbor)
+    pkg_check_modules(LIBRDP_CUPS QUIET IMPORTED_TARGET cups)
 endif()
 
 add_library(librdp
@@ -120,6 +121,10 @@ endif()
 if(LIBRDP_CBOR_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_CBOR=1)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CBOR)
+endif()
+if(LIBRDP_CUPS_FOUND)
+    target_compile_definitions(librdp PRIVATE RDP_HAVE_CUPS=1)
+    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CUPS)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
