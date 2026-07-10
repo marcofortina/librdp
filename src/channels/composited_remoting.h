@@ -96,6 +96,7 @@
 #define RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET 0x00000023u
 #define RDP_COMPOSITED_RESOURCE_GDI_SPRITE_BITMAP 0x00000038u
 #define RDP_COMPOSITED_RENDER_RESOURCE_LIMIT 512u
+#define RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT 512u
 
 typedef struct rdp_composited_control
 {
@@ -414,9 +415,18 @@ typedef struct rdp_composited_render_resource
     uint8_t sprite_margins_valid;
 } rdp_composited_render_resource;
 
+typedef struct rdp_composited_render_invalidation
+{
+    uint8_t active;
+    uint32_t resource;
+    uint32_t generation;
+    rdp_composited_rect_i rect;
+} rdp_composited_render_invalidation;
+
 typedef struct rdp_composited_render_tree
 {
     rdp_composited_render_resource resources[RDP_COMPOSITED_RENDER_RESOURCE_LIMIT];
+    rdp_composited_render_invalidation invalidations[RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT];
     uint32_t resource_count;
     uint32_t command_count;
     uint32_t flush_count;

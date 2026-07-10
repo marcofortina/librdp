@@ -10364,6 +10364,7 @@ static int test_composited_remoting_channel(void)
     rdp_composited_channel_message message;
     rdp_composited_render_tree tree;
     const rdp_composited_render_resource* render_resource = NULL;
+    const rdp_composited_render_invalidation* invalidation = NULL;
     const rdp_composited_rect_i rect = {1, 2, 301, 402};
     const rdp_composited_rect_i client_rect = {4, 5, 290, 380};
     const rdp_composited_rect_i content_rect = {7, 8, 280, 360};
@@ -10373,6 +10374,7 @@ static int test_composited_remoting_channel(void)
     rdp_buffer buffer;
     rdp_buffer batch;
     rdp_buffer wrapped;
+    uint32_t i = 0;
 
     rdp_composited_render_tree_init(&tree);
     rdp_buffer_init(&buffer);
@@ -10837,7 +10839,22 @@ static int test_composited_remoting_channel(void)
            render_resource->duplicate_source == 0u &&
            render_resource->duplicate_target_channel == 0u &&
            tree.resource_count == 2u &&
-           tree.invalidation_count == 1u);
+           tree.invalidation_count == 3u);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x40u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation &&
+           invalidation->generation == 3u &&
+           invalidation->rect.left == 0 &&
+           invalidation->rect.top == 0 &&
+           invalidation->rect.right == 640 &&
+           invalidation->rect.bottom == 480);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -10893,7 +10910,22 @@ static int test_composited_remoting_channel(void)
     PCHECK(render_resource &&
            render_resource->sprite_clip_for_dirty_accum == 0u &&
            render_resource->sprite_clip_resource == 0u &&
-           tree.invalidation_count == 2u);
+           tree.invalidation_count == 7u);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x44u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation &&
+           invalidation->generation == 7u &&
+           invalidation->rect.left == rect.left &&
+           invalidation->rect.top == rect.top &&
+           invalidation->rect.right == rect.right &&
+           invalidation->rect.bottom == rect.bottom);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -11014,8 +11046,23 @@ static int test_composited_remoting_channel(void)
     PCHECK(render_resource &&
            render_resource->invalid_rect_valid &&
            render_resource->invalid_rect.bottom == 402 &&
-           tree.invalidation_count == 3u &&
-           render_resource->invalidation_generation == 3u);
+           tree.invalidation_count == 16u &&
+           render_resource->invalidation_generation == 16u);
+    invalidation = NULL;
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
+    {
+        if (tree.invalidations[i].active && tree.invalidations[i].resource == 0x40u)
+        {
+            invalidation = &tree.invalidations[i];
+            break;
+        }
+    }
+    PCHECK(invalidation &&
+           invalidation->generation == 16u &&
+           invalidation->rect.left == rect.left &&
+           invalidation->rect.top == rect.top &&
+           invalidation->rect.right == rect.right &&
+           invalidation->rect.bottom == rect.bottom);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

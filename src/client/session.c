@@ -18030,23 +18030,23 @@ static void rdp_session_emit_composited_invalidations(librdp_session* session,
     if (surface_width == 0 || surface_height == 0)
         return;
 
-    for (i = 0; i < RDP_COMPOSITED_RENDER_RESOURCE_LIMIT; i++)
+    for (i = 0; i < RDP_COMPOSITED_RENDER_INVALIDATION_LIMIT; i++)
     {
-        const rdp_composited_render_resource* resource = &session->composited_tree.resources[i];
+        const rdp_composited_render_invalidation* invalidation =
+            &session->composited_tree.invalidations[i];
         uint32_t left = 0;
         uint32_t top = 0;
         uint32_t right = surface_width;
         uint32_t bottom = surface_height;
         uint8_t fallback_full = 0;
 
-        if (!resource->active || !resource->invalid_rect_valid ||
-            resource->invalidation_generation <= before_invalidation_count)
+        if (!invalidation->active || invalidation->generation <= before_invalidation_count)
             continue;
 
-        left = rdp_session_composited_clamp_coord(resource->invalid_rect.left, surface_width);
-        top = rdp_session_composited_clamp_coord(resource->invalid_rect.top, surface_height);
-        right = rdp_session_composited_clamp_coord(resource->invalid_rect.right, surface_width);
-        bottom = rdp_session_composited_clamp_coord(resource->invalid_rect.bottom, surface_height);
+        left = rdp_session_composited_clamp_coord(invalidation->rect.left, surface_width);
+        top = rdp_session_composited_clamp_coord(invalidation->rect.top, surface_height);
+        right = rdp_session_composited_clamp_coord(invalidation->rect.right, surface_width);
+        bottom = rdp_session_composited_clamp_coord(invalidation->rect.bottom, surface_height);
         if (right <= left || bottom <= top)
         {
             left = 0;
@@ -18058,8 +18058,8 @@ static void rdp_session_emit_composited_invalidations(librdp_session* session,
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.cr2.surface.invalidated",
                         "resource=%u generation=%u x=%u y=%u width=%u height=%u fallback_full=%u",
-                        resource->resource,
-                        resource->invalidation_generation,
+                        invalidation->resource,
+                        invalidation->generation,
                         left,
                         top,
                         right - left,
