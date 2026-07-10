@@ -6429,10 +6429,15 @@ static librdp_status rdp_session_handle_printer_write(librdp_session* session,
             const uint8_t* cursor = request.data;
             uint32_t remaining = request.length;
 
+            if (rdp_session_seek_fd(job->fd, request.offset) != 0)
+                io_status = rdp_session_errno_to_device_status(errno);
             while (remaining > 0)
             {
-                ssize_t count = write(job->fd, cursor, remaining);
+                ssize_t count = 0;
 
+                if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+                    break;
+                count = write(job->fd, cursor, remaining);
                 if (count < 0 && errno == EINTR)
                     continue;
                 if (count <= 0)
@@ -6461,13 +6466,14 @@ static librdp_status rdp_session_handle_printer_write(librdp_session* session,
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.printer.write",
-                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u written=%u",
+                        "device_id=%u file_id=%u completion_id=%u status=%u requested=%u written=%u offset=%llu",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         io_status,
                         request.length,
-                        written);
+                        written,
+                        (unsigned long long)request.offset);
     return status;
 }
 
