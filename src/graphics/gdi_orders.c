@@ -1,6 +1,7 @@
 #include "graphics/gdi_orders.h"
 
 #include "common/stream.h"
+#include "graphics/gdi_render.h"
 
 #include <limits.h>
 #include <string.h>
@@ -657,18 +658,19 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
     const uint8_t* bytes = (const uint8_t*)data;
     size_t offset = 0;
     uint16_t index = 0;
-    uint8_t current_order_type = initial_order_type;
+    rdp_gdi_render_state render_state;
 
     if ((!data && length > 0) || !list)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     memset(list, 0, sizeof(*list));
+    rdp_gdi_render_state_init(&render_state);
+    render_state.current_order_type = initial_order_type;
     for (index = 0; index < number_orders; index++)
     {
         uint8_t control = 0;
         rdp_gdi_secondary_order_header secondary;
-        rdp_gdi_primary_order_header primary;
         rdp_gdi_altsec_order_header altsec;
 
         if (offset >= length)
@@ -701,18 +703,22 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         }
         if (control & RDP_GDI_TS_STANDARD)
         {
-            if (index + 1u != number_orders)
-                return LIBRDP_STATUS_UNSUPPORTED;
-            if (rdp_gdi_parse_primary_order(bytes + offset,
-                                            length - offset,
-                                            current_order_type,
-                                            &primary) != LIBRDP_STATUS_OK)
+            rdp_gdi_render_op op;
+            size_t consumed = 0;
+            librdp_status status = rdp_gdi_decode_primary_render_order(&render_state,
+                                                                       bytes + offset,
+                                                                       length - offset,
+                                                                       &op,
+                                                                       &consumed);
+
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            if (consumed == 0 || consumed > length - offset)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            current_order_type = primary.next_order_type;
             list->orders[index].kind = RDP_GDI_ORDER_KIND_PRIMARY;
-            list->orders[index].order_type = primary.order_type;
-            list->orders[index].length = length - offset;
-            offset = length;
+            list->orders[index].order_type = op.order_type;
+            list->orders[index].length = consumed;
+            offset += consumed;
             continue;
         }
         return LIBRDP_STATUS_PROTOCOL_ERROR;

@@ -11741,13 +11741,19 @@ static int test_gdi_orders(void)
            list.orders[0].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
            list.orders[1].kind == RDP_GDI_ORDER_KIND_ALTSEC);
     mixed.length = 0;
-    PCHECK(rdp_buffer_append(&mixed, primary_order, sizeof(primary_order)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&mixed, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append(&mixed, secondary.data, secondary.length) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gdi_parse_order_list(mixed.data,
                                     mixed.length,
                                     2,
                                     RDP_GDI_ORDER_PATBLT,
-                                    &list) == LIBRDP_STATUS_UNSUPPORTED);
+                                    &list) == LIBRDP_STATUS_OK);
+    PCHECK(list.count == 2 &&
+           list.orders[0].kind == RDP_GDI_ORDER_KIND_PRIMARY &&
+           list.orders[0].order_type == RDP_GDI_ORDER_OPAQUERECT &&
+           list.orders[0].length == sizeof(render_opaque) &&
+           list.orders[1].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
+           list.orders[1].length == secondary.length);
     PCHECK(rdp_gdi_parse_order_list(NULL, 0, 0, RDP_GDI_ORDER_PATBLT, &list) == LIBRDP_STATUS_OK);
 
     memset(&bitmap_error, 0, sizeof(bitmap_error));
