@@ -156,6 +156,9 @@ typedef struct rdp_smartcard_redirection_establish_context_call
 typedef struct rdp_smartcard_redirection_connect_common
 {
     rdp_smartcard_redirection_context context;
+    uint32_t reader_name_is_null;
+    uint32_t reader_name_len;
+    const uint8_t* reader_name;
     uint32_t share_mode;
     uint32_t preferred_protocols;
 } rdp_smartcard_redirection_connect_common;

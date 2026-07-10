@@ -8012,6 +8012,7 @@ static int test_auth_smartcard_redirection_channels(void)
         0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
     };
     const uint8_t scard_extra[] = {0x01, 0x02, 0x03};
+    const uint8_t scard_reader_name[] = {'R', 'e', 'a', 'd', 'e', 'r', ' ', 'A', 0};
     const uint8_t scard_atr_mask[RDP_SMARTCARD_REDIRECTION_ATR_MAX_LENGTH] = {
         0xff, 0xff, 0xff
     };
@@ -8741,6 +8742,40 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT &&
            scard_message.body.connect.share_mode == RDP_SMARTCARD_REDIRECTION_SHARE_SHARED &&
            scard_message.body.connect.preferred_protocols == RDP_SMARTCARD_REDIRECTION_PROTOCOL_TX);
+    packet.length = 0;
+    buffer.length = 0;
+    PCHECK(rdp_smartcard_redirection_write_context(&buffer,
+                                                   context_bytes,
+                                                   sizeof(context_bytes)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, 0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, (uint32_t)sizeof(scard_reader_name)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&buffer, scard_reader_name, sizeof(scard_reader_name)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_SMARTCARD_REDIRECTION_SHARE_EXCLUSIVE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append_u32_le(&buffer, RDP_SMARTCARD_REDIRECTION_PROTOCOL_T1) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_connect_common(buffer.data,
+                                                          buffer.length,
+                                                          &connect_common) == LIBRDP_STATUS_OK);
+    PCHECK(connect_common.reader_name_is_null == 0 &&
+           connect_common.reader_name_len == sizeof(scard_reader_name) &&
+           memcmp(connect_common.reader_name, scard_reader_name, sizeof(scard_reader_name)) == 0 &&
+           connect_common.share_mode == RDP_SMARTCARD_REDIRECTION_SHARE_EXCLUSIVE);
+    PCHECK(rdp_smartcard_redirection_write_device_control_request(
+               &packet,
+               4u,
+               RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTA,
+               buffer.data,
+               (uint32_t)buffer.length) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_smartcard_redirection_parse_device_control_request_message(
+               packet.data,
+               packet.length,
+               &scard_message) == LIBRDP_STATUS_OK);
+    PCHECK(scard_message.kind == RDP_SMARTCARD_REDIRECTION_MESSAGE_CONNECT &&
+           scard_message.body.connect.reader_name_len == sizeof(scard_reader_name) &&
+           memcmp(scard_message.body.connect.reader_name,
+                  scard_reader_name,
+                  sizeof(scard_reader_name)) == 0);
     packet.length = 0;
     buffer.data[8 + sizeof(context_bytes)] = 0x10;
     PCHECK(rdp_smartcard_redirection_parse_connect_common(buffer.data,

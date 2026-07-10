@@ -6273,6 +6273,26 @@ static DWORD rdp_session_smartcard_scope_to_pcsc(uint32_t scope)
     return SCARD_SCOPE_SYSTEM;
 }
 
+static char* rdp_session_smartcard_connect_reader_name(
+    const rdp_smartcard_redirection_request_message* message)
+{
+    char* reader_name = NULL;
+    int wide = 0;
+
+    if (!message || message->body.connect.reader_name_is_null ||
+        message->body.connect.reader_name_len == 0 || !message->body.connect.reader_name)
+        return NULL;
+    wide = message->request.io_control_code == RDP_SMARTCARD_REDIRECTION_IOCTL_CONNECTW;
+    if (wide)
+        return rdp_session_smartcard_utf16le_to_utf8_multisz(message->body.connect.reader_name,
+                                                             message->body.connect.reader_name_len);
+    reader_name = (char*)calloc((size_t)message->body.connect.reader_name_len + 1u, 1u);
+    if (!reader_name)
+        return NULL;
+    memcpy(reader_name, message->body.connect.reader_name, message->body.connect.reader_name_len);
+    return reader_name;
+}
+
 static void rdp_session_smartcard_reset(librdp_session* session)
 {
     if (!session)
@@ -6754,6 +6774,8 @@ static librdp_status rdp_session_smartcard_handle_connect(librdp_session* sessio
     rdp_session_smartcard_handle* handle = NULL;
     uint8_t handle_blob[RDP_SESSION_SMARTCARD_BLOB_BYTES];
     char readers[4096];
+    char* requested_reader = NULL;
+    const char* connect_reader = NULL;
     DWORD readers_len = sizeof(readers);
     DWORD active_protocol = 0;
     LONG pcsc_status = (LONG)RDP_SESSION_SCARD_E_INVALID_HANDLE;
@@ -6768,13 +6790,23 @@ static librdp_status rdp_session_smartcard_handle_connect(librdp_session* sessio
                                                  message->body.connect.context.length);
     if (context)
     {
-        pcsc_status = SCardListReaders(context->context, NULL, readers, &readers_len);
-        if (pcsc_status == SCARD_S_SUCCESS && readers_len > 1u && readers[0] != '\0')
+        requested_reader = rdp_session_smartcard_connect_reader_name(message);
+        connect_reader = requested_reader;
+        if (!connect_reader)
+        {
+            pcsc_status = SCardListReaders(context->context, NULL, readers, &readers_len);
+            if (pcsc_status == SCARD_S_SUCCESS && readers_len > 1u && readers[0] != '\0')
+                connect_reader = readers;
+        }
+        else
+        {
+            pcsc_status = SCARD_S_SUCCESS;
+        }
+        if (pcsc_status == SCARD_S_SUCCESS && connect_reader && connect_reader[0] != '\0')
         {
             SCARDHANDLE pcsc_handle = 0;
-
             pcsc_status = SCardConnect(context->context,
-                                       readers,
+                                       connect_reader,
                                        message->body.connect.share_mode,
                                        rdp_session_smartcard_protocol_to_pcsc(message->body.connect.preferred_protocols),
                                        &pcsc_handle,
@@ -6811,12 +6843,14 @@ static librdp_status rdp_session_smartcard_handle_connect(librdp_session* sessio
                                                           "client.rdpdr.smartcard.connect.response");
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.rdpdr.smartcard.connect",
-                    "device_id=%u completion_id=%u status=%ld protocol=%u readers_len=%u",
+                    "device_id=%u completion_id=%u status=%ld protocol=%u readers_len=%u requested_reader_len=%u",
                     request->device_id,
                     request->completion_id,
                     pcsc_status,
                     rdp_session_smartcard_protocol_from_pcsc(active_protocol),
-                    (unsigned)readers_len);
+                    (unsigned)readers_len,
+                    message->body.connect.reader_name_len);
+    free(requested_reader);
     rdp_buffer_free(&payload);
     return status;
 }

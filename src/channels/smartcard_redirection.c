@@ -657,8 +657,27 @@ librdp_status rdp_smartcard_redirection_parse_connect_common(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(common, 0, sizeof(*common));
     rdp_stream_init(&stream, data, length);
-    if (rdp_smartcard_redirection_read_context(&stream, &common->context) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &common->share_mode) != LIBRDP_STATUS_OK ||
+    if (rdp_smartcard_redirection_read_context(&stream, &common->context) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) != 8u)
+    {
+        if (rdp_stream_read_u32_le(&stream, &common->reader_name_is_null) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u32_le(&stream, &common->reader_name_len) != LIBRDP_STATUS_OK ||
+            !rdp_smartcard_redirection_length_bool_pair_valid(common->reader_name_is_null,
+                                                              common->reader_name_len) ||
+            common->reader_name_len > rdp_stream_remaining(&stream) ||
+            rdp_stream_remaining(&stream) - common->reader_name_len < 8u ||
+            rdp_stream_read_bytes(&stream, &common->reader_name, common->reader_name_len) !=
+                LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    else
+    {
+        common->reader_name_is_null = 1;
+        common->reader_name_len = 0;
+        common->reader_name = NULL;
+    }
+    if (rdp_stream_read_u32_le(&stream, &common->share_mode) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &common->preferred_protocols) != LIBRDP_STATUS_OK ||
         rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
