@@ -759,6 +759,11 @@ librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_hea
 
         order->compressed = header->order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2;
         order->cache_id = header->extra_flags & 0x0007u;
+        if ((flags & ~(RDP_GDI_CBR2_HEIGHT_SAME_AS_WIDTH |
+                       RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT |
+                       RDP_GDI_CBR2_NO_BITMAP_COMPRESSION_HEADER |
+                       RDP_GDI_CBR2_DO_NOT_CACHE)) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_gdi_cbr2_bpp(bpp_id, &order->bits_per_pixel) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (flags & RDP_GDI_CBR2_PERSISTENT_KEY_PRESENT)

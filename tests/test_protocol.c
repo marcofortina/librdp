@@ -14594,6 +14594,18 @@ static int test_gdi_orders(void)
     rdp_buffer_free(&secondary);
     rdp_buffer_init(&secondary);
     PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                         (uint16_t)(1u | (6u << 3u) | (0x04u << 7u)),
+                                         RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2,
+                                         cache_bitmap_v2_payload,
+                                         sizeof(cache_bitmap_v2_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                         secondary.length,
+                                         &secondary_header) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&secondary);
+    rdp_buffer_init(&secondary);
+    PCHECK(rdp_gdi_write_secondary_order(&secondary,
                                          (uint16_t)(2u | (5u << 3u) |
                                                     (RDP_GDI_CBR2_NO_BITMAP_COMPRESSION_HEADER << 7u)),
                                          RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2,
