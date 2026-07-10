@@ -6210,6 +6210,42 @@ static int test_path_security_license_channels(void)
         PCHECK(dst_u[1] == 10 && dst_u[4] == 20 && dst_u[5] == 30 && dst_u[0] == 180);
         PCHECK(dst_v[1] == 40 && dst_v[4] == 50 && dst_v[5] == 70 && dst_v[0] == 200);
     }
+#if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
+    {
+        uint8_t y_plane[4] = {128, 128, 128, 128};
+        uint8_t u_plane[4] = {160, 130, 130, 130};
+        uint8_t v_plane[4] = {160, 130, 130, 130};
+        const uint8_t* pixel0 = NULL;
+        const uint8_t* pixel1 = NULL;
+
+        PCHECK(rdp_avc_yuv444_planes_to_bgra(y_plane,
+                                             2,
+                                             u_plane,
+                                             2,
+                                             v_plane,
+                                             2,
+                                             2,
+                                             2,
+                                             0,
+                                             &avc_frame) == LIBRDP_STATUS_OK);
+        pixel0 = avc_frame.pixels.data;
+        PCHECK(pixel0[0] == 187 && pixel0[1] == 107 && pixel0[2] == 178 && pixel0[3] == 255);
+        PCHECK(rdp_avc_yuv444_planes_to_bgra(y_plane,
+                                             2,
+                                             u_plane,
+                                             2,
+                                             v_plane,
+                                             2,
+                                             2,
+                                             2,
+                                             1,
+                                             &avc_frame) == LIBRDP_STATUS_OK);
+        pixel0 = avc_frame.pixels.data;
+        pixel1 = avc_frame.pixels.data + 4u;
+        PCHECK(pixel0[0] == 255 && pixel0[1] == 52 && pixel0[2] == 255 && pixel0[3] == 255);
+        PCHECK(pixel1[0] == 131 && pixel1[1] == 127 && pixel1[2] == 131 && pixel1[3] == 255);
+    }
+#endif
     rdp_avc_frame_free(&avc_frame);
     rdp_avc_decoder_free(avc_decoder);
     PCHECK(rdp_graphics_progressive_parse_block(graphics_progressive_stream,

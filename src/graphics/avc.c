@@ -970,6 +970,68 @@ static void rdp_avc_yuv_to_bgra_pixel(uint8_t y, uint8_t u, uint8_t v, uint8_t* 
     dst[3] = 255;
 }
 
+static uint8_t rdp_avc_correct_444_chroma_sample(const uint8_t* plane,
+                                                 size_t stride,
+                                                 uint32_t width,
+                                                 uint32_t height,
+                                                 uint32_t row,
+                                                 uint32_t col)
+{
+    int value = 0;
+
+    if (!plane || (row & 1u) != 0 || (col & 1u) != 0 || row + 1u >= height || col + 1u >= width)
+        return plane ? plane[(size_t)row * stride + col] : 128u;
+    value = 4 * (int)plane[(size_t)row * stride + col] -
+            (int)plane[(size_t)row * stride + col + 1u] -
+            (int)plane[((size_t)row + 1u) * stride + col] -
+            (int)plane[((size_t)row + 1u) * stride + col + 1u];
+    return rdp_avc_clip_u8(value);
+}
+
+librdp_status rdp_avc_yuv444_planes_to_bgra(const uint8_t* y_plane,
+                                            size_t y_stride,
+                                            const uint8_t* u_plane,
+                                            size_t u_stride,
+                                            const uint8_t* v_plane,
+                                            size_t v_stride,
+                                            uint32_t width,
+                                            uint32_t height,
+                                            uint8_t avc444_correction,
+                                            rdp_avc_frame* frame)
+{
+    uint32_t row = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!y_plane || !u_plane || !v_plane || !frame || width == 0 || height == 0 ||
+        y_stride < width || u_stride < width || v_stride < width)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_avc_frame_prepare(frame, width, height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (row = 0; row < height; row++)
+    {
+        uint32_t col = 0;
+        const uint8_t* src_y = y_plane + ((size_t)row * y_stride);
+        const uint8_t* src_u = u_plane + ((size_t)row * u_stride);
+        const uint8_t* src_v = v_plane + ((size_t)row * v_stride);
+        uint8_t* dst = frame->pixels.data + ((size_t)row * frame->stride);
+
+        for (col = 0; col < width; col++)
+        {
+            uint8_t u = src_u[col];
+            uint8_t v = src_v[col];
+
+            if (avc444_correction)
+            {
+                u = rdp_avc_correct_444_chroma_sample(u_plane, u_stride, width, height, row, col);
+                v = rdp_avc_correct_444_chroma_sample(v_plane, v_stride, width, height, row, col);
+            }
+            rdp_avc_yuv_to_bgra_pixel(src_y[col], u, v, dst + ((size_t)col * 4u));
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 #if defined(RDP_HAVE_OPENH264_AVC)
 static librdp_status rdp_avc_yuv420_to_bgra(const rdp_avc_yuv420* yuv, rdp_avc_frame* frame)
 {
@@ -999,26 +1061,18 @@ static librdp_status rdp_avc_yuv420_to_bgra(const rdp_avc_yuv420* yuv, rdp_avc_f
 
 static librdp_status rdp_avc_yuv444_to_bgra(rdp_avc_decoder* decoder, rdp_avc_frame* frame)
 {
-    uint32_t row = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!decoder || !frame || !decoder->yuv444_luma_valid || !decoder->yuv444_chroma_valid)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_avc_frame_prepare(frame, decoder->yuv444_width, decoder->yuv444_height);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    for (row = 0; row < decoder->yuv444_height; row++)
-    {
-        uint32_t col = 0;
-        const uint8_t* src_y = decoder->yuv444[0].data + ((size_t)row * decoder->yuv444_stride[0]);
-        const uint8_t* src_u = decoder->yuv444[1].data + ((size_t)row * decoder->yuv444_stride[1]);
-        const uint8_t* src_v = decoder->yuv444[2].data + ((size_t)row * decoder->yuv444_stride[2]);
-        uint8_t* dst = frame->pixels.data + ((size_t)row * frame->stride);
-
-        for (col = 0; col < decoder->yuv444_width; col++)
-            rdp_avc_yuv_to_bgra_pixel(src_y[col], src_u[col], src_v[col], dst + ((size_t)col * 4u));
-    }
-    return LIBRDP_STATUS_OK;
+    return rdp_avc_yuv444_planes_to_bgra(decoder->yuv444[0].data,
+                                         decoder->yuv444_stride[0],
+                                         decoder->yuv444[1].data,
+                                         decoder->yuv444_stride[1],
+                                         decoder->yuv444[2].data,
+                                         decoder->yuv444_stride[2],
+                                         decoder->yuv444_width,
+                                         decoder->yuv444_height,
+                                         1,
+                                         frame);
 }
 #endif
 

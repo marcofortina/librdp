@@ -64,6 +64,18 @@ void rdp_avc_frame_init(rdp_avc_frame* frame);
 void rdp_avc_frame_free(rdp_avc_frame* frame);
 librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view);
 librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* view);
+#if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
+librdp_status rdp_avc_yuv444_planes_to_bgra(const uint8_t* y_plane,
+                                            size_t y_stride,
+                                            const uint8_t* u_plane,
+                                            size_t u_stride,
+                                            const uint8_t* v_plane,
+                                            size_t v_stride,
+                                            uint32_t width,
+                                            uint32_t height,
+                                            uint8_t avc444_correction,
+                                            rdp_avc_frame* frame);
+#endif
 librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
                                  const rdp_graphics_avc420_stream* stream,
                                  uint32_t surface_width,
