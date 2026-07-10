@@ -2461,6 +2461,13 @@ static int test_path_security_license_channels(void)
         0x10, 0x00, 0x10, 0x00,
         0x45, 0x64
     };
+    const uint8_t graphics_avc420_bad_quant[] = {
+        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x10, 0x00,
+        0x34, 0x64,
+        0x00, 0x00, 0x01, 0x65
+    };
     const uint8_t graphics_avc444_both[] = {
         0x12, 0x00, 0x00, 0x00,
         0x01, 0x00, 0x00, 0x00,
@@ -6732,6 +6739,17 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_empty_bits,
                                             sizeof(graphics_avc420_empty_bits),
                                             &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_quant,
+                                            sizeof(graphics_avc420_bad_quant),
+                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_stream,
+                                            sizeof(graphics_avc420_stream),
+                                            &graphics_avc420) == LIBRDP_STATUS_OK);
+    graphics_avc420_edge = graphics_avc420;
+    graphics_avc420_edge.meta.quant_quality = graphics_avc_quant_bad_qp;
+    graphics_avc420_edge.meta.quant_quality_len = sizeof(graphics_avc_quant_bad_qp);
+    PCHECK(rdp_graphics_write_avc420_stream(&dyn_response,
+                                            &graphics_avc420_edge) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
                                             sizeof(graphics_avc444_both),
                                             &graphics_avc444) == LIBRDP_STATUS_OK);

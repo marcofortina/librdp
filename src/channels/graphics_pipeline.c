@@ -2496,9 +2496,13 @@ static librdp_status rdp_graphics_avc420_validate_metablock(
     for (i = 0; i < metablock->rect_count; i++)
     {
         rdp_graphics_rect16 rect;
+        rdp_graphics_avc420_quant_quality quant_quality;
 
         if (rdp_graphics_parse_rect16(metablock->rects + offset, 8u, &rect) != LIBRDP_STATUS_OK ||
-            rect.right == rect.left || rect.bottom == rect.top)
+            rect.right == rect.left || rect.bottom == rect.top ||
+            rdp_graphics_parse_avc420_quant_quality(metablock->quant_quality + ((size_t)i * 2u),
+                                                    2u,
+                                                    &quant_quality) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
         offset += 8u;
     }
@@ -2532,9 +2536,13 @@ librdp_status rdp_graphics_parse_avc420_metablock(const void* data,
     for (i = 0; i < count; i++)
     {
         rdp_graphics_rect16 rect;
+        rdp_graphics_avc420_quant_quality quant_quality;
 
         if (rdp_graphics_parse_rect16(metablock->rects + offset, 8u, &rect) != LIBRDP_STATUS_OK ||
-            rect.right == rect.left || rect.bottom == rect.top)
+            rect.right == rect.left || rect.bottom == rect.top ||
+            rdp_graphics_parse_avc420_quant_quality(metablock->quant_quality + ((size_t)i * 2u),
+                                                    2u,
+                                                    &quant_quality) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         offset += 8u;
     }
