@@ -2192,6 +2192,8 @@ static int test_path_security_license_channels(void)
         0x10, 0x00, 0x10, 0x00
     };
     const uint8_t graphics_avc_quant_quality[] = {0x45, 0x64};
+    const uint8_t graphics_avc_quant_bad_qp[] = {0x34, 0x64};
+    const uint8_t graphics_avc_quant_bad_quality[] = {0x45, 0x65};
     const uint8_t graphics_progressive_stream[] = {
         0xc3, 0xcc, 0x0a, 0x00, 0x00, 0x00,
         0x00, 0x40, 0x00, 0x01,
@@ -2792,6 +2794,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_rect16 graphics_progressive_rect;
     rdp_graphics_progressive_stream graphics_progressive;
     rdp_graphics_avc420_quant_quality graphics_avc_quant;
+    rdp_graphics_avc420_quant_quality graphics_bad_quant;
     rdp_graphics_avc420_metablock graphics_avc_meta;
     rdp_graphics_avc420_stream graphics_avc420;
     rdp_graphics_avc444_stream graphics_avc444;
@@ -5938,10 +5941,26 @@ static int test_path_security_license_channels(void)
            graphics_avc_quant.r == 1 &&
            graphics_avc_quant.p == 0 &&
            graphics_avc_quant.quality == 100);
+    PCHECK(rdp_graphics_parse_avc420_quant_quality(graphics_avc_quant_bad_qp,
+                                                   sizeof(graphics_avc_quant_bad_qp),
+                                                   &graphics_bad_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc420_quant_quality(graphics_avc_quant_bad_quality,
+                                                   sizeof(graphics_avc_quant_bad_quality),
+                                                   &graphics_bad_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_graphics_write_avc420_quant_quality(&dyn_response,
                                                    &graphics_avc_quant) == LIBRDP_STATUS_OK);
+    graphics_avc_quant.qp = 52;
+    graphics_avc_quant.qp_val = 52;
+    graphics_avc_quant.quality = 100;
+    PCHECK(rdp_graphics_write_avc420_quant_quality(&dyn_response,
+                                                   &graphics_avc_quant) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    graphics_avc_quant.qp = 5;
+    graphics_avc_quant.qp_val = 0x45;
+    graphics_avc_quant.quality = 101;
+    PCHECK(rdp_graphics_write_avc420_quant_quality(&dyn_response,
+                                                   &graphics_avc_quant) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(dyn_response.length == 2 &&
            memcmp(dyn_response.data, graphics_avc_meta.quant_quality, 2) == 0);
     rdp_buffer_free(&dyn_response);

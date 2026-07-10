@@ -2323,6 +2323,8 @@ librdp_status rdp_graphics_parse_avc420_quant_quality(const void* data,
     quant_quality->qp = (uint8_t)(quant_quality->qp_val & 0x3fu);
     quant_quality->r = (uint8_t)((quant_quality->qp_val >> 6) & 0x01u);
     quant_quality->p = (uint8_t)((quant_quality->qp_val >> 7) & 0x01u);
+    if (quant_quality->qp > 51u || quant_quality->quality > 100u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2334,7 +2336,8 @@ static librdp_status rdp_graphics_avc420_quant_value(
 
     if (!quant_quality || !value)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (quant_quality->qp > 0x3fu || quant_quality->r > 1u || quant_quality->p > 1u)
+    if (quant_quality->qp > 51u || quant_quality->quality > 100u ||
+        quant_quality->r > 1u || quant_quality->p > 1u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     encoded = (uint8_t)((quant_quality->p << 7) | (quant_quality->r << 6) | quant_quality->qp);
