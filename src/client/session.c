@@ -10854,6 +10854,14 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                 &avc_frame,
                                 wire.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
                                 source);
+                        if (status == LIBRDP_STATUS_OK && avc444.lc == RDP_GRAPHICS_AVC444_LC_BOTH)
+                            status = rdp_session_graphics_surface_write_avc_regions(
+                                session,
+                                surface,
+                                &avc444.stream2.meta,
+                                &avc_frame,
+                                wire.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+                                source);
                         if (status == LIBRDP_STATUS_OK)
                             avc_rendered = 1;
                     }

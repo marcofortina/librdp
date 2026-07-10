@@ -30,6 +30,7 @@
 #include "clipboard/clipboard.h"
 #include "common/buffer.h"
 #include "common/stream.h"
+#include "graphics/avc.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
 #include "graphics/gdi_orders.h"
@@ -2582,6 +2583,9 @@ static int test_path_security_license_channels(void)
     rdp_graphics_avc420_metablock graphics_avc_meta;
     rdp_graphics_avc420_stream graphics_avc420;
     rdp_graphics_avc444_stream graphics_avc444;
+    rdp_graphics_avc444_stream graphics_avc444_edge;
+    rdp_avc_decoder* avc_decoder;
+    rdp_avc_frame avc_frame;
     rdp_clearcodec_stream clear_stream;
     rdp_clearcodec_composite_payload clear_payload;
     rdp_clearcodec_subcodec clear_subcodec;
@@ -5615,6 +5619,56 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_bad_split,
                                             sizeof(graphics_avc444_bad_split),
                                             &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    avc_decoder = rdp_avc_decoder_new();
+    PCHECK(avc_decoder != NULL);
+    rdp_avc_frame_init(&avc_frame);
+    PCHECK(rdp_avc_decode_420(avc_decoder,
+                              &graphics_avc420,
+                              0,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
+                                            sizeof(graphics_avc444_both),
+                                            &graphics_avc444_edge) == LIBRDP_STATUS_OK);
+    graphics_avc444_edge.has_stream1 = 0;
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
+                                            sizeof(graphics_avc444_both),
+                                            &graphics_avc444_edge) == LIBRDP_STATUS_OK);
+    graphics_avc444_edge.stream2.bitstream_len = 0;
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444V2,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_luma,
+                                            sizeof(graphics_avc444_luma),
+                                            &graphics_avc444_edge) == LIBRDP_STATUS_OK);
+    graphics_avc444_edge.has_stream2 = 1;
+    graphics_avc444_edge.stream2 = graphics_avc444_edge.stream1;
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
+                                            sizeof(graphics_avc444_both),
+                                            &graphics_avc444_edge) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              0xffffu,
+                              &graphics_avc444_edge,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_avc_frame_free(&avc_frame);
+    rdp_avc_decoder_free(avc_decoder);
     PCHECK(rdp_graphics_progressive_parse_block(graphics_progressive_stream,
                                                 sizeof(graphics_progressive_stream),
                                                 &graphics_progressive_block) == LIBRDP_STATUS_OK);

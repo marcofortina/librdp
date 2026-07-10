@@ -1013,11 +1013,13 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
                                  uint32_t surface_height,
                                  rdp_avc_frame* frame)
 {
+    if (!decoder || !stream || !frame)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!stream->bitstream || stream->bitstream_len == 0 || surface_width == 0 || surface_height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!decoder || !stream || !frame)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
                           "client.graphics.avc420.decode.start",
@@ -1059,13 +1061,25 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
                                  uint32_t surface_height,
                                  rdp_avc_frame* frame)
 {
-#if defined(RDP_HAVE_ANY_AVC)
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!decoder || !stream || !frame)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (codec_id != RDP_GRAPHICS_CODECID_AVC444 && codec_id != RDP_GRAPHICS_CODECID_AVC444V2)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (surface_width == 0 || surface_height == 0 ||
+        stream->lc == RDP_GRAPHICS_AVC444_LC_INVALID ||
+        stream->lc > RDP_GRAPHICS_AVC444_LC_CHROMA ||
+        !stream->has_stream1 ||
+        !stream->stream1.bitstream ||
+        stream->stream1.bitstream_len == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (stream->lc == RDP_GRAPHICS_AVC444_LC_BOTH &&
+        (!stream->has_stream2 || !stream->stream2.bitstream || stream->stream2.bitstream_len == 0))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (stream->lc != RDP_GRAPHICS_AVC444_LC_BOTH && stream->has_stream2)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+#if defined(RDP_HAVE_ANY_AVC)
+    librdp_status status = LIBRDP_STATUS_OK;
+
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
                           "client.graphics.avc444.decode.start",
