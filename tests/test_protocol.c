@@ -38,6 +38,7 @@
 #include "graphics/nscodec.h"
 #include "graphics/planar.h"
 #include "graphics/rfx_codec.h"
+#include "graphics/surface_commands.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/capabilities.h"
@@ -1609,6 +1610,30 @@ static int test_path_security_license_channels(void)
         1,    2,    3,    4,    5,    6,    7,    8,
         9,    10,   11,   12,   13,   14,   15,   16
     };
+    const uint8_t surface_command_payload[] = {
+        0x01, 0x00,
+        0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00,
+        0x20, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x02, 0x00,
+        0x10, 0x00, 0x00, 0x00,
+        1,    2,    3,    4,    5,    6,    7,    8,
+        9,    10,   11,   12,   13,   14,   15,   16,
+        0x04, 0x00,
+        0x01, 0x00,
+        0x44, 0x33, 0x22, 0x11
+    };
+    const uint8_t surface_command_extended[] = {
+        0x06, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+        0x20, 0x01, 0x00, 0x01,
+        0x01, 0x00, 0x01, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x78, 0x56, 0x34, 0x12,
+        0xef, 0xcd, 0xab, 0x90,
+        0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+        0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11,
+        0xaa, 0xbb, 0xcc, 0xdd
+    };
     const uint8_t pointer_shape_32[] = {
         0x20, 0x00,
         0x05, 0x00,
@@ -2602,6 +2627,8 @@ static int test_path_security_license_channels(void)
     rdp_graphics_avc444_stream graphics_avc444;
     rdp_graphics_avc444_stream graphics_avc444_edge;
     rdp_graphics_avc444_stream graphics_avc444_valid;
+    rdp_surface_command_list surface_commands;
+    rdp_surface_bits surface_bits;
     librdp_status graphics_avc_status;
     rdp_avc_decoder* avc_decoder;
     rdp_avc_frame avc_frame;
@@ -2874,6 +2901,48 @@ static int test_path_security_license_channels(void)
                                       sizeof(fast_bad_update_compression),
                                       &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_UNSUPPORTED);
+    PCHECK(rdp_surface_commands_parse(surface_command_payload,
+                                      sizeof(surface_command_payload),
+                                      &surface_commands) == LIBRDP_STATUS_OK);
+    PCHECK(surface_commands.count == 2 &&
+           surface_commands.commands[0].kind == RDP_SURFACE_COMMAND_KIND_BITS &&
+           surface_commands.commands[0].bits.command_type == RDP_SURFACE_COMMAND_SET_BITS &&
+           surface_commands.commands[0].bits.dest_left == 1 &&
+           surface_commands.commands[0].bits.dest_top == 2 &&
+           surface_commands.commands[0].bits.width == 2 &&
+           surface_commands.commands[0].bits.height == 2 &&
+           surface_commands.commands[0].bits.codec_id == RDP_SURFACE_CODEC_NONE &&
+           surface_commands.commands[0].bits.bitmap_data_length == 16 &&
+           surface_commands.commands[0].bits.bitmap_data[15] == 16 &&
+           surface_commands.commands[1].kind == RDP_SURFACE_COMMAND_KIND_FRAME_MARKER &&
+           surface_commands.commands[1].frame_marker.action == 1 &&
+           surface_commands.commands[1].frame_marker.frame_id == 0x11223344u);
+    PCHECK(rdp_surface_commands_parse(surface_command_payload,
+                                      sizeof(surface_command_payload) - 1u,
+                                      &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_surface_commands_parse(surface_command_extended,
+                                      sizeof(surface_command_extended),
+                                      &surface_commands) == LIBRDP_STATUS_OK);
+    PCHECK(surface_commands.count == 1 &&
+           surface_commands.commands[0].bits.command_type == RDP_SURFACE_COMMAND_STREAM_BITS &&
+           surface_commands.commands[0].bits.has_extended_header == 1 &&
+           surface_commands.commands[0].bits.codec_id == RDP_SURFACE_CODEC_NSCODEC &&
+           surface_commands.commands[0].bits.high_unique_id == 0x12345678u &&
+           surface_commands.commands[0].bits.low_unique_id == 0x90abcdefu &&
+           surface_commands.commands[0].bits.timestamp_ms == 0x0102030405060708ull &&
+           surface_commands.commands[0].bits.timestamp_s == 0x1112131415161718ull);
+    surface_bits = surface_commands.commands[0].bits;
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_surface_commands_write_bits(&dyn_response, &surface_bits) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_surface_commands_write_frame_marker(&dyn_response, 0, 0x01020304u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_surface_commands_parse(dyn_response.data, dyn_response.length, &surface_commands) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(surface_commands.count == 2 &&
+           surface_commands.commands[0].bits.bitmap_data[3] == 0xdd &&
+           surface_commands.commands[1].frame_marker.frame_id == 0x01020304u);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
     PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NULL, NULL, 0, &pointer_update) ==
            LIBRDP_STATUS_OK);
     PCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_NULL);

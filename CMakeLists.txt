@@ -68,6 +68,7 @@ add_library(librdp
     src/graphics/planar.c
     src/graphics/rfx_codec.c
     src/graphics/surface.c
+    src/graphics/surface_commands.c
     src/input/input.c
     src/licensing/licensing.c
     src/nla/credssp.c
@@ -191,6 +192,7 @@ if(LIBRDP_BUILD_FUZZ)
     add_librdp_fuzzer(fuzz_nscodec fuzz/nscodec_fuzzer.c)
     add_librdp_fuzzer(fuzz_planar fuzz/planar_fuzzer.c)
     add_librdp_fuzzer(fuzz_rfx_codec fuzz/rfx_codec_fuzzer.c)
+    add_librdp_fuzzer(fuzz_surface_commands fuzz/surface_commands_fuzzer.c)
     add_librdp_fuzzer(fuzz_clipboard fuzz/clipboard_fuzzer.c)
     add_librdp_fuzzer(fuzz_security fuzz/security_fuzzer.c)
     add_librdp_fuzzer(fuzz_licensing fuzz/licensing_fuzzer.c)
