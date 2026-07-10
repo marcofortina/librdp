@@ -94,6 +94,7 @@ librdp_status rdp_multitransport_write_header(rdp_buffer* buffer,
 {
     uint8_t action_flags = 0;
     size_t header_len = RDP_MULTITRANSPORT_HEADER_LENGTH + subheaders_len;
+    size_t start = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !rdp_multitransport_valid_action(action) ||
@@ -109,17 +110,18 @@ librdp_status rdp_multitransport_write_header(rdp_buffer* buffer,
             LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
+    start = buffer->length;
     action_flags = action;
     status = rdp_buffer_append_u8(buffer, action_flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, (uint8_t)header_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, subheaders, subheaders_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_le(buffer, (uint16_t)payload_len);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, (uint8_t)header_len);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, subheaders, subheaders_len);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_multitransport_parse_subheader(const void* data,
@@ -152,17 +154,20 @@ librdp_status rdp_multitransport_write_subheader(rdp_buffer* buffer,
                                                  size_t data_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_multitransport_valid_subheader_type(type) ||
         (!data && data_len > 0) || data_len > UINT8_MAX - 2u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, (uint8_t)(data_len + 2u));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, type);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, data, data_len);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_multitransport_write_create_request(rdp_buffer* buffer,
@@ -170,23 +175,25 @@ librdp_status rdp_multitransport_write_create_request(rdp_buffer* buffer,
                                                       const uint8_t security_cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH])
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !security_cookie)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multitransport_write_header(buffer,
                                              RDP_MULTITRANSPORT_ACTION_CREATE_REQUEST,
                                              NULL,
                                              0,
                                              24u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, request_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, security_cookie, RDP_MULTITRANSPORT_COOKIE_LENGTH);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, request_id);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u32_le(buffer, 0);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, security_cookie, RDP_MULTITRANSPORT_COOKIE_LENGTH);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_multitransport_parse_create_request(
@@ -218,15 +225,21 @@ librdp_status rdp_multitransport_parse_create_request(
 librdp_status rdp_multitransport_write_create_response(rdp_buffer* buffer, uint32_t hresult)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multitransport_write_header(buffer,
                                              RDP_MULTITRANSPORT_ACTION_CREATE_RESPONSE,
                                              NULL,
                                              0,
                                              4u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, hresult);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, hresult);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_multitransport_parse_create_response(
@@ -257,17 +270,21 @@ librdp_status rdp_multitransport_write_data(rdp_buffer* buffer,
                                             size_t data_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multitransport_write_header(buffer,
                                              RDP_MULTITRANSPORT_ACTION_DATA,
                                              subheaders,
                                              subheaders_len,
                                              data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, data, data_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, data, data_len);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_multitransport_parse_data(const void* data,

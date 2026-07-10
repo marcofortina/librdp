@@ -52,6 +52,7 @@
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
+#include "transport/multitransport.h"
 #include "transport/udp_transport.h"
 
 #include <openssl/evp.h>
@@ -16417,6 +16418,100 @@ static int test_pnp_redirection_channel(void)
     return 0;
 }
 
+static int test_multitransport(void)
+{
+    const uint8_t autodetect_payload[] = {0x01u, 0x02u, 0x03u};
+    const uint8_t data_payload[] = {0x10u, 0x20u, 0x30u, 0x40u};
+    const uint8_t bad_subheader[] = {0x02u, 0xffu};
+    uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
+    rdp_multitransport_create_request create_request;
+    rdp_multitransport_create_response create_response;
+    rdp_multitransport_data data_pdu;
+    rdp_multitransport_subheader subheader;
+    uint16_t subheader_count = 0;
+    rdp_buffer buffer;
+    rdp_buffer subheaders;
+    size_t i = 0;
+
+    for (i = 0; i < sizeof(cookie); i++)
+        cookie[i] = (uint8_t)(0x80u + i);
+
+    rdp_buffer_init(&buffer);
+    rdp_buffer_init(&subheaders);
+
+    PCHECK(rdp_multitransport_write_create_request(&buffer, 0x11223344u, cookie) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_parse_create_request(buffer.data,
+                                                   buffer.length,
+                                                   &create_request) == LIBRDP_STATUS_OK);
+    PCHECK(create_request.header.action == RDP_MULTITRANSPORT_ACTION_CREATE_REQUEST &&
+           create_request.request_id == 0x11223344u &&
+           memcmp(create_request.security_cookie, cookie, sizeof(cookie)) == 0);
+    buffer.data[8] = 1u;
+    PCHECK(rdp_multitransport_parse_create_request(buffer.data,
+                                                   buffer.length,
+                                                   &create_request) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_multitransport_write_create_response(&buffer, 0x55667788u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_parse_create_response(buffer.data,
+                                                    buffer.length,
+                                                    &create_response) == LIBRDP_STATUS_OK);
+    PCHECK(create_response.header.action == RDP_MULTITRANSPORT_ACTION_CREATE_RESPONSE &&
+           create_response.hresult == 0x55667788u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_multitransport_write_subheader(&subheaders,
+                                              RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST,
+                                              autodetect_payload,
+                                              sizeof(autodetect_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_count_subheaders(subheaders.data,
+                                               subheaders.length,
+                                               &subheader_count) == LIBRDP_STATUS_OK);
+    PCHECK(subheader_count == 1);
+    PCHECK(rdp_multitransport_parse_subheader(subheaders.data,
+                                              subheaders.length,
+                                              &subheader) == LIBRDP_STATUS_OK);
+    PCHECK(subheader.type == RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST &&
+           subheader.data_len == sizeof(autodetect_payload) &&
+           memcmp(subheader.data, autodetect_payload, sizeof(autodetect_payload)) == 0);
+    PCHECK(rdp_multitransport_parse_subheader(bad_subheader,
+                                              sizeof(bad_subheader),
+                                              &subheader) == LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    PCHECK(rdp_multitransport_write_data(&buffer,
+                                         subheaders.data,
+                                         subheaders.length,
+                                         data_payload,
+                                         sizeof(data_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_parse_data(buffer.data,
+                                         buffer.length,
+                                         &data_pdu) == LIBRDP_STATUS_OK);
+    PCHECK(data_pdu.header.action == RDP_MULTITRANSPORT_ACTION_DATA &&
+           data_pdu.header.subheaders_len == subheaders.length &&
+           data_pdu.data_len == sizeof(data_payload) &&
+           memcmp(data_pdu.data, data_payload, sizeof(data_payload)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_write_data(&buffer,
+                                         bad_subheader,
+                                         sizeof(bad_subheader),
+                                         data_payload,
+                                         sizeof(data_payload)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
+
+    rdp_buffer_free(&subheaders);
+    rdp_buffer_free(&buffer);
+    return 0;
+}
+
 static int test_udp_transport(void)
 {
     const uint8_t ack_payload[] = {0xaau, 0xbbu, 0xccu};
@@ -16657,6 +16752,8 @@ int test_protocol(void)
     if (test_usb_redirection_channel() != 0)
         return 1;
     if (test_pnp_redirection_channel() != 0)
+        return 1;
+    if (test_multitransport() != 0)
         return 1;
     if (test_udp_transport() != 0)
         return 1;
