@@ -836,6 +836,7 @@ librdp_status rdp_auth_redirection_write_default_response(
     uint32_t status)
 {
     rdp_auth_redirection_compare_credentials_result compare;
+    uint8_t fixed[RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH];
 
     if (!buffer || !call)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -846,6 +847,20 @@ librdp_status rdp_auth_redirection_write_default_response(
             return rdp_auth_redirection_write_negotiate_version_response(buffer,
                                                                          call->call.call_id,
                                                                          status);
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_NT_RESPONSE:
+            memset(fixed, 0, RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH);
+            return rdp_auth_redirection_write_response(buffer,
+                                                       call->call.call_id,
+                                                       status,
+                                                       fixed,
+                                                       RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH);
+        case RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT:
+            memset(fixed, 0, RDP_AUTH_REDIRECTION_USER_SESSION_KEY_LENGTH);
+            return rdp_auth_redirection_write_response(buffer,
+                                                       call->call.call_id,
+                                                       status,
+                                                       fixed,
+                                                       RDP_AUTH_REDIRECTION_USER_SESSION_KEY_LENGTH);
         case RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS:
             memset(&compare, 0, sizeof(compare));
             return rdp_auth_redirection_write_compare_credentials_response(buffer,

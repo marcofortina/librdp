@@ -10300,6 +10300,42 @@ static int test_auth_smartcard_redirection_channels(void)
            auth_response_message.body.compare_credentials.sha_equal == 0);
     buffer.length = 0;
     PCHECK(rdp_auth_redirection_write_call(&buffer,
+                                           RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_NT_RESPONSE,
+                                           call_payload,
+                                           sizeof(call_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_call_message(buffer.data,
+                                                   buffer.length,
+                                                   &auth_call_message) == LIBRDP_STATUS_OK);
+    packet.length = 0;
+    PCHECK(rdp_auth_redirection_write_default_response(&packet,
+                                                       &auth_call_message,
+                                                       0x80004005u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_response_message(packet.data,
+                                                       packet.length,
+                                                       &auth_response_message) == LIBRDP_STATUS_OK);
+    PCHECK(auth_response_message.kind == RDP_AUTH_REDIRECTION_MESSAGE_FIXED_RESPONSE &&
+           auth_response_message.response.status == 0x80004005u &&
+           auth_response_message.body.fixed.data_len == RDP_AUTH_REDIRECTION_NT_RESPONSE_LENGTH);
+    buffer.length = 0;
+    PCHECK(rdp_auth_redirection_write_call(&buffer,
+                                           RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT,
+                                           call_payload,
+                                           sizeof(call_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_call_message(buffer.data,
+                                                   buffer.length,
+                                                   &auth_call_message) == LIBRDP_STATUS_OK);
+    packet.length = 0;
+    PCHECK(rdp_auth_redirection_write_default_response(&packet,
+                                                       &auth_call_message,
+                                                       0x80004005u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_auth_redirection_parse_response_message(packet.data,
+                                                       packet.length,
+                                                       &auth_response_message) == LIBRDP_STATUS_OK);
+    PCHECK(auth_response_message.kind == RDP_AUTH_REDIRECTION_MESSAGE_FIXED_RESPONSE &&
+           auth_response_message.response.status == 0x80004005u &&
+           auth_response_message.body.fixed.data_len == RDP_AUTH_REDIRECTION_USER_SESSION_KEY_LENGTH);
+    buffer.length = 0;
+    PCHECK(rdp_auth_redirection_write_call(&buffer,
                                            RDP_AUTH_REDIRECTION_CALL_KERB_PACK_AP_REPLY,
                                            NULL,
                                            0) == LIBRDP_STATUS_OK);

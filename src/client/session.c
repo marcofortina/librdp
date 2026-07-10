@@ -17779,6 +17779,17 @@ static librdp_status rdp_session_auth_redirection_send_payload(librdp_session* s
     return status;
 }
 
+static uint32_t rdp_session_auth_redirection_response_status(
+    const rdp_auth_redirection_call_message* call)
+{
+    if (!call)
+        return RDP_SESSION_HRESULT_FAIL;
+    if (call->kind == RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION ||
+        call->call.call_id == RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS)
+        return RDP_SESSION_HRESULT_OK;
+    return RDP_SESSION_HRESULT_FAIL;
+}
+
 static librdp_status rdp_session_handle_auth_redirection_message(librdp_session* session,
                                                                  uint32_t channel_id,
                                                                  uint8_t channel_id_bytes,
@@ -17833,10 +17844,7 @@ static librdp_status rdp_session_handle_auth_redirection_message(librdp_session*
     }
     if (status == LIBRDP_STATUS_OK)
     {
-        if (call.kind == RDP_AUTH_REDIRECTION_MESSAGE_NEGOTIATE_VERSION)
-        {
-            response_status = 0;
-        }
+        response_status = rdp_session_auth_redirection_response_status(&call);
         status = rdp_auth_redirection_write_default_response(&response_payload,
                                                              &call,
                                                              response_status);
