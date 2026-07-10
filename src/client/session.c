@@ -4898,6 +4898,26 @@ static librdp_status rdp_session_make_printer_cache_path(librdp_session* session
     return LIBRDP_STATUS_OK;
 }
 
+static uint32_t rdp_session_validate_printer_output_path(librdp_session* session, uint32_t printer_index)
+{
+    const char* output = NULL;
+    struct stat st;
+
+    if (!session)
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    output = librdp_settings_printer_output_path(session->settings, printer_index);
+    if (!output || output[0] == '\0')
+        return RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
+    memset(&st, 0, sizeof(st));
+    if (stat(output, &st) != 0)
+        return rdp_session_errno_to_device_status(errno);
+    if (!S_ISDIR(st.st_mode))
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    if (access(output, W_OK | X_OK) != 0)
+        return rdp_session_errno_to_device_status(errno);
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
+
 static uint32_t rdp_session_printer_index_from_utf16_name(librdp_session* session,
                                                           const uint8_t* name,
                                                           uint32_t name_len,
@@ -5073,10 +5093,13 @@ static librdp_status rdp_session_handle_printer_create(librdp_session* session,
         io_status = RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
     else
     {
-        job = rdp_session_redirected_file_alloc(session, request->device_id, &file_id);
+        io_status = rdp_session_validate_printer_output_path(session, printer_index);
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            job = rdp_session_redirected_file_alloc(session, request->device_id, &file_id);
         if (!job)
         {
-            io_status = RDP_SESSION_DEVICE_PRINT_QUEUE_FULL;
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+                io_status = RDP_SESSION_DEVICE_PRINT_QUEUE_FULL;
         }
         else
         {
@@ -5299,23 +5322,50 @@ static librdp_status rdp_session_handle_printer_write(librdp_session* session,
 }
 
 static librdp_status rdp_session_handle_printer_device_control(librdp_session* session,
-                                                               const rdp_device_redirection_io_request* request)
+                                                               const uint8_t* data,
+                                                               size_t data_len)
 {
+    rdp_filesystem_redirection_control_request request;
     rdp_buffer response;
+    uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || !request)
+    if (!session || !data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_filesystem_redirection_parse_control_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (rdp_session_printer_index_from_device_id(session, request.io.device_id) == UINT32_MAX)
+        io_status = RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
+    else if (request.output_buffer_length > RDP_SESSION_MAX_FILE_IO_BYTES ||
+             request.input_buffer_length > RDP_SESSION_MAX_FILE_IO_BYTES)
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    else if (request.io.file_id != 0 &&
+             !rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
+        io_status = RDP_SESSION_DEVICE_UNSUCCESSFUL;
+    else
+        io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
     rdp_buffer_init(&response);
     status = rdp_printer_redirection_write_device_control_response(&response,
-                                                                   request->device_id,
-                                                                   request->completion_id,
-                                                                   RDP_DEVICE_REDIRECTION_STATUS_SUCCESS);
+                                                                   request.io.device_id,
+                                                                   request.io.completion_id,
+                                                                   io_status);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_printer_response(session,
                                                    &response,
                                                    "client.rdpdr.printer.device_control.response");
     rdp_buffer_free(&response);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.printer.device_control",
+                        "device_id=%u file_id=%u completion_id=%u ioctl=%u status=%u input_len=%u output_limit=%u",
+                        request.io.device_id,
+                        request.io.file_id,
+                        request.io.completion_id,
+                        request.io_control_code,
+                        io_status,
+                        request.input_buffer_length,
+                        request.output_buffer_length);
     return status;
 }
 
@@ -5367,7 +5417,7 @@ static librdp_status rdp_session_handle_printer_io_request(librdp_session* sessi
         case RDP_DEVICE_REDIRECTION_IRP_WRITE:
             return rdp_session_handle_printer_write(session, data, data_len);
         case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
-            return rdp_session_handle_printer_device_control(session, &request);
+            return rdp_session_handle_printer_device_control(session, data, data_len);
         default:
             return rdp_session_handle_printer_unsupported(session, &request);
     }
