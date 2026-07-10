@@ -6533,12 +6533,19 @@ static uint32_t rdp_session_apply_printer_set_information(rdp_session_redirected
         return RDP_SESSION_DEVICE_UNSUCCESSFUL;
     switch (request->information_class)
     {
+        case RDP_SESSION_FILE_BASIC_INFORMATION:
+            return rdp_session_apply_basic_information(job, request->buffer, request->length);
         case RDP_SESSION_FILE_POSITION_INFORMATION:
             return rdp_session_apply_position_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_MODE_INFORMATION:
+            return rdp_session_apply_mode_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_DISPOSITION_INFORMATION:
+            return rdp_session_apply_disposition_information(job, request->buffer, request->length);
         case RDP_SESSION_FILE_END_OF_FILE_INFORMATION:
         case RDP_SESSION_FILE_ALLOCATION_INFORMATION:
-        case RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION:
             return rdp_session_apply_size_information(job, request->buffer, request->length);
+        case RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION:
+            return rdp_session_apply_valid_data_length_information(job, request->buffer, request->length);
         default:
             return RDP_SESSION_DEVICE_NOT_SUPPORTED;
     }
