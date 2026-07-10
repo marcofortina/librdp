@@ -4715,6 +4715,13 @@ static int test_path_security_license_channels(void)
            nscodec_capability_buffer.data[0] == 1 &&
            nscodec_capability_buffer.data[1] == 0 &&
            nscodec_capability_buffer.data[2] == 3);
+    nscodec_capability_buffer.length = 0;
+    PCHECK(rdp_buffer_append_u8(&nscodec_capability_buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_nscodec_write_capability(&nscodec_capability_buffer,
+                                        &(rdp_nscodec_capability){1, 0, 0}) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(nscodec_capability_buffer.length == 1 &&
+           nscodec_capability_buffer.data[0] == 0xa5u);
     PCHECK(rdp_nscodec_parse_stream(nscodec_raw_argb,
                                     sizeof(nscodec_raw_argb),
                                     1,

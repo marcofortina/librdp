@@ -5,14 +5,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-static size_t rdp_nscodec_round_up(size_t value, size_t alignment)
+static int rdp_nscodec_round_up(size_t value, size_t alignment, size_t* rounded)
 {
     size_t remainder = 0;
 
+    if (!rounded)
+        return 0;
     if (alignment == 0)
-        return value;
+    {
+        *rounded = value;
+        return 1;
+    }
     remainder = value % alignment;
-    return remainder == 0 ? value : value + alignment - remainder;
+    if (remainder == 0)
+    {
+        *rounded = value;
+        return 1;
+    }
+    if (value > ((size_t)-1) - (alignment - remainder))
+        return 0;
+    *rounded = value + alignment - remainder;
+    return 1;
 }
 
 static uint8_t rdp_nscodec_clamp_i32(int32_t value)
@@ -169,9 +182,9 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
         reserved != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rounded_width = rdp_nscodec_round_up((size_t)width, 8u);
-    rounded_height = rdp_nscodec_round_up((size_t)height, 2u);
-    if (rounded_width < width || rounded_height < height)
+    if (!rdp_nscodec_round_up((size_t)width, 8u, &rounded_width) ||
+        !rdp_nscodec_round_up((size_t)height, 2u, &rounded_height) ||
+        rounded_width < width || rounded_height < height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if (stream->chroma_subsampling_level)
