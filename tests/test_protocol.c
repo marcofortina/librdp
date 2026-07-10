@@ -9359,16 +9359,35 @@ static int test_composited_remoting_channel(void)
     rdp_composited_resource_order resource;
     rdp_composited_duplicate_handle duplicate;
     rdp_composited_u32_target_order u32_order;
+    rdp_composited_u64_target_order u64_order;
+    rdp_composited_target_order target_order;
+    rdp_composited_window_node_bounds bounds_order;
+    rdp_composited_window_node_clip clip_order;
+    rdp_composited_window_node_source_modifications source_order;
+    rdp_composited_margins_order margins_order;
+    rdp_composited_color_order color_order;
+    rdp_composited_rect_order rect_order;
+    rdp_composited_target_window_settings window_settings;
+    rdp_composited_render_data render_data;
+    rdp_composited_target_capture_bits capture_bits;
+    rdp_composited_meta_capture_bits meta_capture_bits;
     rdp_composited_window_node_create window_node;
     rdp_composited_target_create target;
     rdp_composited_glyph_run glyph_run;
     rdp_composited_gdi_sprite_bitmap sprite;
     rdp_composited_gdi_surface_update surface_update;
+    rdp_composited_gdi_dirty dirty;
     rdp_composited_meta_target meta;
     rdp_composited_batch_reader reader;
     rdp_composited_channel_message message;
     rdp_composited_render_tree tree;
     const rdp_composited_render_resource* render_resource = NULL;
+    const rdp_composited_rect_i rect = {1, 2, 301, 402};
+    const rdp_composited_rect_i client_rect = {4, 5, 290, 380};
+    const rdp_composited_rect_i content_rect = {7, 8, 280, 360};
+    const rdp_composited_margins_i margins = {9, 10, 11, 12};
+    const uint32_t render_words[3] = {0x01020304u, 0x05060708u, 0x090a0b0cu};
+    uint8_t update_param[40] = {0};
     rdp_buffer buffer;
     rdp_buffer batch;
     rdp_buffer wrapped;
@@ -9449,6 +9468,82 @@ static int test_composited_remoting_channel(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_composited_write_u64_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE,
+                                                 0x44u,
+                                                 0x0102030405060708ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_u64_target_order(buffer.data,
+                                                 buffer.length,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE,
+                                                 &u64_order) == LIBRDP_STATUS_OK);
+    PCHECK(u64_order.target_resource == 0x44u && u64_order.value == 0x0102030405060708ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_order(&buffer,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION,
+                                             0x44u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_target_order(buffer.data,
+                                             buffer.length,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION,
+                                             &target_order) == LIBRDP_STATUS_OK);
+    PCHECK(target_order.target_resource == 0x44u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_bounds(&buffer,
+                                                   0x44u,
+                                                   &rect,
+                                                   &client_rect,
+                                                   &content_rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_window_node_bounds(buffer.data, buffer.length, &bounds_order) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(bounds_order.target_resource == 0x44u &&
+           bounds_order.window.right == 301 &&
+           bounds_order.client.top == 5 &&
+           bounds_order.content.bottom == 360);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_clip(&buffer, 0x44u, 1u, 0x77u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_window_node_clip(buffer.data, buffer.length, &clip_order) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(clip_order.target_resource == 0x44u &&
+           clip_order.for_dirty_accum == 1u &&
+           clip_order.clip_resource == 0x77u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_source_modifications(&buffer,
+                                                                 0x44u,
+                                                                 2u,
+                                                                 0x00112233u,
+                                                                 0x44556677u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_window_node_source_modifications(buffer.data,
+                                                                 buffer.length,
+                                                                 &source_order) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(source_order.target_resource == 0x44u &&
+           source_order.source_modifications == 2u &&
+           source_order.high_color_key == 0x44556677u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_margins_order(&buffer,
+                                              RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS,
+                                              0x44u,
+                                              &margins) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_margins_order(buffer.data,
+                                              buffer.length,
+                                              RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS,
+                                              &margins_order) == LIBRDP_STATUS_OK);
+    PCHECK(margins_order.target_resource == 0x44u &&
+           margins_order.margins.left == 9 &&
+           margins_order.margins.bottom == 12);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_composited_write_window_node_create(&buffer,
                                                    0x11u,
                                                    0x0102030405060708ull,
@@ -9471,6 +9566,103 @@ static int test_composited_remoting_channel(void)
            target.width == 1280u &&
            target.height == 720u &&
            memcmp(target.clear_color, color, sizeof(color)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_color_order(&buffer,
+                                            RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR,
+                                            0x12u,
+                                            color) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_color_order(buffer.data,
+                                            buffer.length,
+                                            RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR,
+                                            &color_order) == LIBRDP_STATUS_OK);
+    PCHECK(color_order.target_resource == 0x12u &&
+           memcmp(color_order.color, color, sizeof(color)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_rect_order(&buffer,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           0x12u,
+                                           &rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_rect_order(buffer.data,
+                                           buffer.length,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           &rect_order) == LIBRDP_STATUS_OK);
+    PCHECK(rect_order.target_resource == 0x12u &&
+           rect_order.rect.left == 1 &&
+           rect_order.rect.bottom == 402);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&window_settings, 0, sizeof(window_settings));
+    window_settings.window_rect = rect;
+    window_settings.window_layer_type = 2u;
+    window_settings.transparency_mode = 3u;
+    window_settings.constant_alpha_bits = 0x3f800000u;
+    window_settings.is_child = 1u;
+    window_settings.is_rtl = 1u;
+    window_settings.rendering_enabled = 0u;
+    memcpy(window_settings.color_key, color, sizeof(color));
+    window_settings.disable_cookie = 0x12345678u;
+    PCHECK(rdp_composited_write_target_window_settings(&buffer, 0x12u, &window_settings) ==
+           LIBRDP_STATUS_OK);
+    memset(&window_settings, 0, sizeof(window_settings));
+    PCHECK(rdp_composited_parse_target_window_settings(buffer.data,
+                                                       buffer.length,
+                                                       &window_settings) == LIBRDP_STATUS_OK);
+    PCHECK(window_settings.target_resource == 0x12u &&
+           window_settings.window_rect.right == 301 &&
+           window_settings.window_layer_type == 2u &&
+           window_settings.disable_cookie == 0x12345678u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_render_data(&buffer,
+                                            0x18u,
+                                            render_words,
+                                            sizeof(render_words)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_render_data(buffer.data, buffer.length, &render_data) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(render_data.target_resource == 0x18u &&
+           render_data.data_size == sizeof(render_words) &&
+           render_data.data_len == sizeof(render_words));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_capture_bits(&buffer,
+                                                    0x12u,
+                                                    3u,
+                                                    4u,
+                                                    320u,
+                                                    240u,
+                                                    0x57u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_target_capture_bits(buffer.data,
+                                                    buffer.length,
+                                                    &capture_bits) == LIBRDP_STATUS_OK);
+    PCHECK(capture_bits.target_resource == 0x12u &&
+           capture_bits.x == 3u &&
+           capture_bits.height == 240u &&
+           capture_bits.dxgi_format == 0x57u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    update_param[0] = 0x5au;
+    PCHECK(rdp_composited_write_meta_capture_bits(&buffer,
+                                                  0x17u,
+                                                  640u,
+                                                  360u,
+                                                  0x1122334455667788ull,
+                                                  1u,
+                                                  update_param) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_meta_capture_bits(buffer.data,
+                                                  buffer.length,
+                                                  &meta_capture_bits) == LIBRDP_STATUS_OK);
+    PCHECK(meta_capture_bits.target_resource == 0x17u &&
+           meta_capture_bits.width == 640u &&
+           meta_capture_bits.update_id == 0x1122334455667788ull &&
+           meta_capture_bits.update_param[0] == 0x5au);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -9506,6 +9698,18 @@ static int test_composited_remoting_channel(void)
                                                    buffer.length,
                                                    &surface_update) == LIBRDP_STATUS_OK);
     PCHECK(surface_update.target_resource == 0x16u && surface_update.dxgi_format == 0x57u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_gdi_dirty(&buffer,
+                                          0x16u,
+                                          -1,
+                                          0x0102030405060708ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_gdi_dirty(buffer.data, buffer.length, &dirty) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(dirty.target_resource == 0x16u &&
+           dirty.dirty_flags == -1 &&
+           dirty.notification_cookie == 0x0102030405060708ull);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -9587,6 +9791,241 @@ static int test_composited_remoting_channel(void)
     PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
     render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
     PCHECK(render_resource && render_resource->root_resource == 0x10u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_bounds(&buffer,
+                                                   0x44u,
+                                                   &rect,
+                                                   &client_rect,
+                                                   &content_rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource &&
+           render_resource->bounds_valid &&
+           render_resource->window_rect.right == 301 &&
+           render_resource->client_rect.top == 5 &&
+           render_resource->content_rect.bottom == 360);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_u64_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_UPDATE_SPRITE_HANDLE,
+                                                 0x44u,
+                                                 0x2122232425262728ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource && render_resource->sprite_id == 0x2122232425262728ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_clip(&buffer, 0x44u, 1u, 0x77u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource &&
+           render_resource->sprite_clip_for_dirty_accum == 1u &&
+           render_resource->sprite_clip_resource == 0x77u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_window_node_source_modifications(&buffer,
+                                                                 0x44u,
+                                                                 2u,
+                                                                 0x00112233u,
+                                                                 0x44556677u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource &&
+           render_resource->source_modifications == 2u &&
+           render_resource->low_color_key == 0x00112233u &&
+           render_resource->high_color_key == 0x44556677u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_margins_order(&buffer,
+                                              RDP_COMPOSITED_CMD_WINDOW_NODE_SET_ALPHA_MARGINS,
+                                              0x44u,
+                                              &margins) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource &&
+           render_resource->alpha_margins_valid &&
+           render_resource->alpha_margins.bottom == 12);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_u32_target_order(&buffer,
+                                                 RDP_COMPOSITED_CMD_WINDOW_NODE_SET_COMPOSE_ONCE,
+                                                 0x44u,
+                                                 1u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource && render_resource->compose_once == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_order(&buffer,
+                                             RDP_COMPOSITED_CMD_WINDOW_NODE_NOTIFY_VISIBLE_REGION,
+                                             0x44u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x44u);
+    PCHECK(render_resource && render_resource->visible_region_updates == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_window_settings(&buffer, 0x40u, &window_settings) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource &&
+           render_resource->window_layer_type == window_settings.window_layer_type &&
+           render_resource->rendering_enabled == 0u &&
+           render_resource->disable_cookie == 0x12345678u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_color_order(&buffer,
+                                            RDP_COMPOSITED_CMD_TARGET_SET_CLEAR_COLOR,
+                                            0x40u,
+                                            color) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource && memcmp(render_resource->clear_color, color, sizeof(color)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_rect_order(&buffer,
+                                           RDP_COMPOSITED_CMD_TARGET_INVALIDATE,
+                                           0x40u,
+                                           &rect) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource &&
+           render_resource->invalid_rect_valid &&
+           render_resource->invalid_rect.bottom == 402 &&
+           tree.invalidation_count == 1u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_render_data(&buffer,
+                                            0x18u,
+                                            render_words,
+                                            sizeof(render_words)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x18u);
+    PCHECK(render_resource &&
+           render_resource->resource_type == RDP_COMPOSITED_RESOURCE_RENDERDATA &&
+           render_resource->render_data_length == sizeof(render_words) &&
+           render_resource->render_instruction_count == 3u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_capture_bits(&buffer,
+                                                    0x40u,
+                                                    3u,
+                                                    4u,
+                                                    320u,
+                                                    240u,
+                                                    0x57u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x40u);
+    PCHECK(render_resource &&
+           render_resource->capture_count == 1u &&
+           render_resource->capture_x == 3u &&
+           render_resource->capture_height == 240u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_meta_capture_bits(&buffer,
+                                                  0x17u,
+                                                  640u,
+                                                  360u,
+                                                  0x1122334455667788ull,
+                                                  1u,
+                                                  update_param) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x17u);
+    PCHECK(render_resource &&
+           render_resource->meta_capture_count == 1u &&
+           render_resource->meta_capture_update_id == 0x1122334455667788ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_gdi_sprite_bitmap(&buffer,
+                                                  0x16u,
+                                                  0x2122232425262728ull,
+                                                  0x3132333435363738ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_margins_order(&buffer,
+                                              RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UPDATE_MARGINS,
+                                              0x16u,
+                                              &margins) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x16u);
+    PCHECK(render_resource &&
+           render_resource->sprite_margins_valid &&
+           render_resource->sprite_margins.right == 11);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_gdi_dirty(&buffer,
+                                          0x16u,
+                                          -1,
+                                          0x0102030405060708ull) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x16u);
+    PCHECK(render_resource &&
+           render_resource->sprite_dirty_count == 1u &&
+           render_resource->sprite_dirty_flags == UINT32_MAX &&
+           render_resource->sprite_dirty_cookie == 0x0102030405060708ull);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_composited_write_target_order(&buffer,
+                                             RDP_COMPOSITED_CMD_GDI_SPRITE_BITMAP_UNMAP_SECTION,
+                                             0x16u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_parse_channel_message(buffer.data, buffer.length, &message) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) == LIBRDP_STATUS_OK);
+    render_resource = rdp_composited_render_tree_find(&tree, 0x16u);
+    PCHECK(render_resource && render_resource->sprite_unmapped == 1u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

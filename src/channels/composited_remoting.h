@@ -87,8 +87,10 @@
 #define RDP_COMPOSITED_MSG_RENDER_STATUS 0x0000000du
 #define RDP_COMPOSITED_MSG_DISABLE_COMPOSITION 0x0000000eu
 #define RDP_COMPOSITED_MSG_META_CAPTURE_BITS_REPLY 0x00000010u
+#define RDP_COMPOSITED_RESOURCE_VISUAL 0x00000012u
 #define RDP_COMPOSITED_RESOURCE_WINDOW_NODE 0x00000013u
 #define RDP_COMPOSITED_RESOURCE_GLYPH_RUN 0x00000014u
+#define RDP_COMPOSITED_RESOURCE_RENDERDATA 0x00000015u
 #define RDP_COMPOSITED_RESOURCE_HWND_TARGET 0x00000018u
 #define RDP_COMPOSITED_RESOURCE_DESKTOP_TARGET 0x00000019u
 #define RDP_COMPOSITED_RESOURCE_META_BITMAP_TARGET 0x00000023u
@@ -149,6 +151,129 @@ typedef struct rdp_composited_u32_target_order
     uint32_t value;
 } rdp_composited_u32_target_order;
 
+typedef struct rdp_composited_u64_target_order
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint64_t value;
+} rdp_composited_u64_target_order;
+
+typedef struct rdp_composited_target_order
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+} rdp_composited_target_order;
+
+typedef struct rdp_composited_rect_i
+{
+    int32_t left;
+    int32_t top;
+    int32_t right;
+    int32_t bottom;
+} rdp_composited_rect_i;
+
+typedef struct rdp_composited_margins_i
+{
+    int32_t left;
+    int32_t top;
+    int32_t right;
+    int32_t bottom;
+} rdp_composited_margins_i;
+
+typedef struct rdp_composited_window_node_bounds
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    rdp_composited_rect_i window;
+    rdp_composited_rect_i client;
+    rdp_composited_rect_i content;
+} rdp_composited_window_node_bounds;
+
+typedef struct rdp_composited_window_node_clip
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t for_dirty_accum;
+    uint32_t clip_resource;
+} rdp_composited_window_node_clip;
+
+typedef struct rdp_composited_window_node_source_modifications
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t source_modifications;
+    uint32_t low_color_key;
+    uint32_t high_color_key;
+} rdp_composited_window_node_source_modifications;
+
+typedef struct rdp_composited_margins_order
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    rdp_composited_margins_i margins;
+} rdp_composited_margins_order;
+
+typedef struct rdp_composited_color_order
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint8_t color[16];
+} rdp_composited_color_order;
+
+typedef struct rdp_composited_rect_order
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    rdp_composited_rect_i rect;
+} rdp_composited_rect_order;
+
+typedef struct rdp_composited_target_window_settings
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    rdp_composited_rect_i window_rect;
+    uint32_t window_layer_type;
+    uint32_t transparency_mode;
+    uint32_t constant_alpha_bits;
+    uint32_t is_child;
+    uint32_t is_rtl;
+    uint32_t rendering_enabled;
+    uint8_t color_key[16];
+    uint32_t disable_cookie;
+} rdp_composited_target_window_settings;
+
+typedef struct rdp_composited_render_data
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t data_size;
+    const uint8_t* data;
+    size_t data_len;
+} rdp_composited_render_data;
+
+typedef struct rdp_composited_target_capture_bits
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t dxgi_format;
+} rdp_composited_target_capture_bits;
+
+typedef struct rdp_composited_meta_capture_bits
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    uint32_t width;
+    uint32_t height;
+    uint64_t update_id;
+    uint32_t include_cursors;
+    const uint8_t* update_param;
+    size_t update_param_len;
+} rdp_composited_meta_capture_bits;
+
 typedef struct rdp_composited_window_node_create
 {
     rdp_composited_channel_message header;
@@ -193,6 +318,14 @@ typedef struct rdp_composited_gdi_surface_update
     uint32_t dxgi_format;
 } rdp_composited_gdi_surface_update;
 
+typedef struct rdp_composited_gdi_dirty
+{
+    rdp_composited_channel_message header;
+    uint32_t target_resource;
+    int32_t dirty_flags;
+    uint64_t notification_cookie;
+} rdp_composited_gdi_dirty;
+
 typedef struct rdp_composited_texture_set
 {
     uint32_t surface_count;
@@ -225,10 +358,57 @@ typedef struct rdp_composited_render_resource
     uint32_t surface_count;
     uint32_t texture_width;
     uint32_t texture_height;
+    uint32_t render_data_length;
+    uint32_t render_instruction_count;
+    uint32_t sprite_image_resource;
+    uint32_t logical_surface_image_resource;
+    uint32_t sprite_clip_resource;
+    uint32_t sprite_clip_for_dirty_accum;
+    uint32_t dx_clip_resource;
+    uint32_t source_modifications;
+    uint32_t low_color_key;
+    uint32_t high_color_key;
+    uint32_t compose_once;
+    uint32_t protected_content;
+    uint32_t visible_region_updates;
+    uint32_t window_layer_type;
+    uint32_t transparency_mode;
+    uint32_t constant_alpha_bits;
+    uint32_t is_child;
+    uint32_t is_rtl;
+    uint32_t rendering_enabled;
+    uint32_t disable_cookie;
+    uint32_t transform_resource;
+    uint32_t color_transform_resource;
+    uint32_t filter_list_resource;
+    uint32_t capture_count;
+    uint32_t capture_x;
+    uint32_t capture_y;
+    uint32_t capture_width;
+    uint32_t capture_height;
+    uint32_t meta_capture_count;
+    uint32_t sprite_dirty_count;
+    uint32_t sprite_dirty_flags;
+    uint32_t sprite_unmapped;
     uint64_t sprite_id;
     uint64_t window_id;
     uint64_t logical_surface_id;
+    uint64_t meta_capture_update_id;
+    uint64_t sprite_dirty_cookie;
+    rdp_composited_rect_i window_rect;
+    rdp_composited_rect_i client_rect;
+    rdp_composited_rect_i content_rect;
+    rdp_composited_rect_i invalid_rect;
+    rdp_composited_margins_i alpha_margins;
+    rdp_composited_margins_i maximized_clip_margins;
+    rdp_composited_margins_i sprite_margins;
     uint8_t clear_color[16];
+    uint8_t color_key[16];
+    uint8_t bounds_valid;
+    uint8_t invalid_rect_valid;
+    uint8_t alpha_margins_valid;
+    uint8_t maximized_clip_margins_valid;
+    uint8_t sprite_margins_valid;
 } rdp_composited_render_resource;
 
 typedef struct rdp_composited_render_tree
@@ -317,6 +497,107 @@ librdp_status rdp_composited_write_u32_target_order(rdp_buffer* buffer,
                                                     uint32_t control_code,
                                                     uint32_t target_resource,
                                                     uint32_t value);
+librdp_status rdp_composited_parse_u64_target_order(const void* data,
+                                                    size_t length,
+                                                    uint32_t expected_code,
+                                                    rdp_composited_u64_target_order* order);
+librdp_status rdp_composited_write_u64_target_order(rdp_buffer* buffer,
+                                                    uint32_t control_code,
+                                                    uint32_t target_resource,
+                                                    uint64_t value);
+librdp_status rdp_composited_parse_target_order(const void* data,
+                                                size_t length,
+                                                uint32_t expected_code,
+                                                rdp_composited_target_order* order);
+librdp_status rdp_composited_write_target_order(rdp_buffer* buffer,
+                                                uint32_t control_code,
+                                                uint32_t target_resource);
+librdp_status rdp_composited_parse_window_node_bounds(const void* data,
+                                                      size_t length,
+                                                      rdp_composited_window_node_bounds* order);
+librdp_status rdp_composited_write_window_node_bounds(
+    rdp_buffer* buffer,
+    uint32_t target_resource,
+    const rdp_composited_rect_i* window,
+    const rdp_composited_rect_i* client,
+    const rdp_composited_rect_i* content);
+librdp_status rdp_composited_parse_window_node_clip(const void* data,
+                                                    size_t length,
+                                                    rdp_composited_window_node_clip* order);
+librdp_status rdp_composited_write_window_node_clip(rdp_buffer* buffer,
+                                                    uint32_t target_resource,
+                                                    uint32_t for_dirty_accum,
+                                                    uint32_t clip_resource);
+librdp_status rdp_composited_parse_window_node_source_modifications(
+    const void* data,
+    size_t length,
+    rdp_composited_window_node_source_modifications* order);
+librdp_status rdp_composited_write_window_node_source_modifications(
+    rdp_buffer* buffer,
+    uint32_t target_resource,
+    uint32_t source_modifications,
+    uint32_t low_color_key,
+    uint32_t high_color_key);
+librdp_status rdp_composited_parse_margins_order(const void* data,
+                                                 size_t length,
+                                                 uint32_t expected_code,
+                                                 rdp_composited_margins_order* order);
+librdp_status rdp_composited_write_margins_order(rdp_buffer* buffer,
+                                                 uint32_t control_code,
+                                                 uint32_t target_resource,
+                                                 const rdp_composited_margins_i* margins);
+librdp_status rdp_composited_parse_color_order(const void* data,
+                                               size_t length,
+                                               uint32_t expected_code,
+                                               rdp_composited_color_order* order);
+librdp_status rdp_composited_write_color_order(rdp_buffer* buffer,
+                                               uint32_t control_code,
+                                               uint32_t target_resource,
+                                               const uint8_t color[16]);
+librdp_status rdp_composited_parse_rect_order(const void* data,
+                                              size_t length,
+                                              uint32_t expected_code,
+                                              rdp_composited_rect_order* order);
+librdp_status rdp_composited_write_rect_order(rdp_buffer* buffer,
+                                              uint32_t control_code,
+                                              uint32_t target_resource,
+                                              const rdp_composited_rect_i* rect);
+librdp_status rdp_composited_parse_target_window_settings(
+    const void* data,
+    size_t length,
+    rdp_composited_target_window_settings* order);
+librdp_status rdp_composited_write_target_window_settings(
+    rdp_buffer* buffer,
+    uint32_t target_resource,
+    const rdp_composited_target_window_settings* settings);
+librdp_status rdp_composited_parse_render_data(const void* data,
+                                               size_t length,
+                                               rdp_composited_render_data* order);
+librdp_status rdp_composited_write_render_data(rdp_buffer* buffer,
+                                               uint32_t target_resource,
+                                               const void* render_data,
+                                               size_t render_data_len);
+librdp_status rdp_composited_parse_target_capture_bits(
+    const void* data,
+    size_t length,
+    rdp_composited_target_capture_bits* order);
+librdp_status rdp_composited_write_target_capture_bits(rdp_buffer* buffer,
+                                                       uint32_t target_resource,
+                                                       uint32_t x,
+                                                       uint32_t y,
+                                                       uint32_t width,
+                                                       uint32_t height,
+                                                       uint32_t dxgi_format);
+librdp_status rdp_composited_parse_meta_capture_bits(const void* data,
+                                                     size_t length,
+                                                     rdp_composited_meta_capture_bits* order);
+librdp_status rdp_composited_write_meta_capture_bits(rdp_buffer* buffer,
+                                                     uint32_t target_resource,
+                                                     uint32_t width,
+                                                     uint32_t height,
+                                                     uint64_t update_id,
+                                                     uint32_t include_cursors,
+                                                     const uint8_t update_param[40]);
 librdp_status rdp_composited_parse_window_node_create(const void* data,
                                                       size_t length,
                                                       rdp_composited_window_node_create* order);
@@ -355,6 +636,13 @@ librdp_status rdp_composited_parse_gdi_surface_update(const void* data,
 librdp_status rdp_composited_write_gdi_surface_update(rdp_buffer* buffer,
                                                       uint32_t target_resource,
                                                       uint32_t dxgi_format);
+librdp_status rdp_composited_parse_gdi_dirty(const void* data,
+                                             size_t length,
+                                             rdp_composited_gdi_dirty* order);
+librdp_status rdp_composited_write_gdi_dirty(rdp_buffer* buffer,
+                                             uint32_t target_resource,
+                                             int32_t dirty_flags,
+                                             uint64_t notification_cookie);
 librdp_status rdp_composited_parse_texture_set(const void* data,
                                                size_t length,
                                                rdp_composited_texture_set* textures);
