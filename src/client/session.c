@@ -5149,8 +5149,11 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
                                                                  size_t data_len)
 {
     rdp_filesystem_redirection_notify_change_request request;
+    rdp_session_redirected_file* file = NULL;
     rdp_buffer response;
+    struct stat st;
     uint32_t io_status = RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    uint8_t is_directory = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !data)
@@ -5158,8 +5161,16 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
     status = rdp_filesystem_redirection_parse_notify_change_request(data, data_len, &request);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (!rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id))
+    memset(&st, 0, sizeof(st));
+    file = rdp_session_redirected_file_find(session, request.io.device_id, request.io.file_id);
+    if (!file || file->fd < 0)
         io_status = RDP_SESSION_DEVICE_NO_SUCH_FILE;
+    else if (fstat(file->fd, &st) != 0)
+        io_status = rdp_session_errno_to_device_status(errno);
+    else if (!S_ISDIR(st.st_mode))
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    else
+        is_directory = 1;
 
     rdp_buffer_init(&response);
     status = rdp_filesystem_redirection_write_buffer_response(&response,
@@ -5176,12 +5187,13 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.rdpdr.file.notify_change",
-                        "device_id=%u file_id=%u completion_id=%u watch_tree=%u filter=%u status=%u",
+                        "device_id=%u file_id=%u completion_id=%u watch_tree=%u filter=%u is_directory=%u status=%u",
                         request.io.device_id,
                         request.io.file_id,
                         request.io.completion_id,
                         request.watch_tree,
                         request.completion_filter,
+                        is_directory,
                         io_status);
     return status;
 }
