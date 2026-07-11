@@ -29,6 +29,17 @@ typedef struct rdp_avc_yuv420
     size_t stride[3];
 } rdp_avc_yuv420;
 
+typedef struct rdp_avc_yuv444_snapshot
+{
+    rdp_buffer planes[3];
+    size_t stride[3];
+    uint32_t width;
+    uint32_t height;
+    uint8_t luma_valid;
+    uint8_t chroma_valid;
+    uint8_t active;
+} rdp_avc_yuv444_snapshot;
+
 #if defined(RDP_HAVE_FFMPEG_AVC)
 typedef struct rdp_avc_h264
 {
@@ -146,6 +157,85 @@ static void rdp_avc_yuv420_free(rdp_avc_yuv420* yuv)
     for (i = 0; i < 3u; i++)
         rdp_buffer_free(&yuv->planes[i]);
     memset(yuv, 0, sizeof(*yuv));
+}
+
+static void rdp_avc_yuv444_snapshot_init(rdp_avc_yuv444_snapshot* snapshot)
+{
+    size_t i = 0;
+
+    if (!snapshot)
+        return;
+    memset(snapshot, 0, sizeof(*snapshot));
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_init(&snapshot->planes[i]);
+}
+
+static void rdp_avc_yuv444_snapshot_free(rdp_avc_yuv444_snapshot* snapshot)
+{
+    size_t i = 0;
+
+    if (!snapshot)
+        return;
+    for (i = 0; i < 3u; i++)
+        rdp_buffer_free(&snapshot->planes[i]);
+    memset(snapshot, 0, sizeof(*snapshot));
+}
+
+static librdp_status rdp_avc_yuv444_snapshot_capture(rdp_avc_decoder* decoder,
+                                                     rdp_avc_yuv444_snapshot* snapshot)
+{
+    size_t i = 0;
+
+    if (!decoder || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_avc_yuv444_snapshot_init(snapshot);
+    snapshot->width = decoder->yuv444_width;
+    snapshot->height = decoder->yuv444_height;
+    snapshot->luma_valid = decoder->yuv444_luma_valid;
+    snapshot->chroma_valid = decoder->yuv444_chroma_valid;
+    for (i = 0; i < 3u; i++)
+    {
+        librdp_status status = rdp_buffer_reserve(&snapshot->planes[i], decoder->yuv444[i].length);
+
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_avc_yuv444_snapshot_free(snapshot);
+            return status;
+        }
+        if (decoder->yuv444[i].length > 0)
+            memcpy(snapshot->planes[i].data, decoder->yuv444[i].data, decoder->yuv444[i].length);
+        snapshot->planes[i].length = decoder->yuv444[i].length;
+        snapshot->stride[i] = decoder->yuv444_stride[i];
+    }
+    snapshot->active = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_yuv444_snapshot_restore(rdp_avc_decoder* decoder,
+                                                     const rdp_avc_yuv444_snapshot* snapshot)
+{
+    size_t i = 0;
+
+    if (!decoder || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!snapshot->active)
+        return LIBRDP_STATUS_OK;
+    for (i = 0; i < 3u; i++)
+    {
+        librdp_status status = rdp_buffer_reserve(&decoder->yuv444[i], snapshot->planes[i].length);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (snapshot->planes[i].length > 0)
+            memcpy(decoder->yuv444[i].data, snapshot->planes[i].data, snapshot->planes[i].length);
+        decoder->yuv444[i].length = snapshot->planes[i].length;
+        decoder->yuv444_stride[i] = snapshot->stride[i];
+    }
+    decoder->yuv444_width = snapshot->width;
+    decoder->yuv444_height = snapshot->height;
+    decoder->yuv444_luma_valid = snapshot->luma_valid;
+    decoder->yuv444_chroma_valid = snapshot->chroma_valid;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_avc_yuv420_prepare(rdp_avc_yuv420* yuv, uint32_t width, uint32_t height)
@@ -1332,6 +1422,9 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;
+    rdp_avc_yuv444_snapshot snapshot;
+
+    rdp_avc_yuv444_snapshot_init(&snapshot);
 
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -1343,6 +1436,9 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
                           surface_height,
                           stream->has_stream1 ? (unsigned)stream->stream1.bitstream_len : 0u,
                           stream->has_stream2 ? (unsigned)stream->stream2.bitstream_len : 0u);
+    status = rdp_avc_yuv444_snapshot_capture(decoder, &snapshot);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
     status = rdp_avc_ensure_yuv444(decoder, surface_width, surface_height);
     if (status != LIBRDP_STATUS_OK)
         goto out;
@@ -1406,6 +1502,14 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
         status = rdp_avc_yuv444_to_bgra(decoder, frame);
 
 out:
+    if (status != LIBRDP_STATUS_OK)
+    {
+        librdp_status restore_status = rdp_avc_yuv444_snapshot_restore(decoder, &snapshot);
+
+        if (restore_status != LIBRDP_STATUS_OK)
+            status = restore_status;
+    }
+    rdp_avc_yuv444_snapshot_free(&snapshot);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
                           status == LIBRDP_STATUS_OK ? "client.graphics.avc444.decode.done" :
