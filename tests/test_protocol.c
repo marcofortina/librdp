@@ -15509,18 +15509,23 @@ static int test_gdi_orders(void)
            !cache_bitmap.compressed &&
            cache_bitmap.bitmap_data_len == 16 &&
            cache_bitmap.bitmap_data[0] == 0x20u);
-    rdp_buffer_free(&secondary);
-    rdp_buffer_init(&secondary);
-    PCHECK(rdp_gdi_write_secondary_order(&secondary,
-                                         (uint16_t)(1u | (6u << 3u) | (0x04u << 7u)),
-                                         RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2,
-                                         cache_bitmap_v2_payload,
-                                         sizeof(cache_bitmap_v2_payload)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
-                                         secondary.length,
-                                         &secondary_header) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_gdi_cache_bitmap_order valid_cache_bitmap = cache_bitmap;
+
+        rdp_buffer_free(&secondary);
+        rdp_buffer_init(&secondary);
+        PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                             (uint16_t)(1u | (6u << 3u) | (0x04u << 7u)),
+                                             RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2,
+                                             cache_bitmap_v2_payload,
+                                             sizeof(cache_bitmap_v2_payload)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                             secondary.length,
+                                             &secondary_header) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&cache_bitmap, &valid_cache_bitmap, sizeof(cache_bitmap)) == 0);
+    }
     rdp_buffer_free(&secondary);
     rdp_buffer_init(&secondary);
     PCHECK(rdp_gdi_write_secondary_order(&secondary,
@@ -15633,6 +15638,18 @@ static int test_gdi_orders(void)
            cache_color_table.palette.entries[3].blue == 3u &&
            cache_color_table.palette.entries[3].green == 252u &&
            cache_color_table.palette.entries[3].red == 0x56u);
+    {
+        rdp_gdi_cache_color_table_order valid_cache_color_table = cache_color_table;
+        rdp_gdi_secondary_order_header invalid_color_table_header = secondary_header;
+
+        invalid_color_table_header.payload_len--;
+        PCHECK(rdp_gdi_parse_cache_color_table_order(&invalid_color_table_header,
+                                                     &cache_color_table) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&cache_color_table,
+                      &valid_cache_color_table,
+                      sizeof(cache_color_table)) == 0);
+    }
 
     rdp_buffer_free(&secondary);
     rdp_buffer_init(&secondary);
@@ -15668,19 +15685,23 @@ static int test_gdi_orders(void)
            cache_brush.brush_data_len == 28 &&
            cache_brush.brush_data[16] == 0x01u &&
            cache_brush.brush_data[27] == 0x0cu);
+    {
+        rdp_gdi_cache_brush_order valid_cache_brush = cache_brush;
 
-    rdp_buffer_free(&secondary);
-    rdp_buffer_init(&secondary);
-    PCHECK(rdp_gdi_write_secondary_order(&secondary,
-                                         0,
-                                         RDP_GDI_SECONDARY_CACHE_BRUSH,
-                                         cache_brush_bad_payload,
-                                         sizeof(cache_brush_bad_payload)) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
-                                         secondary.length,
-                                         &secondary_header) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_gdi_parse_cache_brush_order(&secondary_header, &cache_brush) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+        rdp_buffer_free(&secondary);
+        rdp_buffer_init(&secondary);
+        PCHECK(rdp_gdi_write_secondary_order(&secondary,
+                                             0,
+                                             RDP_GDI_SECONDARY_CACHE_BRUSH,
+                                             cache_brush_bad_payload,
+                                             sizeof(cache_brush_bad_payload)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gdi_parse_secondary_order(secondary.data,
+                                             secondary.length,
+                                             &secondary_header) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gdi_parse_cache_brush_order(&secondary_header, &cache_brush) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&cache_brush, &valid_cache_brush, sizeof(cache_brush)) == 0);
+    }
 
     rdp_buffer_free(&secondary);
     rdp_buffer_init(&secondary);
@@ -15728,6 +15749,15 @@ static int test_gdi_orders(void)
            cache_glyph.glyphs[0].bitmap_len == 4 &&
            cache_glyph.glyphs[0].has_unicode &&
            cache_glyph.glyphs[0].unicode_codepoint == 'B');
+    {
+        rdp_gdi_cache_glyph_order valid_cache_glyph = cache_glyph;
+        rdp_gdi_secondary_order_header invalid_glyph_header = secondary_header;
+
+        invalid_glyph_header.payload_len--;
+        PCHECK(rdp_gdi_parse_cache_glyph_order(&invalid_glyph_header, &cache_glyph) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&cache_glyph, &valid_cache_glyph, sizeof(cache_glyph)) == 0);
+    }
 
     PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
                                                     1,
@@ -16547,6 +16577,16 @@ static int test_gdi_orders(void)
     PCHECK(parsed_error.count == 2 &&
            parsed_error.infos[1].cache_id == 2 &&
            parsed_error.infos[1].new_num_entries == 256);
+    {
+        rdp_gdi_bitmap_cache_error valid_error = parsed_error;
+
+        payload.data[5] = 0x80u;
+        PCHECK(rdp_gdi_parse_bitmap_cache_error_payload(payload.data,
+                                                        payload.length,
+                                                        &parsed_error) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&parsed_error, &valid_error, sizeof(parsed_error)) == 0);
+        payload.data[5] = RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID;
+    }
     payload.length = 0;
     PCHECK(rdp_buffer_append_u8(&payload, 0xa5u) == LIBRDP_STATUS_OK);
     bitmap_error.infos[1].flags = 0x80u;
@@ -16556,10 +16596,6 @@ static int test_gdi_orders(void)
     bitmap_error.infos[1].flags = RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID;
     payload.length = 0;
     PCHECK(rdp_gdi_write_bitmap_cache_error_payload(&payload, &bitmap_error) == LIBRDP_STATUS_OK);
-    payload.data[5] = 0x80u;
-    PCHECK(rdp_gdi_parse_bitmap_cache_error_payload(payload.data,
-                                                    payload.length,
-                                                    &parsed_error) == LIBRDP_STATUS_PROTOCOL_ERROR);
     payload.length = 0;
     PCHECK(rdp_gdi_write_cache_error_flags(&payload,
                                            RDP_GDI_OFFSCREEN_CACHE_ERROR_FLUSH_AND_DISABLE) ==
@@ -16580,6 +16616,15 @@ static int test_gdi_orders(void)
                                                 capability.length,
                                                 &color) == LIBRDP_STATUS_OK);
     PCHECK(color.color_table_cache_size == 6);
+    {
+        rdp_gdi_color_cache_capability valid_color = color;
+
+        capability.data[0] = 0xffu;
+        PCHECK(rdp_gdi_parse_color_cache_capability(capability.data,
+                                                    capability.length,
+                                                    &color) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&color, &valid_color, sizeof(color)) == 0);
+    }
     rdp_buffer_free(&capability);
     rdp_buffer_init(&capability);
 
@@ -16593,11 +16638,16 @@ static int test_gdi_orders(void)
     PCHECK(ninegrid.support_level == RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 &&
            ninegrid.cache_size == 2560 &&
            ninegrid.cache_entries == 256);
-    capability.data[8] = 1;
-    capability.data[9] = 10;
-    PCHECK(rdp_gdi_parse_ninegrid_capability(capability.data,
-                                             capability.length,
-                                             &ninegrid) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_gdi_ninegrid_capability valid_ninegrid = ninegrid;
+
+        capability.data[8] = 1;
+        capability.data[9] = 10;
+        PCHECK(rdp_gdi_parse_ninegrid_capability(capability.data,
+                                                 capability.length,
+                                                 &ninegrid) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&ninegrid, &valid_ninegrid, sizeof(ninegrid)) == 0);
+    }
     rdp_buffer_free(&capability);
     rdp_buffer_init(&capability);
 
@@ -16626,11 +16676,16 @@ static int test_gdi_orders(void)
            gdiplus.cache_entries[0] == 10 &&
            gdiplus.cache_chunk_size[1] == 2048 &&
            gdiplus.image_cache_properties[2] == 128);
-    capability.data[16] = 11;
-    capability.data[17] = 0;
-    PCHECK(rdp_gdi_parse_gdiplus_capability(capability.data,
-                                            capability.length,
-                                            &gdiplus) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_gdi_gdiplus_capability valid_gdiplus = gdiplus;
+
+        capability.data[16] = 11;
+        capability.data[17] = 0;
+        PCHECK(rdp_gdi_parse_gdiplus_capability(capability.data,
+                                                capability.length,
+                                                &gdiplus) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&gdiplus, &valid_gdiplus, sizeof(gdiplus)) == 0);
+    }
 
     rdp_buffer_free(&capability);
     rdp_buffer_free(&payload);
