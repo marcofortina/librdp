@@ -212,42 +212,30 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)flags;
     if (rect_count == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(stream) < (size_t)rect_count * 8u + 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < rect_count; i++)
     {
-        if (state->summary.rect_count == UINT16_MAX)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        state->summary.rect_count++;
-        if (rdp_stream_remaining(stream) == 0)
-        {
-            state->region_active = 1;
-            return LIBRDP_STATUS_OK;
-        }
-    }
-    else
-    {
-        if (rdp_stream_remaining(stream) < (size_t)rect_count * 8u + 4u)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        for (i = 0; i < rect_count; i++)
-        {
-            uint16_t x = 0;
-            uint16_t y = 0;
-            uint16_t width = 0;
-            uint16_t height = 0;
+        uint16_t x = 0;
+        uint16_t y = 0;
+        uint16_t width = 0;
+        uint16_t height = 0;
 
-            if (rdp_stream_read_u16_le(stream, &x) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(stream, &y) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(stream, &width) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(stream, &height) != LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            if (width == 0 || height == 0 ||
-                x > state->summary.width || y > state->summary.height ||
-                width > (uint16_t)(state->summary.width - x) ||
-                height > (uint16_t)(state->summary.height - y))
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-        }
-        if (rect_count > UINT16_MAX - state->summary.rect_count)
+        if (rdp_stream_read_u16_le(stream, &x) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(stream, &y) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(stream, &width) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(stream, &height) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        state->summary.rect_count = (uint16_t)(state->summary.rect_count + rect_count);
+        if (width == 0 || height == 0 ||
+            x > state->summary.width || y > state->summary.height ||
+            width > (uint16_t)(state->summary.width - x) ||
+            height > (uint16_t)(state->summary.height - y))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
+    if (rect_count > UINT16_MAX - state->summary.rect_count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    state->summary.rect_count = (uint16_t)(state->summary.rect_count + rect_count);
     if (rdp_stream_read_u16_le(stream, &region_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &tile_set_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
