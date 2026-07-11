@@ -77,6 +77,9 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+#include <sys/xattr.h>
+#endif
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -2897,6 +2900,16 @@ static uint32_t rdp_session_read_u32_le_raw(const uint8_t* data)
            ((uint32_t)data[3] << 24);
 }
 
+static void rdp_session_write_u32_le_raw(uint8_t* data, uint32_t value)
+{
+    if (!data)
+        return;
+    data[0] = (uint8_t)(value & 0xffu);
+    data[1] = (uint8_t)((value >> 8) & 0xffu);
+    data[2] = (uint8_t)((value >> 16) & 0xffu);
+    data[3] = (uint8_t)((value >> 24) & 0xffu);
+}
+
 static uint16_t rdp_session_read_u16_le_raw(const uint8_t* data)
 {
     if (!data)
@@ -3643,6 +3656,201 @@ static librdp_status rdp_session_write_file_u32_information(rdp_buffer* buffer,
     return status;
 }
 
+static size_t rdp_session_file_ea_entry_stride(size_t name_len, size_t value_len)
+{
+    size_t length = 8u + name_len + 1u + value_len;
+
+    return (length + 3u) & ~(size_t)3u;
+}
+
+static librdp_status rdp_session_file_ea_size(int fd, uint32_t* ea_size)
+{
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+    ssize_t list_len = 0;
+    char* names = NULL;
+    size_t cursor = 0;
+    size_t total = 0;
+
+    if (!ea_size || fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *ea_size = 0;
+    list_len = flistxattr(fd, NULL, 0);
+    if (list_len < 0)
+    {
+        if (errno == ENOTSUP || errno == ENODATA)
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_STATE;
+    }
+    if (list_len == 0)
+        return LIBRDP_STATUS_OK;
+    names = (char*)malloc((size_t)list_len);
+    if (!names)
+        return LIBRDP_STATUS_NO_MEMORY;
+    list_len = flistxattr(fd, names, (size_t)list_len);
+    if (list_len < 0)
+    {
+        free(names);
+        if (errno == ENOTSUP || errno == ENODATA)
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_STATE;
+    }
+    while (cursor < (size_t)list_len)
+    {
+        const char* name = names + cursor;
+        size_t name_len = strnlen(name, (size_t)list_len - cursor);
+        ssize_t value_len = 0;
+
+        if (name_len == (size_t)list_len - cursor)
+        {
+            free(names);
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        if (name_len <= UINT8_MAX)
+        {
+            value_len = fgetxattr(fd, name, NULL, 0);
+            if (value_len >= 0 && value_len <= UINT16_MAX)
+            {
+                size_t entry = rdp_session_file_ea_entry_stride(name_len, (size_t)value_len);
+
+                if (total > UINT32_MAX - entry)
+                {
+                    free(names);
+                    return LIBRDP_STATUS_NO_MEMORY;
+                }
+                total += entry;
+            }
+        }
+        cursor += name_len + 1u;
+    }
+    free(names);
+    *ea_size = (uint32_t)total;
+    return LIBRDP_STATUS_OK;
+#else
+    if (!ea_size || fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *ea_size = 0;
+    return LIBRDP_STATUS_OK;
+#endif
+}
+
+static librdp_status rdp_session_write_file_ea_information(rdp_buffer* buffer, int fd)
+{
+    uint32_t ea_size = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_file_ea_size(fd, &ea_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    return rdp_session_write_file_u32_information(buffer, ea_size);
+}
+
+static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buffer, int fd)
+{
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
+    ssize_t list_len = 0;
+    char* names = NULL;
+    size_t cursor = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    list_len = flistxattr(fd, NULL, 0);
+    if (list_len < 0)
+    {
+        if (errno == ENOTSUP || errno == ENODATA)
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_STATE;
+    }
+    if (list_len == 0)
+        return LIBRDP_STATUS_OK;
+    names = (char*)malloc((size_t)list_len);
+    if (!names)
+        return LIBRDP_STATUS_NO_MEMORY;
+    list_len = flistxattr(fd, names, (size_t)list_len);
+    if (list_len < 0)
+    {
+        free(names);
+        if (errno == ENOTSUP || errno == ENODATA)
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_STATE;
+    }
+    while (cursor < (size_t)list_len)
+    {
+        const char* name = names + cursor;
+        size_t name_len = strnlen(name, (size_t)list_len - cursor);
+        ssize_t value_len = 0;
+        uint8_t* value = NULL;
+        size_t entry_start = 0;
+        size_t entry_len = 0;
+        size_t stride = 0;
+
+        if (name_len == (size_t)list_len - cursor)
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        }
+        cursor += name_len + 1u;
+        if (name_len > UINT8_MAX)
+            continue;
+        value_len = fgetxattr(fd, name, NULL, 0);
+        if (value_len < 0)
+            continue;
+        if (value_len > UINT16_MAX)
+            continue;
+        if (value_len > 0)
+        {
+            value = (uint8_t*)malloc((size_t)value_len);
+            if (!value)
+            {
+                status = LIBRDP_STATUS_NO_MEMORY;
+                break;
+            }
+            value_len = fgetxattr(fd, name, value, (size_t)value_len);
+            if (value_len < 0)
+            {
+                free(value);
+                continue;
+            }
+        }
+        entry_start = buffer->length;
+        entry_len = 8u + name_len + 1u + (size_t)value_len;
+        stride = rdp_session_file_ea_entry_stride(name_len, (size_t)value_len);
+        status = rdp_buffer_append_u32_le(buffer, 0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, 0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u8(buffer, (uint8_t)name_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(buffer, (uint16_t)value_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append(buffer, name, name_len + 1u);
+        if (status == LIBRDP_STATUS_OK && value_len > 0)
+            status = rdp_buffer_append(buffer, value, (size_t)value_len);
+        while (status == LIBRDP_STATUS_OK && buffer->length - entry_start < stride)
+            status = rdp_buffer_append_u8(buffer, 0);
+        free(value);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        if (buffer->length > entry_start + stride)
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            break;
+        }
+        if (cursor < (size_t)list_len)
+            rdp_session_write_u32_le_raw(buffer->data + entry_start, (uint32_t)stride);
+        (void)entry_len;
+    }
+    free(names);
+    return status;
+#else
+    if (!buffer || fd < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return LIBRDP_STATUS_OK;
+#endif
+}
+
 static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
                                                         uint32_t information_class,
                                                         const struct stat* st,
@@ -3659,7 +3867,7 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_INTERNAL_INFORMATION:
             return rdp_session_write_file_internal_information(buffer, st);
         case RDP_SESSION_FILE_EA_INFORMATION:
-            return rdp_session_write_file_u32_information(buffer, 0);
+            return rdp_session_write_file_ea_information(buffer, file ? file->fd : -1);
         case RDP_SESSION_FILE_ACCESS_INFORMATION:
             return rdp_session_write_file_u32_information(buffer, file ? file->desired_access : 0);
         case RDP_SESSION_FILE_NAME_INFORMATION:
@@ -3667,7 +3875,7 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_NORMALIZED_NAME_INFORMATION:
             return rdp_session_write_file_normalized_name_information(buffer, file ? file->path : NULL);
         case RDP_SESSION_FILE_FULL_EA_INFORMATION:
-            return rdp_buffer_append_u32_le(buffer, 0);
+            return rdp_session_write_file_full_ea_information(buffer, file ? file->fd : -1);
         case RDP_SESSION_FILE_POSITION_INFORMATION:
             return rdp_session_write_file_position_information(buffer, file ? file->fd : -1);
         case RDP_SESSION_FILE_MODE_INFORMATION:

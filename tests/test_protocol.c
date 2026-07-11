@@ -10181,11 +10181,12 @@ static int test_filesystem_redirection_channel(void)
                1000u,
                100u,
                0640u) == LIBRDP_STATUS_OK);
-    PCHECK(response.length == 128u);
+    PCHECK(response.length == 136u);
     PCHECK(response.data[0] == 1u);
-    PCHECK(test_read_u16_le(response.data + 2u) == 0x8004u);
+    PCHECK(test_read_u16_le(response.data + 2u) == 0x8014u);
     PCHECK(test_read_u32_le(response.data + 4u) == 20u);
     PCHECK(test_read_u32_le(response.data + 8u) == 36u);
+    PCHECK(test_read_u32_le(response.data + 12u) == 128u);
     PCHECK(test_read_u32_le(response.data + 16u) == 52u);
     PCHECK(response.data[20] == 1u && response.data[21] == 2u);
     PCHECK(test_read_u32_le(response.data + 28u) == 1u);
@@ -10201,6 +10202,9 @@ static int test_filesystem_redirection_channel(void)
     PCHECK(test_read_u32_le(response.data + 112u) == 0u);
     PCHECK(response.data[116] == 1u && response.data[117] == 1u);
     PCHECK(test_read_u32_le(response.data + 124u) == 0u);
+    PCHECK(response.data[128] == 2u);
+    PCHECK(test_read_u16_le(response.data + 130u) == 8u);
+    PCHECK(test_read_u16_le(response.data + 132u) == 0u);
     {
         rdp_filesystem_redirection_posix_security parsed_security;
 
@@ -10254,7 +10258,8 @@ static int test_filesystem_redirection_channel(void)
                    response.data,
                    response.length,
                    RDP_FILESYSTEM_REDIRECTION_OWNER_SECURITY_INFORMATION,
-                   &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
+                   &parsed_security) == LIBRDP_STATUS_OK);
+        PCHECK(parsed_security.owner_present == 0u);
         response.data[4] = 20u;
         response.data[8] = 0u;
         response.data[9] = 0u;
@@ -10264,7 +10269,8 @@ static int test_filesystem_redirection_channel(void)
                    response.data,
                    response.length,
                    RDP_FILESYSTEM_REDIRECTION_GROUP_SECURITY_INFORMATION,
-                   &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
+                   &parsed_security) == LIBRDP_STATUS_OK);
+        PCHECK(parsed_security.group_present == 0u);
         response.data[8] = 36u;
         PCHECK(rdp_filesystem_redirection_parse_posix_security_descriptor(response.data,
                                                                           19u,
@@ -10278,7 +10284,8 @@ static int test_filesystem_redirection_channel(void)
                    response.data,
                    response.length,
                    RDP_FILESYSTEM_REDIRECTION_DACL_SECURITY_INFORMATION,
-                   &parsed_security) == LIBRDP_STATUS_UNSUPPORTED);
+                   &parsed_security) == LIBRDP_STATUS_OK);
+        PCHECK(parsed_security.mode_present == 0u);
         response.data[60] = 0u;
         response.data[84] = 0u;
         response.data[108] = 0u;
@@ -10306,7 +10313,13 @@ static int test_filesystem_redirection_channel(void)
                0x00000008u,
                1000u,
                100u,
-               0644u) == LIBRDP_STATUS_UNSUPPORTED);
+               0644u) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 28u);
+    PCHECK(test_read_u16_le(response.data + 2u) == 0x8010u);
+    PCHECK(test_read_u32_le(response.data + 12u) == 20u);
+    PCHECK(response.data[20] == 2u);
+    PCHECK(test_read_u16_le(response.data + 22u) == 8u);
+    PCHECK(test_read_u16_le(response.data + 24u) == 0u);
     rdp_buffer_free(&response);
     rdp_buffer_init(&response);
 
