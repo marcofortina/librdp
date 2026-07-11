@@ -16945,10 +16945,51 @@ static int test_gdi_orders(void)
            altsec.actual_length == sizeof(altsec_order));
     {
         const uint8_t invalid_altsec[] = {0xffu};
-        const uint8_t unsupported_altsec[] = {
+        const uint8_t window_altsec[] = {
             (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+            0x08u,
+            0x00u,
+            0x00u,
+            0x00u,
+            0x00u,
+            0x04u,
+            0x12u
+        };
+        const uint8_t invalid_window_altsec[] = {
+            (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+            0x20u,
+            0x00u
+        };
+        const uint8_t compdesk_altsec[] = {
+            (uint8_t)((RDP_GDI_ALTSEC_COMPDESK_FIRST << 2u) | RDP_GDI_TS_SECONDARY)
+        };
+        const uint8_t gdiplus_first_altsec[] = {
+            (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
+            0x03u,
+            0x00u,
+            0x03u,
+            0x00u,
+            0x00u,
+            0x00u,
+            0x03u,
+            0x00u,
+            0x00u,
+            0x00u,
             0xaau,
-            0xbbu
+            0xbbu,
+            0xccu
+        };
+        const uint8_t gdiplus_cache_next_altsec[] = {
+            (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT << 2u) | RDP_GDI_TS_SECONDARY),
+            0x01u,
+            0x02u,
+            0x00u,
+            0x03u,
+            0x00u,
+            0x02u,
+            0x00u,
+            0xddu,
+            0xeeu
         };
         rdp_gdi_altsec_order_header valid_altsec = altsec;
 
@@ -16956,12 +16997,34 @@ static int test_gdi_orders(void)
                                           sizeof(invalid_altsec),
                                           &altsec) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&altsec, &valid_altsec, sizeof(altsec)) == 0);
-        PCHECK(rdp_gdi_parse_altsec_order(unsupported_altsec,
-                                          sizeof(unsupported_altsec),
-                                          &altsec) == LIBRDP_STATUS_UNSUPPORTED);
+        PCHECK(rdp_gdi_parse_altsec_order(invalid_window_altsec,
+                                          sizeof(invalid_window_altsec),
+                                          &altsec) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&altsec, &valid_altsec, sizeof(altsec)) == 0);
+        PCHECK(rdp_gdi_parse_altsec_order(window_altsec,
+                                          sizeof(window_altsec),
+                                          &altsec) == LIBRDP_STATUS_OK);
+        PCHECK(altsec.order_type == RDP_GDI_ALTSEC_WINDOW &&
+               altsec.payload_len == sizeof(window_altsec) - 1u &&
+               altsec.actual_length == sizeof(window_altsec));
+        PCHECK(rdp_gdi_parse_altsec_order(compdesk_altsec,
+                                          sizeof(compdesk_altsec),
+                                          &altsec) == LIBRDP_STATUS_OK);
+        PCHECK(altsec.order_type == RDP_GDI_ALTSEC_COMPDESK_FIRST &&
+               altsec.payload_len == 0 &&
+               altsec.actual_length == sizeof(compdesk_altsec));
+        PCHECK(rdp_gdi_parse_altsec_order(gdiplus_first_altsec,
+                                          sizeof(gdiplus_first_altsec),
+                                          &altsec) == LIBRDP_STATUS_OK);
+        PCHECK(altsec.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST &&
+               altsec.payload_len == sizeof(gdiplus_first_altsec) - 1u);
+        PCHECK(rdp_gdi_parse_altsec_order(gdiplus_cache_next_altsec,
+                                          sizeof(gdiplus_cache_next_altsec),
+                                          &altsec) == LIBRDP_STATUS_OK);
+        PCHECK(altsec.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT &&
+               altsec.actual_length == sizeof(gdiplus_cache_next_altsec));
         mixed.length = 0;
-        PCHECK(rdp_buffer_append(&mixed, unsupported_altsec, sizeof(unsupported_altsec)) ==
+        PCHECK(rdp_buffer_append(&mixed, window_altsec, sizeof(window_altsec)) ==
                LIBRDP_STATUS_OK);
         PCHECK(rdp_buffer_append(&mixed, render_opaque, sizeof(render_opaque)) ==
                LIBRDP_STATUS_OK);
@@ -16969,8 +17032,13 @@ static int test_gdi_orders(void)
                                         mixed.length,
                                         2,
                                         RDP_GDI_ORDER_PATBLT,
-                                        &list) == LIBRDP_STATUS_UNSUPPORTED);
+                                        &list) == LIBRDP_STATUS_OK);
+        PCHECK(list.count == 2 &&
+               list.orders[0].kind == RDP_GDI_ORDER_KIND_ALTSEC &&
+               list.orders[0].order_type == RDP_GDI_ALTSEC_WINDOW &&
+               list.orders[1].kind == RDP_GDI_ORDER_KIND_PRIMARY);
         mixed.length = 0;
+        altsec = valid_altsec;
     }
     PCHECK(rdp_gdi_parse_switch_surface_order(&altsec, &switch_surface) == LIBRDP_STATUS_OK);
     PCHECK(switch_surface.bitmap_id == 0x1234u);

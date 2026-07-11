@@ -121,6 +121,43 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             need = 5u + ((uint16_t)payload[3] | ((uint16_t)payload[4] << 8u));
             break;
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST:
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_END:
+            if (available < 10u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 10u + ((uint16_t)payload[0] | ((uint16_t)payload[1] << 8u));
+            break;
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT:
+            if (available < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 2u + ((uint16_t)payload[0] | ((uint16_t)payload[1] << 8u));
+            break;
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST:
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END:
+            if (available < 11u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 11u + ((uint16_t)payload[5] | ((uint16_t)payload[6] << 8u));
+            break;
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT:
+            if (available < 7u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = 7u + ((uint16_t)payload[5] | ((uint16_t)payload[6] << 8u));
+            break;
+        case RDP_GDI_ALTSEC_WINDOW:
+        {
+            uint16_t order_size = 0;
+
+            if (available < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            order_size = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8u);
+            if (order_size < 3u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            need = (size_t)order_size - 1u;
+            break;
+        }
+        case RDP_GDI_ALTSEC_COMPDESK_FIRST:
+            need = 0;
+            break;
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }
