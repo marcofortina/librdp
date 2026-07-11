@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#define RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS 256u
+
 static librdp_status rdp_input_channel_append_u64_le(rdp_buffer* buffer, uint64_t value)
 {
     librdp_status status = rdp_buffer_append_u32_le(buffer, (uint32_t)(value & 0xffffffffu));
@@ -384,11 +386,19 @@ librdp_status rdp_input_channel_write_touch_frame(rdp_buffer* buffer,
                                                   const rdp_input_channel_touch_contact* contacts,
                                                   uint16_t contact_count)
 {
+    uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || contact_count == 0 || !contacts)
+    if (!buffer || contact_count == 0 || contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS || !contacts)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(seen, 0, sizeof(seen));
+    for (i = 0; i < contact_count; i++)
+    {
+        if (seen[contacts[i].contact_id])
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        seen[contacts[i].contact_id] = 1;
+    }
     status = rdp_buffer_append_u16_le(buffer, contact_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_append_u64_le(buffer, frame_offset);
@@ -481,15 +491,22 @@ static librdp_status rdp_input_channel_skip_touch_contacts(rdp_stream* stream,
                                                            uint16_t count,
                                                            size_t* bytes_read)
 {
+    uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     size_t start = stream->position;
     uint16_t i = 0;
 
+    if (count == 0 || count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(seen, 0, sizeof(seen));
     for (i = 0; i < count; i++)
     {
         rdp_input_channel_touch_contact contact;
 
         if (rdp_input_channel_read_touch_contact(stream, &contact) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (seen[contact.contact_id])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        seen[contact.contact_id] = 1;
     }
     if (bytes_read)
         *bytes_read = stream->position - start;
@@ -684,11 +701,19 @@ librdp_status rdp_input_channel_write_pen_frame(rdp_buffer* buffer,
                                                 const rdp_input_channel_pen_contact* contacts,
                                                 uint16_t contact_count)
 {
+    uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || contact_count == 0 || !contacts)
+    if (!buffer || contact_count == 0 || contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS || !contacts)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(seen, 0, sizeof(seen));
+    for (i = 0; i < contact_count; i++)
+    {
+        if (seen[contacts[i].device_id])
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        seen[contacts[i].device_id] = 1;
+    }
     status = rdp_buffer_append_u16_le(buffer, contact_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_append_u64_le(buffer, frame_offset);
@@ -782,15 +807,22 @@ static librdp_status rdp_input_channel_skip_pen_contacts(rdp_stream* stream,
                                                          uint16_t count,
                                                          size_t* bytes_read)
 {
+    uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     size_t start = stream->position;
     uint16_t i = 0;
 
+    if (count == 0 || count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(seen, 0, sizeof(seen));
     for (i = 0; i < count; i++)
     {
         rdp_input_channel_pen_contact contact;
 
         if (rdp_input_channel_read_pen_contact(stream, &contact) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (seen[contact.device_id])
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        seen[contact.device_id] = 1;
     }
     if (bytes_read)
         *bytes_read = stream->position - start;

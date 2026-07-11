@@ -6445,12 +6445,57 @@ static int test_path_security_license_channels(void)
            input_touch_contact.contact_rect_top == -3 &&
            input_touch_contact.orientation == 90 &&
            input_touch_contact.pressure == 512);
+    {
+        rdp_buffer duplicate_contacts;
+
+        rdp_buffer_init(&duplicate_contacts);
+        PCHECK(rdp_buffer_append(&duplicate_contacts,
+                                 dyn_response.data,
+                                 dyn_response.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&duplicate_contacts,
+                                 dyn_response.data,
+                                 dyn_response.length) == LIBRDP_STATUS_OK);
+        channel_packet.length = 0;
+        PCHECK(rdp_input_channel_write_header(&channel_packet,
+                                              RDP_INPUT_CHANNEL_EVENT_TOUCH,
+                                              (uint32_t)(6u + 4u + 2u + 2u + 8u +
+                                                         duplicate_contacts.length)) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0x11223344u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u16_le(&channel_packet, 1) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u16_le(&channel_packet, 2) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0x05060708u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0x01020304u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&channel_packet,
+                                 duplicate_contacts.data,
+                                 duplicate_contacts.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_parse_touch_event(channel_packet.data,
+                                                   channel_packet.length,
+                                                   &input_touch_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        input_touch_frame.contact_count = 2;
+        input_touch_frame.contacts = duplicate_contacts.data;
+        input_touch_frame.contacts_len = duplicate_contacts.length;
+        channel_packet.length = 0;
+        PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0, &input_touch_frame, 1) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+        rdp_buffer_free(&duplicate_contacts);
+    }
     input_touch_frame.contact_count = 2;
-    dyn_response.length = 0;
-    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_input_channel_write_touch_event(&dyn_response, 0, &input_touch_frame, 1) ==
+    input_touch_frame.contacts = dyn_response.data;
+    input_touch_frame.contacts_len = dyn_response.length;
+    channel_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0, &input_touch_frame, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
-    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
+    PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+    input_touch_frame.contact_count = 1;
+    input_touch_frame.contacts = dyn_response.data;
+    input_touch_frame.contacts_len = dyn_response.length;
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0x11223344u, &input_touch_frame, 1) ==
+           LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u8(&channel_packet, 0xaa) == LIBRDP_STATUS_OK);
     channel_packet.data[2] = (uint8_t)(channel_packet.length & 0xffu);
     channel_packet.data[3] = (uint8_t)((channel_packet.length >> 8) & 0xffu);
@@ -6534,12 +6579,57 @@ static int test_path_security_license_channels(void)
            input_pen_contact.rotation == 45 &&
            input_pen_contact.tilt_x == -10 &&
            input_pen_contact.tilt_y == 20);
+    {
+        rdp_buffer duplicate_contacts;
+
+        rdp_buffer_init(&duplicate_contacts);
+        PCHECK(rdp_buffer_append(&duplicate_contacts,
+                                 dyn_response.data,
+                                 dyn_response.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&duplicate_contacts,
+                                 dyn_response.data,
+                                 dyn_response.length) == LIBRDP_STATUS_OK);
+        channel_packet.length = 0;
+        PCHECK(rdp_input_channel_write_header(&channel_packet,
+                                              RDP_INPUT_CHANNEL_EVENT_PEN,
+                                              (uint32_t)(6u + 4u + 2u + 2u + 8u +
+                                                         duplicate_contacts.length)) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0x55667788u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u16_le(&channel_packet, 1) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u16_le(&channel_packet, 2) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 7) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&channel_packet, 0) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&channel_packet,
+                                 duplicate_contacts.data,
+                                 duplicate_contacts.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_parse_pen_event(channel_packet.data,
+                                                 channel_packet.length,
+                                                 &input_pen_event) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        input_pen_frame.contact_count = 2;
+        input_pen_frame.contacts = duplicate_contacts.data;
+        input_pen_frame.contacts_len = duplicate_contacts.length;
+        channel_packet.length = 0;
+        PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0, &input_pen_frame, 1) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+        rdp_buffer_free(&duplicate_contacts);
+    }
     input_pen_frame.contact_count = 2;
-    dyn_response.length = 0;
-    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_input_channel_write_pen_event(&dyn_response, 0, &input_pen_frame, 1) ==
+    input_pen_frame.contacts = dyn_response.data;
+    input_pen_frame.contacts_len = dyn_response.length;
+    channel_packet.length = 0;
+    PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0, &input_pen_frame, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
-    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
+    PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+    input_pen_frame.contact_count = 1;
+    input_pen_frame.contacts = dyn_response.data;
+    input_pen_frame.contacts_len = dyn_response.length;
+    channel_packet.length = 0;
+    PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0x55667788u, &input_pen_frame, 1) ==
+           LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u8(&channel_packet, 0xbb) == LIBRDP_STATUS_OK);
     channel_packet.data[2] = (uint8_t)(channel_packet.length & 0xffu);
     channel_packet.data[3] = (uint8_t)((channel_packet.length >> 8) & 0xffu);
