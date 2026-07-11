@@ -10549,6 +10549,9 @@ static int test_telemetry_multiparty_channels(void)
            telemetry.first_graphics_received_ms == 4);
     buffer.data[0] = 2;
     PCHECK(rdp_telemetry_parse_pdu(buffer.data, buffer.length, &telemetry) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[0] = RDP_TELEMETRY_PDU_ID;
+    buffer.data[1] = RDP_TELEMETRY_PDU_LENGTH - 1u;
+    PCHECK(rdp_telemetry_parse_pdu(buffer.data, buffer.length, &telemetry) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     PCHECK(rdp_telemetry_write_metrics(&buffer, 5, 6, 7, 8) == LIBRDP_STATUS_OK);
@@ -10558,6 +10561,17 @@ static int test_telemetry_multiparty_channels(void)
            telemetry.graphics_channel_opened_ms == 7 &&
            telemetry.first_graphics_received_ms == 8);
     PCHECK(rdp_telemetry_write_metrics(NULL, 0, 0, 0, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    telemetry.id = 0x7fu;
+    telemetry.length = RDP_TELEMETRY_PDU_LENGTH;
+    PCHECK(rdp_telemetry_write_pdu(&buffer, &telemetry) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
+    telemetry.id = RDP_TELEMETRY_PDU_ID;
+    telemetry.length = 0x7fu;
+    PCHECK(rdp_telemetry_write_pdu(&buffer, &telemetry) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

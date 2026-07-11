@@ -65,25 +65,45 @@ librdp_status rdp_telemetry_parse_pdu(const void* data, size_t length, rdp_telem
 librdp_status rdp_telemetry_write_pdu(rdp_buffer* buffer, const rdp_telemetry_pdu* pdu)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !pdu ||
         (pdu->id != 0 && pdu->id != RDP_TELEMETRY_PDU_ID) ||
         (pdu->length != 0 && pdu->length != RDP_TELEMETRY_PDU_LENGTH))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, RDP_TELEMETRY_PDU_ID);
     if (status != LIBRDP_STATUS_OK)
+    {
+        buffer->length = start;
         return status;
+    }
     status = rdp_buffer_append_u8(buffer, RDP_TELEMETRY_PDU_LENGTH);
     if (status != LIBRDP_STATUS_OK)
+    {
+        buffer->length = start;
         return status;
+    }
     status = rdp_buffer_append_u32_le(buffer, pdu->prompt_for_credentials_ms);
     if (status != LIBRDP_STATUS_OK)
+    {
+        buffer->length = start;
         return status;
+    }
     status = rdp_buffer_append_u32_le(buffer, pdu->prompt_for_credentials_done_ms);
     if (status != LIBRDP_STATUS_OK)
+    {
+        buffer->length = start;
         return status;
+    }
     status = rdp_buffer_append_u32_le(buffer, pdu->graphics_channel_opened_ms);
     if (status != LIBRDP_STATUS_OK)
+    {
+        buffer->length = start;
         return status;
-    return rdp_buffer_append_u32_le(buffer, pdu->first_graphics_received_ms);
+    }
+    status = rdp_buffer_append_u32_le(buffer, pdu->first_graphics_received_ms);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
+    return status;
 }
