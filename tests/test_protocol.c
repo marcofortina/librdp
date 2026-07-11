@@ -13142,6 +13142,33 @@ static int test_composited_remoting_channel(void)
     PCHECK(rdp_composited_render_tree_apply_batch(&tree, batch.data, batch.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(tree.command_count == 2u && tree.resource_count == 2u);
+    {
+        rdp_composited_render_tree atomic_tree;
+        rdp_buffer atomic_batch;
+
+        rdp_composited_render_tree_init(&atomic_tree);
+        rdp_buffer_init(&atomic_batch);
+        rdp_buffer_free(&buffer);
+        rdp_buffer_init(&buffer);
+        PCHECK(rdp_composited_write_resource_order(&buffer,
+                                                   RDP_COMPOSITED_CMD_CREATE_RESOURCE,
+                                                   0x90u,
+                                                   RDP_COMPOSITED_RESOURCE_WINDOW_NODE) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&atomic_batch, buffer.data, buffer.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&atomic_batch, 8u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append_u32_le(&atomic_batch, 0xffffffffu) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_composited_render_tree_apply_batch(&atomic_tree,
+                                                      atomic_batch.data,
+                                                      atomic_batch.length) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(atomic_tree.command_count == 0u &&
+               atomic_tree.resource_count == 0u &&
+               rdp_composited_render_tree_find(&atomic_tree, 0x90u) == NULL);
+        rdp_buffer_free(&atomic_batch);
+        rdp_buffer_free(&buffer);
+        rdp_buffer_init(&buffer);
+    }
     before_commands = tree.command_count;
     memset(&message, 0, sizeof(message));
     message.control_code = RDP_COMPOSITED_CMD_CREATE_RESOURCE;

@@ -1580,6 +1580,7 @@ librdp_status rdp_composited_render_tree_apply_batch(rdp_composited_render_tree*
 {
     rdp_composited_batch_reader reader;
     rdp_composited_channel_message message;
+    rdp_composited_render_tree snapshot;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!tree || (!data && length > 0))
@@ -1587,13 +1588,22 @@ librdp_status rdp_composited_render_tree_apply_batch(rdp_composited_render_tree*
     status = rdp_composited_batch_init(&reader, data, length);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    snapshot = *tree;
     while ((status = rdp_composited_batch_next(&reader, &message)) == LIBRDP_STATUS_OK)
     {
         status = rdp_composited_render_tree_apply_message(tree, &message);
         if (status != LIBRDP_STATUS_OK)
+        {
+            *tree = snapshot;
             return status;
+        }
     }
-    return status == LIBRDP_STATUS_AGAIN ? LIBRDP_STATUS_OK : status;
+    if (status != LIBRDP_STATUS_AGAIN)
+    {
+        *tree = snapshot;
+        return status;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_composited_parse_control(const void* data,
