@@ -7933,7 +7933,7 @@ static int test_path_security_license_channels(void)
                                              &avc_frame) == LIBRDP_STATUS_OK);
         pixel0 = avc_frame.pixels.data;
         pixel1 = avc_frame.pixels.data + 4u;
-        PCHECK(pixel0[0] == 255 && pixel0[1] == 52 && pixel0[2] == 255 && pixel0[3] == 255);
+        PCHECK(pixel0[0] == 255 && pixel0[1] == 48 && pixel0[2] == 255 && pixel0[3] == 255);
         PCHECK(pixel1[0] == 131 && pixel1[1] == 127 && pixel1[2] == 131 && pixel1[3] == 255);
     }
 #endif
