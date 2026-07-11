@@ -18,6 +18,7 @@
 #define RDP_BULK_TYPE_RDP6 0x02u
 #define RDP_BULK_TYPE_RDP61 0x03u
 #define RDP_BULK_TYPE_RDP8 0x04u
+#define RDP_BULK_RDP6_HISTORY_SIZE 65536u
 #define RDP_BULK_RDP61_HISTORY_SIZE 2000000u
 
 typedef struct rdp_bulk_mppc_state
@@ -34,10 +35,28 @@ typedef struct rdp_bulk_rdp61_state
     size_t write_offset;
 } rdp_bulk_rdp61_state;
 
+typedef struct rdp_bulk_rdp6_decode_entry
+{
+    uint16_t symbol;
+    uint8_t bit_count;
+    uint8_t reserved;
+} rdp_bulk_rdp6_decode_entry;
+
+typedef struct rdp_bulk_rdp6_state
+{
+    uint8_t history[RDP_BULK_RDP6_HISTORY_SIZE];
+    size_t write_offset;
+    uint32_t offset_cache[4];
+    rdp_bulk_rdp6_decode_entry literal_offset[8192];
+    rdp_bulk_rdp6_decode_entry match_length[512];
+    uint8_t tables_ready;
+} rdp_bulk_rdp6_state;
+
 typedef struct rdp_bulk_decompressor
 {
     rdp_bulk_mppc_state mppc8k;
     rdp_bulk_mppc_state mppc64k;
+    rdp_bulk_rdp6_state rdp6;
     rdp_bulk_mppc_state rdp61_level2;
     rdp_bulk_rdp61_state rdp61;
 } rdp_bulk_decompressor;

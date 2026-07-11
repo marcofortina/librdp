@@ -3685,11 +3685,35 @@ static int test_path_security_license_channels(void)
         PCHECK(bulk_decoded.length == 1 && bulk_decoded.data[0] == 'X');
     }
     bulk_decoded.length = 0;
-    PCHECK(rdp_bulk_decompress(&bulk_decompressor,
-                               RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP6,
-                               "x",
-                               1,
-                               &bulk_decoded) == LIBRDP_STATUS_UNSUPPORTED);
+    {
+        const uint8_t rdp6_literals[] = {
+            0x47, 0xee, 0x33, 0x63, 0xfd, 0xff, 0x0b, 0x00
+        };
+        const uint8_t rdp6_match[] = {
+            0x7b, 0xee, 0xb5, 0xf7, 0x7f, 0xfc, 0x5f, 0x00
+        };
+        const uint8_t rdp6_short[] = {0x47, 0xee, 0x33};
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_RDP6,
+                                   rdp6_literals,
+                                   sizeof(rdp6_literals),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 4 && memcmp(bulk_decoded.data, "rdp6", 4) == 0);
+        bulk_decoded.length = 0;
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_RDP6,
+                                   rdp6_match,
+                                   sizeof(rdp6_match),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 6 && memcmp(bulk_decoded.data, "abcabc", 6) == 0);
+        bulk_decoded.length = 0;
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_RDP6,
+                                   rdp6_short,
+                                   sizeof(rdp6_short),
+                                   &bulk_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
     bulk_decoded.length = 0;
     rdp_bulk_decompressor_reset(&bulk_decompressor);
     {
