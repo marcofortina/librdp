@@ -210,6 +210,8 @@ if(LIBRDP_BUILD_FUZZ)
     endfunction()
 
     add_librdp_fuzzer(fuzz_x224 fuzz/x224_fuzzer.c)
+    add_librdp_fuzzer(fuzz_stream fuzz/stream_fuzzer.c)
+    add_librdp_fuzzer(fuzz_charset fuzz/charset_fuzzer.c)
     add_librdp_fuzzer(fuzz_session_selection fuzz/session_selection_fuzzer.c)
     add_librdp_fuzzer(fuzz_mcs fuzz/mcs_fuzzer.c)
     add_librdp_fuzzer(fuzz_pointer fuzz/pointer_fuzzer.c)

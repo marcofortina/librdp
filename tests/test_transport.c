@@ -1,5 +1,7 @@
 #include "common/buffer.h"
+#include "platform/socket.h"
 #include "protocol/tpkt.h"
+#include "transport/tcp.h"
 #include "transport/multitransport.h"
 #include "transport/transport.h"
 #include "transport/udp_transport.h"
@@ -603,6 +605,7 @@ int test_transport(void)
 {
     int pair[2] = {-1, -1};
     int tls_pair[2] = {-1, -1};
+    int tcp_fd = -1;
     int child_status = 0;
     pid_t child = -1;
     EVP_PKEY* key = NULL;
@@ -626,6 +629,31 @@ int test_transport(void)
     TCHECK(test_udp_transport_protocols() == 0);
     TCHECK(test_multitransport_protocol() == 0);
 
+    TCHECK(rdp_socket_close(-1) == 0);
+    TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    TCHECK(rdp_socket_set_nonblocking(pair[0], 1) == 0);
+    TCHECK(rdp_socket_set_nonblocking(pair[0], 0) == 0);
+    TCHECK(rdp_socket_close(pair[0]) == 0);
+    TCHECK(rdp_socket_close(pair[1]) == 0);
+    pair[0] = -1;
+    pair[1] = -1;
+
+    tcp_fd = socket(AF_INET, SOCK_STREAM, 0);
+    TCHECK(tcp_fd >= 0);
+    TCHECK(rdp_socket_set_nodelay(tcp_fd) == 0);
+    TCHECK(rdp_socket_close(tcp_fd) == 0);
+    tcp_fd = -1;
+
+    TCHECK(rdp_tcp_connect(NULL, 3389, 1, &tcp_fd) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_tcp_connect("127.0.0.1", 0, 1, &tcp_fd) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_tcp_connect("127.0.0.1", 3389, -1, &tcp_fd) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_tcp_connect("127.0.0.1", 3389, 1, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_transport_connect(NULL, "127.0.0.1", 3389, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_transport_connect(&transport, NULL, 3389, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(transport.fd < 0);
+    TCHECK(rdp_transport_write(NULL, "x", 1, &got) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_transport_write(&transport, "x", 1, &got) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
     TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
     rdp_transport_attach_fd(&transport, pair[0], 1);
 
@@ -637,7 +665,8 @@ int test_transport(void)
     TCHECK(rdp_transport_read_exact(&transport, data, 3) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "abc", 3) == 0);
 
-    TCHECK(rdp_transport_write_all(&transport, "xy", 2) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_write(&transport, "xy", 2, &got) == LIBRDP_STATUS_OK);
+    TCHECK(got == 2);
     TCHECK(read(pair[1], data, sizeof(data)) == 2);
     TCHECK(memcmp(data, "xy", 2) == 0);
 

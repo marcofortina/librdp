@@ -890,6 +890,14 @@ static int test_trace(void)
 
     unsetenv("LIBRDP_TRACE_CLIENT");
     unsetenv("LIBRDP_TRACE_LEVEL");
+    rdp_trace_reset_for_tests();
+    CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
+    setenv("LIBRDP_TRACE_CLIENT", "true", 1);
+    rdp_trace_refresh_from_env();
+    CHECK(rdp_trace_enabled(RDP_TRACE_CLIENT));
+    unsetenv("LIBRDP_TRACE_CLIENT");
+    rdp_trace_refresh_from_env();
+    CHECK(!rdp_trace_enabled(RDP_TRACE_CLIENT));
     CHECK(capture_stderr(trace_default_event, output, sizeof(output)));
     CHECK(output[0] == '\0');
 
@@ -928,6 +936,10 @@ static int test_buffer_stream(void)
     const uint8_t* raw = NULL;
 
     rdp_buffer_init(&buffer);
+    CHECK(rdp_buffer_reserve(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_buffer_reserve(&buffer, 32) == LIBRDP_STATUS_OK);
+    CHECK(buffer.capacity >= 32);
+    CHECK(buffer.length == 0);
     CHECK(rdp_buffer_append_u8(&buffer, 0x11) == LIBRDP_STATUS_OK);
     CHECK(rdp_buffer_append_u16_le(&buffer, 0x2233) == LIBRDP_STATUS_OK);
     CHECK(rdp_buffer_append_u16_be(&buffer, 0x4455) == LIBRDP_STATUS_OK);
@@ -1075,6 +1087,7 @@ static int test_settings_surface_input_session(void)
     CHECK(settings != NULL);
     CHECK(librdp_settings_port(settings) == 3389);
     CHECK(librdp_settings_width(settings) == 1024);
+    CHECK(librdp_settings_height(settings) == 768);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
@@ -1265,6 +1278,7 @@ static int test_settings_surface_input_session(void)
 
     surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
     CHECK(surface != NULL);
+    CHECK(librdp_surface_format(surface) == LIBRDP_PIXEL_FORMAT_BGRA32);
     CHECK(librdp_surface_stride(surface) == 16);
     CHECK(librdp_surface_blit_bgra32(surface, 1, 1, 2, 2, pixels, 8) == LIBRDP_STATUS_OK);
     CHECK(librdp_surface_blit_bgra32(surface, 3, 3, 2, 2, pixels, 8) == LIBRDP_STATUS_INVALID_ARGUMENT);

@@ -614,6 +614,13 @@ static int test_video_capture_channel(void)
 
     PCHECK(strcmp(RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME, "RDCamera_Device_Enumerator") == 0);
     PCHECK(strcmp(RDP_VIDEO_CAPTURE_CHANNEL_NAME, "rdpecam") == 0);
+    PCHECK(rdp_video_capture_version_valid(RDP_VIDEO_CAPTURE_VERSION_1));
+    PCHECK(rdp_video_capture_version_valid(RDP_VIDEO_CAPTURE_VERSION_2));
+    PCHECK(!rdp_video_capture_version_valid(0));
+    PCHECK(rdp_video_capture_message_valid(RDP_VIDEO_CAPTURE_VERSION_2,
+                                           RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST));
+    PCHECK(!rdp_video_capture_message_valid(RDP_VIDEO_CAPTURE_VERSION_1,
+                                            RDP_VIDEO_CAPTURE_MESSAGE_PROPERTY_VALUE_REQUEST));
 
     PCHECK(rdp_video_capture_write_empty(&buffer,
                                          RDP_VIDEO_CAPTURE_VERSION_2,
@@ -1075,6 +1082,16 @@ static int test_remote_programs_channel(void)
     PCHECK(rdp_remote_programs_exec_flags_valid(RDP_REMOTE_PROGRAMS_EXEC_FLAG_FILE |
                                                 RDP_REMOTE_PROGRAMS_EXEC_FLAG_TRANSLATE_FILES));
     PCHECK(!rdp_remote_programs_exec_flags_valid(RDP_REMOTE_PROGRAMS_EXEC_FLAG_TRANSLATE_FILES));
+    PCHECK(rdp_remote_programs_exec_result_valid(RDP_REMOTE_PROGRAMS_EXEC_RESULT_OK));
+    PCHECK(!rdp_remote_programs_exec_result_valid(0xffffu));
+    PCHECK(rdp_remote_programs_write_header(&buffer,
+                                            RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE,
+                                            4u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 4u);
+    buffer.length = 0;
+    PCHECK(rdp_remote_programs_write_header(&buffer,
+                                            0xffffu,
+                                            4u) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_remote_programs_write_u32_order(&buffer,
                                                RDP_REMOTE_PROGRAMS_ORDER_HANDSHAKE,
@@ -1672,6 +1689,8 @@ static int test_audio_channels(void)
 
     PCHECK(rdp_audio_format_parse(pcm_format, sizeof(pcm_format), &pcm, &consumed) == LIBRDP_STATUS_OK);
     PCHECK(consumed == sizeof(pcm_format));
+    PCHECK(rdp_audio_format_encoded_size(&pcm) == sizeof(pcm_format));
+    PCHECK(rdp_audio_format_encoded_size(NULL) == 0);
     PCHECK(pcm.format_tag == RDP_AUDIO_FORMAT_PCM);
     PCHECK(pcm.channels == 2 && pcm.samples_per_sec == 44100 && pcm.avg_bytes_per_sec == 176400);
     PCHECK(pcm.block_align == 4 && pcm.bits_per_sample == 16 && pcm.extra_data_len == 0);
@@ -1694,6 +1713,9 @@ static int test_audio_channels(void)
     parsed_pcm = pcm;
     parsed_pcm.channels = 0;
     PCHECK(rdp_audio_format_write(&out, &parsed_pcm) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    parsed_pcm = pcm;
+    parsed_pcm.extra_data_len = 0x10000u;
+    PCHECK(rdp_audio_format_encoded_size(&parsed_pcm) == 0);
     PCHECK(rdp_audio_format_parse(bad_extensible, sizeof(bad_extensible), &parsed_pcm, &consumed) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
@@ -3559,6 +3581,10 @@ static int test_path_security_license_channels(void)
     rdp_graphics_decompressor_init(&graphics_decompressor);
     rdp_clearcodec_context_init(&clear_context);
     rdp_nscodec_context_init(&nscodec_context);
+    PCHECK(RDP_GRAPHICS_BULK_MAX_DECODED == 64u * 1024u * 1024u);
+    rdp_graphics_decompressor_reset(&graphics_decompressor);
+    rdp_clearcodec_context_reset(&clear_context);
+    rdp_nscodec_context_reset(&nscodec_context);
     rdp_buffer_init(&graphics_decoded);
     rdp_buffer_init(&rfx_stream);
     rdp_buffer_init(&rfx_bad_stream);
@@ -7146,6 +7172,7 @@ static int test_path_security_license_channels(void)
     input_touch_contact.contact_rect_bottom = 3;
     input_touch_contact.orientation = 90;
     input_touch_contact.pressure = 512;
+    PCHECK(rdp_input_channel_validate_touch_contact(&input_touch_contact) == LIBRDP_STATUS_OK);
     PCHECK(rdp_input_channel_write_touch_contact(&dyn_response, &input_touch_contact) == LIBRDP_STATUS_OK);
     {
         rdp_input_channel_touch_contact touch_contacts[2];
@@ -7383,6 +7410,7 @@ static int test_path_security_license_channels(void)
     input_pen_contact.rotation = 45;
     input_pen_contact.tilt_x = -10;
     input_pen_contact.tilt_y = 20;
+    PCHECK(rdp_input_channel_validate_pen_contact(&input_pen_contact) == LIBRDP_STATUS_OK);
     PCHECK(rdp_input_channel_write_pen_contact(&dyn_response, &input_pen_contact) == LIBRDP_STATUS_OK);
     {
         rdp_input_channel_pen_contact pen_contacts[2];
@@ -8202,6 +8230,7 @@ static int test_path_security_license_channels(void)
     }
     avc_decoder = rdp_avc_decoder_new();
     PCHECK(avc_decoder != NULL);
+    rdp_avc_decoder_reset(avc_decoder);
     rdp_avc_frame_init(&avc_frame);
     graphics_avc420_edge = graphics_avc420;
     graphics_avc420_edge.meta.rect_count = 0;
@@ -8646,6 +8675,20 @@ static int test_path_security_license_channels(void)
     PCHECK(graphics_progressive_block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT &&
            graphics_progressive_block.length == 10 &&
            graphics_progressive_block.payload_len == 4);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_graphics_progressive_write_block(&dyn_response,
+                                                graphics_progressive_block.type,
+                                                graphics_progressive_block.payload,
+                                                (uint32_t)graphics_progressive_block.payload_len) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_progressive_parse_block(dyn_response.data,
+                                                dyn_response.length,
+                                                &graphics_progressive_block) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_progressive_block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT &&
+           graphics_progressive_block.payload_len == 4);
+    PCHECK(rdp_graphics_progressive_write_block(&dyn_response, 1, NULL, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_graphics_progressive_parse_context(graphics_progressive_stream,
                                                   sizeof(graphics_progressive_stream),
                                                   &graphics_progressive_context) == LIBRDP_STATUS_OK);
@@ -9242,6 +9285,16 @@ static int test_path_security_license_channels(void)
            memcmp(clear_pixels.data, clear_saved, clear_saved_len) == 0);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
+    dyn_response.length = 0;
+    PCHECK(rdp_clipboard_write_header(&dyn_response,
+                                      RDP_CLIPBOARD_CB_MONITOR_READY,
+                                      0,
+                                      0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_clipboard_parse_packet(dyn_response.data, dyn_response.length, &cb) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(cb.type == RDP_CLIPBOARD_CB_MONITOR_READY && cb.payload_len == 0);
+    PCHECK(rdp_clipboard_write_header(NULL, RDP_CLIPBOARD_CB_MONITOR_READY, 0, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_clipboard_parse_packet(clip_caps, sizeof(clip_caps), &cb) == LIBRDP_STATUS_OK);
     PCHECK(rdp_clipboard_parse_capabilities(&cb, &cb_caps) == LIBRDP_STATUS_OK);
     PCHECK(cb_caps.count == 1 && cb_caps.has_general &&
@@ -11824,6 +11877,11 @@ static int test_auth_smartcard_redirection_channels(void)
     PCHECK(rdp_auth_redirection_kerb_call_id_valid(RDP_AUTH_REDIRECTION_CALL_KERB_FINALIZE_KEY_AGREEMENT));
     PCHECK(rdp_auth_redirection_ntlm_call_id_valid(
         RDP_AUTH_REDIRECTION_CALL_NTLM_CALCULATE_USER_SESSION_KEY_NT));
+    PCHECK(rdp_auth_redirection_call_id_valid(RDP_AUTH_REDIRECTION_CALL_KERB_NEGOTIATE_VERSION));
+    PCHECK(rdp_auth_redirection_negotiate_call_id_valid(RDP_AUTH_REDIRECTION_CALL_NTLM_NEGOTIATE_VERSION));
+    PCHECK(!rdp_auth_redirection_negotiate_call_id_valid(RDP_AUTH_REDIRECTION_CALL_NTLM_COMPARE_CREDENTIALS));
+    PCHECK(rdp_auth_redirection_asn1_pdu_valid(RDP_AUTH_REDIRECTION_ASN1_PDU_AS_REP));
+    PCHECK(!rdp_auth_redirection_asn1_pdu_valid(0x7fu));
     PCHECK(!rdp_auth_redirection_kerb_call_id_valid(0x0000010cu));
     PCHECK(!rdp_auth_redirection_ntlm_call_id_valid(0x00000205u));
     PCHECK(!rdp_auth_redirection_ecdh_key_bits_valid(255));
@@ -12274,6 +12332,12 @@ static int test_auth_smartcard_redirection_channels(void)
 
     PCHECK(rdp_smartcard_redirection_ioctl_valid(RDP_SMARTCARD_REDIRECTION_IOCTL_TRANSMIT));
     PCHECK(!rdp_smartcard_redirection_ioctl_valid(0x0009010cu));
+    PCHECK(rdp_smartcard_redirection_share_mode_valid(RDP_SMARTCARD_REDIRECTION_SHARE_SHARED));
+    PCHECK(!rdp_smartcard_redirection_share_mode_valid(0xffffffffu));
+    PCHECK(rdp_smartcard_redirection_disposition_valid(RDP_SMARTCARD_REDIRECTION_LEAVE_CARD));
+    PCHECK(!rdp_smartcard_redirection_disposition_valid(0xffffffffu));
+    PCHECK(rdp_smartcard_redirection_initialization_valid(RDP_SMARTCARD_REDIRECTION_RESET_CARD));
+    PCHECK(!rdp_smartcard_redirection_initialization_valid(0xffffffffu));
     PCHECK(rdp_smartcard_redirection_write_establish_context_call(
                &buffer,
                RDP_SMARTCARD_REDIRECTION_SCOPE_SYSTEM) == LIBRDP_STATUS_OK);
@@ -13444,6 +13508,16 @@ static int test_desktop_composition_channel(void)
 
     PCHECK(rdp_desktop_composition_operation_valid(RDP_DESKTOP_COMPOSITION_OP_TOGGLE));
     PCHECK(!rdp_desktop_composition_operation_valid(0));
+    PCHECK(rdp_desktop_composition_write_header(&buffer,
+                                                RDP_DESKTOP_COMPOSITION_OP_TOGGLE,
+                                                1u) == LIBRDP_STATUS_OK);
+    PCHECK(buffer.length == 4u &&
+           buffer.data[0] == RDP_DESKTOP_COMPOSITION_ALTSEC_HEADER &&
+           buffer.data[1] == RDP_DESKTOP_COMPOSITION_OP_TOGGLE &&
+           test_read_u16_le(buffer.data + 2u) == 1u);
+    buffer.length = 0;
+    PCHECK(rdp_desktop_composition_write_header(&buffer, 0xffu, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     memset(&header, 0x5a, sizeof(header));
     {
         rdp_desktop_composition_header valid_header = header;
@@ -13718,6 +13792,7 @@ static int test_composited_remoting_channel(void)
     uint32_t latest_invalidation = 0;
 
     rdp_composited_render_tree_init(&tree);
+    rdp_composited_render_tree_reset(&tree);
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&batch);
     rdp_buffer_init(&wrapped);
@@ -15339,6 +15414,18 @@ static int test_video_optimized_channel(void)
 
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&payload);
+
+    PCHECK(rdp_video_optimized_write_header(&buffer,
+                                            RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST,
+                                            8u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_video_optimized_parse_header(buffer.data, buffer.length, &header) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST &&
+           header.size == 8u &&
+           header.payload_len == 0);
+    buffer.length = 0;
+    PCHECK(rdp_video_optimized_write_header(&buffer, 0xffffffffu, 8u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_video_optimized_write_presentation_start_request(&buffer,
                                                                 3,
@@ -18279,6 +18366,18 @@ static int test_pnp_redirection_channel(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
+    PCHECK(rdp_pnp_redirection_write_client_io_header(&packet,
+                                                      0x00a1b2u,
+                                                      RDP_PNP_REDIRECTION_PACKET_RESPONSE) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_pnp_redirection_parse_client_io_header(packet.data, packet.length, &client_header) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(client_header.request_id == 0x00a1b2u &&
+           client_header.packet_type == RDP_PNP_REDIRECTION_PACKET_RESPONSE &&
+           client_header.payload_len == 0);
+    packet.length = 0;
+    PCHECK(rdp_pnp_redirection_write_client_io_header(&packet, 0x01000000u, 0xffu) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     PCHECK(rdp_pnp_redirection_write_capabilities_request(&buffer,
                                                           0x00a1b2u,
