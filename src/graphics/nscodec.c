@@ -70,6 +70,7 @@ static librdp_status rdp_nscodec_ensure_planes(rdp_nscodec_context* context, siz
 {
     size_t old_capacity = 0;
     size_t i = 0;
+    uint8_t* resized[4] = {0};
 
     if (!context)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -78,13 +79,24 @@ static librdp_status rdp_nscodec_ensure_planes(rdp_nscodec_context* context, siz
     old_capacity = context->plane_capacity;
     for (i = 0; i < 4u; i++)
     {
-        uint8_t* resized = (uint8_t*)realloc(context->planes[i], capacity);
+        resized[i] = (uint8_t*)malloc(capacity);
+        if (!resized[i])
+        {
+            size_t j = 0;
 
-        if (!resized)
+            for (j = 0; j < i; j++)
+                free(resized[j]);
             return LIBRDP_STATUS_NO_MEMORY;
+        }
+        if (old_capacity > 0 && context->planes[i])
+            memcpy(resized[i], context->planes[i], old_capacity);
         if (capacity > old_capacity)
-            memset(resized + old_capacity, 0, capacity - old_capacity);
-        context->planes[i] = resized;
+            memset(resized[i] + old_capacity, 0, capacity - old_capacity);
+    }
+    for (i = 0; i < 4u; i++)
+    {
+        free(context->planes[i]);
+        context->planes[i] = resized[i];
     }
     context->plane_capacity = capacity;
     return LIBRDP_STATUS_OK;
