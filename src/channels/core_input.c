@@ -285,7 +285,7 @@ librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
     {
         status = rdp_buffer_append_u8(buffer, rdp_core_input_pack_event(events[i].type, events[i].flags));
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            break;
         if (events[i].type == RDP_CORE_INPUT_EVENT_SCANCODE)
             status = rdp_buffer_append_u8(buffer, events[i].scancode);
         else if (events[i].type == RDP_CORE_INPUT_EVENT_UNICODE)
