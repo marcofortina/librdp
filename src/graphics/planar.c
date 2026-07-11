@@ -129,11 +129,13 @@ librdp_status rdp_planar_decode_argb(const void* data,
     size_t output_size = 0;
     size_t i = 0;
     rdp_buffer decoded_planes;
+    rdp_buffer output;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !pixels || !stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_buffer_init(&decoded_planes);
+    rdp_buffer_init(&output);
     if (width == 0 || height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (length < 1u || width > SIZE_MAX / height)
@@ -190,11 +192,10 @@ librdp_status rdp_planar_decode_argb(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     output_size = (size_t)height * output_stride;
 
-    status = rdp_buffer_reserve(pixels, output_size);
+    status = rdp_buffer_reserve(&output, output_size);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    pixels->length = output_size;
-    *stride = output_stride;
+    output.length = output_size;
 
     if (rle)
     {
@@ -204,7 +205,10 @@ librdp_status rdp_planar_decode_argb(const void* data,
 
         status = rdp_buffer_reserve(&decoded_planes, payload_size);
         if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&output);
             return status;
+        }
         decoded_planes.length = payload_size;
         write = decoded_planes.data;
         if (has_alpha)
@@ -217,6 +221,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
                                                  &consumed);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_buffer_free(&output);
                 rdp_buffer_free(&decoded_planes);
                 return status;
             }
@@ -232,6 +237,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
                                              &consumed);
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_buffer_free(&output);
             rdp_buffer_free(&decoded_planes);
             return status;
         }
@@ -246,6 +252,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
                                              &consumed);
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_buffer_free(&output);
             rdp_buffer_free(&decoded_planes);
             return status;
         }
@@ -260,6 +267,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
                                              &consumed);
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_buffer_free(&output);
             rdp_buffer_free(&decoded_planes);
             return status;
         }
@@ -267,6 +275,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
         position += consumed;
         if (position != length)
         {
+            rdp_buffer_free(&output);
             rdp_buffer_free(&decoded_planes);
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
@@ -281,7 +290,7 @@ librdp_status rdp_planar_decode_argb(const void* data,
 
     for (i = 0; i < pixel_count; i++)
     {
-        uint8_t* dest = pixels->data + (i * 4u);
+        uint8_t* dest = output.data + (i * 4u);
 
         if (cll == 0)
         {
@@ -306,5 +315,8 @@ librdp_status rdp_planar_decode_argb(const void* data,
         dest[3] = has_alpha ? alpha[i] : 0xffu;
     }
     rdp_buffer_free(&decoded_planes);
+    rdp_buffer_free(pixels);
+    *pixels = output;
+    *stride = output_stride;
     return LIBRDP_STATUS_OK;
 }

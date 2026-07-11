@@ -3448,7 +3448,9 @@ static int test_path_security_license_channels(void)
     uint8_t standard_work1[16];
     uint8_t standard_work2[8];
     uint8_t standard_update_work[4];
+    uint8_t planar_saved[16];
     size_t decoded_stride = 0;
+    size_t planar_saved_len = 0;
     size_t pointer_stride = 0;
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -4849,6 +4851,9 @@ static int test_path_security_license_channels(void)
            planar_pixels.data[12] == 60 &&
            planar_pixels.data[13] == 40 &&
            planar_pixels.data[14] == 25);
+    planar_saved_len = planar_pixels.length;
+    PCHECK(planar_saved_len <= sizeof(planar_saved));
+    memcpy(planar_saved, planar_pixels.data, planar_saved_len);
     PCHECK(rdp_planar_decode_argb(planar_reserved,
                                   sizeof(planar_reserved),
                                   1,
@@ -4867,6 +4872,8 @@ static int test_path_security_license_channels(void)
                                   1,
                                   &planar_pixels,
                                   &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(planar_pixels.length == planar_saved_len &&
+           memcmp(planar_pixels.data, planar_saved, planar_saved_len) == 0);
     PCHECK(rdp_nscodec_parse_capability(nscodec_capability_data,
                                         sizeof(nscodec_capability_data),
                                         &nscodec_capability) == LIBRDP_STATUS_OK);
