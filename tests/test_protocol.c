@@ -17231,6 +17231,8 @@ static int test_multitransport(void)
 static int test_udp_transport(void)
 {
     const uint8_t ack_payload[] = {0xaau, 0xbbu, 0xccu};
+    const uint8_t udp_ack_vector_payload[] = {0x00u, 0xc1u};
+    const uint8_t udp2_ack_vector_payload[] = {0x05u, 0xc2u, 0x81u};
     const uint8_t data_payload[] = {0x10u, 0x20u, 0x30u, 0x40u};
     const uint8_t packet_payload[] = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u};
     const uint8_t tiny_payload[] = {0xabu, 0xcdu, 0xefu};
@@ -17246,8 +17248,12 @@ static int test_udp_transport(void)
     rdp_udp2_header udp2_header;
     rdp_udp2_packet packet;
     rdp_udp2_prefix prefix;
+    rdp_udp2_packet_kind packet_kind;
     rdp_buffer buffer;
     rdp_buffer unwrapped;
+    uint32_t received = 0;
+    uint32_t pending = 0;
+    uint32_t lost = 0;
     size_t i = 0;
 
     for (i = 0; i < sizeof(correlation_id); i++)
@@ -17305,6 +17311,15 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp_write_ack_vector(&buffer, ack_payload, RDP_UDP_ACK_VECTOR_MAX_SIZE + 1u) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(buffer.length == 8u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_udp_write_ack_vector(&buffer,
+                                    udp_ack_vector_payload,
+                                    sizeof(udp_ack_vector_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp_parse_ack_vector(buffer.data, buffer.length, &ack_vector) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp_ack_vector_count(&ack_vector, &received, &pending) == LIBRDP_STATUS_OK);
+    PCHECK(received == 1u && pending == 2u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -17373,6 +17388,8 @@ static int test_udp_transport(void)
            packet.data_sequence_number == 0x1234u &&
            packet.data_body_len == sizeof(data_payload) &&
            memcmp(packet.data_body, data_payload, sizeof(data_payload)) == 0);
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_DATA);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -17385,6 +17402,8 @@ static int test_udp_transport(void)
            packet.ack.received_timestamp == 0x00aabbccu &&
            packet.ack.delayed_ack_count == 2u &&
            packet.ack.delayed_ack_time_scale == 3u);
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_ACK);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -17403,6 +17422,8 @@ static int test_udp_transport(void)
            packet.ack_vector.timestamp_present &&
            packet.ack_vector.timestamp == 0x00010203u &&
            packet.ack_vector.coded_ack_vector_size == sizeof(ack_payload));
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_ACK_VECTOR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -17410,8 +17431,61 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
     PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_OK);
     PCHECK(packet.has_ack_of_acks && packet.ack_of_acks_sequence_number == 0x4567u);
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_ACK_OF_ACKS);
     packet.has_ack_of_acks = 0;
     PCHECK(rdp_udp2_validate_packet(&packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    PCHECK(rdp_udp2_write_ack_vector_packet(&buffer,
+                                            2u,
+                                            0x1000u,
+                                            0u,
+                                            0u,
+                                            0u,
+                                            udp2_ack_vector_payload,
+                                            sizeof(udp2_ack_vector_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_ack_vector_count(&packet.ack_vector, &received, &lost) == LIBRDP_STATUS_OK);
+    PCHECK(received == 5u && lost == 7u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&packet, 0, sizeof(packet));
+    packet.header.flags = RDP_UDP2_FLAG_ACK | RDP_UDP2_FLAG_AOA | RDP_UDP2_FLAG_DATA;
+    packet.header.log_window_size = 6u;
+    packet.has_ack = 1u;
+    packet.ack.sequence_number = 0x1111u;
+    packet.ack.received_timestamp = 0x00020304u;
+    packet.ack.send_ack_time_gap_ms = 2u;
+    packet.has_ack_of_acks = 1u;
+    packet.ack_of_acks_sequence_number = 0x2222u;
+    packet.has_data = 1u;
+    packet.data_sequence_number = 0x3333u;
+    packet.data_body = data_payload;
+    packet.data_body_len = sizeof(data_payload);
+    PCHECK(rdp_udp2_write_packet(&buffer, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_DATA_WITH_ACK);
+    PCHECK(packet.has_ack && packet.has_ack_of_acks && packet.has_data &&
+           packet.data_body_len == sizeof(data_payload));
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&packet, 0, sizeof(packet));
+    packet.header.flags = RDP_UDP2_FLAG_OVERHEADSIZE | RDP_UDP2_FLAG_DELAYACKINFO;
+    packet.header.log_window_size = 7u;
+    packet.has_overhead_size = 1u;
+    packet.overhead_size = 8u;
+    packet.has_delay_ack_info = 1u;
+    packet.max_delayed_acks = 4u;
+    packet.delayed_ack_timeout_ms = 20u;
+    PCHECK(rdp_udp2_write_packet(&buffer, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
+           packet_kind == RDP_UDP2_PACKET_KIND_CONTROL);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
