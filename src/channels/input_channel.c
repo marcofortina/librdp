@@ -108,6 +108,7 @@ static librdp_status rdp_input_channel_validate_pen_contact_blob(const uint8_t* 
 
 librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rdp_input_channel_header* header)
 {
+    rdp_input_channel_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
@@ -115,15 +116,16 @@ librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rd
     if (length < 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &header->event_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &header->pdu_length) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.event_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.pdu_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->pdu_length != length)
+    if (parsed.pdu_length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_input_channel_valid_event_id(header->event_id))
+    if (!rdp_input_channel_valid_event_id(parsed.event_id))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -143,6 +145,7 @@ librdp_status rdp_input_channel_write_header(rdp_buffer* buffer, uint16_t event_
 
 librdp_status rdp_input_channel_parse_sc_ready(const void* data, size_t length, rdp_input_channel_sc_ready* ready)
 {
+    rdp_input_channel_sc_ready parsed;
     rdp_stream stream;
     rdp_input_channel_header header;
 
@@ -153,23 +156,24 @@ librdp_status rdp_input_channel_parse_sc_ready(const void* data, size_t length, 
     if (header.event_id != RDP_INPUT_CHANNEL_EVENT_SC_READY || (length != 10u && length != 14u))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(ready, 0, sizeof(*ready));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &ready->protocol_version) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.protocol_version) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_input_channel_valid_protocol(ready->protocol_version))
+    if (!rdp_input_channel_valid_protocol(parsed.protocol_version))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) == 4u)
     {
-        if (rdp_stream_read_u32_le(&stream, &ready->supported_features) != LIBRDP_STATUS_OK)
+        if (rdp_stream_read_u32_le(&stream, &parsed.supported_features) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if ((ready->supported_features & ~RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0)
+        if ((parsed.supported_features & ~RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        ready->has_supported_features = 1;
+        parsed.has_supported_features = 1;
     }
-    if (ready->protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 && !ready->has_supported_features)
+    if (parsed.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 && !parsed.has_supported_features)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *ready = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -229,6 +233,7 @@ librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
 
 librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, rdp_input_channel_cs_ready* ready)
 {
+    rdp_input_channel_cs_ready parsed;
     rdp_stream stream;
     rdp_input_channel_header header;
 
@@ -239,24 +244,25 @@ librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, 
     if (header.event_id != RDP_INPUT_CHANNEL_EVENT_CS_READY || length != 16u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(ready, 0, sizeof(*ready));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &ready->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &ready->protocol_version) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &ready->max_touch_contacts) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.protocol_version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.max_touch_contacts) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_input_channel_valid_protocol(ready->protocol_version) ||
-        (ready->flags & ~(RDP_INPUT_CHANNEL_CS_SHOW_TOUCH_VISUALS |
+    if (!rdp_input_channel_valid_protocol(parsed.protocol_version) ||
+        (parsed.flags & ~(RDP_INPUT_CHANNEL_CS_SHOW_TOUCH_VISUALS |
                           RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION |
                           RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN)) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (ready->protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V100 &&
-        (ready->flags & RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION) != 0)
+    if (parsed.protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V100 &&
+        (parsed.flags & RDP_INPUT_CHANNEL_CS_DISABLE_TIMESTAMP_INJECTION) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (ready->protocol_version < RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
-        (ready->flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) != 0)
+    if (parsed.protocol_version < RDP_INPUT_CHANNEL_PROTOCOL_V200 &&
+        (parsed.flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *ready = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -582,6 +588,7 @@ librdp_status rdp_input_channel_parse_touch_event(const void* data,
                                                   size_t length,
                                                   rdp_input_channel_touch_event* event)
 {
+    rdp_input_channel_touch_event parsed;
     rdp_stream stream;
     rdp_input_channel_header header;
 
@@ -591,18 +598,23 @@ librdp_status rdp_input_channel_parse_touch_event(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (header.event_id != RDP_INPUT_CHANNEL_EVENT_TOUCH || length < 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(event, 0, sizeof(*event));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &event->encode_time) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &event->frame_count) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.encode_time) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.frame_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (event->frame_count == 0)
+    if (parsed.frame_count == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    event->frames_len = rdp_stream_remaining(&stream);
-    if (rdp_stream_read_bytes(&stream, &event->frames, event->frames_len) != LIBRDP_STATUS_OK)
+    parsed.frames_len = rdp_stream_remaining(&stream);
+    if (rdp_stream_read_bytes(&stream, &parsed.frames, parsed.frames_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_input_channel_validate_touch_frames(event->frames, event->frames_len, event->frame_count);
+    if (rdp_input_channel_validate_touch_frames(parsed.frames,
+                                                parsed.frames_len,
+                                                parsed.frame_count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *event = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_input_channel_touch_event_get_frame(const rdp_input_channel_touch_event* event,
@@ -908,6 +920,7 @@ librdp_status rdp_input_channel_parse_pen_event(const void* data,
                                                 size_t length,
                                                 rdp_input_channel_pen_event* event)
 {
+    rdp_input_channel_pen_event parsed;
     rdp_stream stream;
     rdp_input_channel_header header;
 
@@ -917,18 +930,23 @@ librdp_status rdp_input_channel_parse_pen_event(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (header.event_id != RDP_INPUT_CHANNEL_EVENT_PEN || length < 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(event, 0, sizeof(*event));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &event->encode_time) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &event->frame_count) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.encode_time) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.frame_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (event->frame_count == 0)
+    if (parsed.frame_count == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    event->frames_len = rdp_stream_remaining(&stream);
-    if (rdp_stream_read_bytes(&stream, &event->frames, event->frames_len) != LIBRDP_STATUS_OK)
+    parsed.frames_len = rdp_stream_remaining(&stream);
+    if (rdp_stream_read_bytes(&stream, &parsed.frames, parsed.frames_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_input_channel_validate_pen_frames(event->frames, event->frames_len, event->frame_count);
+    if (rdp_input_channel_validate_pen_frames(parsed.frames,
+                                              parsed.frames_len,
+                                              parsed.frame_count) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *event = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_input_channel_pen_event_get_frame(const rdp_input_channel_pen_event* event,
