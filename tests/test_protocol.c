@@ -15434,6 +15434,22 @@ static int test_gdi_orders(void)
     PCHECK(secondary_header.actual_length == secondary.length &&
            secondary_header.payload_len == sizeof(secondary_payload) &&
            secondary_header.order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED);
+    {
+        const uint8_t invalid_secondary_header[] = {
+            RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY,
+            0x00u, 0x00u,
+            0x00u, 0x00u,
+            0xffu
+        };
+        rdp_gdi_secondary_order_header valid_secondary_header = secondary_header;
+
+        PCHECK(rdp_gdi_parse_secondary_order(invalid_secondary_header,
+                                             sizeof(invalid_secondary_header),
+                                             &secondary_header) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&secondary_header,
+                      &valid_secondary_header,
+                      sizeof(secondary_header)) == 0);
+    }
     PCHECK(rdp_gdi_parse_cache_bitmap_order(&secondary_header, &cache_bitmap) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
 
@@ -15743,6 +15759,7 @@ static int test_gdi_orders(void)
     {
         const uint16_t too_many = (uint16_t)(RDP_GDI_MAX_ORDERS + 1u);
         const uint8_t huge_payload = 0x5au;
+        rdp_gdi_orders_update valid_update = update;
         const uint8_t slow_too_many[] = {
             0x00u, 0x00u,
             0x00u, 0x00u,
@@ -15756,15 +15773,19 @@ static int test_gdi_orders(void)
         PCHECK(rdp_gdi_parse_slow_orders_update_payload(slow_too_many,
                                                         sizeof(slow_too_many),
                                                         &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&update, &valid_update, sizeof(update)) == 0);
         PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast_too_many,
                                                         sizeof(fast_too_many),
                                                         &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&update, &valid_update, sizeof(update)) == 0);
         PCHECK(rdp_gdi_parse_slow_orders_update_payload(slow_zero_with_data,
                                                         sizeof(slow_zero_with_data),
                                                         &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&update, &valid_update, sizeof(update)) == 0);
         PCHECK(rdp_gdi_parse_fast_orders_update_payload(fast_zero_with_data,
                                                         sizeof(fast_zero_with_data),
                                                         &update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&update, &valid_update, sizeof(update)) == 0);
         PCHECK(rdp_gdi_write_slow_orders_update_payload(&slow,
                                                         too_many,
                                                         secondary.data,
@@ -15834,6 +15855,15 @@ static int test_gdi_orders(void)
            primary.bounds_flags == 0x03u &&
            primary.bounds_len == 5u &&
            primary.payload_len == 2u);
+    {
+        rdp_gdi_primary_order_header valid_primary = primary;
+
+        PCHECK(rdp_gdi_parse_primary_order(bad_bounds,
+                                           sizeof(bad_bounds),
+                                           RDP_GDI_ORDER_PATBLT,
+                                           &primary) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&primary, &valid_primary, sizeof(primary)) == 0);
+    }
     PCHECK(rdp_gdi_write_primary_order(&payload,
                                        RDP_GDI_ORDER_PATBLT,
                                        RDP_GDI_ORDER_OPAQUERECT,
@@ -15847,10 +15877,6 @@ static int test_gdi_orders(void)
     PCHECK(payload.length == sizeof(primary_bounds) &&
            memcmp(payload.data, primary_bounds, sizeof(primary_bounds)) == 0);
     payload.length = 0;
-    PCHECK(rdp_gdi_parse_primary_order(bad_bounds,
-                                       sizeof(bad_bounds),
-                                       RDP_GDI_ORDER_PATBLT,
-                                       &primary) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_gdi_write_primary_order(&payload,
                                        RDP_GDI_ORDER_PATBLT,
                                        RDP_GDI_ORDER_OPAQUERECT,
@@ -16276,6 +16302,15 @@ static int test_gdi_orders(void)
     PCHECK(altsec.order_type == RDP_GDI_ALTSEC_SWITCH_SURFACE &&
            altsec.payload_len == 2u &&
            altsec.actual_length == sizeof(altsec_order));
+    {
+        const uint8_t invalid_altsec[] = {0xffu};
+        rdp_gdi_altsec_order_header valid_altsec = altsec;
+
+        PCHECK(rdp_gdi_parse_altsec_order(invalid_altsec,
+                                          sizeof(invalid_altsec),
+                                          &altsec) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&altsec, &valid_altsec, sizeof(altsec)) == 0);
+    }
     PCHECK(rdp_gdi_parse_switch_surface_order(&altsec, &switch_surface) == LIBRDP_STATUS_OK);
     PCHECK(switch_surface.bitmap_id == 0x1234u);
     payload.length = 0;
@@ -16485,6 +16520,16 @@ static int test_gdi_orders(void)
            list.orders[0].length == sizeof(render_opaque) &&
            list.orders[1].kind == RDP_GDI_ORDER_KIND_SECONDARY &&
            list.orders[1].length == secondary.length);
+    {
+        rdp_gdi_order_list valid_list = list;
+
+        PCHECK(rdp_gdi_parse_order_list(mixed.data,
+                                        mixed.length - 1u,
+                                        2,
+                                        RDP_GDI_ORDER_PATBLT,
+                                        &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&list, &valid_list, sizeof(list)) == 0);
+    }
     PCHECK(rdp_gdi_parse_order_list(NULL, 0, 0, RDP_GDI_ORDER_PATBLT, &list) == LIBRDP_STATUS_OK);
 
     memset(&bitmap_error, 0, sizeof(bitmap_error));

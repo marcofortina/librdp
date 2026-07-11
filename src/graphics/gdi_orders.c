@@ -401,6 +401,7 @@ librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update)
 {
+    rdp_gdi_orders_update parsed;
     rdp_stream stream;
     uint16_t ignored = 0;
 
@@ -408,22 +409,23 @@ librdp_status rdp_gdi_parse_slow_orders_update_payload(const void* data,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &update->update_type) != LIBRDP_STATUS_OK ||
+    if (rdp_stream_read_u16_le(&stream, &parsed.update_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &ignored) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &update->number_orders) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.number_orders) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &ignored) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (update->update_type != RDP_GDI_UPDATE_TYPE_ORDERS)
+    if (parsed.update_type != RDP_GDI_UPDATE_TYPE_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (update->number_orders > RDP_GDI_MAX_ORDERS)
+    if (parsed.number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    update->order_data_len = rdp_stream_remaining(&stream);
-    if (update->number_orders == 0 && update->order_data_len != 0)
+    parsed.order_data_len = rdp_stream_remaining(&stream);
+    if (parsed.number_orders == 0 && parsed.order_data_len != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &update->order_data, update->order_data_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&stream, &parsed.order_data, parsed.order_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *update = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -462,24 +464,26 @@ librdp_status rdp_gdi_parse_fast_orders_update_payload(const void* data,
                                                        size_t length,
                                                        rdp_gdi_orders_update* update)
 {
+    rdp_gdi_orders_update parsed;
     rdp_stream stream;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 2u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    update->update_type = RDP_GDI_UPDATE_TYPE_ORDERS;
-    if (rdp_stream_read_u16_le(&stream, &update->number_orders) != LIBRDP_STATUS_OK)
+    parsed.update_type = RDP_GDI_UPDATE_TYPE_ORDERS;
+    if (rdp_stream_read_u16_le(&stream, &parsed.number_orders) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (update->number_orders > RDP_GDI_MAX_ORDERS)
+    if (parsed.number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    update->order_data_len = rdp_stream_remaining(&stream);
-    if (update->number_orders == 0 && update->order_data_len != 0)
+    parsed.order_data_len = rdp_stream_remaining(&stream);
+    if (parsed.number_orders == 0 && parsed.order_data_len != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &update->order_data, update->order_data_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&stream, &parsed.order_data, parsed.order_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *update = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -510,6 +514,7 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
                                           uint8_t previous_order_type,
                                           rdp_gdi_primary_order_header* header)
 {
+    rdp_gdi_primary_order_header parsed;
     rdp_stream stream;
     uint8_t control_flags = 0;
     uint8_t order_type = previous_order_type;
@@ -523,7 +528,7 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 1u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u8(&stream, &control_flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -545,19 +550,20 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
     {
         if (rdp_stream_read_u8(&stream, &byte) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        header->field_flags |= (uint32_t)byte << (8u * i);
+        parsed.field_flags |= (uint32_t)byte << (8u * i);
     }
     if ((control_flags & RDP_GDI_TS_BOUNDS) &&
         !(control_flags & RDP_GDI_TS_ZERO_BOUNDS_DELTAS) &&
-        rdp_gdi_parse_bounds(&stream, header) != LIBRDP_STATUS_OK)
+        rdp_gdi_parse_bounds(&stream, &parsed) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->control_flags = control_flags;
-    header->order_type = order_type;
-    header->field_flag_bytes = field_bytes;
-    header->next_order_type = order_type;
-    header->payload_len = rdp_stream_remaining(&stream);
-    if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
+    parsed.control_flags = control_flags;
+    parsed.order_type = order_type;
+    parsed.field_flag_bytes = field_bytes;
+    parsed.next_order_type = order_type;
+    parsed.payload_len = rdp_stream_remaining(&stream);
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -637,29 +643,31 @@ librdp_status rdp_gdi_parse_secondary_order(const void* data,
                                             size_t length,
                                             rdp_gdi_secondary_order_header* header)
 {
+    rdp_gdi_secondary_order_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u8(&stream, &header->control_flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->order_length) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->extra_flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &header->order_type) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&stream, &parsed.control_flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.order_length) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.extra_flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.order_type) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((header->control_flags & (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY)) !=
+    if ((parsed.control_flags & (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY)) !=
             (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY) ||
-        !rdp_gdi_secondary_order_type_valid(header->order_type))
+        !rdp_gdi_secondary_order_type_valid(parsed.order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->actual_length = (size_t)header->order_length + 13u;
-    if (header->actual_length > length || header->actual_length < 6u)
+    parsed.actual_length = (size_t)parsed.order_length + 13u;
+    if (parsed.actual_length > length || parsed.actual_length < 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->payload_len = header->actual_length - 6u;
-    if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
+    parsed.payload_len = parsed.actual_length - 6u;
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1120,29 +1128,31 @@ librdp_status rdp_gdi_parse_altsec_order(const void* data,
                                          size_t length,
                                          rdp_gdi_altsec_order_header* header)
 {
+    rdp_gdi_altsec_order_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 1u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u8(&stream, &header->control_flags) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&stream, &parsed.control_flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((header->control_flags & 0x03u) != RDP_GDI_TS_SECONDARY)
+    if ((parsed.control_flags & 0x03u) != RDP_GDI_TS_SECONDARY)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->order_type = (uint8_t)(header->control_flags >> 2);
-    if (!rdp_gdi_altsec_order_type_valid(header->order_type))
+    parsed.order_type = (uint8_t)(parsed.control_flags >> 2);
+    if (!rdp_gdi_altsec_order_type_valid(parsed.order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_gdi_altsec_payload_length(header->order_type,
+    if (rdp_gdi_altsec_payload_length(parsed.order_type,
                                       stream.data + stream.position,
                                       rdp_stream_remaining(&stream),
-                                      &header->payload_len) != LIBRDP_STATUS_OK)
+                                      &parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->actual_length = stream.position;
+    parsed.actual_length = stream.position;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1557,6 +1567,7 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
                                        rdp_gdi_order_list* list)
 {
     const uint8_t* bytes = (const uint8_t*)data;
+    rdp_gdi_order_list parsed;
     size_t offset = 0;
     uint16_t index = 0;
     rdp_gdi_render_state render_state;
@@ -1565,7 +1576,7 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (number_orders > RDP_GDI_MAX_ORDERS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(list, 0, sizeof(*list));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_gdi_render_state_init(&render_state);
     render_state.current_order_type = initial_order_type;
     for (index = 0; index < number_orders; index++)
@@ -1577,16 +1588,16 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         if (offset >= length)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         control = bytes[offset];
-        list->orders[index].data = bytes + offset;
+        parsed.orders[index].data = bytes + offset;
         if ((control & (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY)) ==
             (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY))
         {
             if (rdp_gdi_parse_secondary_order(bytes + offset, length - offset, &secondary) !=
                 LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            list->orders[index].kind = RDP_GDI_ORDER_KIND_SECONDARY;
-            list->orders[index].order_type = secondary.order_type;
-            list->orders[index].length = secondary.actual_length;
+            parsed.orders[index].kind = RDP_GDI_ORDER_KIND_SECONDARY;
+            parsed.orders[index].order_type = secondary.order_type;
+            parsed.orders[index].length = secondary.actual_length;
             offset += secondary.actual_length;
             continue;
         }
@@ -1594,9 +1605,9 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         {
             if (rdp_gdi_parse_altsec_order(bytes + offset, length - offset, &altsec) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            list->orders[index].kind = RDP_GDI_ORDER_KIND_ALTSEC;
-            list->orders[index].order_type = altsec.order_type;
-            list->orders[index].length = altsec.actual_length;
+            parsed.orders[index].kind = RDP_GDI_ORDER_KIND_ALTSEC;
+            parsed.orders[index].order_type = altsec.order_type;
+            parsed.orders[index].length = altsec.actual_length;
             offset += altsec.actual_length;
             continue;
         }
@@ -1614,9 +1625,9 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
                 return status;
             if (consumed == 0 || consumed > length - offset)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            list->orders[index].kind = RDP_GDI_ORDER_KIND_PRIMARY;
-            list->orders[index].order_type = op.order_type;
-            list->orders[index].length = consumed;
+            parsed.orders[index].kind = RDP_GDI_ORDER_KIND_PRIMARY;
+            parsed.orders[index].order_type = op.order_type;
+            parsed.orders[index].length = consumed;
             offset += consumed;
             continue;
         }
@@ -1624,7 +1635,8 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
     }
     if (offset != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    list->count = number_orders;
+    parsed.count = number_orders;
+    *list = parsed;
     return LIBRDP_STATUS_OK;
 }
 
