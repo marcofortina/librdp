@@ -104,6 +104,7 @@ static int test_udp_transport_protocols(void)
     const uint8_t payload[] = {0xaa, 0xbb, 0xcc, 0xdd};
     const uint8_t wire_example[] = {0x73, 0x30, 0x35, 0x56, 0x78, 0xa2, 0x36, 0x10, 0xee, 0x68, 0xf2};
     const uint8_t layout_example[] = {0x30, 0x35, 0x56, 0x78, 0xa2, 0x36, 0x73, 0xee, 0x68, 0xf2};
+    const uint8_t udp2_empty_data_packet[] = {0x04u, 0x40u, 0x34u, 0x12u};
     rdp_buffer buffer;
     rdp_buffer wire;
     rdp_buffer unwrapped;
@@ -245,6 +246,11 @@ static int test_udp_transport_protocols(void)
     TCHECK(rdp_udp2_parse_prefix(0x00u, &udp2_prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
     TCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DATA) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_udp2_write_data_packet(&buffer, 4, 0x1234u, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_udp2_parse_packet(udp2_empty_data_packet,
+                                 sizeof(udp2_empty_data_packet),
+                                 &udp2_packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

@@ -575,7 +575,9 @@ librdp_status rdp_udp2_validate_packet(const rdp_udp2_packet* packet)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!packet->has_data && packet->data_body_len > 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (packet->has_data && !packet->data_body && packet->data_body_len > 0)
+    if (packet->has_data && packet->data_body_len == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (packet->has_data && !packet->data_body)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }

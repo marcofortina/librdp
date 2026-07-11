@@ -17278,6 +17278,7 @@ static int test_udp_transport(void)
     const uint8_t tiny_payload[] = {0xabu, 0xcdu, 0xefu};
     const uint8_t bad_ack_vector_extra[] = {3u, 0u, 0xaau, 0xbbu, 0xccu, 0u, 0u, 0u, 0u};
     const uint8_t bad_ack_vector_padding[] = {3u, 0u, 0xaau, 0xbbu, 0xccu, 0u, 0u, 1u};
+    const uint8_t udp2_empty_data_packet[] = {0x04u, 0x30u, 0x34u, 0x12u};
     uint8_t correlation_id[16];
     uint8_t cookie_hash[32];
     rdp_udp_fec_header fec;
@@ -17411,6 +17412,12 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DATA) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
+    PCHECK(rdp_udp2_write_data_packet(&buffer, 3u, 0x1234u, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
+    PCHECK(rdp_udp2_parse_packet(udp2_empty_data_packet,
+                                 sizeof(udp2_empty_data_packet),
+                                 &packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_udp2_write_data_packet(&buffer,
                                       16u,
                                       0x1234u,
