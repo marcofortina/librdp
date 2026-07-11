@@ -549,20 +549,36 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
         0x05u, 0x00u,
         0x11u, 0x22u, 0x33u
     };
+    static const uint8_t render_scrblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_SCRBLT,
+        0x7fu,
+        0x08u, 0x00u,
+        0x03u, 0x00u,
+        0x04u, 0x00u,
+        0x05u, 0x00u,
+        0xccu,
+        0x02u, 0x00u,
+        0x03u, 0x00u
+    };
+    rdp_buffer orders;
     rdp_buffer payload;
     rdp_buffer slow;
     rdp_buffer mcs;
     size_t total = 0;
     int ok = 0;
 
+    rdp_buffer_init(&orders);
     rdp_buffer_init(&payload);
     rdp_buffer_init(&slow);
     rdp_buffer_init(&mcs);
 
-    ok = rdp_gdi_write_slow_orders_update_payload(&payload,
-                                                  1,
-                                                  render_opaque,
-                                                  sizeof(render_opaque)) == LIBRDP_STATUS_OK;
+    ok = rdp_buffer_append(&orders, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, render_scrblt, sizeof(render_scrblt)) == LIBRDP_STATUS_OK &&
+         rdp_gdi_write_slow_orders_update_payload(&payload,
+                                                  2,
+                                                  orders.data,
+                                                  orders.length) == LIBRDP_STATUS_OK;
     total = payload.length + 18u;
     if (ok)
         ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
@@ -597,6 +613,7 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
     rdp_buffer_free(&mcs);
     rdp_buffer_free(&slow);
     rdp_buffer_free(&payload);
+    rdp_buffer_free(&orders);
     return ok;
 }
 
@@ -1456,7 +1473,7 @@ static int test_settings_surface_input_session(void)
     out = librdp_surface_pixels(session_surface);
     CHECK(out[0] == 9 && out[1] == 10 && out[2] == 11 && out[3] == 12);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 3);
+    CHECK(counter.surfaces == 4);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     out = librdp_surface_pixels(session_surface);
@@ -1464,6 +1481,10 @@ static int test_settings_surface_input_session(void)
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)2 * 4u) + 1u] == 0x22u);
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)2 * 4u) + 2u] == 0x33u);
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)2 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 0u] == 0x11u);
+    CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 1u] == 0x22u);
+    CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 2u] == 0x33u);
+    CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 3u] == 0xffu);
     CHECK(librdp_session_refresh(session, 0, 0, 64, 48) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_refresh(session, 0, 0, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
     key.state = LIBRDP_KEY_PRESSED;
@@ -1472,7 +1493,7 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 3);
+    CHECK(counter.surfaces == 4);
     CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
