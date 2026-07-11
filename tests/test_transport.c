@@ -359,6 +359,16 @@ static int test_udp_transport_protocols(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    TCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DUMMY) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_udp2_unwrap_packet(&unwrapped, buffer.data, buffer.length, &udp2_prefix) == LIBRDP_STATUS_OK);
+    TCHECK(udp2_prefix.packet_type == RDP_UDP2_PACKET_TYPE_DUMMY &&
+           udp2_prefix.short_packet_length == 0u &&
+           unwrapped.length == 0u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    rdp_buffer_free(&unwrapped);
+    rdp_buffer_init(&unwrapped);
+
     TCHECK(rdp_udp2_unwrap_packet(&unwrapped,
                                   wire_example,
                                   sizeof(wire_example),

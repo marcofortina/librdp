@@ -17132,6 +17132,17 @@ static int test_udp_transport(void)
            prefix.short_packet_length == sizeof(tiny_payload) &&
            unwrapped.length == sizeof(tiny_payload) &&
            memcmp(unwrapped.data, tiny_payload, sizeof(tiny_payload)) == 0);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    rdp_buffer_free(&unwrapped);
+    rdp_buffer_init(&unwrapped);
+
+    PCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DUMMY) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_unwrap_packet(&unwrapped, buffer.data, buffer.length, &prefix) == LIBRDP_STATUS_OK);
+    PCHECK(prefix.packet_type == RDP_UDP2_PACKET_TYPE_DUMMY &&
+           prefix.short_packet_length == 0u &&
+           unwrapped.length == 0u);
     buffer.length = (size_t)-4;
     PCHECK(rdp_udp2_wrap_packet(&buffer,
                                 tiny_payload,
