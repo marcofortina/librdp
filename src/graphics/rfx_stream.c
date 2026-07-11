@@ -3,6 +3,7 @@
 #include "common/stream.h"
 #include "common/trace.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define RDP_RFX_WBT_SYNC 0xCCC0u
@@ -35,6 +36,53 @@ typedef struct rdp_rfx_stream_state
     uint8_t region_active;
     uint16_t regions_completed;
 } rdp_rfx_stream_state;
+
+typedef struct rdp_rfx_stream_pending_tiles
+{
+    rdp_rfx_stream_tile* tiles;
+    size_t count;
+    size_t capacity;
+} rdp_rfx_stream_pending_tiles;
+
+static void rdp_rfx_stream_pending_free(rdp_rfx_stream_pending_tiles* pending)
+{
+    if (!pending)
+        return;
+    free(pending->tiles);
+    pending->tiles = NULL;
+    pending->count = 0;
+    pending->capacity = 0;
+}
+
+static librdp_status rdp_rfx_stream_pending_append(rdp_rfx_stream_pending_tiles* pending,
+                                                   const rdp_rfx_stream_tile* tile)
+{
+    rdp_rfx_stream_tile* next = NULL;
+    size_t next_capacity = 0;
+
+    if (!pending || !tile)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (pending->count >= RDP_RFX_STREAM_MAX_TILES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (pending->count == pending->capacity)
+    {
+        next_capacity = pending->capacity == 0 ? 8u : pending->capacity * 2u;
+        if (next_capacity > RDP_RFX_STREAM_MAX_TILES)
+            next_capacity = RDP_RFX_STREAM_MAX_TILES;
+        if (next_capacity <= pending->capacity ||
+            next_capacity > SIZE_MAX / sizeof(pending->tiles[0]))
+            return LIBRDP_STATUS_NO_MEMORY;
+        next = (rdp_rfx_stream_tile*)realloc(pending->tiles,
+                                             next_capacity * sizeof(pending->tiles[0]));
+        if (!next)
+            return LIBRDP_STATUS_NO_MEMORY;
+        pending->tiles = next;
+        pending->capacity = next_capacity;
+    }
+    pending->tiles[pending->count] = *tile;
+    pending->count++;
+    return LIBRDP_STATUS_OK;
+}
 
 static librdp_status rdp_rfx_stream_require_consumed(const rdp_stream* stream)
 {
@@ -247,8 +295,7 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
 
 static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
                                                 rdp_stream* stream,
-                                                rdp_rfx_stream_tile_callback callback,
-                                                void* user)
+                                                rdp_rfx_stream_tile* tile)
 {
     uint16_t block_type = 0;
     uint32_t block_len = 0;
@@ -262,10 +309,9 @@ static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
     const uint8_t* cb_data = NULL;
     const uint8_t* cr_data = NULL;
     rdp_stream tile_stream;
-    rdp_rfx_stream_tile tile;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!state || !stream || !callback)
+    if (!state || !stream || !tile)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (rdp_stream_remaining(stream) < 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -278,12 +324,12 @@ static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
     if (rdp_stream_skip(stream, block_len - 6u) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(&tile, 0, sizeof(tile));
+    memset(tile, 0, sizeof(*tile));
     if (rdp_stream_read_u8(&tile_stream, &quant_y) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u8(&tile_stream, &quant_cb) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u8(&tile_stream, &quant_cr) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&tile_stream, &tile.x_idx) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&tile_stream, &tile.y_idx) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&tile_stream, &tile->x_idx) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&tile_stream, &tile->y_idx) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&tile_stream, &y_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&tile_stream, &cb_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&tile_stream, &cr_len) != LIBRDP_STATUS_OK)
@@ -296,16 +342,16 @@ static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
         rdp_rfx_stream_require_consumed(&tile_stream) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    tile.x = (uint32_t)tile.x_idx * RDP_RFX_STREAM_TILE_SIZE;
-    tile.y = (uint32_t)tile.y_idx * RDP_RFX_STREAM_TILE_SIZE;
-    if (tile.x >= state->summary.width || tile.y >= state->summary.height)
+    tile->x = (uint32_t)tile->x_idx * RDP_RFX_STREAM_TILE_SIZE;
+    tile->y = (uint32_t)tile->y_idx * RDP_RFX_STREAM_TILE_SIZE;
+    if (tile->x >= state->summary.width || tile->y >= state->summary.height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    tile.width = state->summary.width - tile.x;
-    tile.height = state->summary.height - tile.y;
-    if (tile.width > RDP_RFX_STREAM_TILE_SIZE)
-        tile.width = RDP_RFX_STREAM_TILE_SIZE;
-    if (tile.height > RDP_RFX_STREAM_TILE_SIZE)
-        tile.height = RDP_RFX_STREAM_TILE_SIZE;
+    tile->width = state->summary.width - tile->x;
+    tile->height = state->summary.height - tile->y;
+    if (tile->width > RDP_RFX_STREAM_TILE_SIZE)
+        tile->width = RDP_RFX_STREAM_TILE_SIZE;
+    if (tile->height > RDP_RFX_STREAM_TILE_SIZE)
+        tile->height = RDP_RFX_STREAM_TILE_SIZE;
 
     status = rdp_rfx_decode_tile(state->summary.mode,
                                  y_data,
@@ -317,19 +363,13 @@ static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
                                  &state->quants[quant_y],
                                  &state->quants[quant_cb],
                                  &state->quants[quant_cr],
-                                 &tile.pixels);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = callback(&tile, user);
-    if (status == LIBRDP_STATUS_OK && state->summary.tile_count < UINT16_MAX)
-        state->summary.tile_count++;
+                                 &tile->pixels);
     return status;
 }
 
 static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
                                                   rdp_stream* stream,
-                                                  rdp_rfx_stream_tile_callback callback,
-                                                  void* user)
+                                                  rdp_rfx_stream_pending_tiles* pending)
 {
     uint16_t subtype = 0;
     uint16_t index = 0;
@@ -342,7 +382,7 @@ static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
     rdp_stream tile_data_stream;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!state || !stream || !callback)
+    if (!state || !stream || !pending)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!state->region_active)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -379,10 +419,20 @@ static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
     if (rdp_stream_skip(stream, tile_data_size) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    for (i = 0; status == LIBRDP_STATUS_OK && i < tile_count; i++)
-        status = rdp_rfx_stream_decode_tile(state, &tile_data_stream, callback, user);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
+    for (i = 0; i < tile_count; i++)
+    {
+        rdp_rfx_stream_tile tile;
+
+        status = rdp_rfx_stream_decode_tile(state, &tile_data_stream, &tile);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        status = rdp_rfx_stream_pending_append(pending, &tile);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (state->summary.tile_count == UINT16_MAX)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        state->summary.tile_count++;
+    }
     if (rdp_stream_remaining(&tile_data_stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->region_active = 0;
@@ -427,10 +477,14 @@ librdp_status rdp_rfx_stream_decode(const void* data,
 {
     rdp_stream input;
     rdp_rfx_stream_state state;
+    rdp_rfx_stream_pending_tiles pending;
+    size_t i = 0;
+    librdp_status final_status = LIBRDP_STATUS_OK;
 
     if ((!data && length > 0) || !callback)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(&state, 0, sizeof(state));
+    memset(&pending, 0, sizeof(pending));
     state.summary.mode = RDP_RFX_RLGR1;
     if (summary)
         memset(summary, 0, sizeof(*summary));
@@ -448,19 +502,31 @@ librdp_status rdp_rfx_stream_decode(const void* data,
 
         if (rdp_stream_read_u16_le(&input, &block_type) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u32_le(&input, &block_len) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        {
+            final_status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto cleanup;
+        }
         if (block_len < 6u || block_len - 6u > rdp_stream_remaining(&input))
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        {
+            final_status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto cleanup;
+        }
         payload_len = block_len - 6u;
         rdp_stream_init(&block, input.data + input.position, payload_len);
         if (rdp_stream_skip(&input, payload_len) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        {
+            final_status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto cleanup;
+        }
 
         if (block_type >= RDP_RFX_WBT_CONTEXT && block_type <= RDP_RFX_WBT_EXTENSION)
         {
             status = rdp_rfx_stream_read_channel_prefix(block_type, &block);
             if (status != LIBRDP_STATUS_OK)
-                return status;
+            {
+                final_status = status;
+                goto cleanup;
+            }
         }
 
         switch (block_type)
@@ -484,19 +550,34 @@ librdp_status rdp_rfx_stream_decode(const void* data,
                 status = rdp_rfx_stream_parse_region(&state, &block);
                 break;
             case RDP_RFX_WBT_EXTENSION:
-                status = rdp_rfx_stream_parse_tileset(&state, &block, callback, user);
+                status = rdp_rfx_stream_parse_tileset(&state, &block, &pending);
                 break;
             case RDP_RFX_WBT_FRAME_END:
                 status = rdp_rfx_stream_parse_frame_end(&state, &block);
                 break;
             default:
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
+                final_status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                goto cleanup;
         }
         if (status != LIBRDP_STATUS_OK)
-            return status;
+        {
+            final_status = status;
+            goto cleanup;
+        }
     }
     if (state.frame_active || state.region_active || !state.summary.frame_end_seen)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    {
+        final_status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto cleanup;
+    }
+    for (i = 0; i < pending.count; i++)
+    {
+        final_status = callback(&pending.tiles[i], user);
+        if (final_status != LIBRDP_STATUS_OK)
+        {
+            goto cleanup;
+        }
+    }
     if (summary)
         *summary = state.summary;
     rdp_trace_event_level(RDP_TRACE_CLIENT,
@@ -509,5 +590,7 @@ librdp_status rdp_rfx_stream_decode(const void* data,
                           state.summary.rect_count,
                           state.summary.tile_count,
                           state.summary.mode);
-    return LIBRDP_STATUS_OK;
+cleanup:
+    rdp_rfx_stream_pending_free(&pending);
+    return final_status;
 }
