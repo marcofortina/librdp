@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #include "common/buffer.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"

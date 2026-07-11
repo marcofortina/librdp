@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #include "channels/xps_print.h"
 
 #include "common/stream.h"

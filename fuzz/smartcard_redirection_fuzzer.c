@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #include "channels/smartcard_redirection.h"
 
 #include <stddef.h>

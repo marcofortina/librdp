@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #include "channels/video_capture.h"
 
 #include "common/stream.h"

@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #include "input/input.h"
 
 librdp_status rdp_input_make_keyboard_flags(const librdp_key_event* event, uint16_t* flags)

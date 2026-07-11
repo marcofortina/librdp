@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 #ifndef RDP_CHANNELS_DYNAMIC_CHANNEL_H
 #define RDP_CHANNELS_DYNAMIC_CHANNEL_H
 
