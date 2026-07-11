@@ -1721,14 +1721,14 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
     int delta = 0;
     librdp_status status = LIBRDP_STATUS_OK;
     rdp_gdi_render_state working;
+    rdp_gdi_render_op parsed;
 
     if (!state || !data || !op || !consumed)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     working = *state;
-    memset(op, 0, sizeof(*op));
-    *consumed = 0;
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u8(&stream, &control) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -1757,79 +1757,79 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
     }
     if (control & RDP_GDI_TS_BOUNDS)
     {
-        status = rdp_gdi_render_read_bounds(&stream, control, &working, op);
+        status = rdp_gdi_render_read_bounds(&stream, control, &working, &parsed);
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
     delta = (control & RDP_GDI_TS_DELTA_COORDINATES) != 0;
-    op->order_type = order_type;
+    parsed.order_type = order_type;
     switch (order_type)
     {
         case RDP_GDI_ORDER_DSTBLT:
-            status = rdp_gdi_render_decode_dstblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_dstblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_PATBLT:
-            status = rdp_gdi_render_decode_patblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_patblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MEMBLT:
-            status = rdp_gdi_render_decode_memblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_memblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MEM3BLT:
-            status = rdp_gdi_render_decode_mem3blt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_mem3blt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_DRAWNINEGRID:
-            status = rdp_gdi_render_decode_draw_ninegrid(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_draw_ninegrid(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MULTI_DRAWNINEGRID:
-            status = rdp_gdi_render_decode_multi_draw_ninegrid(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_multi_draw_ninegrid(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MULTIDSTBLT:
-            status = rdp_gdi_render_decode_multi_dstblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_multi_dstblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MULTISCRBLT:
-            status = rdp_gdi_render_decode_multi_scrblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_multi_scrblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MULTIPATBLT:
-            status = rdp_gdi_render_decode_multi_patblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_multi_patblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
-            status = rdp_gdi_render_decode_multi_opaque_rect(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_multi_opaque_rect(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_LINETO:
-            status = rdp_gdi_render_decode_line(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_line(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_POLYLINE:
-            status = rdp_gdi_render_decode_polyline(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_polyline(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_POLYGON_SC:
-            status = rdp_gdi_render_decode_polygon_sc(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_polygon_sc(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_POLYGON_CB:
-            status = rdp_gdi_render_decode_polygon_cb(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_polygon_cb(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_ELLIPSE_SC:
-            status = rdp_gdi_render_decode_ellipse_sc(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_ellipse_sc(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_ELLIPSE_CB:
-            status = rdp_gdi_render_decode_ellipse_cb(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_ellipse_cb(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_OPAQUERECT:
-            status = rdp_gdi_render_decode_opaque_rect(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_opaque_rect(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_SCRBLT:
-            status = rdp_gdi_render_decode_scrblt(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_scrblt(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_SAVEBITMAP:
-            status = rdp_gdi_render_decode_save_bitmap(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_save_bitmap(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_GLYPH_INDEX:
-            status = rdp_gdi_render_decode_glyph_index(&stream, field_flags, delta, &working, op);
+            status = rdp_gdi_render_decode_glyph_index(&stream, field_flags, delta, &working, &parsed);
             break;
         case RDP_GDI_ORDER_FAST_INDEX:
-            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, &working, op, 0);
+            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, &working, &parsed, 0);
             break;
         case RDP_GDI_ORDER_FAST_GLYPH:
-            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, &working, op, 1);
+            status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, &working, &parsed, 1);
             break;
         default:
             status = LIBRDP_STATUS_UNSUPPORTED;
@@ -1837,18 +1837,19 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
     }
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if ((op->kind == RDP_GDI_RENDER_OP_DSTBLT || op->kind == RDP_GDI_RENDER_OP_SCRBLT ||
-         op->kind == RDP_GDI_RENDER_OP_PATBLT || op->kind == RDP_GDI_RENDER_OP_OPAQUE_RECT ||
-         op->kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || op->kind == RDP_GDI_RENDER_OP_ELLIPSE_CB ||
-         op->kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
-         op->kind == RDP_GDI_RENDER_OP_MULTIPATBLT || op->kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
-         op->kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
-         op->kind == RDP_GDI_RENDER_OP_MEMBLT || op->kind == RDP_GDI_RENDER_OP_MEM3BLT ||
-         op->kind == RDP_GDI_RENDER_OP_SAVE_BITMAP) &&
-        (op->rect.width < 0 || op->rect.height < 0))
+    if ((parsed.kind == RDP_GDI_RENDER_OP_DSTBLT || parsed.kind == RDP_GDI_RENDER_OP_SCRBLT ||
+         parsed.kind == RDP_GDI_RENDER_OP_PATBLT || parsed.kind == RDP_GDI_RENDER_OP_OPAQUE_RECT ||
+         parsed.kind == RDP_GDI_RENDER_OP_ELLIPSE_SC || parsed.kind == RDP_GDI_RENDER_OP_ELLIPSE_CB ||
+         parsed.kind == RDP_GDI_RENDER_OP_MULTIDSTBLT ||
+         parsed.kind == RDP_GDI_RENDER_OP_MULTIPATBLT || parsed.kind == RDP_GDI_RENDER_OP_MULTISCRBLT ||
+         parsed.kind == RDP_GDI_RENDER_OP_MULTIOPAQUE_RECT ||
+         parsed.kind == RDP_GDI_RENDER_OP_MEMBLT || parsed.kind == RDP_GDI_RENDER_OP_MEM3BLT ||
+         parsed.kind == RDP_GDI_RENDER_OP_SAVE_BITMAP) &&
+        (parsed.rect.width < 0 || parsed.rect.height < 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     working.current_order_type = order_type;
     *state = working;
+    *op = parsed;
     *consumed = stream.position;
     return LIBRDP_STATUS_OK;
 }

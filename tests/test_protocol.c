@@ -16331,12 +16331,19 @@ static int test_gdi_orders(void)
            render_op.src_x == 5 &&
            render_op.src_y == 6);
     render_state_before_error = render_state;
-    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
-                                               render_memblt_bad_width,
-                                               sizeof(render_memblt_bad_width),
-                                               &render_op,
-                                               &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
+    {
+        rdp_gdi_render_op valid_render_op = render_op;
+        size_t valid_render_consumed = render_consumed;
+
+        PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                                   render_memblt_bad_width,
+                                                   sizeof(render_memblt_bad_width),
+                                                   &render_op,
+                                                   &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
+        PCHECK(memcmp(&render_op, &valid_render_op, sizeof(render_op)) == 0);
+        PCHECK(render_consumed == valid_render_consumed);
+    }
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_mem3blt,
                                                sizeof(render_mem3blt),
@@ -16359,11 +16366,20 @@ static int test_gdi_orders(void)
            render_op.brush_style == 3 &&
            render_op.brush_hatch == 0xaau &&
            render_op.brush_extra[6] == 0x55u);
-    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
-                                               render_mem3blt_bad_height,
-                                               sizeof(render_mem3blt_bad_height),
-                                               &render_op,
-                                               &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    render_state_before_error = render_state;
+    {
+        rdp_gdi_render_op valid_render_op = render_op;
+        size_t valid_render_consumed = render_consumed;
+
+        PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                                   render_mem3blt_bad_height,
+                                                   sizeof(render_mem3blt_bad_height),
+                                                   &render_op,
+                                                   &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
+        PCHECK(memcmp(&render_op, &valid_render_op, sizeof(render_op)) == 0);
+        PCHECK(render_consumed == valid_render_consumed);
+    }
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_lineto,
                                                sizeof(render_lineto),
@@ -16629,11 +16645,20 @@ static int test_gdi_orders(void)
            render_op.inline_glyph_bitmap_len == 4 &&
            render_op.glyph_data_len == 1 &&
            render_op.glyph_data[0] == 4u);
-    PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
-                                               render_unsupported,
-                                               sizeof(render_unsupported),
-                                               &render_op,
-                                               &render_consumed) == LIBRDP_STATUS_UNSUPPORTED);
+    render_state_before_error = render_state;
+    {
+        rdp_gdi_render_op valid_render_op = render_op;
+        size_t valid_render_consumed = render_consumed;
+
+        PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
+                                                   render_unsupported,
+                                                   sizeof(render_unsupported),
+                                                   &render_op,
+                                                   &render_consumed) == LIBRDP_STATUS_UNSUPPORTED);
+        PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
+        PCHECK(memcmp(&render_op, &valid_render_op, sizeof(render_op)) == 0);
+        PCHECK(render_consumed == valid_render_consumed);
+    }
     PCHECK(rdp_gdi_parse_altsec_order(altsec_order,
                                       sizeof(altsec_order),
                                       &altsec) == LIBRDP_STATUS_OK);
