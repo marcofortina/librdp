@@ -8431,6 +8431,30 @@ static int test_path_security_license_channels(void)
         pixel1 = avc_frame.pixels.data + 4u;
         PCHECK(pixel0[0] == 255 && pixel0[1] == 48 && pixel0[2] == 255 && pixel0[3] == 255);
         PCHECK(pixel1[0] == 131 && pixel1[1] == 127 && pixel1[2] == 131 && pixel1[3] == 255);
+        {
+            uint8_t saved[8];
+            size_t saved_len = avc_frame.pixels.length;
+            uint32_t saved_width = avc_frame.width;
+            uint32_t saved_height = avc_frame.height;
+            size_t saved_stride = avc_frame.stride;
+
+            memcpy(saved, avc_frame.pixels.data, sizeof(saved));
+            PCHECK(rdp_avc_yuv444_planes_to_bgra(y_plane,
+                                                 1,
+                                                 u_plane,
+                                                 2,
+                                                 v_plane,
+                                                 2,
+                                                 2,
+                                                 2,
+                                                 0,
+                                                 &avc_frame) == LIBRDP_STATUS_INVALID_ARGUMENT);
+            PCHECK(avc_frame.pixels.length == saved_len &&
+                   avc_frame.width == saved_width &&
+                   avc_frame.height == saved_height &&
+                   avc_frame.stride == saved_stride &&
+                   memcmp(avc_frame.pixels.data, saved, sizeof(saved)) == 0);
+        }
     }
 #endif
     rdp_avc_frame_free(&avc_frame);

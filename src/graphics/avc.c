@@ -134,6 +134,20 @@ void rdp_avc_frame_free(rdp_avc_frame* frame)
     frame->stride = 0;
 }
 
+static void rdp_avc_frame_move(rdp_avc_frame* dst, rdp_avc_frame* src)
+{
+    if (!dst || !src || dst == src)
+        return;
+    rdp_buffer_free(&dst->pixels);
+    *dst = *src;
+    src->pixels.data = NULL;
+    src->pixels.length = 0;
+    src->pixels.capacity = 0;
+    src->width = 0;
+    src->height = 0;
+    src->stride = 0;
+}
+
 #if defined(RDP_HAVE_ANY_AVC)
 static uint8_t rdp_avc_clip_u8(int value);
 
@@ -495,18 +509,17 @@ static librdp_status rdp_avc_frame_to_bgra(rdp_avc_h264* h264,
                                            uint32_t surface_height,
                                            rdp_avc_frame* frame)
 {
+    rdp_avc_frame converted;
     uint8_t* dst_data[4] = {0};
     int dst_stride[4] = {0};
     int rows = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
+    rdp_avc_frame_init(&converted);
     if (!h264 || !h264->frame || !frame || h264->frame->width <= 0 || h264->frame->height <= 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((uint32_t)h264->frame->width > surface_width || (uint32_t)h264->frame->height > surface_height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_avc_frame_prepare(frame, (uint32_t)h264->frame->width, (uint32_t)h264->frame->height);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
     h264->to_bgra = sws_getCachedContext(h264->to_bgra,
                                          h264->frame->width,
                                          h264->frame->height,
@@ -521,8 +534,11 @@ static librdp_status rdp_avc_frame_to_bgra(rdp_avc_h264* h264,
     if (!h264->to_bgra)
         return LIBRDP_STATUS_UNSUPPORTED;
     rdp_avc_configure_sws_colorspace(h264->to_bgra);
-    dst_data[0] = frame->pixels.data;
-    dst_stride[0] = (int)frame->stride;
+    status = rdp_avc_frame_prepare(&converted, (uint32_t)h264->frame->width, (uint32_t)h264->frame->height);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    dst_data[0] = converted.pixels.data;
+    dst_stride[0] = (int)converted.stride;
     rows = sws_scale(h264->to_bgra,
                      (const uint8_t* const*)h264->frame->data,
                      h264->frame->linesize,
@@ -530,7 +546,12 @@ static librdp_status rdp_avc_frame_to_bgra(rdp_avc_h264* h264,
                      h264->frame->height,
                      dst_data,
                      dst_stride);
-    return rows == h264->frame->height ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rows == h264->frame->height)
+        rdp_avc_frame_move(frame, &converted);
+    else
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_avc_frame_free(&converted);
+    return status;
 }
 
 static librdp_status rdp_avc_frame_to_yuv420(rdp_avc_h264* h264,
