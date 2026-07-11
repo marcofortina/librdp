@@ -942,6 +942,8 @@ librdp_status rdp_udp2_parse_prefix(uint8_t value, rdp_udp2_prefix* prefix)
     if (prefix->packet_type != RDP_UDP2_PACKET_TYPE_DATA &&
         prefix->packet_type != RDP_UDP2_PACKET_TYPE_DUMMY)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (prefix->packet_type == RDP_UDP2_PACKET_TYPE_DATA && prefix->short_packet_length == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 
@@ -960,7 +962,8 @@ librdp_status rdp_udp2_wrap_packet(rdp_buffer* output,
 
     if (!output || (!packet && packet_len > 0) ||
         (packet_type != RDP_UDP2_PACKET_TYPE_DATA && packet_type != RDP_UDP2_PACKET_TYPE_DUMMY) ||
-        packet_len > UINT16_MAX)
+        packet_len > UINT16_MAX ||
+        (packet_type == RDP_UDP2_PACKET_TYPE_DATA && packet_len == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     padded_len = packet_len < 7u ? 7u : packet_len;
     short_len = packet_len < 7u ? (uint8_t)packet_len : 7u;

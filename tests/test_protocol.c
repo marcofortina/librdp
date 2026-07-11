@@ -17392,7 +17392,11 @@ static int test_udp_transport(void)
     udp2_header.log_window_size = 2u;
     PCHECK(rdp_udp2_write_header(&buffer, &udp2_header) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_udp2_parse_prefix(0x01u, &prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_udp2_parse_prefix(0x00u, &prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DATA) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1 && buffer.data[0] == 0xa5u);
     PCHECK(rdp_udp2_write_data_packet(&buffer,
                                       16u,
                                       0x1234u,
