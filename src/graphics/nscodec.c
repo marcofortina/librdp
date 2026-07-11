@@ -126,6 +126,7 @@ librdp_status rdp_nscodec_parse_capability(const void* data, size_t length, rdp_
 librdp_status rdp_nscodec_write_capability(rdp_buffer* buffer, const rdp_nscodec_capability* capability)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !capability)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -134,14 +135,15 @@ librdp_status rdp_nscodec_write_capability(rdp_buffer* buffer, const rdp_nscodec
         capability->color_loss_level < 1u ||
         capability->color_loss_level > 7u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, capability->allow_dynamic_fidelity);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, capability->allow_subsampling);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, capability->color_loss_level);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return LIBRDP_STATUS_OK;
+        buffer->length = start;
+    return status;
 }
 
 static librdp_status rdp_nscodec_plane_size(size_t width, size_t height, size_t* size)

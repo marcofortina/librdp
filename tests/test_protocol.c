@@ -4213,8 +4213,11 @@ static int test_path_security_license_channels(void)
            rfx_progressive_quant.cr.ll3 == 3);
     rfx_decode_quant = rfx_quant;
     rfx_decode_quant.ll3 = 16;
+    graphics_decoded.length = 0;
+    PCHECK(rdp_buffer_append_u8(&graphics_decoded, 0xa5u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_rfx_write_component_quant(&graphics_decoded, &rfx_decode_quant) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(graphics_decoded.length == 1u && graphics_decoded.data[0] == 0xa5u);
     rdp_buffer_free(&graphics_decoded);
     rdp_buffer_init(&graphics_decoded);
     PCHECK(rdp_rfx_add_component_quant(&rfx_quant,
@@ -4238,8 +4241,10 @@ static int test_path_security_license_channels(void)
                                            sizeof(rfx_bad_progressive_quality_values),
                                            &rfx_progressive_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rfx_progressive_quant.quality = 101u;
+    PCHECK(rdp_buffer_append_u8(&graphics_decoded, 0xa5u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_rfx_write_progressive_quant(&graphics_decoded,
                                            &rfx_progressive_quant) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(graphics_decoded.length == 1u && graphics_decoded.data[0] == 0xa5u);
     rfx_progressive_quant.quality = 100u;
     PCHECK(rdp_rfx_parse_component_quant(rfx_quant_values,
                                          sizeof(rfx_quant_values) - 1u,

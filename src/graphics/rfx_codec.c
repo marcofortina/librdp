@@ -332,18 +332,22 @@ librdp_status rdp_rfx_write_component_quant(rdp_buffer* buffer, const rdp_rfx_co
 {
     uint8_t values[10];
     size_t i = 0;
+    size_t start = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !quant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!rdp_rfx_component_quant_in_range(quant, 15))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     rdp_rfx_component_quant_to_values(quant, values);
     for (i = 0; i < 5u && status == LIBRDP_STATUS_OK; i++)
     {
         uint8_t packed = (uint8_t)(values[i * 2u] | (uint8_t)(values[(i * 2u) + 1u] << 4));
         status = rdp_buffer_append_u8(buffer, packed);
     }
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -375,6 +379,7 @@ librdp_status rdp_rfx_parse_progressive_quant(const void* data,
 librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_progressive_quant* quant)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !quant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -383,6 +388,7 @@ librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_
         !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
         !rdp_rfx_component_quant_in_range(&quant->cr, 8))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, quant->quality);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_rfx_write_component_quant(buffer, &quant->y);
@@ -390,6 +396,8 @@ librdp_status rdp_rfx_write_progressive_quant(rdp_buffer* buffer, const rdp_rfx_
         status = rdp_rfx_write_component_quant(buffer, &quant->cb);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_rfx_write_component_quant(buffer, &quant->cr);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
