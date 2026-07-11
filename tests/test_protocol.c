@@ -14857,6 +14857,7 @@ static int test_gdi_orders(void)
     rdp_gdi_stream_bitmap_next_order stream_next;
     rdp_gdi_gdiplus_capability gdiplus;
     rdp_gdi_render_state render_state;
+    rdp_gdi_render_state render_state_before_error;
     rdp_gdi_render_op render_op;
     size_t render_consumed = 0;
     uint32_t flags = 0;
@@ -15417,11 +15418,13 @@ static int test_gdi_orders(void)
            render_op.rect.height == 4 &&
            render_op.src_x == 5 &&
            render_op.src_y == 6);
+    render_state_before_error = render_state;
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_memblt_bad_width,
                                                sizeof(render_memblt_bad_width),
                                                &render_op,
                                                &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
     PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
                                                render_mem3blt,
                                                sizeof(render_mem3blt),
