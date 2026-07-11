@@ -7,10 +7,12 @@
 static librdp_status rdp_core_input_write_header(rdp_buffer* buffer, uint8_t pdu_type, uint8_t event_count)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, RDP_CORE_INPUT_SIGNATURE);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, pdu_type);
@@ -18,6 +20,8 @@ static librdp_status rdp_core_input_write_header(rdp_buffer* buffer, uint8_t pdu
         status = rdp_buffer_append_u8(buffer, event_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -100,7 +104,11 @@ librdp_status rdp_core_input_parse_header(const void* data,
 librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_core_input_write_header(buffer, RDP_CORE_INPUT_PDU_CS_INIT_REQUEST, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, RDP_CORE_INPUT_PROTOCOL_VERSION_100);
@@ -110,6 +118,8 @@ librdp_status rdp_core_input_write_init_request(rdp_buffer* buffer)
         status = rdp_buffer_append_u32_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, 0);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -258,6 +268,7 @@ librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     uint8_t i = 0;
+    size_t start = 0;
 
     if (!buffer || (!events && event_count > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -268,6 +279,7 @@ librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
             return status;
     }
 
+    start = buffer->length;
     status = rdp_core_input_write_header(buffer, RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE, event_count);
     for (i = 0; status == LIBRDP_STATUS_OK && i < event_count; i++)
     {
@@ -298,6 +310,8 @@ librdp_status rdp_core_input_write_events(rdp_buffer* buffer,
         else if (events[i].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP)
             status = rdp_buffer_append_u32_le(buffer, events[i].timestamp);
     }
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
