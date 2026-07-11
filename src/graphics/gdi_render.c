@@ -1733,7 +1733,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
     if (rdp_stream_read_u8(&stream, &control) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!(control & RDP_GDI_TS_STANDARD) || (control & RDP_GDI_TS_SECONDARY))
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     order_type = working.current_order_type;
     if (control & RDP_GDI_TS_TYPE_CHANGE)
     {
@@ -1741,7 +1741,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     if (!rdp_gdi_render_field_bytes(order_type, &field_bytes))
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     zero_field_bytes = (uint8_t)(((control & RDP_GDI_TS_ZERO_FIELD_BYTE_BIT0) ? 1u : 0u) |
                                  ((control & RDP_GDI_TS_ZERO_FIELD_BYTE_BIT1) ? 2u : 0u));
     if (zero_field_bytes > field_bytes)
@@ -1832,7 +1832,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
             status = rdp_gdi_render_decode_fast_glyph_common(&stream, field_flags, delta, &working, &parsed, 1);
             break;
         default:
-            status = LIBRDP_STATUS_UNSUPPORTED;
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
             break;
     }
     if (status != LIBRDP_STATUS_OK)

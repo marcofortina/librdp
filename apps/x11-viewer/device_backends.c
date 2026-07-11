@@ -284,7 +284,7 @@ static int x11_probe_smartcard(const char* source)
         return x11_probe_pcsc();
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.smartcard.probe",
-                    "ok=0 source=\"%s\" reason=unsupported_source",
+                    "ok=0 source=\"%s\" reason=rejected_source",
                     source ? source : "");
     return 0;
 }
@@ -451,7 +451,7 @@ static int x11_probe_webauthn(const char* provider)
     }
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.webauthn.probe",
-                    "ok=0 provider=\"%s\" reason=unsupported_provider",
+                    "ok=0 provider=\"%s\" reason=rejected_provider",
                     provider);
     return 0;
 }

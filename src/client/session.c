@@ -6282,7 +6282,7 @@ static librdp_status rdp_session_handle_filesystem_security(librdp_session* sess
     return status;
 }
 
-static librdp_status rdp_session_write_filesystem_unsupported_response(
+static librdp_status rdp_session_write_filesystem_not_supported_response(
     rdp_buffer* response,
     const rdp_device_redirection_io_request* request,
     uint32_t io_status)
@@ -6325,7 +6325,7 @@ static librdp_status rdp_session_write_filesystem_unsupported_response(
     }
 }
 
-static librdp_status rdp_session_validate_filesystem_unsupported_request(const uint8_t* data,
+static librdp_status rdp_session_validate_filesystem_not_supported_request(const uint8_t* data,
                                                                          size_t data_len,
                                                                          const rdp_device_redirection_io_request* request)
 {
@@ -6390,7 +6390,7 @@ static librdp_status rdp_session_validate_filesystem_unsupported_request(const u
     }
 }
 
-static librdp_status rdp_session_handle_filesystem_unsupported(librdp_session* session,
+static librdp_status rdp_session_handle_filesystem_not_supported(librdp_session* session,
                                                                const uint8_t* data,
                                                                size_t data_len,
                                                                const rdp_device_redirection_io_request* request,
@@ -6401,19 +6401,19 @@ static librdp_status rdp_session_handle_filesystem_unsupported(librdp_session* s
 
     if (!session || !data || !request)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_session_validate_filesystem_unsupported_request(data, data_len, request);
+    status = rdp_session_validate_filesystem_not_supported_request(data, data_len, request);
     if (status != LIBRDP_STATUS_OK)
         return status;
     rdp_buffer_init(&response);
-    status = rdp_session_write_filesystem_unsupported_response(&response, request, io_status);
+    status = rdp_session_write_filesystem_not_supported_response(&response, request, io_status);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_device_redirection_packet(session,
                                                             &response,
-                                                            "client.rdpdr.file.unsupported.response");
+                                                            "client.rdpdr.file.not_supported.response");
     rdp_buffer_free(&response);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.rdpdr.file.unsupported",
+                        "client.rdpdr.file.not_supported",
                         "device_id=%u file_id=%u completion_id=%u major=%u minor=%u status=%u",
                         request->device_id,
                         request->file_id,
@@ -6469,7 +6469,7 @@ static librdp_status rdp_session_handle_filesystem_io_request(librdp_session* se
                 return rdp_session_handle_filesystem_query_directory(session, data, data_len);
             if (request.minor_function == RDP_FILESYSTEM_REDIRECTION_MINOR_NOTIFY_CHANGE_DIRECTORY)
                 return rdp_session_handle_filesystem_notify_change(session, data, data_len);
-            return rdp_session_handle_filesystem_unsupported(session,
+            return rdp_session_handle_filesystem_not_supported(session,
                                                              data,
                                                              data_len,
                                                              &request,
@@ -6485,7 +6485,7 @@ static librdp_status rdp_session_handle_filesystem_io_request(librdp_session* se
         case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
             return rdp_session_handle_filesystem_device_control(session, data, data_len);
         default:
-            return rdp_session_handle_filesystem_unsupported(session,
+            return rdp_session_handle_filesystem_not_supported(session,
                                                              data,
                                                              data_len,
                                                              &request,
@@ -7523,7 +7523,7 @@ static librdp_status rdp_session_handle_printer_device_control(librdp_session* s
     return status;
 }
 
-static librdp_status rdp_session_handle_printer_unsupported(librdp_session* session,
+static librdp_status rdp_session_handle_printer_not_supported(librdp_session* session,
                                                             const rdp_device_redirection_io_request* request)
 {
     rdp_buffer response;
@@ -7541,7 +7541,7 @@ static librdp_status rdp_session_handle_printer_unsupported(librdp_session* sess
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_printer_response(session,
                                                    &response,
-                                                   "client.rdpdr.printer.unsupported.response");
+                                                   "client.rdpdr.printer.not_supported.response");
     rdp_buffer_free(&response);
     return status;
 }
@@ -7582,7 +7582,7 @@ static librdp_status rdp_session_handle_printer_io_request(librdp_session* sessi
         case RDP_DEVICE_REDIRECTION_IRP_DEVICE_CONTROL:
             return rdp_session_handle_printer_device_control(session, data, data_len);
         default:
-            return rdp_session_handle_printer_unsupported(session, &request);
+            return rdp_session_handle_printer_not_supported(session, &request);
     }
 }
 
@@ -10345,7 +10345,7 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
             return rdp_session_send_smartcard_simple_completion(session,
                                                                 &request,
                                                                 RDP_SESSION_DEVICE_NOT_SUPPORTED,
-                                                                "client.rdpdr.smartcard.unsupported.response");
+                                                                "client.rdpdr.smartcard.not_supported.response");
     }
 
     memset(&message, 0, sizeof(message));
@@ -10406,7 +10406,7 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
             return rdp_session_smartcard_handle_reader_name(session, &request, &message);
         default:
             rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.rdpdr.smartcard.unsupported_ioctl",
+                            "client.rdpdr.smartcard.not_supported_ioctl",
                             "device_id=%u completion_id=%u ioctl=%u",
                             request.device_id,
                             request.completion_id,
@@ -10414,7 +10414,7 @@ static librdp_status rdp_session_handle_smartcard_io_request(librdp_session* ses
             return rdp_session_send_smartcard_long_result(session,
                                                           &request,
                                                           RDP_SESSION_SCARD_E_UNSUPPORTED_FEATURE,
-                                                          "client.rdpdr.smartcard.unsupported_ioctl.response");
+                                                          "client.rdpdr.smartcard.not_supported_ioctl.response");
     }
 #else
     rdp_trace_event(RDP_TRACE_CLIENT,
@@ -11425,7 +11425,7 @@ static librdp_status rdp_session_handle_port_io_request(librdp_session* session,
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_session_send_device_redirection_packet(session,
                                                                     &response,
-                                                                    "client.rdpdr.port.unsupported.response");
+                                                                    "client.rdpdr.port.not_supported.response");
             rdp_buffer_free(&response);
             return status;
         }
@@ -11734,7 +11734,7 @@ static librdp_status rdp_session_handle_printer_component_message(librdp_session
     {
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
-                              "client.rdpdr.printer.pdu.unsupported",
+                              "client.rdpdr.printer.pdu.ignored",
                               "channel_id=%u packet_id=%u payload_len=%u",
                               session->device_redirection_channel_id,
                               packet_id,
@@ -11895,7 +11895,7 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
     {
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
-                              "client.rdpdr.pdu.unsupported",
+                              "client.rdpdr.pdu.ignored",
                               "channel_id=%u packet_id=%u payload_len=%u",
                               session->device_redirection_channel_id,
                               header.packet_id,
@@ -11952,7 +11952,7 @@ static librdp_status rdp_session_clipboard_write_file_payload(librdp_session* se
         return rdp_clipboard_write_hdrop(payload, files, count);
     if (format_id == RDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW)
         return rdp_clipboard_write_file_group_descriptor_w(payload, files, count);
-    return LIBRDP_STATUS_UNSUPPORTED;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static librdp_status rdp_session_clipboard_write_local_data_response(librdp_session* session,
@@ -14938,7 +14938,7 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
                                                                   size_t cr_len,
                                                                   uint32_t* rendered_tiles,
                                                                   uint32_t* failed_tiles,
-                                                                  uint32_t* unsupported_tiles)
+                                                                  uint32_t* missing_tiles)
 {
     rdp_session_progressive_tile_cache* tile_cache = NULL;
     rdp_rfx_component_quant y_quant;
@@ -14956,7 +14956,7 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
     const char* stage = "base_quant.y";
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+    if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !missing_tiles)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!y_data || !cb_data || !cr_data)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -15024,7 +15024,7 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
          !tile_cache->state->cb.valid ||
          !tile_cache->state->cr.valid))
     {
-        (*unsupported_tiles)++;
+        (*missing_tiles)++;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.graphics.progressive.tile.missing",
                         "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u block_type=%u flags=%u progressive_idx=%u",
@@ -15119,7 +15119,7 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
     const rdp_graphics_progressive_tile_upgrade* tile,
     uint32_t* rendered_tiles,
     uint32_t* failed_tiles,
-    uint32_t* unsupported_tiles)
+    uint32_t* missing_tiles)
 {
     rdp_session_progressive_tile_cache* tile_cache = NULL;
     rdp_rfx_component_quant y_quant;
@@ -15137,7 +15137,7 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
     const char* stage = "state";
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || !surface || !region || !tile || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+    if (!session || !surface || !region || !tile || !rendered_tiles || !failed_tiles || !missing_tiles)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     x = (uint32_t)tile->x_idx * RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
@@ -15167,7 +15167,7 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
                                                   0);
     if (!tile_cache || !tile_cache->state || !tile_cache->pixels || !tile_cache->state->valid)
     {
-        (*unsupported_tiles)++;
+        (*missing_tiles)++;
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.graphics.progressive.tile.missing",
                         "dvc_channel_id=%u context_id=%u surface_id=%u x=%u y=%u block_type=%u progressive_idx=%u",
@@ -15381,11 +15381,11 @@ static librdp_status rdp_session_graphics_progressive_render_region(librdp_sessi
                                                                     const rdp_graphics_progressive_region* region,
                                                                     uint32_t* rendered_tiles,
                                                                     uint32_t* failed_tiles,
-                                                                    uint32_t* unsupported_tiles)
+                                                                    uint32_t* missing_tiles)
 {
     size_t offset = 0;
 
-    if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+    if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !missing_tiles)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     while (offset < region->tiles_len)
@@ -15427,7 +15427,7 @@ static librdp_status rdp_session_graphics_progressive_render_region(librdp_sessi
                                                                   tile.cr_len,
                                                                   rendered_tiles,
                                                                   failed_tiles,
-                                                                  unsupported_tiles);
+                                                                  missing_tiles);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
@@ -15461,7 +15461,7 @@ static librdp_status rdp_session_graphics_progressive_render_region(librdp_sessi
                                                                   tile.cr_len,
                                                                   rendered_tiles,
                                                                   failed_tiles,
-                                                                  unsupported_tiles);
+                                                                  missing_tiles);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
@@ -15482,7 +15482,7 @@ static librdp_status rdp_session_graphics_progressive_render_region(librdp_sessi
                                                                      &tile,
                                                                      rendered_tiles,
                                                                      failed_tiles,
-                                                                     unsupported_tiles);
+                                                                     missing_tiles);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
@@ -15501,17 +15501,17 @@ static librdp_status rdp_session_graphics_progressive_render_stream(librdp_sessi
                                                                     const rdp_graphics_wire_to_surface_2* wire,
                                                                     uint32_t* rendered_tiles,
                                                                     uint32_t* failed_tiles,
-                                                                    uint32_t* unsupported_tiles)
+                                                                    uint32_t* missing_tiles)
 {
     size_t offset = 0;
     uint32_t region_index = 0;
 
-    if (!session || !surface || !wire || !rendered_tiles || !failed_tiles || !unsupported_tiles)
+    if (!session || !surface || !wire || !rendered_tiles || !failed_tiles || !missing_tiles)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     *rendered_tiles = 0;
     *failed_tiles = 0;
-    *unsupported_tiles = 0;
+    *missing_tiles = 0;
     while (offset < wire->bitmap_data_length)
     {
         rdp_graphics_progressive_block block;
@@ -15553,7 +15553,7 @@ static librdp_status rdp_session_graphics_progressive_render_stream(librdp_sessi
                                                                     &region,
                                                                     rendered_tiles,
                                                                     failed_tiles,
-                                                                    unsupported_tiles);
+                                                                    missing_tiles);
             if (status != LIBRDP_STATUS_OK)
                 return status;
             status = rdp_session_graphics_progressive_flush_region(session,
@@ -17052,7 +17052,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
     if (status == LIBRDP_STATUS_UNSUPPORTED)
     {
         rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.graphics.unsupported",
+                        "client.graphics.rejected",
                         "dvc_channel_id=%u reason=bulk_compression payload_len=%u",
                         channel_id,
                         (unsigned)data_len);
@@ -17190,7 +17190,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                     if (status == LIBRDP_STATUS_UNSUPPORTED)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
-                                        "client.graphics.codec.unsupported",
+                                        "client.graphics.codec.rejected",
                                         "dvc_channel_id=%u surface_id=%u codec_id=%u payload_len=%u decoder_status=%d",
                                         channel_id,
                                         wire.surface_id,
@@ -17273,7 +17273,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                     if (status == LIBRDP_STATUS_UNSUPPORTED)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
-                                        "client.graphics.codec.unsupported",
+                                        "client.graphics.codec.rejected",
                                         "dvc_channel_id=%u surface_id=%u codec_id=%u payload_len=%u decoder_status=%d",
                                         channel_id,
                                         wire.surface_id,
@@ -17304,7 +17304,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             else
             {
                 rdp_trace_event(RDP_TRACE_CLIENT,
-                                "client.graphics.wire_to_surface.unsupported",
+                                "client.graphics.wire_to_surface.rejected",
                                 "dvc_channel_id=%u surface_id=%u codec_id=%u payload_len=%u",
                                 channel_id,
                                 wire.surface_id,
@@ -17325,7 +17325,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                 rdp_graphics_progressive_stream progressive;
                 uint32_t rendered_tiles = 0;
                 uint32_t failed_tiles = 0;
-                uint32_t unsupported_tiles = 0;
+                uint32_t missing_tiles = 0;
 
                 if (!surface)
                 {
@@ -17343,13 +17343,13 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                            &wire,
                                                                            &rendered_tiles,
                                                                            &failed_tiles,
-                                                                           &unsupported_tiles);
+                                                                           &missing_tiles);
                     if (status != LIBRDP_STATUS_OK)
                         break;
                     rdp_trace_event_level(RDP_TRACE_CLIENT,
                                           RDP_TRACE_LEVEL_DEBUG,
                                           "client.graphics.progressive",
-                                          "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u rendered_tiles=%u failed_tiles=%u unsupported_tiles=%u",
+                                          "dvc_channel_id=%u surface_id=%u context_id=%u blocks=%u regions=%u tiles=%u simple_tiles=%u first_tiles=%u upgrade_tiles=%u rendered_tiles=%u failed_tiles=%u missing_tiles=%u",
                                           channel_id,
                                           wire.surface_id,
                                           wire.codec_context_id,
@@ -17361,12 +17361,12 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                           progressive.upgrade_tile_count,
                                           rendered_tiles,
                                           failed_tiles,
-                                          unsupported_tiles);
+                                          missing_tiles);
                 }
                 else
                 {
                     rdp_trace_event(RDP_TRACE_CLIENT,
-                                    "client.graphics.progressive.unsupported",
+                                    "client.graphics.progressive.rejected",
                                     "dvc_channel_id=%u surface_id=%u context_id=%u payload_len=%u parser_status=%d",
                                     channel_id,
                                     wire.surface_id,
@@ -17393,7 +17393,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                     if (status == LIBRDP_STATUS_UNSUPPORTED)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
-                                        "client.graphics.codec.unsupported",
+                                        "client.graphics.codec.rejected",
                                     "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u decoder_status=%d",
                                     channel_id,
                                     wire.surface_id,
@@ -17409,7 +17409,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             else
             {
                 rdp_trace_event(RDP_TRACE_CLIENT,
-                                "client.graphics.wire_to_surface.unsupported",
+                                "client.graphics.wire_to_surface.rejected",
                                 "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u",
                                 channel_id,
                                 wire.surface_id,
@@ -18000,7 +18000,7 @@ static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* ses
         if (status == LIBRDP_STATUS_UNSUPPORTED)
         {
             rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.mouse_cursor.update.unsupported",
+                            "client.mouse_cursor.update.rejected",
                             "dvc_channel_id=%u update_type=%u payload_len=%u",
                             channel_id,
                             header.update_type,
@@ -18022,7 +18022,7 @@ static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* ses
         if (status == LIBRDP_STATUS_UNSUPPORTED)
         {
             rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.mouse_cursor.shape.unsupported",
+                            "client.mouse_cursor.shape.rejected",
                             "dvc_channel_id=%u update_type=%u xor_bpp=%u width=%u height=%u",
                             channel_id,
                             header.update_type,
@@ -18035,7 +18035,7 @@ static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* ses
     }
 
     rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.mouse_cursor.pdu.unsupported",
+                    "client.mouse_cursor.pdu.ignored",
                     "dvc_channel_id=%u pdu_type=%u update_type=%u payload_len=%u",
                     channel_id,
                     header.pdu_type,
@@ -18306,7 +18306,7 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
     else
     {
         rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.clipboard.pdu.unsupported",
+                        "client.clipboard.pdu.ignored",
                         "channel_id=%u type=%u payload_len=%u",
                         session->clipboard_channel_id,
                         packet.type,
@@ -19215,7 +19215,7 @@ static librdp_status rdp_session_handle_auth_redirection_message(librdp_session*
     else
     {
         rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.auth_redirection.unsupported",
+                        "client.auth_redirection.rejected",
                         "dvc_channel_id=%u payload_len=%u status=%s",
                         channel_id,
                         (unsigned)data_len,
@@ -22113,7 +22113,7 @@ static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* 
     }
 
     rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.urbdrc.unsupported",
+                    "client.urbdrc.ignored",
                     "dvc_channel_id=%u interface_id=%u mask=%u function_id=%u payload_len=%u",
                     session->usb_redirection_channel_id,
                     header.interface_id,
@@ -25915,7 +25915,7 @@ static librdp_status rdp_session_apply_surface_commands(librdp_session* session,
         if (status == LIBRDP_STATUS_UNSUPPORTED)
         {
             rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.surface.bits.unsupported",
+                            "client.surface.bits.rejected",
                             "codec_id=%u command_type=%u width=%u height=%u payload_len=%u",
                             command->bits.codec_id,
                             command->bits.command_type,
@@ -28006,7 +28006,7 @@ static librdp_status rdp_session_apply_gdi_render_op_core(librdp_session* sessio
                               op->color & 0x00ffffffu);
         return LIBRDP_STATUS_OK;
     }
-    return LIBRDP_STATUS_UNSUPPORTED;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op)
@@ -28329,7 +28329,7 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
-                          "rdp.gdi.secondary.unsupported",
+                          "rdp.gdi.secondary.ignored",
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
@@ -28434,7 +28434,7 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
-                          "rdp.gdi.altsec.unsupported",
+                          "rdp.gdi.altsec.ignored",
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
@@ -28493,7 +28493,7 @@ static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session
         if (status == LIBRDP_STATUS_UNSUPPORTED)
         {
             rdp_trace_event(RDP_TRACE_PROTOCOL,
-                            "rdp.gdi.order.unsupported",
+                            "rdp.gdi.order.rejected",
                             "index=%u remaining=%u",
                             i,
                             (unsigned)(update->order_data_len - offset));
@@ -28687,7 +28687,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.fastpath.update.unsupported",
+                                "rdp.fastpath.update.rejected",
                                 "code=%u fragmentation=%u compression=%u payload_len=%u",
                                 update->update_code,
                                 update->fragmentation,
@@ -28722,7 +28722,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.fastpath.palette.unsupported",
+                                "rdp.fastpath.palette.rejected",
                                 "fragmentation=%u compression=%u payload_len=%u",
                                 update->fragmentation,
                                 update->compression,
@@ -28756,7 +28756,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.fastpath.orders.unsupported",
+                                "rdp.fastpath.orders.rejected",
                                 "fragmentation=%u compression=%u payload_len=%u",
                                 update->fragmentation,
                                 update->compression,
@@ -28776,7 +28776,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                 if (status == LIBRDP_STATUS_UNSUPPORTED)
                 {
                     rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                    "rdp.fastpath.orders.unsupported",
+                                    "rdp.fastpath.orders.rejected",
                                     "orders=%u payload_len=%u",
                                     orders.number_orders,
                                     (unsigned)orders.order_data_len);
@@ -28799,7 +28799,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.fastpath.surface.unsupported",
+                                "rdp.fastpath.surface.rejected",
                                 "fragmentation=%u compression=%u payload_len=%u",
                                 update->fragmentation,
                                 update->compression,
@@ -28853,7 +28853,7 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.fastpath.pointer.unsupported",
+                                "rdp.fastpath.pointer.rejected",
                                 "code=%u fragmentation=%u compression=%u payload_len=%u",
                                 update->update_code,
                                 update->fragmentation,
@@ -29247,7 +29247,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
     if (confirm.negotiation.present && !rdp_security_protocol_supported(confirm.negotiation.selected_protocol))
     {
-        rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.unsupported", "selected_protocol=%u",
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.rejected", "selected_protocol=%u",
                         confirm.negotiation.selected_protocol);
         status = LIBRDP_STATUS_UNSUPPORTED;
         goto fail;
@@ -30915,7 +30915,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                         if (status == LIBRDP_STATUS_UNSUPPORTED)
                         {
                             rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                            "rdp.slowpath.orders.unsupported",
+                                            "rdp.slowpath.orders.rejected",
                                             "orders=%u payload_len=%u",
                                             orders.number_orders,
                                             (unsigned)orders.order_data_len);
@@ -30983,7 +30983,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                     else
                     {
                         rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                        "rdp.slowpath.update.unsupported",
+                                        "rdp.slowpath.update.ignored",
                                         "update_type=%u payload_len=%u",
                                         update_type,
                                         (unsigned)slow_payload_len);

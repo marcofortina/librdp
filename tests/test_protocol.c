@@ -16152,7 +16152,7 @@ static int test_gdi_orders(void)
         1u,
         0x80u, 0u, 0u, 0u
     };
-    const uint8_t render_unsupported[] = {
+    const uint8_t render_rejected[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         0x1fu
     };
@@ -17190,10 +17190,10 @@ static int test_gdi_orders(void)
         size_t valid_render_consumed = render_consumed;
 
         PCHECK(rdp_gdi_decode_primary_render_order(&render_state,
-                                                   render_unsupported,
-                                                   sizeof(render_unsupported),
+                                                   render_rejected,
+                                                   sizeof(render_rejected),
                                                    &render_op,
-                                                   &render_consumed) == LIBRDP_STATUS_UNSUPPORTED);
+                                                   &render_consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&render_state, &render_state_before_error, sizeof(render_state)) == 0);
         PCHECK(memcmp(&render_op, &valid_render_op, sizeof(render_op)) == 0);
         PCHECK(render_consumed == valid_render_consumed);
