@@ -6419,6 +6419,26 @@ static int test_path_security_license_channels(void)
     input_touch_contact.orientation = 90;
     input_touch_contact.pressure = 512;
     PCHECK(rdp_input_channel_write_touch_contact(&dyn_response, &input_touch_contact) == LIBRDP_STATUS_OK);
+    {
+        rdp_input_channel_touch_contact touch_contacts[2];
+
+        touch_contacts[0] = input_touch_contact;
+        touch_contacts[1] = input_touch_contact;
+        channel_packet.length = 0;
+        PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_write_touch_frame(&channel_packet,
+                                                   0x0102030405060708ull,
+                                                   touch_contacts,
+                                                   2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+        touch_contacts[1].contact_id = 2;
+        touch_contacts[1].pressure = 1025;
+        PCHECK(rdp_input_channel_write_touch_frame(&channel_packet,
+                                                   0x0102030405060708ull,
+                                                   touch_contacts,
+                                                   2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+    }
     memset(&input_touch_frame, 0, sizeof(input_touch_frame));
     input_touch_frame.contact_count = 1;
     input_touch_frame.frame_offset = 0x0102030405060708ull;
@@ -6553,6 +6573,26 @@ static int test_path_security_license_channels(void)
     input_pen_contact.tilt_x = -10;
     input_pen_contact.tilt_y = 20;
     PCHECK(rdp_input_channel_write_pen_contact(&dyn_response, &input_pen_contact) == LIBRDP_STATUS_OK);
+    {
+        rdp_input_channel_pen_contact pen_contacts[2];
+
+        pen_contacts[0] = input_pen_contact;
+        pen_contacts[1] = input_pen_contact;
+        channel_packet.length = 0;
+        PCHECK(rdp_buffer_append_u8(&channel_packet, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_write_pen_frame(&channel_packet,
+                                                 7,
+                                                 pen_contacts,
+                                                 2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+        pen_contacts[1].device_id = 3;
+        pen_contacts[1].rotation = 360;
+        PCHECK(rdp_input_channel_write_pen_frame(&channel_packet,
+                                                 7,
+                                                 pen_contacts,
+                                                 2) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(channel_packet.length == 1 && channel_packet.data[0] == 0xa5u);
+    }
     memset(&input_pen_frame, 0, sizeof(input_pen_frame));
     input_pen_frame.contact_count = 1;
     input_pen_frame.frame_offset = 7;

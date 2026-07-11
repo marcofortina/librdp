@@ -6,6 +6,15 @@
 
 #define RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS 256u
 
+static librdp_status rdp_input_channel_restore_on_error(rdp_buffer* buffer,
+                                                        size_t start,
+                                                        librdp_status status)
+{
+    if (status != LIBRDP_STATUS_OK && buffer)
+        buffer->length = start;
+    return status;
+}
+
 static librdp_status rdp_input_channel_append_u64_le(rdp_buffer* buffer, uint64_t value)
 {
     librdp_status status = rdp_buffer_append_u32_le(buffer, (uint32_t)(value & 0xffffffffu));
@@ -123,13 +132,15 @@ librdp_status rdp_input_channel_parse_header(const void* data, size_t length, rd
 librdp_status rdp_input_channel_write_header(rdp_buffer* buffer, uint16_t event_id, uint32_t pdu_length)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || pdu_length < 6u || !rdp_input_channel_valid_event_id(event_id))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, event_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, pdu_length);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_parse_sc_ready(const void* data, size_t length, rdp_input_channel_sc_ready* ready)
@@ -171,18 +182,20 @@ librdp_status rdp_input_channel_write_sc_ready(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t length = has_supported_features ? 14u : 10u;
+    size_t start = 0;
 
     if (!buffer || !rdp_input_channel_valid_protocol(protocol_version) ||
         (supported_features & ~RDP_INPUT_CHANNEL_SC_READY_MULTIPEN) != 0 ||
         (protocol_version == RDP_INPUT_CHANNEL_PROTOCOL_V300 && !has_supported_features) ||
         (!has_supported_features && supported_features != 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_input_channel_write_header(buffer, RDP_INPUT_CHANNEL_EVENT_SC_READY, length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, protocol_version);
     if (status == LIBRDP_STATUS_OK && has_supported_features)
         status = rdp_buffer_append_u32_le(buffer, supported_features);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
@@ -191,6 +204,7 @@ librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
                                                uint16_t max_touch_contacts)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_input_channel_valid_protocol(protocol_version) ||
         (flags & ~(RDP_INPUT_CHANNEL_CS_SHOW_TOUCH_VISUALS |
@@ -204,6 +218,7 @@ librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
         (flags & RDP_INPUT_CHANNEL_CS_ENABLE_MULTIPEN) != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    start = buffer->length;
     status = rdp_input_channel_write_header(buffer, RDP_INPUT_CHANNEL_EVENT_CS_READY, 16);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, flags);
@@ -211,7 +226,7 @@ librdp_status rdp_input_channel_write_cs_ready(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, protocol_version);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, max_touch_contacts);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_parse_cs_ready(const void* data, size_t length, rdp_input_channel_cs_ready* ready)
@@ -298,13 +313,18 @@ librdp_status rdp_input_channel_parse_empty(const void* data, size_t length, uin
 
 librdp_status rdp_input_channel_write_dismiss_hovering(rdp_buffer* buffer, uint8_t contact_id)
 {
-    librdp_status status = rdp_input_channel_write_header(buffer,
-                                                          RDP_INPUT_CHANNEL_EVENT_DISMISS_HOVERING_TOUCH_CONTACT,
-                                                          7);
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_input_channel_write_header(buffer,
+                                            RDP_INPUT_CHANNEL_EVENT_DISMISS_HOVERING_TOUCH_CONTACT,
+                                            7);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, contact_id);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_parse_dismiss_hovering(const void* data, size_t length, uint8_t* contact_id)
@@ -350,11 +370,13 @@ librdp_status rdp_input_channel_write_touch_contact(rdp_buffer* buffer,
                                                     const rdp_input_channel_touch_contact* contact)
 {
     librdp_status status = rdp_input_channel_validate_touch_contact(contact);
+    size_t start = 0;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (status != LIBRDP_STATUS_OK)
         return status;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, contact->contact_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, contact->fields_present);
@@ -378,7 +400,7 @@ librdp_status rdp_input_channel_write_touch_contact(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, contact->orientation);
     if (status == LIBRDP_STATUS_OK && (contact->fields_present & RDP_INPUT_CHANNEL_TOUCH_PRESSURE_PRESENT) != 0)
         status = rdp_buffer_append_u32_le(buffer, contact->pressure);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_write_touch_frame(rdp_buffer* buffer,
@@ -389,6 +411,7 @@ librdp_status rdp_input_channel_write_touch_frame(rdp_buffer* buffer,
     uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || contact_count == 0 || contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS || !contacts)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -397,14 +420,17 @@ librdp_status rdp_input_channel_write_touch_frame(rdp_buffer* buffer,
     {
         if (seen[contacts[i].contact_id])
             return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (rdp_input_channel_validate_touch_contact(&contacts[i]) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
         seen[contacts[i].contact_id] = 1;
     }
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, contact_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_append_u64_le(buffer, frame_offset);
     for (i = 0; status == LIBRDP_STATUS_OK && i < contact_count; i++)
         status = rdp_input_channel_write_touch_contact(buffer, &contacts[i]);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_write_touch_event(rdp_buffer* buffer,
@@ -415,9 +441,11 @@ librdp_status rdp_input_channel_write_touch_event(rdp_buffer* buffer,
     rdp_buffer body;
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     rdp_buffer_init(&body);
     status = rdp_buffer_append_u32_le(&body, encode_time);
     if (status == LIBRDP_STATUS_OK)
@@ -445,13 +473,15 @@ librdp_status rdp_input_channel_write_touch_event(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK && body.length > UINT32_MAX - 6u)
         status = LIBRDP_STATUS_INVALID_ARGUMENT;
     if (status == LIBRDP_STATUS_OK)
+    {
         status = rdp_input_channel_write_header(buffer,
                                                 RDP_INPUT_CHANNEL_EVENT_TOUCH,
                                                 (uint32_t)(6u + body.length));
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, body.data, body.length);
     rdp_buffer_free(&body);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 static librdp_status rdp_input_channel_read_touch_contact(rdp_stream* stream,
@@ -669,11 +699,13 @@ librdp_status rdp_input_channel_write_pen_contact(rdp_buffer* buffer,
                                                   const rdp_input_channel_pen_contact* contact)
 {
     librdp_status status = rdp_input_channel_validate_pen_contact(contact);
+    size_t start = 0;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (status != LIBRDP_STATUS_OK)
         return status;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, contact->device_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u16_le(buffer, contact->fields_present);
@@ -693,7 +725,7 @@ librdp_status rdp_input_channel_write_pen_contact(rdp_buffer* buffer,
         status = rdp_buffer_append_u16_le(buffer, (uint16_t)contact->tilt_x);
     if (status == LIBRDP_STATUS_OK && (contact->fields_present & RDP_INPUT_CHANNEL_PEN_TILTY_PRESENT) != 0)
         status = rdp_buffer_append_u16_le(buffer, (uint16_t)contact->tilt_y);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_write_pen_frame(rdp_buffer* buffer,
@@ -704,6 +736,7 @@ librdp_status rdp_input_channel_write_pen_frame(rdp_buffer* buffer,
     uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || contact_count == 0 || contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS || !contacts)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -712,14 +745,17 @@ librdp_status rdp_input_channel_write_pen_frame(rdp_buffer* buffer,
     {
         if (seen[contacts[i].device_id])
             return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (rdp_input_channel_validate_pen_contact(&contacts[i]) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
         seen[contacts[i].device_id] = 1;
     }
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, contact_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_append_u64_le(buffer, frame_offset);
     for (i = 0; status == LIBRDP_STATUS_OK && i < contact_count; i++)
         status = rdp_input_channel_write_pen_contact(buffer, &contacts[i]);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_input_channel_write_pen_event(rdp_buffer* buffer,
@@ -730,9 +766,11 @@ librdp_status rdp_input_channel_write_pen_event(rdp_buffer* buffer,
     rdp_buffer body;
     uint16_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     rdp_buffer_init(&body);
     status = rdp_buffer_append_u32_le(&body, encode_time);
     if (status == LIBRDP_STATUS_OK)
@@ -760,13 +798,15 @@ librdp_status rdp_input_channel_write_pen_event(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK && body.length > UINT32_MAX - 6u)
         status = LIBRDP_STATUS_INVALID_ARGUMENT;
     if (status == LIBRDP_STATUS_OK)
+    {
         status = rdp_input_channel_write_header(buffer,
                                                 RDP_INPUT_CHANNEL_EVENT_PEN,
                                                 (uint32_t)(6u + body.length));
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, body.data, body.length);
     rdp_buffer_free(&body);
-    return status;
+    return rdp_input_channel_restore_on_error(buffer, start, status);
 }
 
 static librdp_status rdp_input_channel_read_pen_contact(rdp_stream* stream,
