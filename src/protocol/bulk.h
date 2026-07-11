@@ -18,6 +18,7 @@
 #define RDP_BULK_TYPE_RDP6 0x02u
 #define RDP_BULK_TYPE_RDP61 0x03u
 #define RDP_BULK_TYPE_RDP8 0x04u
+#define RDP_BULK_RDP61_HISTORY_SIZE 2000000u
 
 typedef struct rdp_bulk_mppc_state
 {
@@ -27,10 +28,18 @@ typedef struct rdp_bulk_mppc_state
     uint8_t level;
 } rdp_bulk_mppc_state;
 
+typedef struct rdp_bulk_rdp61_state
+{
+    uint8_t* history;
+    size_t write_offset;
+} rdp_bulk_rdp61_state;
+
 typedef struct rdp_bulk_decompressor
 {
     rdp_bulk_mppc_state mppc8k;
     rdp_bulk_mppc_state mppc64k;
+    rdp_bulk_mppc_state rdp61_level2;
+    rdp_bulk_rdp61_state rdp61;
 } rdp_bulk_decompressor;
 
 void rdp_bulk_decompressor_init(rdp_bulk_decompressor* decompressor);

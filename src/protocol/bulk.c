@@ -10,6 +10,13 @@ typedef struct rdp_bulk_bit_reader
     size_t bit;
 } rdp_bulk_bit_reader;
 
+#define RDP_BULK_RDP61_L1_COMPRESSED 0x01u
+#define RDP_BULK_RDP61_L1_NO_COMPRESSION 0x02u
+#define RDP_BULK_RDP61_L1_PACKET_AT_FRONT 0x04u
+#define RDP_BULK_RDP61_L1_INNER_COMPRESSION 0x10u
+#define RDP_BULK_RDP61_L1_KNOWN_MASK 0x17u
+#define RDP_BULK_RDP61_MATCH_SIZE 8u
+
 static void rdp_bulk_mppc_state_init(rdp_bulk_mppc_state* state, uint8_t level)
 {
     if (!state)
@@ -29,7 +36,33 @@ static void rdp_bulk_mppc_state_reset(rdp_bulk_mppc_state* state, int clear)
         memset(state->history, 0, state->history_size);
 }
 
+static void rdp_bulk_rdp61_state_init(rdp_bulk_rdp61_state* state)
+{
+    if (!state)
+        return;
+    state->history = NULL;
+    state->write_offset = 0;
+}
+
+static void rdp_bulk_rdp61_state_reset(rdp_bulk_rdp61_state* state, int clear)
+{
+    if (!state)
+        return;
+    state->write_offset = 0;
+    if (clear && state->history)
+        memset(state->history, 0, RDP_BULK_RDP61_HISTORY_SIZE);
+}
+
 static void rdp_bulk_mppc_state_free(rdp_bulk_mppc_state* state)
+{
+    if (!state)
+        return;
+    free(state->history);
+    state->history = NULL;
+    state->write_offset = 0;
+}
+
+static void rdp_bulk_rdp61_state_free(rdp_bulk_rdp61_state* state)
 {
     if (!state)
         return;
@@ -45,6 +78,18 @@ static librdp_status rdp_bulk_mppc_state_ensure(rdp_bulk_mppc_state* state)
     if (state->history)
         return LIBRDP_STATUS_OK;
     state->history = (uint8_t*)calloc(1, state->history_size);
+    if (!state->history)
+        return LIBRDP_STATUS_NO_MEMORY;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bulk_rdp61_state_ensure(rdp_bulk_rdp61_state* state)
+{
+    if (!state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (state->history)
+        return LIBRDP_STATUS_OK;
+    state->history = (uint8_t*)calloc(1, RDP_BULK_RDP61_HISTORY_SIZE);
     if (!state->history)
         return LIBRDP_STATUS_NO_MEMORY;
     return LIBRDP_STATUS_OK;
@@ -287,12 +332,232 @@ static librdp_status rdp_bulk_mppc_decompress(rdp_bulk_mppc_state* state,
     return rdp_buffer_append(decoded, state->history + start, state->write_offset - start);
 }
 
+static uint16_t rdp_bulk_read_u16_le(const uint8_t* data)
+{
+    return (uint16_t)(data[0] | ((uint16_t)data[1] << 8u));
+}
+
+static uint32_t rdp_bulk_read_u32_le(const uint8_t* data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8u) |
+           ((uint32_t)data[2] << 16u) |
+           ((uint32_t)data[3] << 24u);
+}
+
+static librdp_status rdp_bulk_rdp61_emit(rdp_bulk_rdp61_state* state,
+                                         rdp_buffer* decoded,
+                                         uint8_t value,
+                                         size_t* output_offset)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!state || !decoded || !output_offset)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (state->write_offset >= RDP_BULK_RDP61_HISTORY_SIZE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_append_u8(decoded, value);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    state->history[state->write_offset++] = value;
+    (*output_offset)++;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bulk_rdp61_emit_literals(rdp_bulk_rdp61_state* state,
+                                                  rdp_buffer* decoded,
+                                                  const uint8_t* literals,
+                                                  size_t literal_len,
+                                                  size_t* literal_offset,
+                                                  size_t count,
+                                                  size_t* output_offset)
+{
+    size_t i = 0;
+
+    if (!state || !decoded || !literal_offset || !output_offset ||
+        (!literals && literal_len > 0) ||
+        *literal_offset > literal_len ||
+        count > literal_len - *literal_offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < count; i++)
+    {
+        librdp_status status =
+            rdp_bulk_rdp61_emit(state, decoded, literals[*literal_offset], output_offset);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        (*literal_offset)++;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bulk_rdp61_emit_match(rdp_bulk_rdp61_state* state,
+                                               rdp_buffer* decoded,
+                                               uint32_t history_offset,
+                                               uint16_t length,
+                                               size_t* output_offset)
+{
+    uint32_t i = 0;
+
+    if (!state || !state->history || !decoded || !output_offset ||
+        length == 0 ||
+        history_offset >= RDP_BULK_RDP61_HISTORY_SIZE ||
+        (size_t)history_offset + (size_t)length > RDP_BULK_RDP61_HISTORY_SIZE)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < length; i++)
+    {
+        librdp_status status =
+            rdp_bulk_rdp61_emit(state, decoded, state->history[(size_t)history_offset + i], output_offset);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_bulk_rdp61_decompress_level1(rdp_bulk_rdp61_state* state,
+                                                       const uint8_t* data,
+                                                       size_t data_len,
+                                                       rdp_buffer* decoded)
+{
+    uint8_t l1_flags = 0;
+    size_t output_offset = 0;
+    size_t literal_offset = 0;
+    size_t start_offset = 0;
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!state || !data || !decoded || data_len < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_bulk_rdp61_state_ensure(state);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    l1_flags = data[0];
+    if ((l1_flags & ~RDP_BULK_RDP61_L1_KNOWN_MASK) != 0 ||
+        ((l1_flags & RDP_BULK_RDP61_L1_COMPRESSED) != 0 &&
+         (l1_flags & RDP_BULK_RDP61_L1_NO_COMPRESSION) != 0) ||
+        ((l1_flags & (RDP_BULK_RDP61_L1_COMPRESSED | RDP_BULK_RDP61_L1_NO_COMPRESSION)) == 0))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if ((l1_flags & RDP_BULK_RDP61_L1_PACKET_AT_FRONT) != 0)
+        rdp_bulk_rdp61_state_reset(state, 1);
+
+    payload = data + 2u;
+    payload_len = data_len - 2u;
+    start_offset = state->write_offset;
+    if ((l1_flags & RDP_BULK_RDP61_L1_NO_COMPRESSION) != 0)
+    {
+        status = rdp_bulk_rdp61_emit_literals(state,
+                                              decoded,
+                                              payload,
+                                              payload_len,
+                                              &literal_offset,
+                                              payload_len,
+                                              &output_offset);
+        if (status != LIBRDP_STATUS_OK)
+            state->write_offset = start_offset;
+        return status;
+    }
+
+    if (payload_len < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    {
+        uint16_t match_count = rdp_bulk_read_u16_le(payload);
+        size_t match_offset = 2u;
+        size_t details_len = (size_t)match_count * RDP_BULK_RDP61_MATCH_SIZE;
+        const uint8_t* literals = NULL;
+        size_t literal_len = 0;
+        uint16_t i = 0;
+
+        if (match_count == 0 || 2u + details_len > payload_len)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        literals = payload + 2u + details_len;
+        literal_len = payload_len - 2u - details_len;
+
+        for (i = 0; i < match_count; i++)
+        {
+            const uint8_t* detail = payload + match_offset;
+            uint16_t length = rdp_bulk_read_u16_le(detail);
+            uint16_t match_output = rdp_bulk_read_u16_le(detail + 2u);
+            uint32_t history_offset = rdp_bulk_read_u32_le(detail + 4u);
+            size_t literal_gap = 0;
+
+            if ((size_t)match_output < output_offset)
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
+            literal_gap = (size_t)match_output - output_offset;
+            status = rdp_bulk_rdp61_emit_literals(state,
+                                                  decoded,
+                                                  literals,
+                                                  literal_len,
+                                                  &literal_offset,
+                                                  literal_gap,
+                                                  &output_offset);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_bulk_rdp61_emit_match(state,
+                                                   decoded,
+                                                   history_offset,
+                                                   length,
+                                                   &output_offset);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            match_offset += RDP_BULK_RDP61_MATCH_SIZE;
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_bulk_rdp61_emit_literals(state,
+                                                  decoded,
+                                                  literals,
+                                                  literal_len,
+                                                  &literal_offset,
+                                                  literal_len - literal_offset,
+                                                  &output_offset);
+    }
+
+    if (status != LIBRDP_STATUS_OK)
+        state->write_offset = start_offset;
+    return status;
+}
+
+static librdp_status rdp_bulk_rdp61_decompress(rdp_bulk_rdp61_state* state,
+                                               rdp_bulk_mppc_state* level2,
+                                               const uint8_t* data,
+                                               size_t data_len,
+                                               rdp_buffer* decoded)
+{
+    rdp_buffer inner;
+    uint8_t l1_flags = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!state || !level2 || !data || !decoded || data_len < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    l1_flags = data[0];
+    if ((l1_flags & RDP_BULK_RDP61_L1_INNER_COMPRESSION) == 0)
+        return rdp_bulk_rdp61_decompress_level1(state, data, data_len, decoded);
+
+    rdp_buffer_init(&inner);
+    status = rdp_buffer_append_u8(&inner, data[0]);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&inner, data[1]);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_bulk_mppc_decompress(level2, data[1], data + 2u, data_len - 2u, &inner);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_bulk_rdp61_decompress_level1(state, inner.data, inner.length, decoded);
+    rdp_buffer_free(&inner);
+    return status;
+}
+
 void rdp_bulk_decompressor_init(rdp_bulk_decompressor* decompressor)
 {
     if (!decompressor)
         return;
     rdp_bulk_mppc_state_init(&decompressor->mppc8k, 0);
     rdp_bulk_mppc_state_init(&decompressor->mppc64k, 1);
+    rdp_bulk_mppc_state_init(&decompressor->rdp61_level2, 1);
+    rdp_bulk_rdp61_state_init(&decompressor->rdp61);
 }
 
 void rdp_bulk_decompressor_reset(rdp_bulk_decompressor* decompressor)
@@ -301,6 +566,8 @@ void rdp_bulk_decompressor_reset(rdp_bulk_decompressor* decompressor)
         return;
     rdp_bulk_mppc_state_reset(&decompressor->mppc8k, 1);
     rdp_bulk_mppc_state_reset(&decompressor->mppc64k, 1);
+    rdp_bulk_mppc_state_reset(&decompressor->rdp61_level2, 1);
+    rdp_bulk_rdp61_state_reset(&decompressor->rdp61, 1);
 }
 
 void rdp_bulk_decompressor_free(rdp_bulk_decompressor* decompressor)
@@ -309,6 +576,8 @@ void rdp_bulk_decompressor_free(rdp_bulk_decompressor* decompressor)
         return;
     rdp_bulk_mppc_state_free(&decompressor->mppc8k);
     rdp_bulk_mppc_state_free(&decompressor->mppc64k);
+    rdp_bulk_mppc_state_free(&decompressor->rdp61_level2);
+    rdp_bulk_rdp61_state_free(&decompressor->rdp61);
 }
 
 librdp_status rdp_bulk_decompress(rdp_bulk_decompressor* decompressor,
@@ -330,5 +599,11 @@ librdp_status rdp_bulk_decompress(rdp_bulk_decompressor* decompressor,
         return rdp_bulk_mppc_decompress(&decompressor->mppc8k, flags, bytes, data_len, decoded);
     if (type == RDP_BULK_TYPE_64K)
         return rdp_bulk_mppc_decompress(&decompressor->mppc64k, flags, bytes, data_len, decoded);
+    if (type == RDP_BULK_TYPE_RDP61)
+        return rdp_bulk_rdp61_decompress(&decompressor->rdp61,
+                                         &decompressor->rdp61_level2,
+                                         bytes,
+                                         data_len,
+                                         decoded);
     return LIBRDP_STATUS_UNSUPPORTED;
 }

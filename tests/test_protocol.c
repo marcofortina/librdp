@@ -3690,6 +3690,67 @@ static int test_path_security_license_channels(void)
                                "x",
                                1,
                                &bulk_decoded) == LIBRDP_STATUS_UNSUPPORTED);
+    bulk_decoded.length = 0;
+    rdp_bulk_decompressor_reset(&bulk_decompressor);
+    {
+        const uint8_t rdp61_literals[] = {
+            0x06, 0x00,
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'
+        };
+        const uint8_t rdp61_matches[] = {
+            0x01, 0x00,
+            0x02, 0x00,
+            0x09, 0x00, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00,
+            0x04, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00,
+            'k', 'l', 'm', 'n', 'o', 'u'
+        };
+        const char expected[] = "klmnodefghijklabcdu";
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP61,
+                                   rdp61_literals,
+                                   sizeof(rdp61_literals),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 10 && memcmp(bulk_decoded.data, "abcdefghij", 10) == 0);
+        bulk_decoded.length = 0;
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP61,
+                                   rdp61_matches,
+                                   sizeof(rdp61_matches),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == sizeof(expected) - 1u &&
+               memcmp(bulk_decoded.data, expected, sizeof(expected) - 1u) == 0);
+    }
+    bulk_decoded.length = 0;
+    {
+        const uint8_t rdp61_inner_literals[] = {
+            0x12, RDP_BULK_TYPE_64K,
+            'i', 'n', 'n', 'e', 'r'
+        };
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP61,
+                                   rdp61_inner_literals,
+                                   sizeof(rdp61_inner_literals),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 5 && memcmp(bulk_decoded.data, "inner", 5) == 0);
+    }
+    bulk_decoded.length = 0;
+    {
+        const uint8_t rdp61_bad_match_order[] = {
+            0x01, 0x00,
+            0x02, 0x00,
+            0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            'x', 'y'
+        };
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP61,
+                                   rdp61_bad_match_order,
+                                   sizeof(rdp61_bad_match_order),
+                                   &bulk_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
     PCHECK(rdp_fastpath_write_update(&decoded_fastpath,
                                      0x0fu,
                                      RDP_FASTPATH_FRAGMENT_SINGLE,
