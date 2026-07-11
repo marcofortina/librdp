@@ -28,7 +28,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer_init(&buffer);
     (void)rdp_desktop_composition_write_toggle(&buffer, RDP_DESKTOP_COMPOSITION_EVENT_COMPOSITION_ON);
     buffer.length = 0;
-    (void)rdp_desktop_composition_write_lsurface(&buffer, 1, 0, 1, 0, 0, 2, 0);
+    (void)rdp_desktop_composition_write_lsurface(&buffer, 1, 0, 1, 640, 480, 2, 0);
     buffer.length = 0;
     (void)rdp_desktop_composition_write_surfobj(&buffer, 1, 32, 2, 640, 480);
     buffer.length = 0;

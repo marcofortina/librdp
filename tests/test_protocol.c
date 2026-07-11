@@ -12581,6 +12581,20 @@ static int test_desktop_composition_channel(void)
     PCHECK(rdp_desktop_composition_write_lsurface(&buffer, 1, 0, 1, 0, 1, 1, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(buffer.length == 0u);
+    PCHECK(rdp_desktop_composition_write_lsurface(&buffer,
+                                                  0,
+                                                  0,
+                                                  0x0102030405060708ull,
+                                                  0,
+                                                  0,
+                                                  0x1112131415161718ull,
+                                                  0) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_desktop_composition_parse_lsurface(buffer.data, buffer.length, &lsurface) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(lsurface.create == 0u &&
+           lsurface.width == 0u &&
+           lsurface.height == 0u &&
+           lsurface.surface_id == 0x0102030405060708ull);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
