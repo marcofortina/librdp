@@ -6445,6 +6445,30 @@ static int test_path_security_license_channels(void)
                                        core_events,
                                        2) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5u);
+    {
+        const uint8_t invalid_second_event[] = {
+            RDP_CORE_INPUT_SIGNATURE,
+            RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE,
+            2,
+            0,
+            0,
+            0x1e,
+            (uint8_t)((RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP << 5) | 1u),
+            0x78,
+            0x56,
+            0x34,
+            0x12
+        };
+
+        memset(core_events, 0x5a, sizeof(core_events));
+        core_event_count = 77;
+        PCHECK(rdp_core_input_parse_events(invalid_second_event,
+                                           sizeof(invalid_second_event),
+                                           core_events,
+                                           8,
+                                           &core_event_count) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(core_event_count == 77 && core_events[0].type == 0x5a && core_events[0].scancode == 0x5a);
+    }
     PCHECK(rdp_input_channel_parse_header(input_sc_ready_v300,
                                           sizeof(input_sc_ready_v300),
                                           &input_header) == LIBRDP_STATUS_OK);

@@ -179,6 +179,7 @@ librdp_status rdp_core_input_parse_events(const void* data,
 {
     rdp_stream stream;
     rdp_core_input_header header;
+    rdp_core_input_event parsed[UINT8_MAX + 1u];
     uint8_t i = 0;
 
     if (!data || !events || !event_count)
@@ -190,7 +191,7 @@ librdp_status rdp_core_input_parse_events(const void* data,
     if (header.event_count > capacity)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(events, 0, sizeof(*events) * capacity);
+    memset(parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -203,61 +204,64 @@ librdp_status rdp_core_input_parse_events(const void* data,
 
         if (rdp_stream_read_u8(&stream, &packed) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        events[i].type = (uint8_t)((packed >> 5) & 0x07u);
-        events[i].flags = (uint8_t)(packed & 0x1fu);
-        payload_len = rdp_core_input_event_payload_len(events[i].type);
+        parsed[i].type = (uint8_t)((packed >> 5) & 0x07u);
+        parsed[i].flags = (uint8_t)(packed & 0x1fu);
+        payload_len = rdp_core_input_event_payload_len(parsed[i].type);
         if (payload_len == 0xffu || rdp_stream_remaining(&stream) < payload_len)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-        if (events[i].type == RDP_CORE_INPUT_EVENT_SCANCODE)
+        if (parsed[i].type == RDP_CORE_INPUT_EVENT_SCANCODE)
         {
-            if ((events[i].flags & ~(RDP_CORE_INPUT_KBDFLAGS_RELEASE |
+            if ((parsed[i].flags & ~(RDP_CORE_INPUT_KBDFLAGS_RELEASE |
                                      RDP_CORE_INPUT_KBDFLAGS_EXTENDED |
                                      RDP_CORE_INPUT_KBDFLAGS_EXTENDED1)) != 0 ||
-                rdp_stream_read_u8(&stream, &events[i].scancode) != LIBRDP_STATUS_OK)
+                rdp_stream_read_u8(&stream, &parsed[i].scancode) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        else if (events[i].type == RDP_CORE_INPUT_EVENT_UNICODE)
+        else if (parsed[i].type == RDP_CORE_INPUT_EVENT_UNICODE)
         {
-            if ((events[i].flags & ~RDP_CORE_INPUT_KBDFLAGS_RELEASE) != 0 ||
-                rdp_stream_read_u16_le(&stream, &events[i].unicode_code) != LIBRDP_STATUS_OK)
+            if ((parsed[i].flags & ~RDP_CORE_INPUT_KBDFLAGS_RELEASE) != 0 ||
+                rdp_stream_read_u16_le(&stream, &parsed[i].unicode_code) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        else if (events[i].type == RDP_CORE_INPUT_EVENT_SYNC)
+        else if (parsed[i].type == RDP_CORE_INPUT_EVENT_SYNC)
         {
-            if ((events[i].flags & ~(RDP_CORE_INPUT_SYNC_SCROLL_LOCK |
+            if ((parsed[i].flags & ~(RDP_CORE_INPUT_SYNC_SCROLL_LOCK |
                                      RDP_CORE_INPUT_SYNC_NUM_LOCK |
                                      RDP_CORE_INPUT_SYNC_CAPS_LOCK |
                                      RDP_CORE_INPUT_SYNC_KANA_LOCK)) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        else if (events[i].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP)
+        else if (parsed[i].type == RDP_CORE_INPUT_EVENT_QOE_TIMESTAMP)
         {
-            if (events[i].flags != 0 ||
-                rdp_stream_read_u32_le(&stream, &events[i].timestamp) != LIBRDP_STATUS_OK)
+            if (parsed[i].flags != 0 ||
+                rdp_stream_read_u32_le(&stream, &parsed[i].timestamp) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        else if (events[i].type == RDP_CORE_INPUT_EVENT_RELMOUSE)
+        else if (parsed[i].type == RDP_CORE_INPUT_EVENT_RELMOUSE)
         {
-            if (events[i].flags != 0 ||
-                rdp_stream_read_u16_le(&stream, &events[i].pointer_flags) != LIBRDP_STATUS_OK ||
+            if (parsed[i].flags != 0 ||
+                rdp_stream_read_u16_le(&stream, &parsed[i].pointer_flags) != LIBRDP_STATUS_OK ||
                 rdp_stream_read_u16_le(&stream, &dx) != LIBRDP_STATUS_OK ||
                 rdp_stream_read_u16_le(&stream, &dy) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            events[i].dx = (int16_t)dx;
-            events[i].dy = (int16_t)dy;
+            parsed[i].dx = (int16_t)dx;
+            parsed[i].dy = (int16_t)dy;
         }
         else
         {
-            if (events[i].flags != 0 ||
-                rdp_stream_read_u16_le(&stream, &events[i].pointer_flags) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(&stream, &events[i].x) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(&stream, &events[i].y) != LIBRDP_STATUS_OK)
+            if (parsed[i].flags != 0 ||
+                rdp_stream_read_u16_le(&stream, &parsed[i].pointer_flags) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed[i].x) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed[i].y) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
     }
     if (rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(events, 0, sizeof(*events) * capacity);
+    if (header.event_count > 0)
+        memcpy(events, parsed, sizeof(*events) * header.event_count);
     *event_count = header.event_count;
     return LIBRDP_STATUS_OK;
 }
