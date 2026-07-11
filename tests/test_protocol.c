@@ -3454,6 +3454,7 @@ static int test_path_security_license_channels(void)
     uint16_t confirm_source_len = 0;
     uint16_t confirm_caps_len = 0;
     uint8_t nscodec_rle_decoded[24];
+    uint8_t nscodec_region_dest[64];
     const uint16_t expected_confirm_types[] = {
         RDP_CAPABILITY_TYPE_GENERAL,
         RDP_CAPABILITY_TYPE_BITMAP,
@@ -4911,6 +4912,24 @@ static int test_path_security_license_channels(void)
            nscodec_pixels.data[1] == 120 &&
            nscodec_pixels.data[2] == 90 &&
            nscodec_pixels.data[3] == 0x7f);
+    memset(nscodec_region_dest, 0xee, sizeof(nscodec_region_dest));
+    PCHECK(rdp_nscodec_decode_region_bgra32(&nscodec_context,
+                                            nscodec_raw_argb,
+                                            sizeof(nscodec_raw_argb),
+                                            1,
+                                            1,
+                                            nscodec_region_dest,
+                                            16,
+                                            1,
+                                            1,
+                                            4,
+                                            4) == LIBRDP_STATUS_OK);
+    PCHECK(nscodec_region_dest[0] == 0xee &&
+           nscodec_region_dest[20] == 70 &&
+           nscodec_region_dest[21] == 120 &&
+           nscodec_region_dest[22] == 90 &&
+           nscodec_region_dest[23] == 0x7f &&
+           nscodec_region_dest[24] == 0xee);
     PCHECK(rdp_nscodec_decode_rle_plane(nscodec_rle_plane,
                                         sizeof(nscodec_rle_plane),
                                         nscodec_rle_decoded,
