@@ -107,6 +107,12 @@ static librdp_status rdp_planar_decode_rle_plane(const uint8_t* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Planar decoding converts optional RLE planes, chroma subsampling, color-loss
+ * deltas, and alpha into one BGRA buffer. Keep plane sizing and expansion
+ * checks centralized here because malformed dimensions can otherwise turn into
+ * mismatched chroma indexes later in the conversion loop.
+ */
 librdp_status rdp_planar_decode_argb(const void* data,
                                      size_t length,
                                      uint32_t width,

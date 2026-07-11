@@ -413,6 +413,11 @@ librdp_status rdp_smartcard_redirection_parse_device_control_request(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Smartcard device-control payloads reuse the same wire envelope for many
+ * PC/SC calls. Parse the envelope first, then specialize by IOCTL so malformed
+ * lengths or unsupported calls never reach backend-specific handlers.
+ */
 librdp_status rdp_smartcard_redirection_parse_device_control_request_message(
     const void* data,
     size_t length,

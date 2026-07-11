@@ -177,6 +177,7 @@ endif()
 
 if(LIBRDP_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter)
     add_executable(test_core
         tests/test_core.c
         tests/test_protocol.c
@@ -191,6 +192,12 @@ if(LIBRDP_BUILD_TESTS)
         target_compile_definitions(test_core PRIVATE RDP_HAVE_OPENH264_AVC=1)
     endif()
     add_test(NAME core COMMAND test_core)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME public_api_docs
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)
+        add_test(NAME source_comments
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-source-comments.py)
+    endif()
 endif()
 
 if(LIBRDP_BUILD_FUZZ)

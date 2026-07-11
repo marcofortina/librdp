@@ -2076,6 +2076,12 @@ static librdp_status rdp_session_pnp_send_status(librdp_session* session,
     return status;
 }
 
+/*
+ * PNP redirection multiplexes version/authentication announcements and server
+ * I/O requests on one static channel. Keep all state transitions in this
+ * dispatcher so partial storage writes, open-device lifetime, and completion
+ * status mapping stay ordered exactly as the server expects.
+ */
 static librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* session,
                                                                 const uint8_t* data,
                                                                 size_t data_len)
@@ -3138,6 +3144,12 @@ static librdp_status rdp_session_send_remote_programs_startup(librdp_session* se
     return status;
 }
 
+/*
+ * RAIL messages can arrive before the startup exchange has been completed.
+ * This dispatcher lazily sends the startup PDU, then routes orders while
+ * preserving the session-side app launch state used by later window lifecycle
+ * handling.
+ */
 static librdp_status rdp_session_handle_remote_programs_message(librdp_session* session,
                                                                 const uint8_t* data,
                                                                 size_t data_len)
@@ -13144,6 +13156,12 @@ static librdp_status rdp_session_handle_audio_output_wave_encrypt(librdp_session
     return status;
 }
 
+/*
+ * Audio output has three framing layers: virtual-channel fragmentation,
+ * rdpsnd message framing, and sometimes a split wave-info/wave-data pair.
+ * This dispatcher owns the pending wave state so acknowledgements are emitted
+ * only after the matching payload has been delivered to the application.
+ */
 static librdp_status rdp_session_handle_audio_output_message(librdp_session* session,
                                                              const uint8_t* data,
                                                              size_t data_len)
@@ -14922,6 +14940,12 @@ static librdp_status rdp_session_graphics_progressive_write_region_tile(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Progressive tiles update a cached surface through region clipping, optional
+ * quantization upgrades, and dirty tracking. Render through this single path so
+ * partial progressive state is promoted to the visible surface only after the
+ * tile payload and destination rectangle have both been validated.
+ */
 static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session* session,
                                                                   uint32_t channel_id,
                                                                   uint32_t codec_context_id,
@@ -17040,6 +17064,12 @@ static librdp_status rdp_session_send_graphics_frame_ack(librdp_session* session
     return status;
 }
 
+/*
+ * Graphics pipeline traffic is segmented, optionally bulk-compressed, and can
+ * carry frame markers, cache operations, surface commands, and codec payloads
+ * in one byte stream. Decode and apply in-order here so frame acknowledgements
+ * reflect only work that has reached the local surface/cache state.
+ */
 static librdp_status rdp_session_handle_graphics_message(librdp_session* session,
                                                          uint32_t channel_id,
                                                          const uint8_t* data,
@@ -18049,6 +18079,11 @@ static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* ses
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Clipboard requests and responses share one channel and several asynchronous
+ * transactions. This dispatcher keeps pending format/file requests correlated
+ * with their stream IDs and copies only the data that must outlive the PDU.
+ */
 static librdp_status rdp_session_handle_clipboard_message(librdp_session* session,
                                                           const uint8_t* data,
                                                           size_t data_len)
@@ -18899,6 +18934,11 @@ static librdp_status rdp_session_webauthn_load_mock_response(const char* path, r
     return status;
 }
 
+/*
+ * WebAuthn requests cross a trust boundary: malformed CBOR/RPC data must turn
+ * into a protocol failure response, while provider failures must not leak host
+ * authenticator details beyond the HRESULT-style status and response payload.
+ */
 static librdp_status rdp_session_handle_webauthn_message(librdp_session* session,
                                                          uint32_t channel_id,
                                                          uint8_t channel_id_bytes,
@@ -21228,6 +21268,11 @@ static void rdp_session_usb_transfer_result_free(rdp_session_usb_transfer_result
     memset(result, 0, sizeof(*result));
 }
 
+/*
+ * Execute one validated USB transfer against the host backend and normalize
+ * backend-specific results into URBDRC status plus optional payload bytes. This
+ * boundary keeps libusb ownership and error mapping out of the protocol writer.
+ */
 static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                                       const rdp_usb_redirection_transfer* transfer,
                                                       rdp_session_usb_transfer_result* result)
@@ -21794,6 +21839,11 @@ static librdp_status rdp_session_usb_complete_submit_urb_control(
     return status;
 }
 
+/*
+ * URBDRC packets describe host USB operations requested by the server. Route
+ * only after validating the common header so backend execution never observes
+ * truncated request structures or stale interface IDs.
+ */
 static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session,
                                                                 const uint8_t* data,
                                                                 size_t data_len)
@@ -22941,6 +22991,11 @@ static librdp_status rdp_session_handle_video_optimized_data_message(librdp_sess
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * TSMF control and data messages can use either the full channel header or a
+ * compact channel-specific header. Parse both forms here and keep presentation
+ * bookkeeping synchronized with application data events.
+ */
 static librdp_status rdp_session_handle_video_redirection_message(librdp_session* session,
                                                                   rdp_session_dynamic_channel* channel,
                                                                   uint32_t channel_id,
@@ -24181,6 +24236,11 @@ static librdp_status rdp_session_handle_video_capture_control_message(librdp_ses
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Camera data-channel messages drive a request/reply protocol: open selects a
+ * source, sample requests arm exactly one pending reply, and close/error clear
+ * the streaming state. Keeping that state here prevents duplicate replies.
+ */
 static librdp_status rdp_session_handle_video_capture_data_message(librdp_session* session,
                                                                    uint32_t channel_id,
                                                                    const uint8_t* data,
@@ -24473,6 +24533,12 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Dynamic virtual channels are the extension demultiplexer for display,
+ * graphics, input, devices, media, and application-owned channels. Route known
+ * channel names internally first; only unknown active user channels are exposed
+ * to the public callback surface.
+ */
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,
                                                                 uint32_t channel_id,
@@ -24679,6 +24745,11 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     return status;
 }
 
+/*
+ * The dynamic-channel control stream manages channel creation, close, and data
+ * framing before payload dispatch. This function owns the channel table update
+ * order so public channel events cannot refer to entries that are not active.
+ */
 static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                         const rdp_virtual_channel_packet* channel_packet)
 {
@@ -28644,6 +28715,11 @@ static librdp_status rdp_session_fastpath_payload(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Fast-path packets may be encrypted, compressed, fragmented, and batched.
+ * Unwrap once, then process each update in wire order; fragmented bitmap,
+ * surface, orders, and pointer updates share the same fragment accumulator.
+ */
 static librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet)
 {
     rdp_buffer decoded;

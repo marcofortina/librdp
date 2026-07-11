@@ -672,6 +672,12 @@ librdp_status rdp_credssp_write_spnego_ntlm_negotiate(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Build the NTLMv2 AUTHENTICATE message in one place so security-buffer
+ * offsets, proof hashes, exported-session-key wrapping, and the final MIC stay
+ * consistent. Secret inputs are consumed to derive protocol fields and must
+ * not be traced or stored outside the caller-owned credential lifetime.
+ */
 librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
                                                   const rdp_ntlm_challenge* challenge,
                                                   const char* username,
