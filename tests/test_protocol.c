@@ -1414,7 +1414,9 @@ static int test_mcs_gcc_capabilities(void)
     config.multitransport_flags = 0x80000000u;
     rdp_buffer_free(&client_blocks);
     rdp_buffer_init(&client_blocks);
+    PCHECK(rdp_buffer_append_u8(&client_blocks, 0xa5u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(client_blocks.length == 1 && client_blocks.data[0] == 0xa5u);
     config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
                                   RDP_GCC_MULTITRANSPORT_UDP_FECL |
                                   RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;

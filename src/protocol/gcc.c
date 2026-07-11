@@ -407,17 +407,22 @@ static librdp_status rdp_gcc_write_client_multitransport(rdp_buffer* buffer,
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    rdp_buffer out;
 
     if (!buffer || !config || config->desktop_width == 0 || config->desktop_height == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_gcc_write_client_core(buffer, config);
+    rdp_buffer_init(&out);
+    status = rdp_gcc_write_client_core(&out, config);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_gcc_write_client_security(buffer);
+        status = rdp_gcc_write_client_security(&out);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_gcc_write_client_network(buffer, config);
+        status = rdp_gcc_write_client_network(&out, config);
     if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
-        status = rdp_gcc_write_client_multitransport(buffer, config);
+        status = rdp_gcc_write_client_multitransport(&out, config);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, out.data, out.length);
+    rdp_buffer_free(&out);
     return status;
 }
 
