@@ -122,8 +122,7 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
             need = 5u + ((uint16_t)payload[3] | ((uint16_t)payload[4] << 8u));
             break;
         default:
-            need = available;
-            break;
+            return LIBRDP_STATUS_UNSUPPORTED;
     }
     if (need > available)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -1155,6 +1154,7 @@ librdp_status rdp_gdi_parse_altsec_order(const void* data,
 {
     rdp_gdi_altsec_order_header parsed;
     rdp_stream stream;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -1169,11 +1169,12 @@ librdp_status rdp_gdi_parse_altsec_order(const void* data,
     parsed.order_type = (uint8_t)(parsed.control_flags >> 2);
     if (!rdp_gdi_altsec_order_type_valid(parsed.order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_gdi_altsec_payload_length(parsed.order_type,
-                                      stream.data + stream.position,
-                                      rdp_stream_remaining(&stream),
-                                      &parsed.payload_len) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_gdi_altsec_payload_length(parsed.order_type,
+                                           stream.data + stream.position,
+                                           rdp_stream_remaining(&stream),
+                                           &parsed.payload_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.actual_length = stream.position;
@@ -1642,8 +1643,10 @@ librdp_status rdp_gdi_parse_order_list(const void* data,
         }
         if ((control & 0x03u) == RDP_GDI_TS_SECONDARY)
         {
-            if (rdp_gdi_parse_altsec_order(bytes + offset, length - offset, &altsec) != LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            librdp_status status = rdp_gdi_parse_altsec_order(bytes + offset, length - offset, &altsec);
+
+            if (status != LIBRDP_STATUS_OK)
+                return status;
             parsed.orders[index].kind = RDP_GDI_ORDER_KIND_ALTSEC;
             parsed.orders[index].order_type = altsec.order_type;
             parsed.orders[index].length = altsec.actual_length;
