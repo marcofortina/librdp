@@ -16753,6 +16753,15 @@ static int test_multitransport(void)
     PCHECK(rdp_multitransport_parse_subheader(bad_subheader,
                                               sizeof(bad_subheader),
                                               &subheader) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_multitransport_write_header(&buffer,
+                                           RDP_MULTITRANSPORT_ACTION_DATA,
+                                           autodetect_payload,
+                                           (size_t)-1,
+                                           sizeof(data_payload)) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     PCHECK(rdp_multitransport_write_data(&buffer,
                                          subheaders.data,
