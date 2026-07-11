@@ -6820,6 +6820,10 @@ static int test_path_security_license_channels(void)
                                                     dyn_response.length,
                                                     &input_contact_id) == LIBRDP_STATUS_OK);
     PCHECK(input_contact_id == 9);
+    PCHECK(rdp_input_channel_parse_dismiss_hovering(dyn_response.data,
+                                                    dyn_response.length - 1u,
+                                                    &input_contact_id) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(input_contact_id == 9);
     dyn_response.length = 0;
     memset(&input_touch_contact, 0, sizeof(input_touch_contact));
     input_touch_contact.contact_id = 1;
@@ -6875,6 +6879,16 @@ static int test_path_security_license_channels(void)
                                                    &input_touch_frame) == LIBRDP_STATUS_OK);
     PCHECK(input_touch_frame.contact_count == 1 &&
            input_touch_frame.frame_offset == 0x0102030405060708ull);
+    {
+        rdp_input_channel_touch_event invalid_touch_event = input_touch_event;
+        rdp_input_channel_touch_frame valid_touch_frame = input_touch_frame;
+
+        invalid_touch_event.frames_len--;
+        PCHECK(rdp_input_channel_touch_event_get_frame(&invalid_touch_event,
+                                                       0,
+                                                       &input_touch_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&input_touch_frame, &valid_touch_frame, sizeof(input_touch_frame)) == 0);
+    }
     PCHECK(rdp_input_channel_touch_frame_get_contact(&input_touch_frame,
                                                      0,
                                                      &input_touch_contact) == LIBRDP_STATUS_OK);
@@ -6884,6 +6898,18 @@ static int test_path_security_license_channels(void)
            input_touch_contact.contact_rect_top == -3 &&
            input_touch_contact.orientation == 90 &&
            input_touch_contact.pressure == 512);
+    {
+        rdp_input_channel_touch_frame invalid_touch_frame = input_touch_frame;
+        rdp_input_channel_touch_contact valid_touch_contact = input_touch_contact;
+
+        invalid_touch_frame.contacts_len--;
+        PCHECK(rdp_input_channel_touch_frame_get_contact(&invalid_touch_frame,
+                                                         0,
+                                                         &input_touch_contact) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&input_touch_contact,
+                      &valid_touch_contact,
+                      sizeof(input_touch_contact)) == 0);
+    }
     {
         rdp_buffer second_contact;
         rdp_input_channel_touch_frame frames[2];
@@ -7089,6 +7115,16 @@ static int test_path_security_license_channels(void)
                                                  0,
                                                  &input_pen_frame) == LIBRDP_STATUS_OK);
     PCHECK(input_pen_frame.contact_count == 1 && input_pen_frame.frame_offset == 7);
+    {
+        rdp_input_channel_pen_event invalid_pen_event = input_pen_event;
+        rdp_input_channel_pen_frame valid_pen_frame = input_pen_frame;
+
+        invalid_pen_event.frames_len--;
+        PCHECK(rdp_input_channel_pen_event_get_frame(&invalid_pen_event,
+                                                     0,
+                                                     &input_pen_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&input_pen_frame, &valid_pen_frame, sizeof(input_pen_frame)) == 0);
+    }
     PCHECK(rdp_input_channel_pen_frame_get_contact(&input_pen_frame,
                                                    0,
                                                    &input_pen_contact) == LIBRDP_STATUS_OK);
@@ -7099,6 +7135,18 @@ static int test_path_security_license_channels(void)
            input_pen_contact.rotation == 45 &&
            input_pen_contact.tilt_x == -10 &&
            input_pen_contact.tilt_y == 20);
+    {
+        rdp_input_channel_pen_frame invalid_pen_frame = input_pen_frame;
+        rdp_input_channel_pen_contact valid_pen_contact = input_pen_contact;
+
+        invalid_pen_frame.contacts_len--;
+        PCHECK(rdp_input_channel_pen_frame_get_contact(&invalid_pen_frame,
+                                                       0,
+                                                       &input_pen_contact) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&input_pen_contact,
+                      &valid_pen_contact,
+                      sizeof(input_pen_contact)) == 0);
+    }
     {
         rdp_buffer second_contact;
         rdp_input_channel_pen_frame frames[2];
