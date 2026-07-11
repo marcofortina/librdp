@@ -352,6 +352,8 @@ static librdp_status rdp_nscodec_decode_planes(rdp_nscodec_context* context,
     size_t chroma_expected = 0;
     size_t alpha_expected = 0;
     size_t capacity = 0;
+    uint8_t* planes[4] = {NULL, NULL, NULL, NULL};
+    size_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!context || !stream)
@@ -366,31 +368,55 @@ static librdp_status rdp_nscodec_decode_planes(rdp_nscodec_context* context,
         capacity = chroma_expected;
     if (alpha_expected > capacity)
         capacity = alpha_expected;
-    status = rdp_nscodec_ensure_planes(context, capacity);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
 
-    status = rdp_nscodec_decode_plane(stream->luma, stream->luma_len, luma_expected, context->planes[0]);
+    for (i = 0; i < 4u; i++)
+    {
+        planes[i] = (uint8_t*)malloc(capacity);
+        if (!planes[i])
+        {
+            status = LIBRDP_STATUS_NO_MEMORY;
+            goto out;
+        }
+    }
+
+    status = rdp_nscodec_decode_plane(stream->luma, stream->luma_len, luma_expected, planes[0]);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        goto out;
     status = rdp_nscodec_decode_plane(stream->orange_chroma,
                                       stream->orange_chroma_len,
                                       chroma_expected,
-                                      context->planes[1]);
+                                      planes[1]);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        goto out;
     status = rdp_nscodec_decode_plane(stream->green_chroma,
                                       stream->green_chroma_len,
                                       chroma_expected,
-                                      context->planes[2]);
+                                      planes[2]);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        goto out;
     if (stream->alpha_len == 0)
     {
-        memset(context->planes[3], 0xffu, alpha_expected);
-        return LIBRDP_STATUS_OK;
+        memset(planes[3], 0xffu, alpha_expected);
     }
-    return rdp_nscodec_decode_plane(stream->alpha, stream->alpha_len, alpha_expected, context->planes[3]);
+    else
+    {
+        status = rdp_nscodec_decode_plane(stream->alpha, stream->alpha_len, alpha_expected, planes[3]);
+        if (status != LIBRDP_STATUS_OK)
+            goto out;
+    }
+
+    status = rdp_nscodec_ensure_planes(context, capacity);
+    if (status != LIBRDP_STATUS_OK)
+        goto out;
+    memcpy(context->planes[0], planes[0], luma_expected);
+    memcpy(context->planes[1], planes[1], chroma_expected);
+    memcpy(context->planes[2], planes[2], chroma_expected);
+    memcpy(context->planes[3], planes[3], alpha_expected);
+
+out:
+    for (i = 0; i < 4u; i++)
+        free(planes[i]);
+    return status;
 }
 
 librdp_status rdp_nscodec_decode_region_bgra32(rdp_nscodec_context* context,

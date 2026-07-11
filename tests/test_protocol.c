@@ -2214,6 +2214,16 @@ static int test_path_security_license_channels(void)
         0x01, 0x00, 0x01, 0x00,
         100, 10, 20, 0x7f
     };
+    const uint8_t nscodec_partial_plane_failure[] = {
+        0x05, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        0x05, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+        100, 100, 100, 100, 100,
+        0xaa,
+        0, 0, 0, 0, 0
+    };
     const uint8_t planar_reserved[] = {0x80, 0, 0, 0};
     const uint8_t planar_subsample_without_loss[] = {RDP_PLANAR_FORMAT_CHROMA_SUBSAMPLING, 0, 0, 0};
     const uint8_t fast_bitmap_update[] = {
@@ -4984,6 +4994,29 @@ static int test_path_security_license_channels(void)
                                     1,
                                     1,
                                     &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        size_t nscodec_capacity_before = nscodec_context.plane_capacity;
+        uint8_t nscodec_luma_before = nscodec_context.planes[0][0];
+        uint8_t nscodec_orange_before = nscodec_context.planes[1][0];
+        uint8_t nscodec_green_before = nscodec_context.planes[2][0];
+        uint8_t nscodec_alpha_before = nscodec_context.planes[3][0];
+
+        nscodec_pixels.length = 5;
+        decoded_stride = 77;
+        PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
+                                         nscodec_partial_plane_failure,
+                                         sizeof(nscodec_partial_plane_failure),
+                                         5,
+                                         1,
+                                         &nscodec_pixels,
+                                         &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(nscodec_pixels.length == 5 && decoded_stride == 77);
+        PCHECK(nscodec_context.plane_capacity == nscodec_capacity_before &&
+               nscodec_context.planes[0][0] == nscodec_luma_before &&
+               nscodec_context.planes[1][0] == nscodec_orange_before &&
+               nscodec_context.planes[2][0] == nscodec_green_before &&
+               nscodec_context.planes[3][0] == nscodec_alpha_before);
+    }
     nscodec_pixels.length = 5;
     decoded_stride = 77;
     PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
