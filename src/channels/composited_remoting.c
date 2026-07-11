@@ -948,7 +948,6 @@ librdp_status rdp_composited_render_tree_apply_message(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!rdp_composited_channel_command_known(message->control_code))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    tree->command_count++;
     switch (message->control_code)
     {
         case RDP_COMPOSITED_CMD_CREATE_RESOURCE:
@@ -1474,7 +1473,10 @@ librdp_status rdp_composited_render_tree_apply_message(
         case RDP_COMPOSITED_CMD_META_TARGET_SET_TRANSFORM:
         case RDP_COMPOSITED_CMD_META_TARGET_SET_COLOR_TRANSFORM:
         case RDP_COMPOSITED_CMD_META_TARGET_SET_FILTER_LIST:
-            return rdp_composited_render_apply_u32(tree, message);
+            status = rdp_composited_render_apply_u32(tree, message);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            break;
         case RDP_COMPOSITED_CMD_SYNC_FLUSH:
         case RDP_COMPOSITED_CMD_ASYNC_FLUSH:
             tree->flush_count++;
@@ -1568,6 +1570,7 @@ librdp_status rdp_composited_render_tree_apply_message(
             tree->last_extension_payload_len = (uint32_t)message->payload_len;
             break;
     }
+    tree->command_count++;
     return LIBRDP_STATUS_OK;
 }
 

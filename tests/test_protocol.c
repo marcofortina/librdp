@@ -12445,12 +12445,14 @@ static int test_composited_remoting_channel(void)
     const uint8_t bitmap_indexed[4] = {0, 1, 0, 0};
     const uint8_t bitmap_palette[8] = {0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff};
     const uint8_t compressed_bitmap[8] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    const uint8_t bad_composited_message[4] = {0};
     uint8_t update_param[40] = {0};
     rdp_buffer buffer;
     rdp_buffer batch;
     rdp_buffer wrapped;
     uint32_t i = 0;
     uint32_t before_invalidations = 0;
+    uint32_t before_commands = 0;
     uint32_t collected_count = 0;
     uint32_t latest_invalidation = 0;
 
@@ -12861,6 +12863,14 @@ static int test_composited_remoting_channel(void)
     PCHECK(rdp_composited_render_tree_apply_batch(&tree, batch.data, batch.length) ==
            LIBRDP_STATUS_OK);
     PCHECK(tree.command_count == 2u && tree.resource_count == 2u);
+    before_commands = tree.command_count;
+    memset(&message, 0, sizeof(message));
+    message.control_code = RDP_COMPOSITED_CMD_CREATE_RESOURCE;
+    message.data = bad_composited_message;
+    message.message_size = sizeof(bad_composited_message);
+    PCHECK(rdp_composited_render_tree_apply_message(&tree, &message) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(tree.command_count == before_commands && tree.resource_count == 2u);
     render_resource = rdp_composited_render_tree_find(&tree, 0x10u);
     PCHECK(render_resource && render_resource->resource_type == RDP_COMPOSITED_RESOURCE_WINDOW_NODE);
     render_resource = rdp_composited_render_tree_find(&tree, 0x30u);
