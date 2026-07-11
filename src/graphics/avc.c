@@ -173,6 +173,25 @@ static void rdp_avc_yuv420_free(rdp_avc_yuv420* yuv)
     memset(yuv, 0, sizeof(*yuv));
 }
 
+static void rdp_avc_yuv420_move(rdp_avc_yuv420* dst, rdp_avc_yuv420* src)
+{
+    size_t i = 0;
+
+    if (!dst || !src || dst == src)
+        return;
+    rdp_avc_yuv420_free(dst);
+    *dst = *src;
+    for (i = 0; i < 3u; i++)
+    {
+        src->planes[i].data = NULL;
+        src->planes[i].length = 0;
+        src->planes[i].capacity = 0;
+        src->stride[i] = 0;
+    }
+    src->width = 0;
+    src->height = 0;
+}
+
 static void rdp_avc_yuv444_snapshot_init(rdp_avc_yuv444_snapshot* snapshot)
 {
     size_t i = 0;
@@ -1306,28 +1325,41 @@ static librdp_status rdp_avc_decode_h264_to_yuv420(rdp_avc_decoder* decoder,
                                                    uint32_t surface_height,
                                                    rdp_avc_yuv420* yuv)
 {
+    rdp_avc_yuv420 decoded;
     librdp_status status = LIBRDP_STATUS_UNSUPPORTED;
 
+    rdp_avc_yuv420_init(&decoded);
 #if defined(RDP_HAVE_FFMPEG_AVC)
     rdp_avc_h264* ffmpeg = aux ? &decoder->aux_stream : &decoder->main_stream;
 
     status = rdp_avc_h264_decode(ffmpeg, data, length);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_avc_frame_to_yuv420(ffmpeg, surface_width, surface_height, yuv);
+        status = rdp_avc_frame_to_yuv420(ffmpeg, surface_width, surface_height, &decoded);
     if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_avc_yuv420_move(yuv, &decoded);
+        rdp_avc_yuv420_free(&decoded);
         return status;
+    }
+    rdp_avc_yuv420_free(&decoded);
+    rdp_avc_yuv420_init(&decoded);
 #endif
 #if defined(RDP_HAVE_OPENH264_AVC)
     {
         rdp_avc_openh264* openh264 = aux ? &decoder->openh264_aux_stream : &decoder->openh264_main_stream;
         librdp_status fallback_status =
-            rdp_avc_openh264_decode_to_yuv420(openh264, data, length, surface_width, surface_height, yuv);
+            rdp_avc_openh264_decode_to_yuv420(openh264, data, length, surface_width, surface_height, &decoded);
 
         if (fallback_status == LIBRDP_STATUS_OK)
+        {
+            rdp_avc_yuv420_move(yuv, &decoded);
+            rdp_avc_yuv420_free(&decoded);
             return fallback_status;
+        }
         status = fallback_status;
     }
 #endif
+    rdp_avc_yuv420_free(&decoded);
     return status;
 }
 
