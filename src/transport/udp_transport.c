@@ -966,6 +966,8 @@ librdp_status rdp_udp2_wrap_packet(rdp_buffer* output,
     short_len = packet_len < 7u ? (uint8_t)packet_len : 7u;
     prefix = (uint8_t)((packet_type << 1) | (short_len << 5));
     output_len = padded_len + 1u;
+    if (output_len > SIZE_MAX - output->length)
+        return LIBRDP_STATUS_NO_MEMORY;
     status = rdp_buffer_reserve(output, output->length + output_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -1007,6 +1009,8 @@ librdp_status rdp_udp2_unwrap_packet(rdp_buffer* output, const void* wire, size_
         }
         layout_len = prefix->short_packet_length;
     }
+    if (layout_len > SIZE_MAX - output->length)
+        return LIBRDP_STATUS_NO_MEMORY;
     status = rdp_buffer_reserve(output, output->length + layout_len);
     if (status != LIBRDP_STATUS_OK)
         return status;

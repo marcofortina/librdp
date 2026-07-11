@@ -16970,6 +16970,16 @@ static int test_udp_transport(void)
            prefix.short_packet_length == sizeof(tiny_payload) &&
            unwrapped.length == sizeof(tiny_payload) &&
            memcmp(unwrapped.data, tiny_payload, sizeof(tiny_payload)) == 0);
+    buffer.length = (size_t)-4;
+    PCHECK(rdp_udp2_wrap_packet(&buffer,
+                                tiny_payload,
+                                sizeof(tiny_payload),
+                                RDP_UDP2_PACKET_TYPE_DUMMY) == LIBRDP_STATUS_NO_MEMORY);
+    buffer.length = 8u;
+    unwrapped.length = (size_t)-2;
+    PCHECK(rdp_udp2_unwrap_packet(&unwrapped, buffer.data, buffer.length, &prefix) ==
+           LIBRDP_STATUS_NO_MEMORY);
+    unwrapped.length = 0;
     buffer.data[5] = 1u;
     rdp_buffer_free(&unwrapped);
     rdp_buffer_init(&unwrapped);
