@@ -13516,6 +13516,14 @@ static int test_composited_remoting_channel(void)
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
+    PCHECK(rdp_buffer_append_u8(&buffer, 0x5au) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_write_control_fixed(&buffer,
+                                              RDP_COMPOSITED_CONTROL_DATA_ON_CHANNEL,
+                                              0,
+                                              0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0x5au);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
 
     PCHECK(rdp_composited_write_version_reply(&buffer, versions, 1) == LIBRDP_STATUS_OK);
     PCHECK(rdp_composited_parse_control(buffer.data, buffer.length, &control) == LIBRDP_STATUS_OK);
@@ -13949,6 +13957,18 @@ static int test_composited_remoting_channel(void)
     wrapped.data[7] = 1u;
     PCHECK(rdp_composited_parse_control(wrapped.data, wrapped.length, &control) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_buffer_free(&wrapped);
+    rdp_buffer_init(&wrapped);
+    PCHECK(rdp_buffer_append_u8(&wrapped, 0x5bu) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_composited_write_data_on_channel(&wrapped, 7u, update_param, 3u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(wrapped.length == 1u && wrapped.data[0] == 0x5bu);
+    PCHECK(rdp_composited_write_notification(&wrapped,
+                                             RDP_COMPOSITED_CONTROL_OPEN_CHANNEL,
+                                             7u,
+                                             update_param,
+                                             4u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(wrapped.length == 1u && wrapped.data[0] == 0x5bu);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

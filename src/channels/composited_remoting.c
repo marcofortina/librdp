@@ -187,6 +187,15 @@ static librdp_status rdp_composited_write_zeroes(rdp_buffer* buffer, size_t coun
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_composited_restore_on_error(rdp_buffer* buffer,
+                                                     size_t start,
+                                                     librdp_status status)
+{
+    if (status != LIBRDP_STATUS_OK && buffer)
+        buffer->length = start;
+    return status;
+}
+
 int rdp_composited_control_code_valid(uint32_t control_code)
 {
     switch (control_code)
@@ -1649,6 +1658,7 @@ librdp_status rdp_composited_write_control_fixed(rdp_buffer* buffer,
                                                  uint32_t word1)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_composited_control_code_valid(control_code) ||
         control_code == RDP_COMPOSITED_CONTROL_DATA_ON_CHANNEL ||
@@ -1656,6 +1666,7 @@ librdp_status rdp_composited_write_control_fixed(rdp_buffer* buffer,
         control_code == RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION ||
         control_code == RDP_COMPOSITED_CONTROL_CONNECTION_BROADCAST)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, control_code);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, 16u);
@@ -1663,7 +1674,7 @@ librdp_status rdp_composited_write_control_fixed(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, word0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, word1);
-    return status;
+    return rdp_composited_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_composited_write_data_on_channel(rdp_buffer* buffer,
@@ -1672,10 +1683,12 @@ librdp_status rdp_composited_write_data_on_channel(rdp_buffer* buffer,
                                                    size_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || (!payload && payload_len > 0) || payload_len > UINT32_MAX - 16u ||
         !rdp_composited_aligned_size(payload_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, RDP_COMPOSITED_CONTROL_DATA_ON_CHANNEL);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)(16u + payload_len));
@@ -1685,7 +1698,7 @@ librdp_status rdp_composited_write_data_on_channel(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, payload, payload_len);
-    return status;
+    return rdp_composited_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_composited_write_notification(rdp_buffer* buffer,
@@ -1695,6 +1708,7 @@ librdp_status rdp_composited_write_notification(rdp_buffer* buffer,
                                                 size_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || (!payload && payload_len > 0) || payload_len > UINT32_MAX - 16u ||
         !rdp_composited_aligned_size(payload_len) ||
@@ -1702,6 +1716,7 @@ librdp_status rdp_composited_write_notification(rdp_buffer* buffer,
          control_code != RDP_COMPOSITED_CONTROL_CHANNEL_NOTIFICATION &&
          control_code != RDP_COMPOSITED_CONTROL_CONNECTION_BROADCAST))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, control_code);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)(16u + payload_len));
@@ -1714,7 +1729,7 @@ librdp_status rdp_composited_write_notification(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, payload, payload_len);
-    return status;
+    return rdp_composited_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_composited_write_version_reply(rdp_buffer* buffer,
@@ -1929,16 +1944,18 @@ librdp_status rdp_composited_write_channel_message(rdp_buffer* buffer,
                                                    size_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_composited_channel_command_known(control_code) || (!payload && payload_len > 0) ||
         payload_len > UINT32_MAX - 8u || !rdp_composited_aligned_size(payload_len))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u32_le(buffer, (uint32_t)(8u + payload_len));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, control_code);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, payload, payload_len);
-    return status;
+    return rdp_composited_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_composited_batch_init(rdp_composited_batch_reader* reader,
