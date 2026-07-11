@@ -14434,6 +14434,78 @@ static librdp_status rdp_session_graphics_surface_write_wire(librdp_session* ses
                                                    "uncompressed");
 }
 
+typedef struct rdp_session_graphics_rfx_context
+{
+    librdp_session* session;
+    rdp_session_graphics_surface* surface;
+    int force_opaque;
+    uint16_t tiles;
+} rdp_session_graphics_rfx_context;
+
+static librdp_status rdp_session_graphics_rfx_tile(const rdp_rfx_stream_tile* tile, void* user)
+{
+    rdp_session_graphics_rfx_context* context = (rdp_session_graphics_rfx_context*)user;
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (!tile || !context || !context->session || !context->surface)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (tile->x >= context->surface->width || tile->y >= context->surface->height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    width = tile->width;
+    height = tile->height;
+    if (width > context->surface->width - tile->x)
+        width = context->surface->width - tile->x;
+    if (height > context->surface->height - tile->y)
+        height = context->surface->height - tile->y;
+    if (width == 0 || height == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (context->tiles < UINT16_MAX)
+        context->tiles++;
+    return rdp_session_graphics_surface_write_bgra(context->session,
+                                                   context->surface,
+                                                   (uint16_t)tile->x,
+                                                   (uint16_t)tile->y,
+                                                   (uint16_t)width,
+                                                   (uint16_t)height,
+                                                   tile->pixels.bgra,
+                                                   tile->pixels.stride,
+                                                   context->force_opaque,
+                                                   "cavideo");
+}
+
+static librdp_status rdp_session_graphics_surface_write_rfx(librdp_session* session,
+                                                            rdp_session_graphics_surface* surface,
+                                                            const uint8_t* data,
+                                                            size_t data_len,
+                                                            uint8_t pixel_format)
+{
+    rdp_session_graphics_rfx_context context;
+    rdp_rfx_stream_summary summary;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !surface || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&context, 0, sizeof(context));
+    memset(&summary, 0, sizeof(summary));
+    context.session = session;
+    context.surface = surface;
+    context.force_opaque = pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888;
+    status = rdp_rfx_stream_decode(data, data_len, rdp_session_graphics_rfx_tile, &context, &summary);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.cavideo",
+                        "surface_id=%u frame_id=%u width=%u height=%u tiles=%u rects=%u blitted=%u",
+                        surface->surface_id,
+                        summary.frame_id,
+                        summary.width,
+                        summary.height,
+                        summary.tile_count,
+                        summary.rect_count,
+                        context.tiles);
+    return status;
+}
+
 static uint32_t rdp_session_min_u32(uint32_t a, uint32_t b)
 {
     return a < b ? a : b;
@@ -17147,6 +17219,36 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                     (int)status);
                     status = LIBRDP_STATUS_OK;
                 }
+            }
+            else if (wire.codec_id == RDP_GRAPHICS_CODECID_CAVIDEO)
+            {
+                rdp_session_graphics_surface* surface = rdp_session_graphics_surface_find(session, wire.surface_id);
+
+                if (!surface)
+                {
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    break;
+                }
+                status = rdp_session_graphics_surface_write_rfx(session,
+                                                                surface,
+                                                                wire.bitmap_data,
+                                                                wire.bitmap_data_length,
+                                                                wire.pixel_format);
+                if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
+                {
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.graphics.codec.unsupported",
+                                    "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u decoder_status=%d",
+                                    channel_id,
+                                    wire.surface_id,
+                                    wire.codec_id,
+                                    wire.codec_context_id,
+                                    wire.bitmap_data_length,
+                                    (int)status);
+                    status = LIBRDP_STATUS_OK;
+                }
+                if (status != LIBRDP_STATUS_OK)
+                    break;
             }
             else
             {
