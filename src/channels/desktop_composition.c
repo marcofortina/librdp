@@ -68,16 +68,19 @@ librdp_status rdp_desktop_composition_write_header(rdp_buffer* buffer,
                                                    uint16_t size)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_desktop_composition_operation_valid(operation))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, RDP_DESKTOP_COMPOSITION_ALTSEC_HEADER);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, operation);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, size);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, operation);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, size);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_desktop_composition_parse_toggle(const void* data,
@@ -105,13 +108,17 @@ librdp_status rdp_desktop_composition_parse_toggle(const void* data,
 librdp_status rdp_desktop_composition_write_toggle(rdp_buffer* buffer, uint8_t event_type)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
-    if (!rdp_desktop_composition_event_valid(event_type))
+    if (!buffer || !rdp_desktop_composition_event_valid(event_type))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_TOGGLE, 1u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, event_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u8(buffer, event_type);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_desktop_composition_parse_lsurface(const void* data,
@@ -156,12 +163,15 @@ librdp_status rdp_desktop_composition_write_lsurface(rdp_buffer* buffer,
                                                      uint64_t luid)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
-    if (!rdp_desktop_composition_bool_valid(create) ||
+    if (!buffer ||
+        !rdp_desktop_composition_bool_valid(create) ||
         (flags & ~(RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
                    RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION)) != 0 ||
         (create && (width == 0 || height == 0)))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_LSURFACE, 0x22u);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, create);
@@ -177,6 +187,8 @@ librdp_status rdp_desktop_composition_write_lsurface(rdp_buffer* buffer,
         status = rdp_desktop_composition_write_u64(buffer, window_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_desktop_composition_write_u64(buffer, luid);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -216,9 +228,11 @@ librdp_status rdp_desktop_composition_write_surfobj(rdp_buffer* buffer,
                                                     uint32_t height)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || width == 0 || height == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_SURFOBJ, 0x16u);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, cache_id);
@@ -232,6 +246,8 @@ librdp_status rdp_desktop_composition_write_surfobj(rdp_buffer* buffer,
         status = rdp_buffer_append_u32_le(buffer, width);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, height);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -265,9 +281,11 @@ librdp_status rdp_desktop_composition_write_assoc(rdp_buffer* buffer,
                                                   uint64_t redirection_surface_id)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
-    if (!rdp_desktop_composition_bool_valid(associate))
+    if (!buffer || !rdp_desktop_composition_bool_valid(associate))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_ASSOC, 0x11u);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u8(buffer, associate);
@@ -275,6 +293,8 @@ librdp_status rdp_desktop_composition_write_assoc(rdp_buffer* buffer,
         status = rdp_desktop_composition_write_u64(buffer, logical_surface_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_desktop_composition_write_u64(buffer, redirection_surface_id);
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = start;
     return status;
 }
 
@@ -301,11 +321,18 @@ librdp_status rdp_desktop_composition_parse_compref(const void* data,
 
 librdp_status rdp_desktop_composition_write_compref(rdp_buffer* buffer, uint64_t logical_surface_id)
 {
-    librdp_status status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_COMPREF, 8u);
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_COMPREF, 8u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_desktop_composition_write_u64(buffer, logical_surface_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_desktop_composition_write_u64(buffer, logical_surface_id);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_desktop_composition_parse_switch_surfobj(const void* data,
@@ -331,13 +358,20 @@ librdp_status rdp_desktop_composition_parse_switch_surfobj(const void* data,
 
 librdp_status rdp_desktop_composition_write_switch_surfobj(rdp_buffer* buffer, uint32_t cache_id)
 {
-    librdp_status status = rdp_desktop_composition_write_header(buffer,
-                                                                RDP_DESKTOP_COMPOSITION_OP_SWITCH_SURFOBJ,
-                                                                4u);
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
+    status = rdp_desktop_composition_write_header(buffer,
+                                                  RDP_DESKTOP_COMPOSITION_OP_SWITCH_SURFOBJ,
+                                                  4u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(buffer, cache_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, cache_id);
+        buffer->length = start;
+    return status;
 }
 
 librdp_status rdp_desktop_composition_parse_opaque(const void* data,
@@ -364,11 +398,15 @@ librdp_status rdp_desktop_composition_write_opaque(rdp_buffer* buffer,
                                                    uint16_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || (!payload && payload_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_desktop_composition_write_header(buffer, operation, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, payload, payload_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, payload, payload_len);
+        buffer->length = start;
+    return status;
 }

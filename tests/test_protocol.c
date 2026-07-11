@@ -12278,6 +12278,11 @@ static int test_desktop_composition_channel(void)
     buffer.data[4] = 0xffu;
     PCHECK(rdp_desktop_composition_parse_toggle(buffer.data, buffer.length, &toggle) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.length = 0;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_desktop_composition_write_toggle(&buffer, 0xffu) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -12358,6 +12363,11 @@ static int test_desktop_composition_channel(void)
     PCHECK(assoc.associate == 1u &&
            assoc.logical_surface_id == 0x4142434445464748ull &&
            assoc.redirection_surface_id == 0x5152535455565758ull);
+    buffer.length = 0;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_desktop_composition_write_assoc(&buffer, 2, 1, 2) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -12391,6 +12401,11 @@ static int test_desktop_composition_channel(void)
     buffer.data[2] = 0xffu;
     PCHECK(rdp_desktop_composition_parse_opaque(buffer.data, buffer.length, &opaque) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.length = 0;
+    PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_desktop_composition_write_opaque(&buffer, 0xffu, payload, sizeof(payload)) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 1u && buffer.data[0] == 0xa5u);
 
     rdp_buffer_free(&buffer);
     return 0;
