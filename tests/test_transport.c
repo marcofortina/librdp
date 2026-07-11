@@ -248,9 +248,16 @@ static int test_udp_transport_protocols(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     TCHECK(rdp_udp2_write_data_packet(&buffer, 4, 0x1234u, NULL, 0) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
-    TCHECK(rdp_udp2_parse_packet(udp2_empty_data_packet,
-                                 sizeof(udp2_empty_data_packet),
-                                 &udp2_packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(&udp2_packet, 0x5a, sizeof(udp2_packet));
+    udp2_packet.header.flags = 0x777u;
+    {
+        rdp_udp2_packet udp2_before = udp2_packet;
+
+        TCHECK(rdp_udp2_parse_packet(udp2_empty_data_packet,
+                                     sizeof(udp2_empty_data_packet),
+                                     &udp2_packet) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&udp2_packet, &udp2_before, sizeof(udp2_packet)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

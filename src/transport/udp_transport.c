@@ -584,65 +584,75 @@ librdp_status rdp_udp2_validate_packet(const rdp_udp2_packet* packet)
 
 librdp_status rdp_udp2_parse_packet(const void* data, size_t length, rdp_udp2_packet* packet)
 {
+    rdp_udp2_packet parsed;
     rdp_stream stream;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !packet)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < RDP_UDP2_HEADER_LENGTH)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(packet, 0, sizeof(*packet));
-    if (rdp_udp2_parse_header(data, length, &packet->header) != LIBRDP_STATUS_OK)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_udp2_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, RDP_UDP2_HEADER_LENGTH) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (packet->header.flags & RDP_UDP2_FLAG_ACK)
+    if (parsed.header.flags & RDP_UDP2_FLAG_ACK)
     {
-        packet->has_ack = 1;
-        if (rdp_udp2_parse_ack(&stream, &packet->ack) != LIBRDP_STATUS_OK)
+        parsed.has_ack = 1;
+        if (rdp_udp2_parse_ack(&stream, &parsed.ack) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->header.flags & RDP_UDP2_FLAG_OVERHEADSIZE)
+    if (parsed.header.flags & RDP_UDP2_FLAG_OVERHEADSIZE)
     {
-        packet->has_overhead_size = 1;
-        if (rdp_stream_read_u8(&stream, &packet->overhead_size) != LIBRDP_STATUS_OK)
+        parsed.has_overhead_size = 1;
+        if (rdp_stream_read_u8(&stream, &parsed.overhead_size) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->header.flags & RDP_UDP2_FLAG_DELAYACKINFO)
+    if (parsed.header.flags & RDP_UDP2_FLAG_DELAYACKINFO)
     {
-        packet->has_delay_ack_info = 1;
-        if (rdp_stream_read_u8(&stream, &packet->max_delayed_acks) != LIBRDP_STATUS_OK ||
-            packet->max_delayed_acks > 15u ||
-            rdp_stream_read_u16_le(&stream, &packet->delayed_ack_timeout_ms) != LIBRDP_STATUS_OK)
+        parsed.has_delay_ack_info = 1;
+        if (rdp_stream_read_u8(&stream, &parsed.max_delayed_acks) != LIBRDP_STATUS_OK ||
+            parsed.max_delayed_acks > 15u ||
+            rdp_stream_read_u16_le(&stream, &parsed.delayed_ack_timeout_ms) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->header.flags & RDP_UDP2_FLAG_AOA)
+    if (parsed.header.flags & RDP_UDP2_FLAG_AOA)
     {
-        packet->has_ack_of_acks = 1;
-        if (rdp_stream_read_u16_le(&stream, &packet->ack_of_acks_sequence_number) != LIBRDP_STATUS_OK)
+        parsed.has_ack_of_acks = 1;
+        if (rdp_stream_read_u16_le(&stream, &parsed.ack_of_acks_sequence_number) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->header.flags & RDP_UDP2_FLAG_DATA)
+    if (parsed.header.flags & RDP_UDP2_FLAG_DATA)
     {
-        packet->has_data = 1;
-        if (rdp_stream_read_u16_le(&stream, &packet->data_sequence_number) != LIBRDP_STATUS_OK)
+        parsed.has_data = 1;
+        if (rdp_stream_read_u16_le(&stream, &parsed.data_sequence_number) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->header.flags & RDP_UDP2_FLAG_ACKVEC)
+    if (parsed.header.flags & RDP_UDP2_FLAG_ACKVEC)
     {
-        packet->has_ack_vector = 1;
-        if (rdp_udp2_parse_ack_vector_payload(&stream, &packet->ack_vector) != LIBRDP_STATUS_OK)
+        parsed.has_ack_vector = 1;
+        if (rdp_udp2_parse_ack_vector_payload(&stream, &parsed.ack_vector) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (packet->has_data)
+    if (parsed.has_data)
     {
-        packet->data_body = data ? ((const uint8_t*)data + stream.position) : NULL;
-        packet->data_body_len = rdp_stream_remaining(&stream);
-        return rdp_udp2_validate_packet(packet);
+        parsed.data_body = data ? ((const uint8_t*)data + stream.position) : NULL;
+        parsed.data_body_len = rdp_stream_remaining(&stream);
+        status = rdp_udp2_validate_packet(&parsed);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        *packet = parsed;
+        return LIBRDP_STATUS_OK;
     }
     if (rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_udp2_validate_packet(packet);
+    status = rdp_udp2_validate_packet(&parsed);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *packet = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_udp2_write_ack(rdp_buffer* buffer, const rdp_udp2_ack* ack)
