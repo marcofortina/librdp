@@ -44,22 +44,24 @@ static librdp_status rdp_multiparty_parse_exact_header(const void* data,
 
 librdp_status rdp_multiparty_parse_header(const void* data, size_t length, rdp_multiparty_header* header)
 {
+    rdp_multiparty_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 4u || length > UINT16_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &header->type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->length) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_multiparty_valid_type(header->type) ||
-        header->length < 4u || header->length > length)
+    if (!rdp_multiparty_valid_type(parsed.type) ||
+        parsed.length < 4u || parsed.length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->payload = (const uint8_t*)data + 4u;
-    header->payload_len = (size_t)header->length - 4u;
+    parsed.payload = (const uint8_t*)data + 4u;
+    parsed.payload_len = (size_t)parsed.length - 4u;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -155,23 +157,26 @@ librdp_status rdp_multiparty_parse_string(const void* data,
                                           rdp_multiparty_string* string,
                                           size_t* consumed)
 {
+    rdp_multiparty_string parsed;
     rdp_stream stream;
+    size_t parsed_consumed = 0;
 
     if (!data || !string || !consumed)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 2u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(string, 0, sizeof(*string));
-    *consumed = 0;
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &string->char_count) != LIBRDP_STATUS_OK ||
-        string->char_count > RDP_MULTIPARTY_STRING_MAX_CHARS)
+    if (rdp_stream_read_u16_le(&stream, &parsed.char_count) != LIBRDP_STATUS_OK ||
+        parsed.char_count > RDP_MULTIPARTY_STRING_MAX_CHARS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    string->utf16_len = (size_t)string->char_count * 2u;
-    if (string->utf16_len > rdp_stream_remaining(&stream) ||
-        rdp_stream_read_bytes(&stream, &string->utf16, string->utf16_len) != LIBRDP_STATUS_OK)
+    parsed.utf16_len = (size_t)parsed.char_count * 2u;
+    if (parsed.utf16_len > rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &parsed.utf16, parsed.utf16_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    *consumed = 2u + string->utf16_len;
+    parsed_consumed = 2u + parsed.utf16_len;
+    *string = parsed;
+    *consumed = parsed_consumed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -195,21 +200,23 @@ librdp_status rdp_multiparty_parse_filter_state(const void* data,
                                                 size_t length,
                                                 rdp_multiparty_filter_state* state)
 {
+    rdp_multiparty_filter_state parsed;
     rdp_stream stream;
 
     if (!data || !state)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(state, 0, sizeof(*state));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED,
-                                          &state->header) != LIBRDP_STATUS_OK ||
-        state->header.payload_len != 1u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len != 1u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, state->header.payload, state->header.payload_len);
-    if (rdp_stream_read_u8(&stream, &state->flags) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_filter_flags(state->flags))
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_filter_flags(parsed.flags))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *state = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -232,28 +239,30 @@ librdp_status rdp_multiparty_parse_app_created(const void* data,
                                                size_t length,
                                                rdp_multiparty_app_created* app)
 {
+    rdp_multiparty_app_created parsed;
     rdp_stream stream;
     size_t consumed = 0;
 
     if (!data || !app)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(app, 0, sizeof(*app));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_APP_CREATED,
-                                          &app->header) != LIBRDP_STATUS_OK ||
-        app->header.payload_len < 8u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, app->header.payload, app->header.payload_len);
-    if (rdp_stream_read_u16_le(&stream, &app->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &app->app_id) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_share_flags(app->flags, RDP_MULTIPARTY_APPLICATION_SHARED) ||
-        rdp_multiparty_parse_string(app->header.payload + 6u,
-                                    app->header.payload_len - 6u,
-                                    &app->name,
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.app_id) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_share_flags(parsed.flags, RDP_MULTIPARTY_APPLICATION_SHARED) ||
+        rdp_multiparty_parse_string(parsed.header.payload + 6u,
+                                    parsed.header.payload_len - 6u,
+                                    &parsed.name,
                                     &consumed) != LIBRDP_STATUS_OK ||
-        consumed != app->header.payload_len - 6u)
+        consumed != parsed.header.payload_len - 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *app = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -293,18 +302,20 @@ librdp_status rdp_multiparty_parse_id_message(const void* data,
                                               uint16_t expected_type,
                                               rdp_multiparty_id_message* message)
 {
+    rdp_multiparty_id_message parsed;
     rdp_stream stream;
 
     if (!data || !message)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(message, 0, sizeof(*message));
-    if (rdp_multiparty_parse_exact_header(data, length, expected_type, &message->header) !=
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_multiparty_parse_exact_header(data, length, expected_type, &parsed.header) !=
             LIBRDP_STATUS_OK ||
-        message->header.payload_len != 4u)
+        parsed.header.payload_len != 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, message->header.payload, message->header.payload_len);
-    if (rdp_stream_read_u32_le(&stream, &message->id) != LIBRDP_STATUS_OK)
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &parsed.id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *message = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -329,29 +340,31 @@ librdp_status rdp_multiparty_parse_window_created(const void* data,
                                                   size_t length,
                                                   rdp_multiparty_window_created* window)
 {
+    rdp_multiparty_window_created parsed;
     rdp_stream stream;
     size_t consumed = 0;
 
     if (!data || !window)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(window, 0, sizeof(*window));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_WND_CREATED,
-                                          &window->header) != LIBRDP_STATUS_OK ||
-        window->header.payload_len < 12u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len < 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, window->header.payload, window->header.payload_len);
-    if (rdp_stream_read_u16_le(&stream, &window->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &window->app_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &window->window_id) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_share_flags(window->flags, RDP_MULTIPARTY_WINDOW_SHARED) ||
-        rdp_multiparty_parse_string(window->header.payload + 10u,
-                                    window->header.payload_len - 10u,
-                                    &window->name,
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.app_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.window_id) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_share_flags(parsed.flags, RDP_MULTIPARTY_WINDOW_SHARED) ||
+        rdp_multiparty_parse_string(parsed.header.payload + 10u,
+                                    parsed.header.payload_len - 10u,
+                                    &parsed.name,
                                     &consumed) != LIBRDP_STATUS_OK ||
-        consumed != window->header.payload_len - 10u)
+        consumed != parsed.header.payload_len - 10u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *window = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -394,25 +407,27 @@ librdp_status rdp_multiparty_parse_region_update(const void* data,
                                                  size_t length,
                                                  rdp_multiparty_region_update* region)
 {
+    rdp_multiparty_region_update parsed;
     rdp_stream stream;
 
     if (!data || !region)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(region, 0, sizeof(*region));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_WND_REGION_UPDATE,
-                                          &region->header) != LIBRDP_STATUS_OK ||
-        region->header.payload_len != 16u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len != 16u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, region->header.payload, region->header.payload_len);
-    if (rdp_stream_read_u32_le(&stream, &region->left) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &region->top) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &region->right) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &region->bottom) != LIBRDP_STATUS_OK)
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &parsed.left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.top) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.right) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.bottom) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (region->right < region->left || region->bottom < region->top)
+    if (parsed.right < parsed.left || parsed.bottom < parsed.top)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *region = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -449,32 +464,34 @@ librdp_status rdp_multiparty_parse_participant_created(
     size_t length,
     rdp_multiparty_participant_created* participant)
 {
+    rdp_multiparty_participant_created parsed;
     rdp_stream stream;
     size_t consumed = 0;
 
     if (!data || !participant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(participant, 0, sizeof(*participant));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED,
-                                          &participant->header) != LIBRDP_STATUS_OK ||
-        participant->header.payload_len < 12u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len < 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, participant->header.payload, participant->header.payload_len);
-    if (rdp_stream_read_u32_le(&stream, &participant->participant_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &participant->group_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &participant->flags) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_share_flags(participant->flags,
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &parsed.participant_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.group_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_share_flags(parsed.flags,
                                           RDP_MULTIPARTY_MAY_VIEW |
                                           RDP_MULTIPARTY_MAY_INTERACT |
                                           RDP_MULTIPARTY_IS_PARTICIPANT) ||
-        rdp_multiparty_parse_string(participant->header.payload + 10u,
-                                    participant->header.payload_len - 10u,
-                                    &participant->friendly_name,
+        rdp_multiparty_parse_string(parsed.header.payload + 10u,
+                                    parsed.header.payload_len - 10u,
+                                    &parsed.friendly_name,
                                     &consumed) != LIBRDP_STATUS_OK ||
-        consumed != participant->header.payload_len - 10u)
+        consumed != parsed.header.payload_len - 10u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *participant = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -522,22 +539,24 @@ librdp_status rdp_multiparty_parse_participant_removed(
     size_t length,
     rdp_multiparty_participant_removed* participant)
 {
+    rdp_multiparty_participant_removed parsed;
     rdp_stream stream;
 
     if (!data || !participant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(participant, 0, sizeof(*participant));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED,
-                                          &participant->header) != LIBRDP_STATUS_OK ||
-        participant->header.payload_len != 12u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len != 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, participant->header.payload, participant->header.payload_len);
-    if (rdp_stream_read_u32_le(&stream, &participant->participant_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &participant->disconnect_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &participant->disconnect_code) != LIBRDP_STATUS_OK)
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u32_le(&stream, &parsed.participant_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.disconnect_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.disconnect_code) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *participant = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -569,25 +588,27 @@ librdp_status rdp_multiparty_parse_control_change(const void* data,
                                                   size_t length,
                                                   rdp_multiparty_control_change* change)
 {
+    rdp_multiparty_control_change parsed;
     rdp_stream stream;
 
     if (!data || !change)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(change, 0, sizeof(*change));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED,
-                                          &change->header) != LIBRDP_STATUS_OK ||
-        change->header.payload_len != 6u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len != 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, change->header.payload, change->header.payload_len);
-    if (rdp_stream_read_u16_le(&stream, &change->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &change->participant_id) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_share_flags(change->flags,
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.participant_id) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_share_flags(parsed.flags,
                                           RDP_MULTIPARTY_REQUEST_VIEW |
                                           RDP_MULTIPARTY_REQUEST_INTERACT |
                                           RDP_MULTIPARTY_ALLOW_CONTROL_REQUESTS))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *change = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -620,26 +641,28 @@ librdp_status rdp_multiparty_parse_control_change_response(
     size_t length,
     rdp_multiparty_control_change_response* response)
 {
+    rdp_multiparty_control_change_response parsed;
     rdp_stream stream;
 
     if (!data || !response)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(response, 0, sizeof(*response));
+    memset(&parsed, 0, sizeof(parsed));
     if (rdp_multiparty_parse_exact_header(data,
                                           length,
                                           RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGE_RESPONSE,
-                                          &response->header) != LIBRDP_STATUS_OK ||
-        response->header.payload_len != 10u)
+                                          &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.payload_len != 10u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    rdp_stream_init(&stream, response->header.payload, response->header.payload_len);
-    if (rdp_stream_read_u16_le(&stream, &response->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &response->participant_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &response->reason_code) != LIBRDP_STATUS_OK ||
-        !rdp_multiparty_valid_share_flags(response->flags,
+    rdp_stream_init(&stream, parsed.header.payload, parsed.header.payload_len);
+    if (rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.participant_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.reason_code) != LIBRDP_STATUS_OK ||
+        !rdp_multiparty_valid_share_flags(parsed.flags,
                                           RDP_MULTIPARTY_REQUEST_VIEW |
                                           RDP_MULTIPARTY_REQUEST_INTERACT |
                                           RDP_MULTIPARTY_ALLOW_CONTROL_REQUESTS))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *response = parsed;
     return LIBRDP_STATUS_OK;
 }
 

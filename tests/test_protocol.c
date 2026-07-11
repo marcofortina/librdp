@@ -10960,9 +10960,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_parse_message(buffer.data, buffer.length, &message) == LIBRDP_STATUS_OK);
     PCHECK(message.type == RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED &&
            message.body.filter_state.flags == RDP_MULTIPARTY_FILTER_ENABLED);
-    buffer.data[4] = 0x80;
-    PCHECK(rdp_multiparty_parse_filter_state(buffer.data, buffer.length, &filter) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_multiparty_filter_state valid_filter = filter;
+
+        buffer.data[4] = 0x80;
+        PCHECK(rdp_multiparty_parse_filter_state(buffer.data, buffer.length, &filter) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&filter, &valid_filter, sizeof(filter)) == 0);
+    }
     memset(&message, 0x5a, sizeof(message));
     message.type = 0x7777u;
     {
@@ -10984,14 +10989,34 @@ static int test_telemetry_multiparty_channels(void)
                                             1) == LIBRDP_STATUS_OK);
     PCHECK(rdp_multiparty_parse_header(buffer.data, buffer.length, &header) == LIBRDP_STATUS_OK);
     PCHECK(header.length == buffer.length && header.payload_len == buffer.length - 4u);
+    {
+        rdp_multiparty_header valid_header = header;
+
+        PCHECK(rdp_multiparty_parse_header(buffer.data, buffer.length - 1u, &header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&header, &valid_header, sizeof(header)) == 0);
+    }
     PCHECK(rdp_multiparty_parse_app_created(buffer.data, buffer.length, &app) == LIBRDP_STATUS_OK);
     PCHECK(app.flags == RDP_MULTIPARTY_APPLICATION_SHARED &&
            app.app_id == 0x11223344u &&
            app.name.char_count == 1 &&
            app.name.utf16[0] == 'A');
-    PCHECK(rdp_multiparty_parse_app_created(buffer.data,
-                                            buffer.length - 1u,
-                                            &app) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_multiparty_app_created valid_app = app;
+        rdp_multiparty_string valid_name = app.name;
+        size_t consumed = 0x77u;
+
+        PCHECK(rdp_multiparty_parse_string(app.header.payload + 6u,
+                                           app.header.payload_len - 7u,
+                                           &app.name,
+                                           &consumed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&app.name, &valid_name, sizeof(app.name)) == 0);
+        PCHECK(consumed == 0x77u);
+        PCHECK(rdp_multiparty_parse_app_created(buffer.data,
+                                                buffer.length - 1u,
+                                                &app) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&app, &valid_app, sizeof(app)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
@@ -11011,6 +11036,15 @@ static int test_telemetry_multiparty_channels(void)
                                            RDP_MULTIPARTY_TYPE_WND_SHOW,
                                            &id_message) == LIBRDP_STATUS_OK);
     PCHECK(id_message.id == 7u);
+    {
+        rdp_multiparty_id_message valid_id_message = id_message;
+
+        PCHECK(rdp_multiparty_parse_id_message(buffer.data,
+                                               buffer.length - 1u,
+                                               RDP_MULTIPARTY_TYPE_WND_SHOW,
+                                               &id_message) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&id_message, &valid_id_message, sizeof(id_message)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -11023,6 +11057,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_parse_window_created(buffer.data, buffer.length, &window) ==
            LIBRDP_STATUS_OK);
     PCHECK(window.app_id == 1u && window.window_id == 2u && window.name.utf16_len == 2u);
+    {
+        rdp_multiparty_window_created valid_window = window;
+
+        PCHECK(rdp_multiparty_parse_window_created(buffer.data,
+                                                   buffer.length - 1u,
+                                                   &window) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&window, &valid_window, sizeof(window)) == 0);
+    }
     PCHECK(rdp_multiparty_parse_message(buffer.data, buffer.length, &message) == LIBRDP_STATUS_OK);
     PCHECK(message.type == RDP_MULTIPARTY_TYPE_WND_CREATED &&
            message.body.window_created.window_id == 2u);
@@ -11042,6 +11084,21 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_write_region_update(&buffer, 1, 2, 10, 20) == LIBRDP_STATUS_OK);
     PCHECK(rdp_multiparty_parse_region_update(buffer.data, buffer.length, &region) == LIBRDP_STATUS_OK);
     PCHECK(region.left == 1 && region.bottom == 20);
+    {
+        rdp_multiparty_region_update valid_region = region;
+
+        buffer.data[4] = 10u;
+        buffer.data[5] = 0u;
+        buffer.data[6] = 0u;
+        buffer.data[7] = 0u;
+        buffer.data[12] = 1u;
+        buffer.data[13] = 0u;
+        buffer.data[14] = 0u;
+        buffer.data[15] = 0u;
+        PCHECK(rdp_multiparty_parse_region_update(buffer.data, buffer.length, &region) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&region, &valid_region, sizeof(region)) == 0);
+    }
     PCHECK(rdp_multiparty_write_region_update(&buffer, 10, 2, 1, 20) == LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
@@ -11057,6 +11114,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(participant.participant_id == 3u &&
            participant.group_id == 4u &&
            participant.friendly_name.char_count == 1);
+    {
+        rdp_multiparty_participant_created valid_participant = participant;
+
+        PCHECK(rdp_multiparty_parse_participant_created(buffer.data,
+                                                        buffer.length - 1u,
+                                                        &participant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&participant, &valid_participant, sizeof(participant)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
     PCHECK(rdp_buffer_append_u8(&buffer, 0xa5u) == LIBRDP_STATUS_OK);
@@ -11074,6 +11139,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_parse_participant_removed(buffer.data, buffer.length, &removed) ==
            LIBRDP_STATUS_OK);
     PCHECK(removed.participant_id == 3u && removed.disconnect_type == 2u);
+    {
+        rdp_multiparty_participant_removed valid_removed = removed;
+
+        PCHECK(rdp_multiparty_parse_participant_removed(buffer.data,
+                                                        buffer.length - 1u,
+                                                        &removed) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&removed, &valid_removed, sizeof(removed)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -11084,6 +11157,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_parse_control_change(buffer.data, buffer.length, &change) ==
            LIBRDP_STATUS_OK);
     PCHECK(change.participant_id == 3u);
+    {
+        rdp_multiparty_control_change valid_change = change;
+
+        buffer.data[5] = 0x80u;
+        PCHECK(rdp_multiparty_parse_control_change(buffer.data, buffer.length, &change) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&change, &valid_change, sizeof(change)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -11094,6 +11175,14 @@ static int test_telemetry_multiparty_channels(void)
     PCHECK(rdp_multiparty_parse_control_change_response(buffer.data, buffer.length, &response) ==
            LIBRDP_STATUS_OK);
     PCHECK(response.flags == RDP_MULTIPARTY_REQUEST_INTERACT && response.reason_code == 0);
+    {
+        rdp_multiparty_control_change_response valid_response = response;
+
+        buffer.data[5] = 0x80u;
+        PCHECK(rdp_multiparty_parse_control_change_response(buffer.data, buffer.length, &response) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&response, &valid_response, sizeof(response)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
