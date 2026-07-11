@@ -17187,7 +17187,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                          wire.pixel_format == RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
                                                                          wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ? "clearcodec" : "planar");
                     rdp_buffer_free(&decoded_bitmap);
-                    if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
+                    if (status == LIBRDP_STATUS_UNSUPPORTED)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
                                         "client.graphics.codec.unsupported",
@@ -17270,7 +17270,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                         if (status == LIBRDP_STATUS_OK)
                             avc_rendered = 1;
                     }
-                    if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
+                    if (status == LIBRDP_STATUS_UNSUPPORTED)
                     {
                         rdp_trace_event(RDP_TRACE_CLIENT,
                                         "client.graphics.codec.unsupported",
@@ -17390,10 +17390,10 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                 wire.bitmap_data,
                                                                 wire.bitmap_data_length,
                                                                 wire.pixel_format);
-                if (status == LIBRDP_STATUS_UNSUPPORTED || status == LIBRDP_STATUS_PROTOCOL_ERROR)
-                {
-                    rdp_trace_event(RDP_TRACE_CLIENT,
-                                    "client.graphics.codec.unsupported",
+                    if (status == LIBRDP_STATUS_UNSUPPORTED)
+                    {
+                        rdp_trace_event(RDP_TRACE_CLIENT,
+                                        "client.graphics.codec.unsupported",
                                     "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u decoder_status=%d",
                                     channel_id,
                                     wire.surface_id,
