@@ -15002,6 +15002,7 @@ static int test_gdi_orders(void)
     PCHECK(update.number_orders == 1 && update.order_data_len == secondary.length);
     {
         const uint16_t too_many = (uint16_t)(RDP_GDI_MAX_ORDERS + 1u);
+        const uint8_t huge_payload = 0x5au;
         const uint8_t slow_too_many[] = {
             0x00u, 0x00u,
             0x00u, 0x00u,
@@ -15040,6 +15041,28 @@ static int test_gdi_orders(void)
                                                         0,
                                                         secondary.data,
                                                         secondary.length) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        payload.length = 0;
+        PCHECK(rdp_buffer_append_u8(&payload, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gdi_write_slow_orders_update_payload(&payload,
+                                                        1,
+                                                        &huge_payload,
+                                                        (size_t)-1) == LIBRDP_STATUS_NO_MEMORY);
+        PCHECK(payload.length == 1 && payload.data[0] == 0xa5u);
+        PCHECK(rdp_gdi_write_fast_orders_update_payload(&payload,
+                                                        1,
+                                                        &huge_payload,
+                                                        (size_t)-1) == LIBRDP_STATUS_NO_MEMORY);
+        PCHECK(payload.length == 1 && payload.data[0] == 0xa5u);
+        PCHECK(rdp_gdi_write_primary_order(&payload,
+                                           RDP_GDI_ORDER_DSTBLT,
+                                           RDP_GDI_ORDER_DSTBLT,
+                                           RDP_GDI_TS_STANDARD,
+                                           0,
+                                           NULL,
+                                           0,
+                                           &huge_payload,
+                                           (size_t)-1) == LIBRDP_STATUS_NO_MEMORY);
+        PCHECK(payload.length == 1 && payload.data[0] == 0xa5u);
     }
 
     PCHECK(rdp_gdi_parse_primary_order(primary_order,
