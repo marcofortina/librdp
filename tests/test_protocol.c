@@ -6604,6 +6604,60 @@ static int test_path_security_license_channels(void)
            input_touch_contact.orientation == 90 &&
            input_touch_contact.pressure == 512);
     {
+        rdp_buffer second_contact;
+        rdp_input_channel_touch_frame frames[2];
+
+        rdp_buffer_init(&second_contact);
+        input_touch_contact.contact_id = 2;
+        input_touch_contact.x = 300;
+        input_touch_contact.y = 400;
+        input_touch_contact.contact_flags = RDP_INPUT_CHANNEL_CONTACT_UPDATE |
+                                            RDP_INPUT_CHANNEL_CONTACT_INRANGE |
+                                            RDP_INPUT_CHANNEL_CONTACT_INCONTACT;
+        input_touch_contact.orientation = 180;
+        input_touch_contact.pressure = 900;
+        PCHECK(rdp_input_channel_write_touch_contact(&second_contact, &input_touch_contact) ==
+               LIBRDP_STATUS_OK);
+        memset(frames, 0, sizeof(frames));
+        frames[0].contact_count = 1;
+        frames[0].frame_offset = 0x0102030405060708ull;
+        frames[0].contacts = dyn_response.data;
+        frames[0].contacts_len = dyn_response.length;
+        frames[1].contact_count = 1;
+        frames[1].frame_offset = 0x1112131415161718ull;
+        frames[1].contacts = second_contact.data;
+        frames[1].contacts_len = second_contact.length;
+        channel_packet.length = 0;
+        PCHECK(rdp_input_channel_write_touch_event(&channel_packet, 0x11223344u, frames, 2) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_parse_touch_event(channel_packet.data,
+                                                   channel_packet.length,
+                                                   &input_touch_event) == LIBRDP_STATUS_OK);
+        PCHECK(input_touch_event.frame_count == 2);
+        PCHECK(rdp_input_channel_touch_event_get_frame(&input_touch_event,
+                                                       1,
+                                                       &input_touch_frame) == LIBRDP_STATUS_OK);
+        PCHECK(input_touch_frame.contact_count == 1 &&
+               input_touch_frame.frame_offset == 0x1112131415161718ull);
+        PCHECK(rdp_input_channel_touch_frame_get_contact(&input_touch_frame,
+                                                         0,
+                                                         &input_touch_contact) == LIBRDP_STATUS_OK);
+        PCHECK(input_touch_contact.contact_id == 2 &&
+               input_touch_contact.x == 300 &&
+               input_touch_contact.y == 400 &&
+               input_touch_contact.orientation == 180 &&
+               input_touch_contact.pressure == 900);
+        rdp_buffer_free(&second_contact);
+    }
+    input_touch_contact.contact_id = 1;
+    input_touch_contact.x = 100;
+    input_touch_contact.y = 200;
+    input_touch_contact.contact_flags = RDP_INPUT_CHANNEL_CONTACT_DOWN |
+                                        RDP_INPUT_CHANNEL_CONTACT_INRANGE |
+                                        RDP_INPUT_CHANNEL_CONTACT_INCONTACT;
+    input_touch_contact.orientation = 90;
+    input_touch_contact.pressure = 512;
+    {
         rdp_buffer duplicate_contacts;
 
         rdp_buffer_init(&duplicate_contacts);
@@ -6757,6 +6811,62 @@ static int test_path_security_license_channels(void)
            input_pen_contact.rotation == 45 &&
            input_pen_contact.tilt_x == -10 &&
            input_pen_contact.tilt_y == 20);
+    {
+        rdp_buffer second_contact;
+        rdp_input_channel_pen_frame frames[2];
+
+        rdp_buffer_init(&second_contact);
+        input_pen_contact.device_id = 3;
+        input_pen_contact.x = 40;
+        input_pen_contact.y = 50;
+        input_pen_contact.pen_flags = RDP_INPUT_CHANNEL_PEN_ERASER_PRESSED;
+        input_pen_contact.pressure = 300;
+        input_pen_contact.rotation = 270;
+        input_pen_contact.tilt_x = 15;
+        input_pen_contact.tilt_y = -25;
+        PCHECK(rdp_input_channel_write_pen_contact(&second_contact, &input_pen_contact) ==
+               LIBRDP_STATUS_OK);
+        memset(frames, 0, sizeof(frames));
+        frames[0].contact_count = 1;
+        frames[0].frame_offset = 7;
+        frames[0].contacts = dyn_response.data;
+        frames[0].contacts_len = dyn_response.length;
+        frames[1].contact_count = 1;
+        frames[1].frame_offset = 11;
+        frames[1].contacts = second_contact.data;
+        frames[1].contacts_len = second_contact.length;
+        channel_packet.length = 0;
+        PCHECK(rdp_input_channel_write_pen_event(&channel_packet, 0x55667788u, frames, 2) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_input_channel_parse_pen_event(channel_packet.data,
+                                                 channel_packet.length,
+                                                 &input_pen_event) == LIBRDP_STATUS_OK);
+        PCHECK(input_pen_event.frame_count == 2);
+        PCHECK(rdp_input_channel_pen_event_get_frame(&input_pen_event,
+                                                     1,
+                                                     &input_pen_frame) == LIBRDP_STATUS_OK);
+        PCHECK(input_pen_frame.contact_count == 1 && input_pen_frame.frame_offset == 11);
+        PCHECK(rdp_input_channel_pen_frame_get_contact(&input_pen_frame,
+                                                       0,
+                                                       &input_pen_contact) == LIBRDP_STATUS_OK);
+        PCHECK(input_pen_contact.device_id == 3 &&
+               input_pen_contact.x == 40 &&
+               input_pen_contact.y == 50 &&
+               input_pen_contact.pen_flags == RDP_INPUT_CHANNEL_PEN_ERASER_PRESSED &&
+               input_pen_contact.pressure == 300 &&
+               input_pen_contact.rotation == 270 &&
+               input_pen_contact.tilt_x == 15 &&
+               input_pen_contact.tilt_y == -25);
+        rdp_buffer_free(&second_contact);
+    }
+    input_pen_contact.device_id = 2;
+    input_pen_contact.x = -20;
+    input_pen_contact.y = 30;
+    input_pen_contact.pen_flags = RDP_INPUT_CHANNEL_PEN_BARREL_PRESSED;
+    input_pen_contact.pressure = 700;
+    input_pen_contact.rotation = 45;
+    input_pen_contact.tilt_x = -10;
+    input_pen_contact.tilt_y = 20;
     {
         rdp_buffer duplicate_contacts;
 
