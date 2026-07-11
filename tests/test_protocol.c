@@ -6527,10 +6527,15 @@ static int test_path_security_license_channels(void)
            test_read_u16_le(dyn_response.data + 6) == RDP_CORE_INPUT_PROTOCOL_VERSION_100);
     PCHECK(rdp_core_input_parse_header(dyn_response.data, dyn_response.length, &core_header) == LIBRDP_STATUS_OK);
     PCHECK(core_header.pdu_type == RDP_CORE_INPUT_PDU_CS_INIT_REQUEST && core_header.event_count == 0);
-    dyn_response.data[3] = 1;
-    PCHECK(rdp_core_input_parse_header(dyn_response.data, dyn_response.length, &core_header) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
-    dyn_response.data[3] = 0;
+    {
+        rdp_core_input_header valid_core_header = core_header;
+
+        dyn_response.data[3] = 1;
+        PCHECK(rdp_core_input_parse_header(dyn_response.data, dyn_response.length, &core_header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&core_header, &valid_core_header, sizeof(core_header)) == 0);
+        dyn_response.data[3] = 0;
+    }
     PCHECK(rdp_core_input_parse_init_response(core_response,
                                               sizeof(core_response),
                                               &core_init_response) == LIBRDP_STATUS_OK);
@@ -6540,9 +6545,16 @@ static int test_path_security_license_channels(void)
     PCHECK(core_negotiation.selected_protocol_version == RDP_CORE_INPUT_PROTOCOL_VERSION_100 &&
            core_negotiation.supports_relative_mouse &&
            core_negotiation.supports_qoe_timestamp);
-    PCHECK(rdp_core_input_parse_init_response(core_response,
-                                              sizeof(core_response) - 1u,
-                                              &core_init_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_core_input_init_response valid_core_init_response = core_init_response;
+
+        PCHECK(rdp_core_input_parse_init_response(core_response,
+                                                  sizeof(core_response) - 1u,
+                                                  &core_init_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&core_init_response,
+                      &valid_core_init_response,
+                      sizeof(core_init_response)) == 0);
+    }
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_core_input_write_keyboard_event(&dyn_response, 0x1e, 0) == LIBRDP_STATUS_OK);

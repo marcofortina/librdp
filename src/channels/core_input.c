@@ -78,26 +78,28 @@ librdp_status rdp_core_input_parse_header(const void* data,
                                           size_t length,
                                           rdp_core_input_header* header)
 {
+    rdp_core_input_header parsed;
     const uint8_t* bytes = (const uint8_t*)data;
 
     if (!data || !header || length < 4)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
-    header->signature = bytes[0];
-    header->pdu_type = bytes[1];
-    header->event_count = bytes[2];
-    header->padding = bytes[3];
-    if (header->signature != RDP_CORE_INPUT_SIGNATURE)
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.signature = bytes[0];
+    parsed.pdu_type = bytes[1];
+    parsed.event_count = bytes[2];
+    parsed.padding = bytes[3];
+    if (parsed.signature != RDP_CORE_INPUT_SIGNATURE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->pdu_type != RDP_CORE_INPUT_PDU_CS_INIT_REQUEST &&
-        header->pdu_type != RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE &&
-        header->pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE)
+    if (parsed.pdu_type != RDP_CORE_INPUT_PDU_CS_INIT_REQUEST &&
+        parsed.pdu_type != RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE &&
+        parsed.pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->padding != 0)
+    if (parsed.padding != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE && header->event_count != 0)
+    if (parsed.pdu_type != RDP_CORE_INPUT_PDU_CS_KEYBOARD_AND_MOUSE && parsed.event_count != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -127,6 +129,7 @@ librdp_status rdp_core_input_parse_init_response(const void* data,
                                                  size_t length,
                                                  rdp_core_input_init_response* response)
 {
+    rdp_core_input_init_response parsed;
     rdp_stream stream;
     rdp_core_input_header header;
 
@@ -139,15 +142,16 @@ librdp_status rdp_core_input_parse_init_response(const void* data,
     if (header.pdu_type != RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(response, 0, sizeof(*response));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &response->selected_protocol_version) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &response->protocol_version_max) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u16_le(&stream, &parsed.selected_protocol_version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.protocol_version_max) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (response->selected_protocol_version == 0 ||
-        response->selected_protocol_version > response->protocol_version_max)
+    if (parsed.selected_protocol_version == 0 ||
+        parsed.selected_protocol_version > parsed.protocol_version_max)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *response = parsed;
     return LIBRDP_STATUS_OK;
 }
 
