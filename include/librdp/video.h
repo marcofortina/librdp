@@ -49,10 +49,54 @@ typedef struct librdp_video_capture_media
     uint8_t flags;
 } librdp_video_capture_media;
 
+/**
+ * @brief Send one captured camera sample to the server.
+ *
+ * This replies to a pending LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST for the
+ * selected stream. The data buffer is read during the call only and is not
+ * retained.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] stream_index Stream index from the current video capture request.
+ * @param[in] data Encoded or raw sample bytes. NULL is allowed only when
+ * data_len is 0.
+ * @param[in] data_len Sample length in bytes.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or oversized sample arguments; LIBRDP_STATUS_STATE when the session, capture
+ * channel, stream, or pending request state does not allow a sample reply;
+ * allocation or transport errors propagated from the send path.
+ *
+ * @note Thread-safety: sessions are not internally synchronized; call from the
+ * same serialized context that processes video capture events.
+ * @warning Camera frames can contain sensitive user data; the application is
+ * responsible for capture consent, device access policy, and local buffering.
+ * @since 0.1.0
+ */
 librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
                                                        uint8_t stream_index,
                                                        const void* data,
                                                        size_t data_len);
+
+/**
+ * @brief Report a camera sample error to the server.
+ *
+ * This replies to a pending LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST when the
+ * application cannot provide a sample for the selected stream.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] stream_index Stream index from the current video capture request.
+ * @param[in] error_code Video capture error code to send to the server.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * session is NULL; LIBRDP_STATUS_STATE when the session, capture channel,
+ * stream, or pending request state does not allow an error reply; allocation
+ * or transport errors propagated from the send path.
+ *
+ * @note Thread-safety: sessions are not internally synchronized; call from the
+ * same serialized context that processes video capture events.
+ * @since 0.1.0
+ */
 librdp_status librdp_session_video_capture_send_error(librdp_session* session,
                                                       uint8_t stream_index,
                                                       uint32_t error_code);

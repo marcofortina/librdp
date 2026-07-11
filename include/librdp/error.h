@@ -24,6 +24,21 @@ typedef enum librdp_status
     LIBRDP_STATUS_STATE = -9
 } librdp_status;
 
+/**
+ * @brief Return the stable text token for a status code.
+ *
+ * The returned pointer refers to static storage owned by the library and
+ * remains valid for the lifetime of the process. Unknown status values return
+ * the token "unknown".
+ *
+ * @param[in] status Status code to describe.
+ *
+ * @return Non-NULL NUL-terminated status token owned by the library.
+ *
+ * @note Thread-safety: this function uses immutable static strings and can be
+ * called concurrently.
+ * @since 0.1.0
+ */
 const char* librdp_status_string(librdp_status status);
 
 #ifdef __cplusplus

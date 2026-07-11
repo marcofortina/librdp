@@ -18,10 +18,52 @@ extern "C" {
 typedef struct librdp_session librdp_session;
 typedef uint32_t librdp_channel_id;
 
+/**
+ * @brief Send data on an application-owned dynamic virtual channel.
+ *
+ * The channel must have been announced to the application through a channel
+ * open event and must still be active. Internal library channels cannot be sent
+ * through this API. The data buffer is read during the call only and is not
+ * retained.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] channel_id Dynamic channel identifier; must be non-zero.
+ * @param[in] data Payload bytes. NULL is allowed only when data_len is 0.
+ * @param[in] data_len Payload length in bytes.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
+ * ready; LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or
+ * allocation errors propagated from the send path.
+ *
+ * @note Thread-safety: sessions are not internally synchronized; call from the
+ * same thread that drives the session unless the application serializes access.
+ * @since 0.1.0
+ */
 librdp_status librdp_session_channel_send(librdp_session* session,
                                           librdp_channel_id channel_id,
                                           const void* data,
                                           size_t data_len);
+
+/**
+ * @brief Close an application-owned dynamic virtual channel.
+ *
+ * The channel must have been announced to the application through a channel
+ * open event and must still be active. On success the local channel entry is
+ * cleared and the channel identifier must not be reused by the caller.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] channel_id Dynamic channel identifier; must be non-zero.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
+ * ready; LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or
+ * allocation errors propagated from the close path.
+ *
+ * @note Thread-safety: sessions are not internally synchronized; call from the
+ * same thread that drives the session unless the application serializes access.
+ * @since 0.1.0
+ */
 librdp_status librdp_session_channel_close(librdp_session* session, librdp_channel_id channel_id);
 
 #ifdef __cplusplus
