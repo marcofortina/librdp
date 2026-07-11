@@ -3722,12 +3722,22 @@ static int test_path_security_license_channels(void)
            surface_commands.commands[1].kind == RDP_SURFACE_COMMAND_KIND_FRAME_MARKER &&
            surface_commands.commands[1].frame_marker.action == 1 &&
            surface_commands.commands[1].frame_marker.frame_id == 0x11223344u);
-    PCHECK(rdp_surface_commands_parse(surface_command_payload,
-                                      sizeof(surface_command_payload) - 1u,
-                                      &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_surface_commands_parse(surface_command_short_frame_marker,
-                                      sizeof(surface_command_short_frame_marker),
-                                      &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_surface_command_list valid_surface_commands = surface_commands;
+
+        PCHECK(rdp_surface_commands_parse(surface_command_payload,
+                                          sizeof(surface_command_payload) - 1u,
+                                          &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&surface_commands,
+                      &valid_surface_commands,
+                      sizeof(surface_commands)) == 0);
+        PCHECK(rdp_surface_commands_parse(surface_command_short_frame_marker,
+                                          sizeof(surface_command_short_frame_marker),
+                                          &surface_commands) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&surface_commands,
+                      &valid_surface_commands,
+                      sizeof(surface_commands)) == 0);
+    }
     PCHECK(rdp_surface_commands_parse(surface_command_extended,
                                       sizeof(surface_command_extended),
                                       &surface_commands) == LIBRDP_STATUS_OK);

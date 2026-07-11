@@ -34,6 +34,7 @@ static librdp_status rdp_surface_commands_parse_bits(rdp_stream* stream,
                                                      uint16_t command_type,
                                                      rdp_surface_bits* bits)
 {
+    rdp_surface_bits parsed;
     uint8_t reserved = 0;
 
     if (!stream || !bits)
@@ -41,47 +42,48 @@ static librdp_status rdp_surface_commands_parse_bits(rdp_stream* stream,
     if (rdp_stream_remaining(stream) < 20u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(bits, 0, sizeof(*bits));
-    bits->command_type = command_type;
-    if (rdp_stream_read_u16_le(stream, &bits->dest_left) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &bits->dest_top) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &bits->dest_right) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &bits->dest_bottom) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(stream, &bits->bpp) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(stream, &bits->flags) != LIBRDP_STATUS_OK ||
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.command_type = command_type;
+    if (rdp_stream_read_u16_le(stream, &parsed.dest_left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(stream, &parsed.dest_top) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(stream, &parsed.dest_right) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(stream, &parsed.dest_bottom) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(stream, &parsed.bpp) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(stream, &parsed.flags) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u8(stream, &reserved) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(stream, &bits->codec_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &bits->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(stream, &bits->height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(stream, &bits->bitmap_data_length) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u8(stream, &parsed.codec_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(stream, &parsed.bitmap_data_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if (reserved != 0 ||
-        (bits->flags & (uint8_t)~RDP_SURFACE_BITS_FLAG_EXTENDED_HEADER) != 0 ||
-        bits->dest_left >= bits->dest_right ||
-        bits->dest_top >= bits->dest_bottom ||
-        bits->width == 0 ||
-        bits->height == 0 ||
-        bits->bpp == 0 ||
-        bits->bpp > 32u)
+        (parsed.flags & (uint8_t)~RDP_SURFACE_BITS_FLAG_EXTENDED_HEADER) != 0 ||
+        parsed.dest_left >= parsed.dest_right ||
+        parsed.dest_top >= parsed.dest_bottom ||
+        parsed.width == 0 ||
+        parsed.height == 0 ||
+        parsed.bpp == 0 ||
+        parsed.bpp > 32u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    if ((bits->flags & RDP_SURFACE_BITS_FLAG_EXTENDED_HEADER) != 0)
+    if ((parsed.flags & RDP_SURFACE_BITS_FLAG_EXTENDED_HEADER) != 0)
     {
         if (rdp_stream_remaining(stream) < 24u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        bits->has_extended_header = 1;
-        if (rdp_stream_read_u32_le(stream, &bits->high_unique_id) != LIBRDP_STATUS_OK ||
-            rdp_stream_read_u32_le(stream, &bits->low_unique_id) != LIBRDP_STATUS_OK ||
-            rdp_surface_commands_read_u64_le(stream, &bits->timestamp_ms) != LIBRDP_STATUS_OK ||
-            rdp_surface_commands_read_u64_le(stream, &bits->timestamp_s) != LIBRDP_STATUS_OK)
+        parsed.has_extended_header = 1;
+        if (rdp_stream_read_u32_le(stream, &parsed.high_unique_id) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u32_le(stream, &parsed.low_unique_id) != LIBRDP_STATUS_OK ||
+            rdp_surface_commands_read_u64_le(stream, &parsed.timestamp_ms) != LIBRDP_STATUS_OK ||
+            rdp_surface_commands_read_u64_le(stream, &parsed.timestamp_s) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
 
-    if (bits->bitmap_data_length > rdp_stream_remaining(stream))
+    if (parsed.bitmap_data_length > rdp_stream_remaining(stream))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(stream, &bits->bitmap_data, bits->bitmap_data_length) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(stream, &parsed.bitmap_data, parsed.bitmap_data_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *bits = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -89,13 +91,17 @@ librdp_status rdp_surface_commands_parse(const void* data,
                                          size_t length,
                                          rdp_surface_command_list* list)
 {
+    rdp_surface_command_list parsed;
     rdp_stream stream;
 
     if ((!data && length > 0) || !list)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(list, 0, sizeof(*list));
+    memset(&parsed, 0, sizeof(parsed));
     if (length == 0)
+    {
+        *list = parsed;
         return LIBRDP_STATUS_OK;
+    }
 
     rdp_stream_init(&stream, data, length);
     while (rdp_stream_remaining(&stream) > 0)
@@ -103,12 +109,12 @@ librdp_status rdp_surface_commands_parse(const void* data,
         uint16_t command_type = 0;
         rdp_surface_command* command = NULL;
 
-        if (list->count >= RDP_SURFACE_COMMAND_MAX_COMMANDS)
+        if (parsed.count >= RDP_SURFACE_COMMAND_MAX_COMMANDS)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_read_u16_le(&stream, &command_type) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-        command = &list->commands[list->count];
+        command = &parsed.commands[parsed.count];
         if (command_type == RDP_SURFACE_COMMAND_SET_BITS ||
             command_type == RDP_SURFACE_COMMAND_STREAM_BITS)
         {
@@ -128,8 +134,9 @@ librdp_status rdp_surface_commands_parse(const void* data,
         {
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
-        list->count++;
+        parsed.count++;
     }
+    *list = parsed;
     return LIBRDP_STATUS_OK;
 }
 
