@@ -7744,12 +7744,15 @@ static int test_path_security_license_channels(void)
            graphics_avc_quant.r == 1 &&
            graphics_avc_quant.p == 0 &&
            graphics_avc_quant.quality == 100);
+    graphics_bad_quant = graphics_avc_quant;
     PCHECK(rdp_graphics_parse_avc420_quant_quality(graphics_avc_quant_bad_qp,
                                                    sizeof(graphics_avc_quant_bad_qp),
                                                    &graphics_bad_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(memcmp(&graphics_bad_quant, &graphics_avc_quant, sizeof(graphics_bad_quant)) == 0);
     PCHECK(rdp_graphics_parse_avc420_quant_quality(graphics_avc_quant_bad_quality,
                                                    sizeof(graphics_avc_quant_bad_quality),
                                                    &graphics_bad_quant) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(memcmp(&graphics_bad_quant, &graphics_avc_quant, sizeof(graphics_bad_quant)) == 0);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_graphics_write_avc420_quant_quality(&dyn_response,
@@ -7786,15 +7789,22 @@ static int test_path_security_license_channels(void)
                                             &graphics_avc420) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == sizeof(graphics_avc420_stream) &&
            memcmp(dyn_response.data, graphics_avc420_stream, sizeof(graphics_avc420_stream)) == 0);
-    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_rect,
-                                            sizeof(graphics_avc420_bad_rect),
-                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_empty_bits,
-                                            sizeof(graphics_avc420_empty_bits),
-                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_quant,
-                                            sizeof(graphics_avc420_bad_quant),
-                                            &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_graphics_avc420_stream valid_graphics_avc420 = graphics_avc420;
+
+        PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_rect,
+                                                sizeof(graphics_avc420_bad_rect),
+                                                &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_avc420, &valid_graphics_avc420, sizeof(graphics_avc420)) == 0);
+        PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_empty_bits,
+                                                sizeof(graphics_avc420_empty_bits),
+                                                &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_avc420, &valid_graphics_avc420, sizeof(graphics_avc420)) == 0);
+        PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_bad_quant,
+                                                sizeof(graphics_avc420_bad_quant),
+                                                &graphics_avc420) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_avc420, &valid_graphics_avc420, sizeof(graphics_avc420)) == 0);
+    }
     PCHECK(rdp_graphics_parse_avc420_stream(graphics_avc420_stream,
                                             sizeof(graphics_avc420_stream),
                                             &graphics_avc420) == LIBRDP_STATUS_OK);
@@ -7844,15 +7854,22 @@ static int test_path_security_license_channels(void)
                                             &graphics_avc444) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == sizeof(graphics_avc444_chroma) &&
            memcmp(dyn_response.data, graphics_avc444_chroma, sizeof(graphics_avc444_chroma)) == 0);
-    graphics_avc444.lc = RDP_GRAPHICS_AVC444_LC_INVALID;
+    graphics_avc444_edge = graphics_avc444;
+    graphics_avc444_edge.lc = RDP_GRAPHICS_AVC444_LC_INVALID;
     PCHECK(rdp_graphics_write_avc444_stream(&dyn_response,
-                                            &graphics_avc444) == LIBRDP_STATUS_INVALID_ARGUMENT);
-    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_invalid_lc,
-                                            sizeof(graphics_avc444_invalid_lc),
-                                            &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_bad_split,
-                                            sizeof(graphics_avc444_bad_split),
-                                            &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
+                                            &graphics_avc444_edge) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    {
+        rdp_graphics_avc444_stream valid_graphics_avc444 = graphics_avc444;
+
+        PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_invalid_lc,
+                                                sizeof(graphics_avc444_invalid_lc),
+                                                &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_avc444, &valid_graphics_avc444, sizeof(graphics_avc444)) == 0);
+        PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_bad_split,
+                                                sizeof(graphics_avc444_bad_split),
+                                                &graphics_avc444) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_avc444, &valid_graphics_avc444, sizeof(graphics_avc444)) == 0);
+    }
     avc_decoder = rdp_avc_decoder_new();
     PCHECK(avc_decoder != NULL);
     rdp_avc_frame_init(&avc_frame);
