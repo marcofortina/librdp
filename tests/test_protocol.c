@@ -10631,6 +10631,15 @@ static int test_telemetry_multiparty_channels(void)
     buffer.data[4] = 0x80;
     PCHECK(rdp_multiparty_parse_filter_state(buffer.data, buffer.length, &filter) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(&message, 0x5a, sizeof(message));
+    message.type = 0x7777u;
+    {
+        rdp_multiparty_message before = message;
+
+        PCHECK(rdp_multiparty_parse_message(buffer.data, buffer.length, &message) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&message, &before, sizeof(message)) == 0);
+    }
     PCHECK(rdp_multiparty_parse_message(buffer.data, buffer.length, &message) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
