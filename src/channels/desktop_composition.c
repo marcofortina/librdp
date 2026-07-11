@@ -45,21 +45,23 @@ librdp_status rdp_desktop_composition_parse_header(const void* data,
                                                    size_t length,
                                                    rdp_desktop_composition_header* header)
 {
+    rdp_desktop_composition_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 4u || length > UINT16_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u8(&stream, &header->altsec_header) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &header->operation) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->size) != LIBRDP_STATUS_OK ||
-        header->altsec_header != RDP_DESKTOP_COMPOSITION_ALTSEC_HEADER ||
-        !rdp_desktop_composition_operation_valid(header->operation) ||
-        header->size != length - 4u)
+    if (rdp_stream_read_u8(&stream, &parsed.altsec_header) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.operation) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.size) != LIBRDP_STATUS_OK ||
+        parsed.altsec_header != RDP_DESKTOP_COMPOSITION_ALTSEC_HEADER ||
+        !rdp_desktop_composition_operation_valid(parsed.operation) ||
+        parsed.size != length - 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -87,21 +89,23 @@ librdp_status rdp_desktop_composition_parse_toggle(const void* data,
                                                    size_t length,
                                                    rdp_desktop_composition_toggle* order)
 {
+    rdp_desktop_composition_toggle parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 5u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_TOGGLE)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_TOGGLE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->event_type) != LIBRDP_STATUS_OK ||
-        !rdp_desktop_composition_event_valid(order->event_type))
+        rdp_stream_read_u8(&stream, &parsed.event_type) != LIBRDP_STATUS_OK ||
+        !rdp_desktop_composition_event_valid(parsed.event_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -125,31 +129,33 @@ librdp_status rdp_desktop_composition_parse_lsurface(const void* data,
                                                      size_t length,
                                                      rdp_desktop_composition_lsurface* order)
 {
+    rdp_desktop_composition_lsurface parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 38u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_LSURFACE)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_LSURFACE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->create) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->flags) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->surface_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->height) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->window_id) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->luid) != LIBRDP_STATUS_OK ||
-        !rdp_desktop_composition_bool_valid(order->create) ||
-        (order->flags & ~(RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
+        rdp_stream_read_u8(&stream, &parsed.create) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.window_id) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.luid) != LIBRDP_STATUS_OK ||
+        !rdp_desktop_composition_bool_valid(parsed.create) ||
+        (parsed.flags & ~(RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
                           RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION)) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (order->create && (order->width == 0 || order->height == 0))
+    if (parsed.create && (parsed.width == 0 || parsed.height == 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -196,27 +202,29 @@ librdp_status rdp_desktop_composition_parse_surfobj(const void* data,
                                                     size_t length,
                                                     rdp_desktop_composition_surfobj* order)
 {
+    rdp_desktop_composition_surfobj parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 26u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_SURFOBJ)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_SURFOBJ)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->cache_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->surface_bpp) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->flags) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->surface_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->height) != LIBRDP_STATUS_OK ||
-        order->flags != 0 ||
-        order->width == 0 || order->height == 0)
+        rdp_stream_read_u32_le(&stream, &parsed.cache_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.surface_bpp) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        parsed.flags != 0 ||
+        parsed.width == 0 || parsed.height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -255,23 +263,25 @@ librdp_status rdp_desktop_composition_parse_assoc(const void* data,
                                                   size_t length,
                                                   rdp_desktop_composition_assoc* order)
 {
+    rdp_desktop_composition_assoc parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 21u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_ASSOC)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_ASSOC)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &order->associate) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->logical_surface_id) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->redirection_surface_id) != LIBRDP_STATUS_OK ||
-        !rdp_desktop_composition_bool_valid(order->associate))
+        rdp_stream_read_u8(&stream, &parsed.associate) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.logical_surface_id) != LIBRDP_STATUS_OK ||
+        rdp_desktop_composition_read_u64(&stream, &parsed.redirection_surface_id) != LIBRDP_STATUS_OK ||
+        !rdp_desktop_composition_bool_valid(parsed.associate))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -302,20 +312,22 @@ librdp_status rdp_desktop_composition_parse_compref(const void* data,
                                                     size_t length,
                                                     rdp_desktop_composition_u64_order* order)
 {
+    rdp_desktop_composition_u64_order parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_COMPREF)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_COMPREF)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_desktop_composition_read_u64(&stream, &order->value) != LIBRDP_STATUS_OK)
+        rdp_desktop_composition_read_u64(&stream, &parsed.value) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -339,20 +351,22 @@ librdp_status rdp_desktop_composition_parse_switch_surfobj(const void* data,
                                                            size_t length,
                                                            rdp_desktop_composition_u32_order* order)
 {
+    rdp_desktop_composition_u32_order parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK ||
-        order->header.operation != RDP_DESKTOP_COMPOSITION_OP_SWITCH_SURFOBJ)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK ||
+        parsed.header.operation != RDP_DESKTOP_COMPOSITION_OP_SWITCH_SURFOBJ)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &order->value) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.value) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -378,18 +392,22 @@ librdp_status rdp_desktop_composition_parse_opaque(const void* data,
                                                    size_t length,
                                                    rdp_desktop_composition_opaque* order)
 {
+    rdp_desktop_composition_opaque parsed;
     rdp_stream stream;
 
     if (!data || !order)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(order, 0, sizeof(*order));
-    if (rdp_desktop_composition_parse_header(data, length, &order->header) != LIBRDP_STATUS_OK)
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_desktop_composition_parse_header(data, length, &parsed.header) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    order->payload_len = rdp_stream_remaining(&stream);
-    return rdp_stream_read_bytes(&stream, &order->payload, order->payload_len);
+    parsed.payload_len = rdp_stream_remaining(&stream);
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_desktop_composition_write_opaque(rdp_buffer* buffer,
