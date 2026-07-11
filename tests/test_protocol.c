@@ -2534,6 +2534,11 @@ static int test_path_security_license_channels(void)
     };
     const uint8_t graphics_segment_compressed_literal[] = {0xe0, 0x24, 0x24, 0x80, 0x07};
     const uint8_t graphics_segment_bad_compression_type[] = {0xe0, 0x20, 1, 2, 3};
+    const uint8_t graphics_segment_multipart_bad_second[] = {
+        0xe1, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x04, 0x51,
+        0x04, 0x00, 0x00, 0x00, 0x20, 1, 2, 3
+    };
     const uint8_t graphics_create_surface[] = {
         0x09, 0x00, 0x00, 0x00,
         0x0f, 0x00, 0x00, 0x00,
@@ -7225,6 +7230,24 @@ static int test_path_security_license_channels(void)
                                               graphics_segment_bad_compression_type,
                                               sizeof(graphics_segment_bad_compression_type),
                                               &graphics_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        uint32_t graphics_history_index = graphics_decompressor.history_index;
+        uint32_t graphics_history_filled = graphics_decompressor.history_filled;
+        uint32_t graphics_history_last_index =
+            graphics_history_index == 0 ? RDP_GRAPHICS_BULK_HISTORY_SIZE - 1u : graphics_history_index - 1u;
+        uint8_t graphics_history_last = graphics_decompressor.history[graphics_history_last_index];
+
+        graphics_decoded.length = 0;
+        PCHECK(rdp_buffer_append_u8(&graphics_decoded, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
+                                                  graphics_segment_multipart_bad_second,
+                                                  sizeof(graphics_segment_multipart_bad_second),
+                                                  &graphics_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(graphics_decoded.length == 1u && graphics_decoded.data[0] == 0xa5u);
+        PCHECK(graphics_decompressor.history_index == graphics_history_index &&
+               graphics_decompressor.history_filled == graphics_history_filled &&
+               graphics_decompressor.history[graphics_history_last_index] == graphics_history_last);
+    }
     PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm, sizeof(graphics_confirm) - 1u, &graphics_caps_confirm) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_parse_create_surface(graphics_create_surface,

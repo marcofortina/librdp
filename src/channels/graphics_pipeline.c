@@ -24,6 +24,14 @@ typedef struct rdp_graphics_bit_reader
     uint8_t cache_bits;
 } rdp_graphics_bit_reader;
 
+typedef struct rdp_graphics_decompressor_snapshot
+{
+    uint8_t* history;
+    uint32_t history_index;
+    uint32_t history_filled;
+    uint8_t had_history;
+} rdp_graphics_decompressor_snapshot;
+
 static const rdp_graphics_token rdp_graphics_tokens[] = {
     {1, 0, 8, 0, 0},
     {5, 17, 5, 1, 0},
@@ -100,6 +108,69 @@ static librdp_status rdp_graphics_decompressor_ensure(rdp_graphics_decompressor*
     decompressor->history = (uint8_t*)calloc(1, RDP_GRAPHICS_BULK_HISTORY_SIZE);
     if (!decompressor->history)
         return LIBRDP_STATUS_NO_MEMORY;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_graphics_decompressor_snapshot_init(rdp_graphics_decompressor_snapshot* snapshot)
+{
+    if (!snapshot)
+        return;
+    memset(snapshot, 0, sizeof(*snapshot));
+}
+
+static void rdp_graphics_decompressor_snapshot_free(rdp_graphics_decompressor_snapshot* snapshot)
+{
+    if (!snapshot)
+        return;
+    free(snapshot->history);
+    memset(snapshot, 0, sizeof(*snapshot));
+}
+
+static librdp_status rdp_graphics_decompressor_snapshot_capture(
+    const rdp_graphics_decompressor* decompressor,
+    rdp_graphics_decompressor_snapshot* snapshot)
+{
+    if (!decompressor || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_graphics_decompressor_snapshot_init(snapshot);
+    snapshot->history_index = decompressor->history_index;
+    snapshot->history_filled = decompressor->history_filled;
+    snapshot->had_history = decompressor->history != NULL;
+    if (!decompressor->history)
+        return LIBRDP_STATUS_OK;
+
+    snapshot->history = (uint8_t*)malloc(RDP_GRAPHICS_BULK_HISTORY_SIZE);
+    if (!snapshot->history)
+    {
+        rdp_graphics_decompressor_snapshot_free(snapshot);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    memcpy(snapshot->history, decompressor->history, RDP_GRAPHICS_BULK_HISTORY_SIZE);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_graphics_decompressor_snapshot_restore(
+    rdp_graphics_decompressor* decompressor,
+    const rdp_graphics_decompressor_snapshot* snapshot)
+{
+    if (!decompressor || !snapshot)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (!snapshot->had_history)
+    {
+        free(decompressor->history);
+        decompressor->history = NULL;
+        decompressor->history_index = 0;
+        decompressor->history_filled = 0;
+        return LIBRDP_STATUS_OK;
+    }
+
+    if (rdp_graphics_decompressor_ensure(decompressor) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memcpy(decompressor->history, snapshot->history, RDP_GRAPHICS_BULK_HISTORY_SIZE);
+    decompressor->history_index = snapshot->history_index;
+    decompressor->history_filled = snapshot->history_filled;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1496,9 +1567,11 @@ librdp_status rdp_graphics_decode_segmented_data(rdp_graphics_decompressor* deco
                                                  size_t length,
                                                  rdp_buffer* decoded)
 {
+    rdp_graphics_decompressor_snapshot snapshot;
     rdp_stream stream;
     uint8_t descriptor = 0;
     size_t start_length = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!decompressor || !data || !decoded)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -1506,48 +1579,72 @@ librdp_status rdp_graphics_decode_segmented_data(rdp_graphics_decompressor* deco
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     start_length = decoded->length;
+    status = rdp_graphics_decompressor_snapshot_capture(decompressor, &snapshot);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u8(&stream, &descriptor) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (descriptor == RDP_GRAPHICS_SEGMENT_SINGLE)
     {
         const uint8_t* bulk = NULL;
         size_t bulk_len = rdp_stream_remaining(&stream);
 
-        if (rdp_stream_read_bytes(&stream, &bulk, bulk_len) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        return rdp_graphics_append_bulk_data(decompressor, bulk, bulk_len, decoded);
+        if (status == LIBRDP_STATUS_OK &&
+            rdp_stream_read_bytes(&stream, &bulk, bulk_len) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_graphics_append_bulk_data(decompressor, bulk, bulk_len, decoded);
     }
-    if (descriptor == RDP_GRAPHICS_SEGMENT_MULTIPART)
+    else if (descriptor == RDP_GRAPHICS_SEGMENT_MULTIPART)
     {
         uint16_t segment_count = 0;
         uint32_t uncompressed_size = 0;
         uint16_t i = 0;
-        librdp_status status = LIBRDP_STATUS_OK;
 
         if (rdp_stream_read_u16_le(&stream, &segment_count) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u32_le(&stream, &uncompressed_size) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (segment_count == 0 || uncompressed_size > RDP_GRAPHICS_BULK_MAX_DECODED)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        for (i = 0; i < segment_count; i++)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK &&
+            (segment_count == 0 || uncompressed_size > RDP_GRAPHICS_BULK_MAX_DECODED))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (i = 0; status == LIBRDP_STATUS_OK && i < segment_count; i++)
         {
             uint32_t segment_size = 0;
             const uint8_t* segment = NULL;
 
             if (rdp_stream_read_u32_le(&stream, &segment_size) != LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
             if (rdp_stream_read_bytes(&stream, &segment, segment_size) != LIBRDP_STATUS_OK)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            {
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
+            }
             status = rdp_graphics_append_bulk_data(decompressor, segment, segment_size, decoded);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
         }
-        if (rdp_stream_remaining(&stream) != 0 || decoded->length - start_length != uncompressed_size)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        return LIBRDP_STATUS_OK;
+        if (status == LIBRDP_STATUS_OK &&
+            (rdp_stream_remaining(&stream) != 0 || decoded->length - start_length != uncompressed_size))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    return LIBRDP_STATUS_PROTOCOL_ERROR;
+    else if (status == LIBRDP_STATUS_OK)
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+
+    if (status != LIBRDP_STATUS_OK)
+    {
+        librdp_status restore_status = rdp_graphics_decompressor_snapshot_restore(decompressor, &snapshot);
+
+        decoded->length = start_length;
+        if (restore_status != LIBRDP_STATUS_OK)
+            status = restore_status;
+    }
+    rdp_graphics_decompressor_snapshot_free(&snapshot);
+    return status;
 }
 
 librdp_status rdp_graphics_progressive_parse_block(const void* data,
