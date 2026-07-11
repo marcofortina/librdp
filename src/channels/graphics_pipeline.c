@@ -2443,12 +2443,13 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_stream* stream)
 {
+    rdp_graphics_progressive_stream parsed;
     size_t offset = 0;
 
     if (!data || !stream || length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(stream, 0, sizeof(*stream));
+    memset(&parsed, 0, sizeof(parsed));
     while (offset < length)
     {
         rdp_graphics_progressive_block block;
@@ -2457,9 +2458,9 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                  length - offset,
                                                  &block) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        stream->block_count++;
+        parsed.block_count++;
         if (rdp_graphics_progressive_known_block(block.type))
-            stream->known_block_count++;
+            parsed.known_block_count++;
         if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT)
         {
             rdp_graphics_progressive_context context;
@@ -2468,9 +2469,9 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                        length - offset,
                                                        &context) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            stream->has_context = 1;
-            stream->tile_size = (uint8_t)context.tile_size;
-            stream->flags = context.flags;
+            parsed.has_context = 1;
+            parsed.tile_size = (uint8_t)context.tile_size;
+            parsed.flags = context.flags;
         }
         else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_BEGIN)
         {
@@ -2480,15 +2481,15 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                            length - offset,
                                                            &frame_begin) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            stream->has_frame_begin = 1;
-            stream->region_count += frame_begin.region_count;
+            parsed.has_frame_begin = 1;
+            parsed.region_count += frame_begin.region_count;
         }
         else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_END)
         {
             if (rdp_graphics_progressive_parse_frame_end((const uint8_t*)data + offset,
                                                          length - offset) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            stream->has_frame_end = 1;
+            parsed.has_frame_end = 1;
         }
         else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_REGION)
         {
@@ -2497,12 +2498,15 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
             if (rdp_graphics_progressive_parse_region((const uint8_t*)data + offset,
                                                       length - offset,
                                                       &region) != LIBRDP_STATUS_OK ||
-                rdp_graphics_progressive_count_region_tiles(&region, stream) != LIBRDP_STATUS_OK)
+                rdp_graphics_progressive_count_region_tiles(&region, &parsed) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         offset += block.length;
     }
-    return offset == length ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (offset != length)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *stream = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_graphics_parse_avc420_quant_quality(const void* data,

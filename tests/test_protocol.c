@@ -8245,9 +8245,16 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_graphics_progressive_parse_region(graphics_progressive_bad_region,
                                                  sizeof(graphics_progressive_bad_region),
                                                  &graphics_progressive_region) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_graphics_progressive_parse_stream(graphics_progressive_stream,
-                                                 sizeof(graphics_progressive_stream) - 1u,
-                                                 &graphics_progressive) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_graphics_progressive_stream graphics_progressive_before = graphics_progressive;
+
+        PCHECK(rdp_graphics_progressive_parse_stream(graphics_progressive_stream,
+                                                     sizeof(graphics_progressive_stream) - 1u,
+                                                     &graphics_progressive) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_progressive,
+                      &graphics_progressive_before,
+                      sizeof(graphics_progressive)) == 0);
+    }
     PCHECK(rdp_graphics_parse_surface_to_surface(graphics_surface_to_surface,
                                                  sizeof(graphics_surface_to_surface),
                                                  &graphics_surface_copy) == LIBRDP_STATUS_OK);
