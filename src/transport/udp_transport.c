@@ -760,7 +760,7 @@ librdp_status rdp_udp2_classify_packet(const rdp_udp2_packet* packet, rdp_udp2_p
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (rdp_udp2_validate_packet(packet) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (packet->has_data && packet->has_ack)
+    if (packet->has_data && (packet->has_ack || packet->has_ack_vector || packet->has_ack_of_acks))
         *kind = RDP_UDP2_PACKET_KIND_DATA_WITH_ACK;
     else if (packet->has_data)
         *kind = RDP_UDP2_PACKET_KIND_DATA;
