@@ -4,8 +4,6 @@
 
 #include <string.h>
 
-#define RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS 256u
-
 static librdp_status rdp_input_channel_restore_on_error(rdp_buffer* buffer,
                                                         size_t start,
                                                         librdp_status status)
@@ -345,7 +343,7 @@ librdp_status rdp_input_channel_parse_dismiss_hovering(const void* data, size_t 
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_input_channel_validate_touch_contact(const rdp_input_channel_touch_contact* contact)
+librdp_status rdp_input_channel_validate_touch_contact(const rdp_input_channel_touch_contact* contact)
 {
     if (!contact ||
         (contact->fields_present & ~(RDP_INPUT_CHANNEL_TOUCH_CONTACTRECT_PRESENT |
@@ -665,7 +663,7 @@ librdp_status rdp_input_channel_touch_frame_get_contact(const rdp_input_channel_
     return LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
-static librdp_status rdp_input_channel_validate_pen_contact(const rdp_input_channel_pen_contact* contact)
+librdp_status rdp_input_channel_validate_pen_contact(const rdp_input_channel_pen_contact* contact)
 {
     if (!contact ||
         (contact->fields_present & ~(RDP_INPUT_CHANNEL_PEN_FLAGS_PRESENT |

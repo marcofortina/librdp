@@ -30738,10 +30738,25 @@ static librdp_status rdp_session_validate_touch_frames(const librdp_touch_frame*
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     for (i = 0; i < frame_count; i++)
     {
+        uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
+        uint16_t j = 0;
+
         if (!frames[i].contacts ||
             frames[i].contact_count == 0 ||
-            frames[i].contact_count > max_touch_contacts)
+            frames[i].contact_count > max_touch_contacts ||
+            frames[i].contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
+        memset(seen, 0, sizeof(seen));
+        for (j = 0; j < frames[i].contact_count; j++)
+        {
+            rdp_input_channel_touch_contact contact;
+
+            rdp_session_copy_touch_contact(&frames[i].contacts[j], &contact);
+            if (seen[contact.contact_id] ||
+                rdp_input_channel_validate_touch_contact(&contact) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            seen[contact.contact_id] = 1u;
+        }
     }
     return LIBRDP_STATUS_OK;
 }
@@ -30754,8 +30769,24 @@ static librdp_status rdp_session_validate_pen_frames(const librdp_pen_frame* fra
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     for (i = 0; i < frame_count; i++)
     {
-        if (!frames[i].contacts || frames[i].contact_count == 0)
+        uint8_t seen[RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS];
+        uint16_t j = 0;
+
+        if (!frames[i].contacts ||
+            frames[i].contact_count == 0 ||
+            frames[i].contact_count > RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
+        memset(seen, 0, sizeof(seen));
+        for (j = 0; j < frames[i].contact_count; j++)
+        {
+            rdp_input_channel_pen_contact contact;
+
+            rdp_session_copy_pen_contact(&frames[i].contacts[j], &contact);
+            if (seen[contact.device_id] ||
+                rdp_input_channel_validate_pen_contact(&contact) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            seen[contact.device_id] = 1u;
+        }
     }
     return LIBRDP_STATUS_OK;
 }
@@ -30944,6 +30975,11 @@ librdp_status librdp_session_send_touch(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_validate_touch_frames(frames,
+                                               frame_count,
+                                               RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_require_input_channel(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -31015,14 +31051,14 @@ librdp_status librdp_session_send_pen(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_validate_pen_frames(frames, frame_count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_require_input_channel(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (!session->input_channel_supports_pen)
         return LIBRDP_STATUS_UNSUPPORTED;
-    status = rdp_session_validate_pen_frames(frames, frame_count);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
 
     internal_frames = (rdp_input_channel_pen_frame*)calloc(frame_count, sizeof(*internal_frames));
     contact_buffers = (rdp_buffer*)calloc(frame_count, sizeof(*contact_buffers));

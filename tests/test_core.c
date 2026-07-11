@@ -1389,6 +1389,20 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_send_touch(session, 1, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_send_touch(session, 1, &touch_frame, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_send_touch(session, 1, &touch_frame, 1) == LIBRDP_STATUS_STATE);
+    touch_contact.contact_flags = LIBRDP_CONTACT_DOWN;
+    CHECK(librdp_session_send_touch(session, 1, &touch_frame, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    touch_contact.contact_flags = LIBRDP_CONTACT_DOWN | LIBRDP_CONTACT_INRANGE | LIBRDP_CONTACT_INCONTACT;
+    {
+        librdp_touch_contact duplicate_touch[2];
+
+        duplicate_touch[0] = touch_contact;
+        duplicate_touch[1] = touch_contact;
+        touch_frame.contacts = duplicate_touch;
+        touch_frame.contact_count = 2;
+        CHECK(librdp_session_send_touch(session, 1, &touch_frame, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        touch_frame.contacts = &touch_contact;
+        touch_frame.contact_count = 1;
+    }
     memset(&pen_contact, 0, sizeof(pen_contact));
     pen_contact.device_id = 1;
     pen_contact.fields_present = LIBRDP_PEN_PRESSURE_PRESENT;
@@ -1403,6 +1417,20 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_send_pen(session, 1, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_send_pen(session, 1, &pen_frame, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_send_pen(session, 1, &pen_frame, 1) == LIBRDP_STATUS_STATE);
+    pen_contact.pressure = 1025u;
+    CHECK(librdp_session_send_pen(session, 1, &pen_frame, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    pen_contact.pressure = 512u;
+    {
+        librdp_pen_contact duplicate_pen[2];
+
+        duplicate_pen[0] = pen_contact;
+        duplicate_pen[1] = pen_contact;
+        pen_frame.contacts = duplicate_pen;
+        pen_frame.contact_count = 2;
+        CHECK(librdp_session_send_pen(session, 1, &pen_frame, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        pen_frame.contacts = &pen_contact;
+        pen_frame.contact_count = 1;
+    }
     CHECK(librdp_session_dismiss_touch(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_dismiss_touch(session, 1) == LIBRDP_STATUS_STATE);
     CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));

@@ -46,6 +46,7 @@
 #define RDP_INPUT_CHANNEL_PEN_BARREL_PRESSED 0x00000001u
 #define RDP_INPUT_CHANNEL_PEN_ERASER_PRESSED 0x00000002u
 #define RDP_INPUT_CHANNEL_PEN_INVERTED 0x00000004u
+#define RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS 256u
 
 typedef struct rdp_input_channel_header
 {
@@ -163,6 +164,7 @@ librdp_status rdp_input_channel_write_touch_event(rdp_buffer* buffer,
                                                   uint32_t encode_time,
                                                   const rdp_input_channel_touch_frame* frames,
                                                   uint16_t frame_count);
+librdp_status rdp_input_channel_validate_touch_contact(const rdp_input_channel_touch_contact* contact);
 librdp_status rdp_input_channel_write_touch_contact(rdp_buffer* buffer,
                                                     const rdp_input_channel_touch_contact* contact);
 librdp_status rdp_input_channel_write_touch_frame(rdp_buffer* buffer,
@@ -182,6 +184,7 @@ librdp_status rdp_input_channel_write_pen_event(rdp_buffer* buffer,
                                                 uint32_t encode_time,
                                                 const rdp_input_channel_pen_frame* frames,
                                                 uint16_t frame_count);
+librdp_status rdp_input_channel_validate_pen_contact(const rdp_input_channel_pen_contact* contact);
 librdp_status rdp_input_channel_write_pen_contact(rdp_buffer* buffer,
                                                   const rdp_input_channel_pen_contact* contact);
 librdp_status rdp_input_channel_write_pen_frame(rdp_buffer* buffer,
