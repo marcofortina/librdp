@@ -6565,6 +6565,16 @@ static int test_path_security_license_channels(void)
                LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(error_info == valid_error_info);
     }
+    {
+        uint32_t invalid_tunnel = 0x12345678u;
+
+        dyn_response.length = 0;
+        PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_dynamic_channel_write_soft_sync_response(&dyn_response,
+                                                            &invalid_tunnel,
+                                                            1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(dyn_response.length == 1u && dyn_response.data[0] == 0xa5u);
+    }
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_mouse_cursor_write_caps_advertise(&dyn_response) == LIBRDP_STATUS_OK);
