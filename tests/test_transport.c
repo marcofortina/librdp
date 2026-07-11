@@ -502,8 +502,24 @@ static int test_multitransport_protocol(void)
            LIBRDP_STATUS_PROTOCOL_ERROR);
     buffer.data[0] = RDP_MULTITRANSPORT_ACTION_DATA;
     buffer.data[RDP_MULTITRANSPORT_HEADER_LENGTH + parsed_subheader.length + 1u] = 0xffu;
-    TCHECK(rdp_multitransport_parse_data(buffer.data, buffer.length, &tunnel_data) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    memset(&header, 0x5a, sizeof(header));
+    header.action = 0x77u;
+    {
+        rdp_multitransport_header header_before = header;
+
+        TCHECK(rdp_multitransport_parse_header(buffer.data, buffer.length, &header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&header, &header_before, sizeof(header)) == 0);
+    }
+    memset(&tunnel_data, 0x5a, sizeof(tunnel_data));
+    tunnel_data.header.action = 0x77u;
+    {
+        rdp_multitransport_data tunnel_before = tunnel_data;
+
+        TCHECK(rdp_multitransport_parse_data(buffer.data, buffer.length, &tunnel_data) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&tunnel_data, &tunnel_before, sizeof(tunnel_data)) == 0);
+    }
 
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&subheader);
