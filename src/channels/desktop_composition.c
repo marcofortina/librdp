@@ -141,6 +141,8 @@ librdp_status rdp_desktop_composition_parse_lsurface(const void* data,
         (order->flags & ~(RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
                           RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION)) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (order->create && (order->width == 0 || order->height == 0))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 
@@ -157,7 +159,8 @@ librdp_status rdp_desktop_composition_write_lsurface(rdp_buffer* buffer,
 
     if (!rdp_desktop_composition_bool_valid(create) ||
         (flags & ~(RDP_DESKTOP_COMPOSITION_LSURFACE_COMPOSE_ONCE |
-                   RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION)) != 0)
+                   RDP_DESKTOP_COMPOSITION_LSURFACE_REDIRECTION)) != 0 ||
+        (create && (width == 0 || height == 0)))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_LSURFACE, 0x22u);
     if (status == LIBRDP_STATUS_OK)
@@ -199,7 +202,8 @@ librdp_status rdp_desktop_composition_parse_surfobj(const void* data,
         rdp_desktop_composition_read_u64(&stream, &order->surface_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &order->width) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &order->height) != LIBRDP_STATUS_OK ||
-        order->flags != 0)
+        order->flags != 0 ||
+        order->width == 0 || order->height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -211,8 +215,11 @@ librdp_status rdp_desktop_composition_write_surfobj(rdp_buffer* buffer,
                                                     uint32_t width,
                                                     uint32_t height)
 {
-    librdp_status status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_SURFOBJ, 0x16u);
+    librdp_status status = LIBRDP_STATUS_OK;
 
+    if (!buffer || width == 0 || height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_desktop_composition_write_header(buffer, RDP_DESKTOP_COMPOSITION_OP_SURFOBJ, 0x16u);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, cache_id);
     if (status == LIBRDP_STATUS_OK)

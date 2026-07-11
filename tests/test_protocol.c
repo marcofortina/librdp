@@ -12230,8 +12230,19 @@ static int test_desktop_composition_channel(void)
            lsurface.height == 768u &&
            lsurface.window_id == 0x1112131415161718ull &&
            lsurface.luid == 0x2122232425262728ull);
+    buffer.data[14] = 0u;
+    buffer.data[15] = 0u;
+    buffer.data[16] = 0u;
+    buffer.data[17] = 0u;
+    PCHECK(rdp_desktop_composition_parse_lsurface(buffer.data, buffer.length, &lsurface) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.length = 0;
     PCHECK(rdp_desktop_composition_write_lsurface(&buffer, 1, 0x80, 1, 1, 1, 1, 1) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 0u);
+    PCHECK(rdp_desktop_composition_write_lsurface(&buffer, 1, 0, 1, 0, 1, 1, 1) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 0u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -12249,9 +12260,20 @@ static int test_desktop_composition_channel(void)
            surfobj.surface_id == 0x3132333435363738ull &&
            surfobj.width == 64u &&
            surfobj.height == 32u);
+    buffer.data[18] = 0u;
+    buffer.data[19] = 0u;
+    buffer.data[20] = 0u;
+    buffer.data[21] = 0u;
+    PCHECK(rdp_desktop_composition_parse_surfobj(buffer.data, buffer.length, &surfobj) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.data[18] = 64u;
     buffer.data[9] = 1u;
     PCHECK(rdp_desktop_composition_parse_surfobj(buffer.data, buffer.length, &surfobj) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    buffer.length = 0;
+    PCHECK(rdp_desktop_composition_write_surfobj(&buffer, 0x8f, 32, 0x3132333435363738ull, 0, 32) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 0u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
