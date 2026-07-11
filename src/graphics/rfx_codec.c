@@ -914,6 +914,7 @@ librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
                                   const rdp_rfx_component_quant* cr_quant,
                                   rdp_rfx_tile_pixels* pixels)
 {
+    rdp_rfx_tile_pixels output;
     int32_t y_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cb_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cr_coefficients[RDP_RFX_TILE_COEFFICIENTS];
@@ -922,7 +923,7 @@ librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
     if (!y_data || !cb_data || !cr_data || !y_quant || !cb_quant || !cr_quant || !pixels)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(pixels, 0, sizeof(*pixels));
+    memset(&output, 0, sizeof(output));
     status = rdp_rfx_decode_component(mode,
                                       y_data,
                                       y_len,
@@ -945,13 +946,15 @@ librdp_status rdp_rfx_decode_tile(rdp_rfx_rlgr_mode mode,
                                           RDP_RFX_TILE_COEFFICIENTS);
     if (status == LIBRDP_STATUS_OK)
     {
-        pixels->stride = 64u * 4u;
+        output.stride = 64u * 4u;
         status = rdp_rfx_ycbcr_to_bgra(y_coefficients,
                                        cb_coefficients,
                                        cr_coefficients,
-                                       pixels->bgra,
-                                       pixels->stride);
+                                       output.bgra,
+                                       output.stride);
     }
+    if (status == LIBRDP_STATUS_OK)
+        *pixels = output;
     return status;
 }
 
@@ -1206,6 +1209,7 @@ librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
                                                     rdp_rfx_tile_pixels* pixels)
 {
     rdp_rfx_progressive_tile_state next;
+    rdp_rfx_tile_pixels output;
     int32_t y_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cb_coefficients[RDP_RFX_TILE_COEFFICIENTS];
     int32_t cr_coefficients[RDP_RFX_TILE_COEFFICIENTS];
@@ -1216,7 +1220,7 @@ librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     next = *state;
-    memset(pixels, 0, sizeof(*pixels));
+    memset(&output, 0, sizeof(output));
     status = rdp_rfx_decode_progressive_component_state(y_data,
                                                         y_len,
                                                         "y",
@@ -1248,12 +1252,12 @@ librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
                                                             cr_coefficients);
     if (status == LIBRDP_STATUS_OK)
     {
-        pixels->stride = 64u * 4u;
+        output.stride = 64u * 4u;
         status = rdp_rfx_ycbcr_to_bgra(y_coefficients,
                                        cb_coefficients,
                                        cr_coefficients,
-                                       pixels->bgra,
-                                       pixels->stride);
+                                       output.bgra,
+                                       output.stride);
     }
     if (status == LIBRDP_STATUS_OK)
     {
@@ -1261,6 +1265,7 @@ librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
         next.extrapolate = extrapolate ? 1u : 0u;
         next.valid = 1;
         *state = next;
+        *pixels = output;
     }
     return status;
 }

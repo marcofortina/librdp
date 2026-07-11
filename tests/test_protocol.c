@@ -4505,6 +4505,22 @@ static int test_path_security_license_channels(void)
                                            &rfx_pixels) == LIBRDP_STATUS_OK);
     PCHECK(rfx_pixels.bgra[0] == 128 &&
            rfx_pixels.bgra[(63u * 64u * 4u) + (63u * 4u)] == 128);
+    rfx_saved_upgrade_pixels = rfx_pixels;
+    rfx_pixels.stride = 0x7777u;
+    rfx_pixels.bgra[0] = 0x5au;
+    PCHECK(rdp_rfx_decode_tile(RDP_RFX_RLGR1,
+                               rfx_zero_rlgr,
+                               1,
+                               rfx_zero_rlgr,
+                               sizeof(rfx_zero_rlgr),
+                               rfx_zero_rlgr,
+                               sizeof(rfx_zero_rlgr),
+                               &rfx_decode_quant,
+                               &rfx_decode_quant,
+                               &rfx_decode_quant,
+                               &rfx_pixels) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rfx_pixels.stride == 0x7777u && rfx_pixels.bgra[0] == 0x5au);
+    rfx_pixels = rfx_saved_upgrade_pixels;
     memset(&rfx_zero_delta, 0, sizeof(rfx_zero_delta));
     memset(&rfx_progressive_state, 0, sizeof(rfx_progressive_state));
     memset(&rfx_upgrade_pixels, 0, sizeof(rfx_upgrade_pixels));
@@ -4579,9 +4595,33 @@ static int test_path_security_license_channels(void)
            rfx_progressive_state.y.current[0] == 64 &&
            rfx_progressive_state.y.sign[0] == 1);
     rfx_saved_state = rfx_progressive_state;
-    rfx_saved_upgrade_pixels = rfx_upgrade_pixels;
+    rfx_saved_upgrade_pixels = rfx_pixels;
     rfx_bad_quant = rfx_decode_quant;
     rfx_bad_quant.ll3 = 0;
+    rfx_pixels.stride = 0x8888u;
+    rfx_pixels.bgra[0] = 0xa5u;
+    PCHECK(rdp_rfx_decode_progressive_tile_state(rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 rfx_zero_rlgr,
+                                                 sizeof(rfx_zero_rlgr),
+                                                 &rfx_bad_quant,
+                                                 &rfx_zero_delta,
+                                                 &rfx_decode_quant,
+                                                 &rfx_zero_delta,
+                                                 &rfx_decode_quant,
+                                                 &rfx_zero_delta,
+                                                 1,
+                                                 1,
+                                                 &rfx_progressive_state,
+                                                 &rfx_pixels) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rfx_progressive_state.pass == rfx_saved_state.pass &&
+           rfx_progressive_state.y.current[0] == rfx_saved_state.y.current[0] &&
+           rfx_pixels.stride == 0x8888u &&
+           rfx_pixels.bgra[0] == 0xa5u);
+    rfx_pixels = rfx_saved_upgrade_pixels;
+    rfx_saved_upgrade_pixels = rfx_upgrade_pixels;
     PCHECK(rdp_rfx_decode_progressive_upgrade_tile(NULL,
                                                    0,
                                                    NULL,
