@@ -115,6 +115,99 @@ void rdp_clearcodec_context_free(rdp_clearcodec_context* context)
     memset(context, 0, sizeof(*context));
 }
 
+static librdp_status rdp_clearcodec_clone_bytes(uint8_t** dest, const uint8_t* source, size_t length)
+{
+    if (!dest)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *dest = NULL;
+    if (!source || length == 0)
+        return LIBRDP_STATUS_OK;
+    *dest = (uint8_t*)malloc(length);
+    if (!*dest)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memcpy(*dest, source, length);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_clearcodec_clone_nscodec(rdp_nscodec_context* dest,
+                                                  const rdp_nscodec_context* source)
+{
+    size_t i = 0;
+
+    if (!dest || !source)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_nscodec_context_init(dest);
+    if (source->plane_capacity == 0)
+        return LIBRDP_STATUS_OK;
+    dest->plane_capacity = source->plane_capacity;
+    for (i = 0; i < 4u; i++)
+    {
+        dest->planes[i] = (uint8_t*)malloc(dest->plane_capacity);
+        if (!dest->planes[i])
+            return LIBRDP_STATUS_NO_MEMORY;
+        if (source->planes[i])
+            memcpy(dest->planes[i], source->planes[i], dest->plane_capacity);
+        else
+            memset(dest->planes[i], 0, dest->plane_capacity);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_clearcodec_context_clone(rdp_clearcodec_context* dest,
+                                                  const rdp_clearcodec_context* source)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    if (!dest || !source)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_clearcodec_context_init(dest);
+    status = rdp_clearcodec_clone_bytes(&dest->vbar_storage,
+                                        source->vbar_storage,
+                                        (size_t)RDP_CLEARCODEC_VBAR_STORAGE_ENTRIES *
+                                            RDP_CLEARCODEC_VBAR_STRIDE);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_clearcodec_clone_bytes(&dest->short_vbar_storage,
+                                            source->short_vbar_storage,
+                                            (size_t)RDP_CLEARCODEC_SHORT_VBAR_STORAGE_ENTRIES *
+                                                RDP_CLEARCODEC_VBAR_STRIDE);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_clearcodec_clone_bytes(&dest->vbar_lengths,
+                                            source->vbar_lengths,
+                                            RDP_CLEARCODEC_VBAR_STORAGE_ENTRIES);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_clearcodec_clone_bytes(&dest->short_vbar_lengths,
+                                            source->short_vbar_lengths,
+                                            RDP_CLEARCODEC_SHORT_VBAR_STORAGE_ENTRIES);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_clearcodec_clone_nscodec(&dest->nscodec, &source->nscodec);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_clearcodec_context_free(dest);
+        return status;
+    }
+    dest->vbar_cursor = source->vbar_cursor;
+    dest->short_vbar_cursor = source->short_vbar_cursor;
+    for (i = 0; i < RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES; i++)
+    {
+        dest->glyphs[i].pixel_count = source->glyphs[i].pixel_count;
+        if (source->glyphs[i].pixels.length > 0)
+        {
+            status = rdp_buffer_reserve(&dest->glyphs[i].pixels, source->glyphs[i].pixels.length);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_clearcodec_context_free(dest);
+                return status;
+            }
+            memcpy(dest->glyphs[i].pixels.data,
+                   source->glyphs[i].pixels.data,
+                   source->glyphs[i].pixels.length);
+            dest->glyphs[i].pixels.length = source->glyphs[i].pixels.length;
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_clearcodec_context_ensure_bands(rdp_clearcodec_context* context)
 {
     if (!context)
@@ -843,35 +936,64 @@ librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
 {
     rdp_clearcodec_stream stream;
     rdp_clearcodec_composite_payload payload;
+    rdp_clearcodec_context work;
+    rdp_buffer output;
     size_t row_stride = 0;
     size_t size = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!context || !data || !pixels || !stride || width == 0 || height == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_clearcodec_context_init(&work);
+    rdp_buffer_init(&output);
 
     status = rdp_clearcodec_parse_stream(data, length, &stream);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if ((stream.flags & RDP_CLEARCODEC_FLAG_CACHE_RESET) != 0)
-        rdp_clearcodec_context_reset(context);
     if ((stream.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0)
-        return rdp_clearcodec_copy_glyph(&context->glyphs[stream.glyph_index], width, height, pixels, stride);
+    {
+        if ((stream.flags & RDP_CLEARCODEC_FLAG_CACHE_RESET) == 0)
+            return rdp_clearcodec_copy_glyph(&context->glyphs[stream.glyph_index], width, height, pixels, stride);
+        status = rdp_clearcodec_context_clone(&work, context);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_clearcodec_context_reset(&work);
+        status = rdp_clearcodec_copy_glyph(&work.glyphs[stream.glyph_index], width, height, pixels, stride);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_clearcodec_context_free(&work);
+            return status;
+        }
+        rdp_clearcodec_context_free(context);
+        *context = work;
+        return LIBRDP_STATUS_OK;
+    }
     if (stream.payload_len == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     status = rdp_clearcodec_parse_composite_payload(stream.payload, stream.payload_len, &payload);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    status = rdp_clearcodec_context_clone(&work, context);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((stream.flags & RDP_CLEARCODEC_FLAG_CACHE_RESET) != 0)
+        rdp_clearcodec_context_reset(&work);
 
     row_stride = (size_t)width * 4u;
     if ((size_t)height > ((size_t)-1) / row_stride)
+    {
+        rdp_clearcodec_context_free(&work);
         return LIBRDP_STATUS_NO_MEMORY;
+    }
     size = row_stride * (size_t)height;
-    status = rdp_buffer_reserve(pixels, size);
+    status = rdp_buffer_reserve(&output, size);
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_clearcodec_context_free(&work);
         return status;
-    memset(pixels->data, 0, size);
-    pixels->length = size;
+    }
+    memset(output.data, 0, size);
+    output.length = size;
 
     if (payload.residual_len > 0)
     {
@@ -879,41 +1001,50 @@ librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
                                                 payload.residual_len,
                                                 width,
                                                 height,
-                                                pixels->data,
+                                                output.data,
                                                 row_stride);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            goto fail;
     }
     if (payload.bands_len > 0)
     {
-        status = rdp_clearcodec_decode_bands(context,
+        status = rdp_clearcodec_decode_bands(&work,
                                              payload.bands,
                                              payload.bands_len,
                                              width,
                                              height,
-                                             pixels->data,
+                                             output.data,
                                              row_stride);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            goto fail;
     }
     if (payload.subcodec_len > 0)
     {
-        status = rdp_clearcodec_decode_subcodecs(context,
+        status = rdp_clearcodec_decode_subcodecs(&work,
                                                  payload.subcodec,
                                                  payload.subcodec_len,
                                                  width,
                                                  height,
-                                                 pixels->data,
+                                                 output.data,
                                                  row_stride);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            goto fail;
     }
     if (stream.has_glyph_index)
     {
-        status = rdp_clearcodec_store_glyph(context, stream.glyph_index, width, height, pixels);
+        status = rdp_clearcodec_store_glyph(&work, stream.glyph_index, width, height, &output);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            goto fail;
     }
+    rdp_clearcodec_context_free(context);
+    *context = work;
+    rdp_buffer_free(pixels);
+    *pixels = output;
     *stride = row_stride;
     return LIBRDP_STATUS_OK;
+
+fail:
+    rdp_buffer_free(&output);
+    rdp_clearcodec_context_free(&work);
+    return status;
 }

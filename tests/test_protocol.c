@@ -3449,8 +3449,10 @@ static int test_path_security_license_channels(void)
     uint8_t standard_work2[8];
     uint8_t standard_update_work[4];
     uint8_t planar_saved[16];
+    uint8_t clear_saved[16];
     size_t decoded_stride = 0;
     size_t planar_saved_len = 0;
+    size_t clear_saved_len = 0;
     size_t pointer_stride = 0;
     size_t i = 0;
     uint16_t confirm_source_len = 0;
@@ -8466,6 +8468,9 @@ static int test_path_security_license_channels(void)
            clear_pixels.data[2] == 7 &&
            clear_pixels.data[12] == 9 &&
            clear_pixels.data[15] == 0xff);
+    clear_saved_len = clear_pixels.length;
+    PCHECK(clear_saved_len <= sizeof(clear_saved));
+    memcpy(clear_saved, clear_pixels.data, clear_saved_len);
     clear_pixels.length = 0;
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_glyph_hit,
@@ -8485,6 +8490,15 @@ static int test_path_security_license_channels(void)
                                         2,
                                         &clear_pixels,
                                         &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
+                                        clear_glyph_hit,
+                                        sizeof(clear_glyph_hit),
+                                        2,
+                                        2,
+                                        &clear_pixels,
+                                        &decoded_stride) == LIBRDP_STATUS_OK);
+    PCHECK(clear_pixels.length == clear_saved_len &&
+           memcmp(clear_pixels.data, clear_saved, clear_saved_len) == 0);
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_missing_glyph_hit,
                                         sizeof(clear_missing_glyph_hit),
@@ -8513,6 +8527,8 @@ static int test_path_security_license_channels(void)
                                         2,
                                         &clear_pixels,
                                         &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(clear_pixels.length == clear_saved_len &&
+           memcmp(clear_pixels.data, clear_saved, clear_saved_len) == 0);
     PCHECK(rdp_clipboard_parse_packet(clip, sizeof(clip), &cb) == LIBRDP_STATUS_OK);
     PCHECK(cb.type == 1 && cb.flags == 2 && cb.payload_len == 3 && cb.payload[0] == 4);
     PCHECK(rdp_clipboard_parse_packet(clip_caps, sizeof(clip_caps), &cb) == LIBRDP_STATUS_OK);
