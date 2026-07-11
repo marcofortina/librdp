@@ -18151,7 +18151,9 @@ static int test_udp_transport(void)
     uint8_t cookie_hash[32];
     rdp_udp_fec_header fec;
     rdp_udp_syn_data syn;
+    rdp_udp_payload_prefix payload_prefix;
     rdp_udp_ack_vector ack_vector;
+    rdp_udp_ack_of_ack_vector ack_of_ack;
     rdp_udp_correlation_id correlation;
     rdp_udp_syn_data_ex syn_ex;
     rdp_udp2_header udp2_header;
@@ -18205,6 +18207,14 @@ static int test_udp_transport(void)
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
+    PCHECK(rdp_udp_write_payload_prefix(&buffer, 0x1234u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_udp_parse_payload_prefix(buffer.data, buffer.length, &payload_prefix) == LIBRDP_STATUS_OK);
+    PCHECK(payload_prefix.payload_size == 0x1234u);
+    PCHECK(rdp_udp_write_payload_prefix(NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 2u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
     PCHECK(rdp_udp_write_ack_vector(&buffer, ack_payload, sizeof(ack_payload)) == LIBRDP_STATUS_OK);
     PCHECK(buffer.length == 8u);
     PCHECK(rdp_udp_parse_ack_vector(buffer.data, buffer.length, &ack_vector) == LIBRDP_STATUS_OK);
@@ -18229,6 +18239,18 @@ static int test_udp_transport(void)
     PCHECK(rdp_udp_parse_ack_vector(buffer.data, buffer.length, &ack_vector) == LIBRDP_STATUS_OK);
     PCHECK(rdp_udp_ack_vector_count(&ack_vector, &received, &pending) == LIBRDP_STATUS_OK);
     PCHECK(received == 1u && pending == 2u);
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+
+    memset(&ack_of_ack, 0, sizeof(ack_of_ack));
+    ack_of_ack.reset_sequence_number = 0x10203040u;
+    PCHECK(rdp_udp_write_ack_of_ack_vector(&buffer, &ack_of_ack) == LIBRDP_STATUS_OK);
+    memset(&ack_of_ack, 0, sizeof(ack_of_ack));
+    PCHECK(rdp_udp_parse_ack_of_ack_vector(buffer.data, buffer.length, &ack_of_ack) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(ack_of_ack.reset_sequence_number == 0x10203040u);
+    PCHECK(rdp_udp_write_ack_of_ack_vector(NULL, &ack_of_ack) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(buffer.length == 4u);
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
