@@ -21,6 +21,15 @@ static int rdp_multiparty_valid_share_flags(uint16_t flags, uint16_t allowed)
     return (flags & (uint16_t)~allowed) == 0;
 }
 
+static librdp_status rdp_multiparty_restore_on_error(rdp_buffer* buffer,
+                                                     size_t start,
+                                                     librdp_status status)
+{
+    if (status != LIBRDP_STATUS_OK && buffer)
+        buffer->length = start;
+    return status;
+}
+
 static librdp_status rdp_multiparty_parse_exact_header(const void* data,
                                                        size_t length,
                                                        uint16_t expected_type,
@@ -57,13 +66,16 @@ librdp_status rdp_multiparty_parse_header(const void* data, size_t length, rdp_m
 librdp_status rdp_multiparty_write_header(rdp_buffer* buffer, uint16_t type, uint16_t payload_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_multiparty_valid_type(type) || payload_len > UINT16_MAX - 4u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len + 4u));
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u16_le(buffer, (uint16_t)(payload_len + 4u));
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_message(const void* data,
@@ -153,13 +165,16 @@ librdp_status rdp_multiparty_write_string(rdp_buffer* buffer, const uint8_t* utf
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t byte_count = (size_t)char_count * 2u;
+    size_t start = 0;
 
     if (!buffer || char_count > RDP_MULTIPARTY_STRING_MAX_CHARS || (!utf16 && char_count > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u16_le(buffer, char_count);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, utf16, byte_count);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, utf16, byte_count);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_filter_state(const void* data,
@@ -187,13 +202,16 @@ librdp_status rdp_multiparty_parse_filter_state(const void* data,
 librdp_status rdp_multiparty_write_filter_state(rdp_buffer* buffer, uint8_t flags)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !rdp_multiparty_valid_filter_flags(flags))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer, RDP_MULTIPARTY_TYPE_FILTER_STATE_UPDATED, 1u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u8(buffer, flags);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u8(buffer, flags);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_app_created(const void* data,
@@ -233,22 +251,27 @@ librdp_status rdp_multiparty_write_app_created(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t payload_len = 8u + (size_t)name_chars * 2u;
+    size_t start = 0;
 
     if (!buffer || !rdp_multiparty_valid_share_flags(flags, RDP_MULTIPARTY_APPLICATION_SHARED) ||
+        name_chars > RDP_MULTIPARTY_STRING_MAX_CHARS ||
+        (!name_utf16 && name_chars > 0) ||
         payload_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer,
                                          RDP_MULTIPARTY_TYPE_APP_CREATED,
                                          (uint16_t)payload_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, app_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_id_message(const void* data,
@@ -274,15 +297,18 @@ librdp_status rdp_multiparty_parse_id_message(const void* data,
 librdp_status rdp_multiparty_write_id_message(rdp_buffer* buffer, uint16_t type, uint32_t id)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || (type != RDP_MULTIPARTY_TYPE_APP_REMOVED &&
                     type != RDP_MULTIPARTY_TYPE_WND_REMOVED &&
                     type != RDP_MULTIPARTY_TYPE_WND_SHOW))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer, type, 4u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, id);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, id);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_window_created(const void* data,
@@ -324,25 +350,30 @@ librdp_status rdp_multiparty_write_window_created(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t payload_len = 12u + (size_t)name_chars * 2u;
+    size_t start = 0;
 
     if (!buffer || !rdp_multiparty_valid_share_flags(flags, RDP_MULTIPARTY_WINDOW_SHARED) ||
+        name_chars > RDP_MULTIPARTY_STRING_MAX_CHARS ||
+        (!name_utf16 && name_chars > 0) ||
         payload_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer,
                                          RDP_MULTIPARTY_TYPE_WND_CREATED,
                                          (uint16_t)payload_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, app_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, window_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_region_update(const void* data,
@@ -378,22 +409,25 @@ librdp_status rdp_multiparty_write_region_update(rdp_buffer* buffer,
                                                  uint32_t bottom)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || right < left || bottom < top)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer, RDP_MULTIPARTY_TYPE_WND_REGION_UPDATE, 16u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, left);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, top);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, right);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, bottom);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, bottom);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_participant_created(
@@ -439,29 +473,34 @@ librdp_status rdp_multiparty_write_participant_created(rdp_buffer* buffer,
 {
     librdp_status status = LIBRDP_STATUS_OK;
     size_t payload_len = 12u + (size_t)name_chars * 2u;
+    size_t start = 0;
 
     if (!buffer ||
         !rdp_multiparty_valid_share_flags(flags,
                                           RDP_MULTIPARTY_MAY_VIEW |
                                           RDP_MULTIPARTY_MAY_INTERACT |
                                           RDP_MULTIPARTY_IS_PARTICIPANT) ||
+        name_chars > RDP_MULTIPARTY_STRING_MAX_CHARS ||
+        (!name_utf16 && name_chars > 0) ||
         payload_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer,
                                          RDP_MULTIPARTY_TYPE_PARTICIPANT_CREATED,
                                          (uint16_t)payload_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, participant_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, group_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_multiparty_write_string(buffer, name_utf16, name_chars);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_participant_removed(
@@ -494,19 +533,22 @@ librdp_status rdp_multiparty_write_participant_removed(rdp_buffer* buffer,
                                                        uint32_t disconnect_code)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer, RDP_MULTIPARTY_TYPE_PARTICIPANT_REMOVED, 12u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, participant_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, disconnect_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, disconnect_code);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, disconnect_code);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_control_change(const void* data,
@@ -540,6 +582,7 @@ librdp_status rdp_multiparty_write_control_change(rdp_buffer* buffer,
                                                   uint32_t participant_id)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer ||
         !rdp_multiparty_valid_share_flags(flags,
@@ -547,13 +590,15 @@ librdp_status rdp_multiparty_write_control_change(rdp_buffer* buffer,
                                           RDP_MULTIPARTY_REQUEST_INTERACT |
                                           RDP_MULTIPARTY_ALLOW_CONTROL_REQUESTS))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer, RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGED, 6u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, participant_id);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, participant_id);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_control_change_response(
@@ -590,6 +635,7 @@ librdp_status rdp_multiparty_write_control_change_response(rdp_buffer* buffer,
                                                            uint32_t reason_code)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer ||
         !rdp_multiparty_valid_share_flags(flags,
@@ -597,18 +643,20 @@ librdp_status rdp_multiparty_write_control_change_response(rdp_buffer* buffer,
                                           RDP_MULTIPARTY_REQUEST_INTERACT |
                                           RDP_MULTIPARTY_ALLOW_CONTROL_REQUESTS))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_multiparty_write_header(buffer,
                                          RDP_MULTIPARTY_TYPE_PARTICIPANT_CTRL_CHANGE_RESPONSE,
                                          10u);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_multiparty_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, participant_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, reason_code);
+        return rdp_multiparty_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, reason_code);
+    return rdp_multiparty_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_multiparty_parse_empty(const void* data, size_t length, uint16_t expected_type)
