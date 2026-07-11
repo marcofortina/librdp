@@ -5759,6 +5759,16 @@ static int test_path_security_license_channels(void)
            license_request.key_exchange_list.length == 4 &&
            license_request.scope_list.count == 1 &&
            license_request.scope_list.scopes[0].length == sizeof(license_scope));
+    {
+        rdp_license_server_request valid_license_request = license_request;
+
+        PCHECK(rdp_license_parse_server_request(license_packet.data,
+                                                license_packet.length - 1u,
+                                                &license_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&license_request,
+                      &valid_license_request,
+                      sizeof(license_request)) == 0);
+    }
     rdp_license_client_state_init(&license_state);
     PCHECK(rdp_license_classify_message(license_packet.data,
                                         license_packet.length,
@@ -5768,9 +5778,6 @@ static int test_path_security_license_channels(void)
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                          license_message_type) == LIBRDP_STATUS_OK);
     PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED);
-    PCHECK(rdp_license_parse_server_request(license_packet.data,
-                                            license_packet.length - 1u,
-                                            &license_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
     license_packet.length = 0;
     license_payload.length = 0;
     PCHECK(rdp_buffer_append_u32_le(&license_payload, 0u) == LIBRDP_STATUS_OK);
@@ -5790,6 +5797,16 @@ static int test_path_security_license_channels(void)
                                                 &license_challenge) == LIBRDP_STATUS_OK);
     PCHECK(license_challenge.encrypted_challenge.length == 2 &&
            license_challenge.encrypted_challenge.data[1] == 0xbb);
+    {
+        rdp_license_platform_challenge valid_license_challenge = license_challenge;
+
+        PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
+                                                    license_packet.length - 1u,
+                                                    &license_challenge) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&license_challenge,
+                      &valid_license_challenge,
+                      sizeof(license_challenge)) == 0);
+    }
     PCHECK(rdp_license_client_state_step(&license_state,
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                          RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE) ==
@@ -5811,6 +5828,14 @@ static int test_path_security_license_channels(void)
                                             license_packet.length,
                                             &license_new) == LIBRDP_STATUS_OK);
     PCHECK(license_new.encrypted_license_info.type == RDP_LICENSE_BLOB_ENCRYPTED_DATA);
+    {
+        rdp_license_new_or_upgrade valid_license_new = license_new;
+
+        PCHECK(rdp_license_parse_new_or_upgrade(license_packet.data,
+                                                license_packet.length - 1u,
+                                                &license_new) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&license_new, &valid_license_new, sizeof(license_new)) == 0);
+    }
     license_packet.length = 0;
     PCHECK(rdp_buffer_append_u32_le(&license_packet, 1u) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append_u32_le(&license_packet, (uint32_t)sizeof(license_scope)) == LIBRDP_STATUS_OK);
@@ -5826,6 +5851,16 @@ static int test_path_security_license_channels(void)
                                               &license_info) == LIBRDP_STATUS_OK);
     PCHECK(license_info.scope_len == sizeof(license_scope) &&
            license_info.license_info_len == sizeof(license_cal));
+    {
+        rdp_license_new_license_info valid_license_info = license_info;
+
+        PCHECK(rdp_buffer_append_u8(&license_packet, 0xaau) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_license_parse_new_license_info(license_packet.data,
+                                                  license_packet.length,
+                                                  &license_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&license_info, &valid_license_info, sizeof(license_info)) == 0);
+        license_packet.length--;
+    }
     memset(&license_cert_info, 0, sizeof(license_cert_info));
     license_cert_info.version = 1;
     license_cert_info.license_count = 2;
@@ -5851,11 +5886,18 @@ static int test_path_security_license_channels(void)
            parsed_license_cert_info.adjusted_product_id[4] == 'A' &&
            parsed_license_cert_info.version_info.major_version == 10 &&
            (parsed_license_cert_info.version_info.flags & RDP_LICENSE_PRODUCT_INFO_RTM_LICENSE));
-    license_packet.data[27] = 2;
-    PCHECK(rdp_license_parse_product_certificate_info(license_packet.data,
-                                                      license_packet.length,
-                                                      &parsed_license_cert_info) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_license_product_certificate_info valid_license_cert_info = parsed_license_cert_info;
+
+        license_packet.data[27] = 2;
+        PCHECK(rdp_license_parse_product_certificate_info(license_packet.data,
+                                                          license_packet.length,
+                                                          &parsed_license_cert_info) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&parsed_license_cert_info,
+                      &valid_license_cert_info,
+                      sizeof(parsed_license_cert_info)) == 0);
+    }
     license_packet.length = 0;
 
     memset(&license_server_info, 0, sizeof(license_server_info));
@@ -5872,10 +5914,17 @@ static int test_path_security_license_channels(void)
            parsed_license_server_info.issuer_name_len == sizeof(license_issuer_name) &&
            parsed_license_server_info.scope_len == sizeof(license_issuer_scope) &&
            !parsed_license_server_info.has_issuer_id);
-    license_packet.data[6] = 0;
-    PCHECK(rdp_license_parse_server_info(license_packet.data,
-                                         license_packet.length,
-                                         &parsed_license_server_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_license_server_info valid_license_server_info = parsed_license_server_info;
+
+        license_packet.data[6] = 0;
+        PCHECK(rdp_license_parse_server_info(license_packet.data,
+                                             license_packet.length,
+                                             &parsed_license_server_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&parsed_license_server_info,
+                      &valid_license_server_info,
+                      sizeof(parsed_license_server_info)) == 0);
+    }
     license_packet.length = 0;
 
     license_server_info.issuer_id = license_issuer_id;
@@ -5889,10 +5938,17 @@ static int test_path_security_license_channels(void)
     PCHECK(parsed_license_server_info.version == RDP_LICENSE_SERVER_INFO_VERSION_2 &&
            parsed_license_server_info.has_issuer_id &&
            parsed_license_server_info.issuer_id_len == sizeof(license_issuer_id));
-    license_packet.data[10 + sizeof(license_issuer_name) - 1u] = 1;
-    PCHECK(rdp_license_parse_server_info(license_packet.data,
-                                         license_packet.length,
-                                         &parsed_license_server_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_license_server_info valid_license_server_info = parsed_license_server_info;
+
+        license_packet.data[10 + sizeof(license_issuer_name) - 1u] = 1;
+        PCHECK(rdp_license_parse_server_info(license_packet.data,
+                                             license_packet.length,
+                                             &parsed_license_server_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&parsed_license_server_info,
+                      &valid_license_server_info,
+                      sizeof(parsed_license_server_info)) == 0);
+    }
     license_packet.length = 0;
 
     PCHECK(rdp_license_write_error_alert(&license_packet,
