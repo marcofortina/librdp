@@ -3,6 +3,11 @@
 #include "channels/device_redirection.h"
 #include "common/stream.h"
 
+#ifdef RDP_HAVE_ARCHIVE
+#include <archive.h>
+#include <archive_entry.h>
+#endif
+
 #include <string.h>
 
 #define RDP_PRINTER_REDIRECTION_ANNOUNCE_FIXED_LENGTH 24u
@@ -55,6 +60,39 @@ static int rdp_printer_redirection_contains_bytes(const uint8_t* data,
 
 static int rdp_printer_redirection_zip_is_xps(const uint8_t* data, size_t length)
 {
+#ifdef RDP_HAVE_ARCHIVE
+    struct archive* archive = NULL;
+    struct archive_entry* entry = NULL;
+    int has_content_types = 0;
+    int has_fixed_sequence = 0;
+
+    if (!data || length < 4u || memcmp(data, "PK\003\004", 4u) != 0)
+        return 0;
+    archive = archive_read_new();
+    if (archive)
+    {
+        (void)archive_read_support_filter_none(archive);
+        (void)archive_read_support_format_zip(archive);
+        if (archive_read_open_memory(archive, data, length) == ARCHIVE_OK)
+        {
+            while (archive_read_next_header(archive, &entry) == ARCHIVE_OK)
+            {
+                const char* path = archive_entry_pathname(entry);
+
+                if (path && strcmp(path, "[Content_Types].xml") == 0)
+                    has_content_types = 1;
+                if (path && strstr(path, "FixedDocumentSequence") != NULL)
+                    has_fixed_sequence = 1;
+                if (has_content_types && has_fixed_sequence)
+                    break;
+                (void)archive_read_data_skip(archive);
+            }
+        }
+        (void)archive_read_free(archive);
+        if (has_content_types && has_fixed_sequence)
+            return 1;
+    }
+#endif
     return length >= 4u &&
            memcmp(data, "PK\003\004", 4u) == 0 &&
            (rdp_printer_redirection_contains_bytes(data,
