@@ -104,6 +104,7 @@ static librdp_status rdp_nscodec_ensure_planes(rdp_nscodec_context* context, siz
 
 librdp_status rdp_nscodec_parse_capability(const void* data, size_t length, rdp_nscodec_capability* capability)
 {
+    rdp_nscodec_capability parsed;
     const uint8_t* bytes = (const uint8_t*)data;
 
     if (!data || !capability)
@@ -111,15 +112,16 @@ librdp_status rdp_nscodec_parse_capability(const void* data, size_t length, rdp_
     if (length != RDP_NSCODEC_CAPABILITY_LENGTH)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(capability, 0, sizeof(*capability));
-    capability->allow_dynamic_fidelity = bytes[0];
-    capability->allow_subsampling = bytes[1];
-    capability->color_loss_level = bytes[2];
-    if (capability->allow_dynamic_fidelity > 1u ||
-        capability->allow_subsampling > 1u ||
-        capability->color_loss_level < 1u ||
-        capability->color_loss_level > 7u)
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.allow_dynamic_fidelity = bytes[0];
+    parsed.allow_subsampling = bytes[1];
+    parsed.color_loss_level = bytes[2];
+    if (parsed.allow_dynamic_fidelity > 1u ||
+        parsed.allow_subsampling > 1u ||
+        parsed.color_loss_level < 1u ||
+        parsed.color_loss_level > 7u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *capability = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -160,6 +162,7 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
                                        uint32_t height,
                                        rdp_nscodec_stream* stream)
 {
+    rdp_nscodec_stream parsed;
     rdp_stream input;
     const uint8_t* planes = NULL;
     uint16_t reserved = 0;
@@ -175,24 +178,24 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
     if (width == 0 || height == 0 || length < RDP_NSCODEC_STREAM_HEADER_LENGTH)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(stream, 0, sizeof(*stream));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&input, data, length);
-    if (rdp_stream_read_u32_le(&input, &stream->luma_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&input, &stream->orange_chroma_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&input, &stream->green_chroma_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&input, &stream->alpha_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&input, &stream->color_loss_level) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&input, &stream->chroma_subsampling_level) != LIBRDP_STATUS_OK ||
+    if (rdp_stream_read_u32_le(&input, &parsed.luma_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&input, &parsed.orange_chroma_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&input, &parsed.green_chroma_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&input, &parsed.alpha_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&input, &parsed.color_loss_level) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&input, &parsed.chroma_subsampling_level) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&input, &reserved) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)reserved;
 
-    if (stream->luma_len == 0 ||
-        stream->orange_chroma_len == 0 ||
-        stream->green_chroma_len == 0 ||
-        stream->color_loss_level < 1u ||
-        stream->color_loss_level > 7u ||
-        stream->chroma_subsampling_level > 1u ||
+    if (parsed.luma_len == 0 ||
+        parsed.orange_chroma_len == 0 ||
+        parsed.green_chroma_len == 0 ||
+        parsed.color_loss_level < 1u ||
+        parsed.color_loss_level > 7u ||
+        parsed.chroma_subsampling_level > 1u ||
         reserved != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
@@ -201,53 +204,54 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
         rounded_width < width || rounded_height < height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    if (stream->chroma_subsampling_level)
+    if (parsed.chroma_subsampling_level)
     {
-        stream->luma_width = rounded_width;
-        stream->luma_height = height;
-        stream->chroma_width = rounded_width / 2u;
-        stream->chroma_height = rounded_height / 2u;
+        parsed.luma_width = rounded_width;
+        parsed.luma_height = height;
+        parsed.chroma_width = rounded_width / 2u;
+        parsed.chroma_height = rounded_height / 2u;
     }
     else
     {
-        stream->luma_width = width;
-        stream->luma_height = height;
-        stream->chroma_width = width;
-        stream->chroma_height = height;
+        parsed.luma_width = width;
+        parsed.luma_height = height;
+        parsed.chroma_width = width;
+        parsed.chroma_height = height;
     }
-    stream->alpha_width = width;
-    stream->alpha_height = height;
+    parsed.alpha_width = width;
+    parsed.alpha_height = height;
 
-    if (rdp_nscodec_plane_size(stream->luma_width, stream->luma_height, &luma_expected) != LIBRDP_STATUS_OK ||
-        rdp_nscodec_plane_size(stream->chroma_width, stream->chroma_height, &chroma_expected) != LIBRDP_STATUS_OK ||
-        rdp_nscodec_plane_size(stream->alpha_width, stream->alpha_height, &alpha_expected) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    if (stream->luma_len > luma_expected ||
-        stream->orange_chroma_len > chroma_expected ||
-        stream->green_chroma_len > chroma_expected ||
-        stream->alpha_len > alpha_expected)
+    if (rdp_nscodec_plane_size(parsed.luma_width, parsed.luma_height, &luma_expected) != LIBRDP_STATUS_OK ||
+        rdp_nscodec_plane_size(parsed.chroma_width, parsed.chroma_height, &chroma_expected) != LIBRDP_STATUS_OK ||
+        rdp_nscodec_plane_size(parsed.alpha_width, parsed.alpha_height, &alpha_expected) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    total = (size_t)stream->luma_len;
-    if ((size_t)stream->orange_chroma_len > ((size_t)-1) - total)
+    if (parsed.luma_len > luma_expected ||
+        parsed.orange_chroma_len > chroma_expected ||
+        parsed.green_chroma_len > chroma_expected ||
+        parsed.alpha_len > alpha_expected)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    total += (size_t)stream->orange_chroma_len;
-    if ((size_t)stream->green_chroma_len > ((size_t)-1) - total)
+
+    total = (size_t)parsed.luma_len;
+    if ((size_t)parsed.orange_chroma_len > ((size_t)-1) - total)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    total += (size_t)stream->green_chroma_len;
-    if ((size_t)stream->alpha_len > ((size_t)-1) - total)
+    total += (size_t)parsed.orange_chroma_len;
+    if ((size_t)parsed.green_chroma_len > ((size_t)-1) - total)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    total += (size_t)stream->alpha_len;
+    total += (size_t)parsed.green_chroma_len;
+    if ((size_t)parsed.alpha_len > ((size_t)-1) - total)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total += (size_t)parsed.alpha_len;
     if (total != length - RDP_NSCODEC_STREAM_HEADER_LENGTH)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if (rdp_stream_read_bytes(&input, &planes, total) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    stream->luma = planes;
-    stream->orange_chroma = stream->luma + stream->luma_len;
-    stream->green_chroma = stream->orange_chroma + stream->orange_chroma_len;
-    stream->alpha = stream->alpha_len > 0 ? stream->green_chroma + stream->green_chroma_len : NULL;
+    parsed.luma = planes;
+    parsed.orange_chroma = parsed.luma + parsed.luma_len;
+    parsed.green_chroma = parsed.orange_chroma + parsed.orange_chroma_len;
+    parsed.alpha = parsed.alpha_len > 0 ? parsed.green_chroma + parsed.green_chroma_len : NULL;
+    *stream = parsed;
     return LIBRDP_STATUS_OK;
 }
 

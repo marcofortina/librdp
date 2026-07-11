@@ -4953,9 +4953,16 @@ static int test_path_security_license_channels(void)
     PCHECK(nscodec_capability.allow_dynamic_fidelity == 1 &&
            nscodec_capability.allow_subsampling == 1 &&
            nscodec_capability.color_loss_level == 7);
-    PCHECK(rdp_nscodec_parse_capability(nscodec_bad_capability_data,
-                                        sizeof(nscodec_bad_capability_data),
-                                        &nscodec_capability) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_nscodec_capability valid_nscodec_capability = nscodec_capability;
+
+        PCHECK(rdp_nscodec_parse_capability(nscodec_bad_capability_data,
+                                            sizeof(nscodec_bad_capability_data),
+                                            &nscodec_capability) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&nscodec_capability,
+                      &valid_nscodec_capability,
+                      sizeof(nscodec_capability)) == 0);
+    }
     PCHECK(rdp_nscodec_write_capability(&nscodec_capability_buffer,
                                         &(rdp_nscodec_capability){1, 0, 3}) == LIBRDP_STATUS_OK);
     PCHECK(nscodec_capability_buffer.length == 3 &&
@@ -4979,6 +4986,22 @@ static int test_path_security_license_channels(void)
            nscodec_stream.green_chroma_len == 1 &&
            nscodec_stream.alpha_len == 1 &&
            nscodec_stream.luma[0] == 100);
+    {
+        rdp_nscodec_stream valid_nscodec_stream = nscodec_stream;
+
+        PCHECK(rdp_nscodec_parse_stream(nscodec_invalid_stream,
+                                        sizeof(nscodec_invalid_stream),
+                                        1,
+                                        1,
+                                        &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&nscodec_stream, &valid_nscodec_stream, sizeof(nscodec_stream)) == 0);
+        PCHECK(rdp_nscodec_parse_stream(nscodec_bad_reserved,
+                                        sizeof(nscodec_bad_reserved),
+                                        1,
+                                        1,
+                                        &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&nscodec_stream, &valid_nscodec_stream, sizeof(nscodec_stream)) == 0);
+    }
     PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
                                      nscodec_raw_argb,
                                      sizeof(nscodec_raw_argb),
@@ -5037,16 +5060,6 @@ static int test_path_security_license_channels(void)
            nscodec_pixels.data[3] == 0xff &&
            nscodec_pixels.data[32] == 100 &&
            nscodec_pixels.data[35] == 0xff);
-    PCHECK(rdp_nscodec_parse_stream(nscodec_invalid_stream,
-                                    sizeof(nscodec_invalid_stream),
-                                    1,
-                                    1,
-                                    &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_nscodec_parse_stream(nscodec_bad_reserved,
-                                    sizeof(nscodec_bad_reserved),
-                                    1,
-                                    1,
-                                    &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
     {
         size_t nscodec_capacity_before = nscodec_context.plane_capacity;
         uint8_t nscodec_luma_before = nscodec_context.planes[0][0];
