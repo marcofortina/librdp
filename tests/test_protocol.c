@@ -2384,6 +2384,20 @@ static int test_path_security_license_channels(void)
         0x04, 0x00, 0x00, 0x00,
         0x30, 0x00, 0x00, 0x00
     };
+    const uint8_t graphics_capset_trailing[] = {
+        0x02, 0x00, 0x0a, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0xef, 0xbe, 0xad, 0xde
+    };
+    const uint8_t graphics_confirm_trailing_capset[] = {
+        0x13, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x04, 0x00, 0x08, 0x00,
+        0x04, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0xef, 0xbe, 0xad, 0xde
+    };
     const uint8_t graphics_segment_single[] = {
         0xe0, 0x04,
         0x13, 0x00, 0x00, 0x00,
@@ -6677,18 +6691,18 @@ static int test_path_security_license_channels(void)
     PCHECK(test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
     PCHECK(test_read_u32_le(dyn_response.data + 4) == dyn_response.length);
     PCHECK(test_read_u16_le(dyn_response.data + 8) == (dyn_response.length == 46 ? 3 : 2));
-    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 10, dyn_response.length - 10, &graphics_capset) ==
+    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 10, 12, &graphics_capset) ==
            LIBRDP_STATUS_OK);
     PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_8 &&
            (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
-    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 22, dyn_response.length - 22, &graphics_capset) ==
+    PCHECK(rdp_graphics_parse_capset(dyn_response.data + 22, 12, &graphics_capset) ==
            LIBRDP_STATUS_OK);
     if (dyn_response.length == 46)
     {
         PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_81 &&
                (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0 &&
                (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED) != 0);
-        PCHECK(rdp_graphics_parse_capset(dyn_response.data + 34, dyn_response.length - 34, &graphics_capset) ==
+        PCHECK(rdp_graphics_parse_capset(dyn_response.data + 34, 12, &graphics_capset) ==
                LIBRDP_STATUS_OK);
         PCHECK(graphics_capset.version == RDP_GRAPHICS_CAPVERSION_10 &&
                (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0 &&
@@ -6715,6 +6729,9 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_graphics_parse_capset(graphics_capset_conflicting_avc,
                                      sizeof(graphics_capset_conflicting_avc),
                                      &graphics_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_graphics_parse_capset(graphics_capset_trailing,
+                                     sizeof(graphics_capset_trailing),
+                                     &graphics_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5) == LIBRDP_STATUS_OK);
@@ -6732,6 +6749,9 @@ static int test_path_security_license_channels(void)
            LIBRDP_STATUS_OK);
     PCHECK(graphics_caps_confirm.selected.version == RDP_GRAPHICS_CAPVERSION_8);
     PCHECK((graphics_caps_confirm.selected.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0);
+    PCHECK(rdp_graphics_parse_caps_confirm(graphics_confirm_trailing_capset,
+                                           sizeof(graphics_confirm_trailing_capset),
+                                           &graphics_caps_confirm) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_graphics_decode_segmented_data(&graphics_decompressor,
                                               graphics_segment_single,
                                               sizeof(graphics_segment_single),

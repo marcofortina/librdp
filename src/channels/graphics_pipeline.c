@@ -462,7 +462,7 @@ librdp_status rdp_graphics_parse_capset(const void* data, size_t length, rdp_gra
     if (rdp_stream_read_u32_le(&stream, &capset->version) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &caps_data_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (caps_data_length != 4u || length < 8u + caps_data_length)
+    if (caps_data_length != 4u || length != 8u + caps_data_length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_u32_le(&stream, &capset->flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
