@@ -1212,34 +1212,37 @@ librdp_status rdp_gdi_write_create_ninegrid_bitmap_order(rdp_buffer* buffer,
                                                          const rdp_gdi_create_ninegrid_bitmap_order* order)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !order || order->bits_per_pixel == 0 || order->bits_per_pixel > 32u ||
         order->bitmap_id > UINT16_MAX || order->info.left_width > UINT16_MAX ||
         order->info.right_width > UINT16_MAX || order->info.top_height > UINT16_MAX ||
         order->info.bottom_height > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, (uint8_t)order->bits_per_pixel);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_id);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, order->info.flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->info.left_width);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->info.right_width);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->info.top_height);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->info.bottom_height);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u32_le(buffer, order->info.transparent_color);
+        return rdp_gdi_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u32_le(buffer, order->info.transparent_color);
+    return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_gdi_parse_create_offscreen_bitmap_order(
@@ -1295,34 +1298,36 @@ librdp_status rdp_gdi_write_create_offscreen_bitmap_order(
     uint16_t flags = 0;
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !order || order->bitmap_id > 0x7fffu ||
         order->width == 0 || order->width > UINT16_MAX ||
         order->height == 0 || order->height > UINT16_MAX ||
         order->delete_count > RDP_GDI_MAX_OFFSCREEN_DELETE_INDICES)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     flags = (uint16_t)order->bitmap_id;
     if (order->delete_count > 0)
         flags |= 0x8000u;
     status = rdp_buffer_append_u16_le(buffer, flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->width);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->height);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     if (order->delete_count == 0)
         return LIBRDP_STATUS_OK;
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->delete_count);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     for (i = 0; i < order->delete_count; i++)
     {
         status = rdp_buffer_append_u16_le(buffer, order->delete_indices[i]);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_gdi_restore_on_error(buffer, start, status);
     }
     return LIBRDP_STATUS_OK;
 }
@@ -1447,6 +1452,7 @@ librdp_status rdp_gdi_write_stream_bitmap_first_order(
     const rdp_gdi_stream_bitmap_first_order* order)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !order || (!order->bitmap_block && order->bitmap_block_len > 0) ||
         order->flags > UINT8_MAX || order->bits_per_pixel == 0 || order->bits_per_pixel > 32u ||
@@ -1457,31 +1463,33 @@ librdp_status rdp_gdi_write_stream_bitmap_first_order(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((order->flags & RDP_GDI_STREAM_BITMAP_V2) == 0 && order->bitmap_size > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, (uint8_t)order->flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u8(buffer, (uint8_t)order->bits_per_pixel);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->width);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->height);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     if ((order->flags & RDP_GDI_STREAM_BITMAP_V2) != 0)
         status = rdp_buffer_append_u32_le(buffer, order->bitmap_size);
     else
         status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_size);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_block_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+        return rdp_gdi_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+    return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_gdi_parse_stream_bitmap_next_order(
@@ -1522,21 +1530,24 @@ librdp_status rdp_gdi_write_stream_bitmap_next_order(
     const rdp_gdi_stream_bitmap_next_order* order)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !order || (!order->bitmap_block && order->bitmap_block_len > 0) ||
         order->flags > UINT8_MAX || order->bitmap_type > UINT16_MAX ||
         order->bitmap_block_len > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_buffer_append_u8(buffer, (uint8_t)order->flags);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_type);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, (uint16_t)order->bitmap_block_len);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+        return rdp_gdi_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append(buffer, order->bitmap_block, order->bitmap_block_len);
+    return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_gdi_parse_order_list(const void* data,
@@ -1750,18 +1761,21 @@ librdp_status rdp_gdi_write_color_cache_capability(
     const rdp_gdi_color_cache_capability* capability)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !capability)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_gdi_write_capability_header(buffer,
                                              RDP_GDI_CAPSTYPE_COLOR_CACHE,
                                              RDP_GDI_COLOR_CACHE_CAPABILITY_LENGTH);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, capability->color_table_cache_size);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, 0);
+        return rdp_gdi_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u16_le(buffer, 0);
+    return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_gdi_parse_ninegrid_capability(const void* data,
@@ -1795,24 +1809,27 @@ librdp_status rdp_gdi_write_ninegrid_capability(
     const rdp_gdi_ninegrid_capability* capability)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
 
     if (!buffer || !capability ||
         capability->support_level > RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 ||
         capability->cache_size > 2560u ||
         capability->cache_entries > 256u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    start = buffer->length;
     status = rdp_gdi_write_capability_header(buffer,
                                              RDP_GDI_CAPSTYPE_DRAW_NINEGRID_CACHE,
                                              RDP_GDI_DRAW_NINEGRID_CAPABILITY_LENGTH);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, capability->support_level);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u16_le(buffer, capability->cache_size);
     if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u16_le(buffer, capability->cache_entries);
+        return rdp_gdi_restore_on_error(buffer, start, status);
+    status = rdp_buffer_append_u16_le(buffer, capability->cache_entries);
+    return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
 librdp_status rdp_gdi_parse_gdiplus_capability(const void* data,
@@ -1870,6 +1887,7 @@ librdp_status rdp_gdi_write_gdiplus_capability(
     static const uint16_t max_chunks[4] = {512u, 2048u, 1024u, 64u};
     static const uint16_t max_properties[3] = {4096u, 256u, 128u};
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t start = 0;
     size_t i = 0;
 
     if (!buffer || !capability ||
@@ -1891,37 +1909,38 @@ librdp_status rdp_gdi_write_gdiplus_capability(
         if (capability->image_cache_properties[i] > max_properties[i])
             return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
+    start = buffer->length;
     status = rdp_gdi_write_capability_header(buffer,
                                              RDP_GDI_CAPSTYPE_DRAW_GDIPLUS,
                                              RDP_GDI_DRAW_GDIPLUS_CAPABILITY_LENGTH);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, capability->support_level);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, capability->version);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     status = rdp_buffer_append_u32_le(buffer, capability->cache_level);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        return rdp_gdi_restore_on_error(buffer, start, status);
     for (i = 0; i < 5u; i++)
     {
         status = rdp_buffer_append_u16_le(buffer, capability->cache_entries[i]);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_gdi_restore_on_error(buffer, start, status);
     }
     for (i = 0; i < 4u; i++)
     {
         status = rdp_buffer_append_u16_le(buffer, capability->cache_chunk_size[i]);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_gdi_restore_on_error(buffer, start, status);
     }
     for (i = 0; i < 3u; i++)
     {
         status = rdp_buffer_append_u16_le(buffer, capability->image_cache_properties[i]);
         if (status != LIBRDP_STATUS_OK)
-            return status;
+            return rdp_gdi_restore_on_error(buffer, start, status);
     }
     return LIBRDP_STATUS_OK;
 }
