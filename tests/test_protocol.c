@@ -15664,6 +15664,13 @@ static int test_gdi_orders(void)
     PCHECK(payload.length == sizeof(altsec_order) &&
            memcmp(payload.data, altsec_order, sizeof(altsec_order)) == 0);
     payload.length = 0;
+    PCHECK(rdp_buffer_append_u8(&payload, 0xa5u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_write_altsec_order(&payload,
+                                      RDP_GDI_ALTSEC_SWITCH_SURFACE,
+                                      altsec_order + 1u,
+                                      (size_t)-1) == LIBRDP_STATUS_NO_MEMORY);
+    PCHECK(payload.length == 1u && payload.data[0] == 0xa5u);
+    payload.length = 0;
     PCHECK(rdp_gdi_write_altsec_order(&payload,
                                       RDP_GDI_ALTSEC_CREATE_OFFSCREEN_BITMAP,
                                       create_offscreen_payload,
@@ -15865,6 +15872,15 @@ static int test_gdi_orders(void)
     PCHECK(parsed_error.count == 2 &&
            parsed_error.infos[1].cache_id == 2 &&
            parsed_error.infos[1].new_num_entries == 256);
+    payload.length = 0;
+    PCHECK(rdp_buffer_append_u8(&payload, 0xa5u) == LIBRDP_STATUS_OK);
+    bitmap_error.infos[1].flags = 0x80u;
+    PCHECK(rdp_gdi_write_bitmap_cache_error_payload(&payload, &bitmap_error) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(payload.length == 1u && payload.data[0] == 0xa5u);
+    bitmap_error.infos[1].flags = RDP_GDI_BITMAP_CACHE_ERROR_NEWNUMENTRIES_VALID;
+    payload.length = 0;
+    PCHECK(rdp_gdi_write_bitmap_cache_error_payload(&payload, &bitmap_error) == LIBRDP_STATUS_OK);
     payload.data[5] = 0x80u;
     PCHECK(rdp_gdi_parse_bitmap_cache_error_payload(payload.data,
                                                     payload.length,
