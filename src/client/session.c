@@ -43,6 +43,7 @@
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "platform/socket.h"
+#include "protocol/bulk.h"
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
@@ -639,6 +640,8 @@ struct librdp_session
     uint8_t fastpath_fragmenting;
     uint8_t fastpath_fragment_update_code;
     rdp_buffer fastpath_fragment;
+    rdp_buffer fastpath_decompressed;
+    rdp_buffer slowpath_decompressed;
     rdp_gdi_render_state gdi_render;
     uint8_t palette_valid;
     rdp_palette_update palette;
@@ -728,6 +731,8 @@ struct librdp_session
     uint32_t usb_request_completion_interface_id;
     uint32_t usb_device_count_sent;
     rdp_graphics_decompressor graphics_decompressor;
+    rdp_graphics_decompressor bulk_rdp8_decompressor;
+    rdp_bulk_decompressor bulk_decompressor;
     rdp_clearcodec_context clearcodec;
     rdp_nscodec_context surface_nscodec;
     rdp_avc_decoder* avc;
@@ -28261,6 +28266,25 @@ static void rdp_session_fastpath_fragment_reset(librdp_session* session)
     session->fastpath_fragment_update_code = 0;
     rdp_buffer_free(&session->fastpath_fragment);
     rdp_buffer_init(&session->fastpath_fragment);
+    session->fastpath_decompressed.length = 0;
+}
+
+static librdp_status rdp_session_decompress_bulk_payload(librdp_session* session,
+                                                         uint8_t flags,
+                                                         const uint8_t* data,
+                                                         size_t data_len,
+                                                         rdp_buffer* decoded)
+{
+    uint8_t type = (uint8_t)(flags & RDP_BULK_TYPE_MASK);
+
+    if (!session || (!data && data_len > 0) || !decoded)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    decoded->length = 0;
+    if ((flags & RDP_BULK_FLAGS_MASK) == 0)
+        return rdp_buffer_append(decoded, data, data_len);
+    if (type == RDP_BULK_TYPE_RDP8)
+        return rdp_graphics_decode_segmented_data(&session->bulk_rdp8_decompressor, data, data_len, decoded);
+    return rdp_bulk_decompress(&session->bulk_decompressor, flags, data, data_len, decoded);
 }
 
 static librdp_status rdp_session_fastpath_payload(librdp_session* session,
@@ -28270,6 +28294,8 @@ static librdp_status rdp_session_fastpath_payload(librdp_session* session,
                                                   int* complete,
                                                   int* from_fragment)
 {
+    const uint8_t* payload_data = NULL;
+    size_t payload_len = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !update || !data || !data_len || !complete || !from_fragment)
@@ -28279,23 +28305,46 @@ static librdp_status rdp_session_fastpath_payload(librdp_session* session,
     *complete = 0;
     *from_fragment = 0;
     if (update->compression != 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
+    {
+        status = rdp_session_decompress_bulk_payload(session,
+                                                     update->compression_flags,
+                                                     update->data,
+                                                     update->data_len,
+                                                     &session->fastpath_decompressed);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        payload_data = session->fastpath_decompressed.data;
+        payload_len = session->fastpath_decompressed.length;
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "rdp.fastpath.decompress",
+                              "code=%u flags=%u compressed_len=%u decoded_len=%u",
+                              update->update_code,
+                              update->compression_flags,
+                              (unsigned)update->data_len,
+                              (unsigned)payload_len);
+    }
+    else
+    {
+        payload_data = update->data;
+        payload_len = update->data_len;
+    }
     if (update->fragmentation == RDP_FASTPATH_FRAGMENT_SINGLE)
     {
         if (session->fastpath_fragmenting)
             rdp_session_fastpath_fragment_reset(session);
-        *data = update->data;
-        *data_len = update->data_len;
+        *data = payload_data;
+        *data_len = payload_len;
         *complete = 1;
         return LIBRDP_STATUS_OK;
     }
-    if (update->data_len > RDP_SESSION_MAX_FASTPATH_FRAGMENT ||
-        session->fastpath_fragment.length > RDP_SESSION_MAX_FASTPATH_FRAGMENT - update->data_len)
+    if (payload_len > RDP_SESSION_MAX_FASTPATH_FRAGMENT ||
+        session->fastpath_fragment.length > RDP_SESSION_MAX_FASTPATH_FRAGMENT - payload_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (update->fragmentation == RDP_FASTPATH_FRAGMENT_FIRST)
     {
         rdp_session_fastpath_fragment_reset(session);
-        status = rdp_buffer_append(&session->fastpath_fragment, update->data, update->data_len);
+        status = rdp_buffer_append(&session->fastpath_fragment, payload_data, payload_len);
         if (status != LIBRDP_STATUS_OK)
             return status;
         session->fastpath_fragmenting = 1;
@@ -28313,7 +28362,7 @@ static librdp_status rdp_session_fastpath_payload(librdp_session* session,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!session->fastpath_fragmenting || session->fastpath_fragment_update_code != update->update_code)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_buffer_append(&session->fastpath_fragment, update->data, update->data_len);
+    status = rdp_buffer_append(&session->fastpath_fragment, payload_data, payload_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
@@ -28623,9 +28672,13 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
     rdp_buffer_init(&session->fastpath_fragment);
+    rdp_buffer_init(&session->fastpath_decompressed);
+    rdp_buffer_init(&session->slowpath_decompressed);
     rdp_buffer_init(&session->gdi_stream_bitmap.bitmap_data);
     rdp_gdi_render_state_init(&session->gdi_render);
     rdp_graphics_decompressor_init(&session->graphics_decompressor);
+    rdp_graphics_decompressor_init(&session->bulk_rdp8_decompressor);
+    rdp_bulk_decompressor_init(&session->bulk_decompressor);
     rdp_clearcodec_context_init(&session->clearcodec);
     rdp_nscodec_context_init(&session->surface_nscodec);
     rdp_composited_render_tree_init(&session->composited_tree);
@@ -28635,6 +28688,8 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     {
         rdp_nscodec_context_free(&session->surface_nscodec);
         rdp_clearcodec_context_free(&session->clearcodec);
+        rdp_bulk_decompressor_free(&session->bulk_decompressor);
+        rdp_graphics_decompressor_free(&session->bulk_rdp8_decompressor);
         rdp_graphics_decompressor_free(&session->graphics_decompressor);
         rdp_transport_close(&session->transport);
         librdp_surface_free(session->surface);
@@ -28674,6 +28729,8 @@ void librdp_session_free(librdp_session* session)
     rdp_buffer_free(&session->pnp_redirection_storage);
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_free(&session->fastpath_fragment);
+    rdp_buffer_free(&session->fastpath_decompressed);
+    rdp_buffer_free(&session->slowpath_decompressed);
     rdp_session_graphics_surfaces_clear(session);
     rdp_session_graphics_cache_clear(session);
     rdp_session_gdi_color_table_cache_clear(session);
@@ -28689,6 +28746,8 @@ void librdp_session_free(librdp_session* session)
     rdp_avc_decoder_free(session->avc);
     rdp_nscodec_context_free(&session->surface_nscodec);
     rdp_clearcodec_context_free(&session->clearcodec);
+    rdp_bulk_decompressor_free(&session->bulk_decompressor);
+    rdp_graphics_decompressor_free(&session->bulk_rdp8_decompressor);
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
     rdp_transport_close(&session->transport);
@@ -28870,6 +28929,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_video_capture_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_graphics_decompressor_reset(&session->bulk_rdp8_decompressor);
+    rdp_bulk_decompressor_reset(&session->bulk_decompressor);
+    session->slowpath_decompressed.length = 0;
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_nscodec_context_reset(&session->surface_nscodec);
     rdp_session_graphics_surfaces_clear(session);
@@ -30525,20 +30587,52 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
             }
             if (data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE)
             {
+                const uint8_t* slow_payload = data_pdu.payload;
+                size_t slow_payload_len = data_pdu.payload_len;
+
                 if (data_pdu.compressed_type != 0)
                 {
-                    rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                    "rdp.slowpath.update.unsupported",
-                                    "compressed_type=%u payload_len=%u",
-                                    data_pdu.compressed_type,
-                                    (unsigned)data_pdu.payload_len);
+                    size_t compressed_payload_len = 0;
+
+                    if (data_pdu.compressed_length < 18u)
+                    {
+                        rdp_buffer_free(&security_payload);
+                        rdp_buffer_free(&packet);
+                        return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
+                    }
+                    compressed_payload_len = (size_t)data_pdu.compressed_length - 18u;
+                    if (compressed_payload_len > data_pdu.payload_len)
+                    {
+                        rdp_buffer_free(&security_payload);
+                        rdp_buffer_free(&packet);
+                        return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
+                    }
+                    status = rdp_session_decompress_bulk_payload(session,
+                                                                data_pdu.compressed_type,
+                                                                data_pdu.payload,
+                                                                compressed_payload_len,
+                                                                &session->slowpath_decompressed);
+                    if (status != LIBRDP_STATUS_OK)
+                    {
+                        rdp_buffer_free(&security_payload);
+                        rdp_buffer_free(&packet);
+                        return rdp_session_fail(session, status);
+                    }
+                    slow_payload = session->slowpath_decompressed.data;
+                    slow_payload_len = session->slowpath_decompressed.length;
+                    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                                          RDP_TRACE_LEVEL_DEBUG,
+                                          "rdp.slowpath.decompress",
+                                          "compressed_type=%u compressed_len=%u decoded_len=%u",
+                                          data_pdu.compressed_type,
+                                          (unsigned)compressed_payload_len,
+                                          (unsigned)slow_payload_len);
                 }
-                else
                 {
                     rdp_stream update_stream;
                     uint16_t update_type = 0;
 
-                    rdp_stream_init(&update_stream, data_pdu.payload, data_pdu.payload_len);
+                    rdp_stream_init(&update_stream, slow_payload, slow_payload_len);
                     if (rdp_stream_read_u16_le(&update_stream, &update_type) != LIBRDP_STATUS_OK)
                     {
                         rdp_buffer_free(&security_payload);
@@ -30550,13 +30644,13 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                                           "rdp.slowpath.update",
                                           "update_type=%u payload_len=%u",
                                           update_type,
-                                          (unsigned)data_pdu.payload_len);
+                                          (unsigned)slow_payload_len);
                     if (update_type == RDP_GDI_UPDATE_TYPE_ORDERS)
                     {
                         rdp_gdi_orders_update orders;
 
-                        status = rdp_gdi_parse_slow_orders_update_payload(data_pdu.payload,
-                                                                          data_pdu.payload_len,
+                        status = rdp_gdi_parse_slow_orders_update_payload(slow_payload,
+                                                                          slow_payload_len,
                                                                           &orders);
                         if (status == LIBRDP_STATUS_OK)
                             status = rdp_session_apply_gdi_orders_update(session, &orders);
@@ -30581,7 +30675,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                     {
                         rdp_bitmap_update update;
 
-                        status = rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &update);
+                        status = rdp_bitmap_parse_update(slow_payload, slow_payload_len, &update);
                         if (status == LIBRDP_STATUS_OK)
                             status = rdp_session_apply_bitmap_update(session, &update);
                         if (status != LIBRDP_STATUS_OK)
@@ -30596,7 +30690,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                     {
                         rdp_palette_update palette;
 
-                        status = rdp_bitmap_parse_palette_update(data_pdu.payload, data_pdu.payload_len, &palette);
+                        status = rdp_bitmap_parse_palette_update(slow_payload, slow_payload_len, &palette);
                         if (status == LIBRDP_STATUS_OK)
                             status = rdp_session_apply_palette_update(session, &palette);
                         if (status != LIBRDP_STATUS_OK)
@@ -30611,7 +30705,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                     {
                         rdp_pointer_update pointer;
 
-                        status = rdp_pointer_parse_slowpath(data_pdu.payload + 2u, data_pdu.payload_len - 2u, &pointer);
+                        status = rdp_pointer_parse_slowpath(slow_payload + 2u, slow_payload_len - 2u, &pointer);
                         if (status == LIBRDP_STATUS_OK)
                             status = rdp_session_pointer_apply_update(session, &pointer);
                         if (status != LIBRDP_STATUS_OK)
@@ -30634,7 +30728,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
                                         "rdp.slowpath.update.unsupported",
                                         "update_type=%u payload_len=%u",
                                         update_type,
-                                        (unsigned)data_pdu.payload_len);
+                                        (unsigned)slow_payload_len);
                     }
                 }
             }
@@ -30767,6 +30861,9 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_video_capture_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
+    rdp_graphics_decompressor_reset(&session->bulk_rdp8_decompressor);
+    rdp_bulk_decompressor_reset(&session->bulk_decompressor);
+    session->slowpath_decompressed.length = 0;
     rdp_clearcodec_context_reset(&session->clearcodec);
     rdp_nscodec_context_reset(&session->surface_nscodec);
     rdp_session_graphics_surfaces_clear(session);

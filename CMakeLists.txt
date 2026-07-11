@@ -96,6 +96,7 @@ add_library(librdp
     src/nla/credssp.c
     src/platform/socket.c
     src/protocol/capabilities.c
+    src/protocol/bulk.c
     src/protocol/fastpath.c
     src/protocol/gcc.c
     src/protocol/mcs.c

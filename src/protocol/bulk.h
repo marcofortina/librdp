@@ -1,0 +1,45 @@
+#ifndef RDP_PROTOCOL_BULK_H
+#define RDP_PROTOCOL_BULK_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <librdp/error.h>
+
+#include "common/buffer.h"
+
+#define RDP_BULK_PACKET_COMPRESSED 0x20u
+#define RDP_BULK_PACKET_AT_FRONT 0x40u
+#define RDP_BULK_PACKET_FLUSHED 0x80u
+#define RDP_BULK_TYPE_MASK 0x0fu
+#define RDP_BULK_FLAGS_MASK 0xe0u
+#define RDP_BULK_TYPE_8K 0x00u
+#define RDP_BULK_TYPE_64K 0x01u
+#define RDP_BULK_TYPE_RDP6 0x02u
+#define RDP_BULK_TYPE_RDP61 0x03u
+#define RDP_BULK_TYPE_RDP8 0x04u
+
+typedef struct rdp_bulk_mppc_state
+{
+    uint8_t* history;
+    size_t history_size;
+    size_t write_offset;
+    uint8_t level;
+} rdp_bulk_mppc_state;
+
+typedef struct rdp_bulk_decompressor
+{
+    rdp_bulk_mppc_state mppc8k;
+    rdp_bulk_mppc_state mppc64k;
+} rdp_bulk_decompressor;
+
+void rdp_bulk_decompressor_init(rdp_bulk_decompressor* decompressor);
+void rdp_bulk_decompressor_reset(rdp_bulk_decompressor* decompressor);
+void rdp_bulk_decompressor_free(rdp_bulk_decompressor* decompressor);
+librdp_status rdp_bulk_decompress(rdp_bulk_decompressor* decompressor,
+                                  uint8_t flags,
+                                  const void* data,
+                                  size_t data_len,
+                                  rdp_buffer* decoded);
+
+#endif

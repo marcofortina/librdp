@@ -42,6 +42,7 @@
 #include "graphics/surface_commands.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
+#include "protocol/bulk.h"
 #include "protocol/capabilities.h"
 #include "protocol/fastpath.h"
 #include "protocol/gcc.h"
@@ -3215,6 +3216,7 @@ static int test_path_security_license_channels(void)
     uint8_t malformed_slowpath[sizeof(bitmap_data_pdu)];
     rdp_fastpath_header fast;
     rdp_fastpath_update_list fast_updates;
+    rdp_bulk_decompressor bulk_decompressor;
     rdp_slowpath_share_control_header slow_header;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_data_pdu data_pdu;
@@ -3385,6 +3387,7 @@ static int test_path_security_license_channels(void)
     rdp_buffer plain_security;
     rdp_buffer encrypted_fastpath;
     rdp_buffer decoded_fastpath;
+    rdp_buffer bulk_decoded;
     rdp_buffer confirm_active;
     rdp_buffer client_sync;
     rdp_buffer client_control;
@@ -3530,6 +3533,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&plain_security);
     rdp_buffer_init(&encrypted_fastpath);
     rdp_buffer_init(&decoded_fastpath);
+    rdp_buffer_init(&bulk_decoded);
+    rdp_bulk_decompressor_init(&bulk_decompressor);
     rdp_buffer_init(&confirm_active);
     rdp_buffer_init(&client_sync);
     rdp_buffer_init(&client_control);
@@ -3628,6 +3633,51 @@ static int test_path_security_license_channels(void)
            fast_updates.updates[0].compression_flags == 0x20u);
     rdp_buffer_free(&decoded_fastpath);
     rdp_buffer_init(&decoded_fastpath);
+    PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                               0,
+                               "raw",
+                               3,
+                               &bulk_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(bulk_decoded.length == 3 && memcmp(bulk_decoded.data, "raw", 3) == 0);
+    bulk_decoded.length = 0;
+    {
+        const uint8_t mppc_literal[] = {0x41};
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_8K,
+                                   mppc_literal,
+                                   sizeof(mppc_literal),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 1 && bulk_decoded.data[0] == 'A');
+    }
+    bulk_decoded.length = 0;
+    {
+        const uint8_t mppc_match[] = {0x41, 0x42, 0x43, 0xf0, 0xc0};
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_8K,
+                                   mppc_match,
+                                   sizeof(mppc_match),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 6 && memcmp(bulk_decoded.data, "ABCABC", 6) == 0);
+    }
+    bulk_decoded.length = 0;
+    {
+        const uint8_t mppc_literal64[] = {0x58};
+
+        PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                                   RDP_BULK_PACKET_COMPRESSED | RDP_BULK_PACKET_FLUSHED | RDP_BULK_TYPE_64K,
+                                   mppc_literal64,
+                                   sizeof(mppc_literal64),
+                                   &bulk_decoded) == LIBRDP_STATUS_OK);
+        PCHECK(bulk_decoded.length == 1 && bulk_decoded.data[0] == 'X');
+    }
+    bulk_decoded.length = 0;
+    PCHECK(rdp_bulk_decompress(&bulk_decompressor,
+                               RDP_BULK_PACKET_COMPRESSED | RDP_BULK_TYPE_RDP6,
+                               "x",
+                               1,
+                               &bulk_decoded) == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_fastpath_write_update(&decoded_fastpath,
                                      0x0fu,
                                      RDP_FASTPATH_FRAGMENT_SINGLE,
@@ -9464,6 +9514,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&client_control);
     rdp_buffer_free(&client_sync);
     rdp_buffer_free(&expected_cipher);
+    rdp_bulk_decompressor_free(&bulk_decompressor);
+    rdp_buffer_free(&bulk_decoded);
     rdp_buffer_free(&decoded_fastpath);
     rdp_buffer_free(&encrypted_fastpath);
     rdp_buffer_free(&plain_security);
