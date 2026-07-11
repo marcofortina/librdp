@@ -14434,6 +14434,154 @@ static librdp_status rdp_session_graphics_surface_write_wire(librdp_session* ses
                                                    "uncompressed");
 }
 
+static librdp_status rdp_session_graphics_surface_alpha_run(rdp_session_graphics_surface* surface,
+                                                            uint16_t left,
+                                                            uint16_t top,
+                                                            uint16_t width,
+                                                            uint32_t* position,
+                                                            uint32_t total,
+                                                            uint32_t count,
+                                                            uint8_t alpha)
+{
+    uint32_t i = 0;
+    size_t stride = 0;
+
+    if (!surface || !position || count == 0 || count > total - *position)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    stride = (size_t)surface->width * 4u;
+    for (i = 0; i < count; i++)
+    {
+        uint32_t index = *position + i;
+        uint32_t x = (uint32_t)left + (index % width);
+        uint32_t y = (uint32_t)top + (index / width);
+        uint8_t* pixel = surface->pixels.data + ((size_t)y * stride) + ((size_t)x * 4u);
+
+        pixel[3] = alpha;
+    }
+    *position += count;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_graphics_surface_apply_alpha(librdp_session* session,
+                                                              rdp_session_graphics_surface* surface,
+                                                              const rdp_graphics_wire_to_surface_1* wire)
+{
+    uint16_t left = 0;
+    uint16_t top = 0;
+    uint16_t width = 0;
+    uint16_t height = 0;
+    uint16_t signature = 0;
+    uint16_t compressed = 0;
+    uint32_t total = 0;
+    uint32_t position = 0;
+    size_t offset = 4u;
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !surface || !wire || !wire->bitmap_data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (wire->dest_rect.left >= wire->dest_rect.right ||
+        wire->dest_rect.top >= wire->dest_rect.bottom ||
+        wire->dest_rect.right > surface->width ||
+        wire->dest_rect.bottom > surface->height ||
+        wire->bitmap_data_length < 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    left = wire->dest_rect.left;
+    top = wire->dest_rect.top;
+    width = (uint16_t)(wire->dest_rect.right - wire->dest_rect.left);
+    height = (uint16_t)(wire->dest_rect.bottom - wire->dest_rect.top);
+    if ((uint32_t)width > UINT32_MAX / (uint32_t)height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = (uint32_t)width * (uint32_t)height;
+    signature = (uint16_t)(wire->bitmap_data[0] | ((uint16_t)wire->bitmap_data[1] << 8u));
+    compressed = (uint16_t)(wire->bitmap_data[2] | ((uint16_t)wire->bitmap_data[3] << 8u));
+    if (signature != 0x414cu)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (compressed == 0)
+    {
+        if (wire->bitmap_data_length - offset != total)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (i = 0; i < total; i++)
+        {
+            status = rdp_session_graphics_surface_alpha_run(surface,
+                                                            left,
+                                                            top,
+                                                            width,
+                                                            &position,
+                                                            total,
+                                                            1,
+                                                            wire->bitmap_data[offset + i]);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    else
+    {
+        while (position < total)
+        {
+            uint8_t alpha = 0;
+            uint32_t count = 0;
+
+            if (wire->bitmap_data_length - offset < 2u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            alpha = wire->bitmap_data[offset++];
+            count = wire->bitmap_data[offset++];
+            if (count >= 0xffu)
+            {
+                if (wire->bitmap_data_length - offset < 2u)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                count = (uint32_t)wire->bitmap_data[offset] |
+                        ((uint32_t)wire->bitmap_data[offset + 1u] << 8u);
+                offset += 2u;
+                if (count >= 0xffffu)
+                {
+                    if (wire->bitmap_data_length - offset < 4u)
+                        return LIBRDP_STATUS_PROTOCOL_ERROR;
+                    count = (uint32_t)wire->bitmap_data[offset] |
+                            ((uint32_t)wire->bitmap_data[offset + 1u] << 8u) |
+                            ((uint32_t)wire->bitmap_data[offset + 2u] << 16u) |
+                            ((uint32_t)wire->bitmap_data[offset + 3u] << 24u);
+                    offset += 4u;
+                }
+            }
+            status = rdp_session_graphics_surface_alpha_run(surface,
+                                                            left,
+                                                            top,
+                                                            width,
+                                                            &position,
+                                                            total,
+                                                            count,
+                                                            alpha);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        if (offset != wire->bitmap_data_length)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+
+    status = rdp_session_graphics_surface_flush(session,
+                                                surface,
+                                                left,
+                                                top,
+                                                wire->dest_rect.right,
+                                                wire->dest_rect.bottom,
+                                                "alpha");
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.graphics.alpha",
+                        "surface_id=%u x=%u y=%u width=%u height=%u compressed=%u pixels=%u",
+                        surface->surface_id,
+                        left,
+                        top,
+                        width,
+                        height,
+                        compressed ? 1u : 0u,
+                        total);
+    return status;
+}
+
 typedef struct rdp_session_graphics_rfx_context
 {
     librdp_session* session;
@@ -16972,6 +17120,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED ||
                 wire.codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ||
                 wire.codec_id == RDP_GRAPHICS_CODECID_PLANAR ||
+                wire.codec_id == RDP_GRAPHICS_CODECID_ALPHA ||
                 wire.codec_id == RDP_GRAPHICS_CODECID_AVC420 ||
                 wire.codec_id == RDP_GRAPHICS_CODECID_AVC444 ||
                 wire.codec_id == RDP_GRAPHICS_CODECID_AVC444V2)
@@ -16987,6 +17136,13 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                 if (wire.codec_id == RDP_GRAPHICS_CODECID_UNCOMPRESSED)
                 {
                     status = rdp_session_graphics_surface_write_wire(session, surface, &wire);
+                    if (status != LIBRDP_STATUS_OK)
+                        break;
+                    rendered = 1;
+                }
+                else if (wire.codec_id == RDP_GRAPHICS_CODECID_ALPHA)
+                {
+                    status = rdp_session_graphics_surface_apply_alpha(session, surface, &wire);
                     if (status != LIBRDP_STATUS_OK)
                         break;
                     rendered = 1;

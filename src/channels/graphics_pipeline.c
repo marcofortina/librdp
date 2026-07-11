@@ -240,6 +240,7 @@ static int rdp_graphics_wire_to_surface_1_codec_supported(uint16_t codec_id)
            codec_id == RDP_GRAPHICS_CODECID_CLEARCODEC ||
            codec_id == RDP_GRAPHICS_CODECID_PLANAR ||
            codec_id == RDP_GRAPHICS_CODECID_AVC420 ||
+           codec_id == RDP_GRAPHICS_CODECID_ALPHA ||
            codec_id == RDP_GRAPHICS_CODECID_AVC444 ||
            codec_id == RDP_GRAPHICS_CODECID_AVC444V2;
 }
