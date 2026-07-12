@@ -339,6 +339,11 @@ librdp_status rdp_smartcard_redirection_write_string(
     return rdp_buffer_append(buffer, data, length);
 }
 
+/*
+ * Validate PC/SC IOCTL identifiers at the channel boundary. The explicit
+ * whitelist separates protocol-supported smartcard operations from malformed
+ * or backend-specific control codes before handle state is consulted.
+ */
 int rdp_smartcard_redirection_ioctl_valid(uint32_t io_control_code)
 {
     switch (io_control_code)

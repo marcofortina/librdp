@@ -234,6 +234,11 @@ int rdp_composited_control_code_valid(uint32_t control_code)
     }
 }
 
+/*
+ * Classify compositor channel commands without parsing a payload. The dense
+ * switch keeps accepted command identifiers explicit so unknown server
+ * commands are rejected before they can mutate the render tree.
+ */
 int rdp_composited_channel_command_known(uint32_t control_code)
 {
     if ((control_code >= 0x12u && control_code <= 0x20u) ||

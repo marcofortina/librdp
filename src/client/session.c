@@ -3966,8 +3966,8 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
 
 /*
  * Serialize one redirected directory enumeration record. The writer maps host
- * stat data into the requested information class while keeping next-entry
- * offsets and UTF-16 names consistent.
+ * stat data into the requested information class, validate next-entry
+ * offsets and keeping UTF-16 names consistent.
  */
 static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
                                                              uint32_t information_class,
@@ -21912,6 +21912,12 @@ static librdp_status rdp_session_usb_complete_transfer(librdp_session* session,
     return status;
 }
 
+/*
+ * Classify a submitted USB URB as an IN or OUT transfer using the URB function
+ * and direction bits embedded in the request payload. This keeps transfer
+ * completion framing consistent even for vendor/class requests with different
+ * header layouts.
+ */
 static uint32_t rdp_session_usb_submit_urb_function_id(const uint8_t* ts_urb,
                                                        uint32_t cb_ts_urb,
                                                        const rdp_usb_redirection_urb_header* urb,

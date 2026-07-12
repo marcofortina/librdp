@@ -599,6 +599,11 @@ static librdp_status rdp_gdi_render_decode_memblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode the stateful Mem3Blt order field set and materialize one render
+ * operation. Each optional field updates cached order state only after its
+ * stream read succeeds, preserving the previous state on malformed payloads.
+ */
 static librdp_status rdp_gdi_render_decode_mem3blt(rdp_stream* stream,
                                                    uint32_t flags,
                                                    int delta,

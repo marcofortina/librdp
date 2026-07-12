@@ -25,6 +25,11 @@ int rdp_port_redirection_device_type_valid(uint32_t device_type)
            device_type == RDP_DEVICE_REDIRECTION_TYPE_PARALLEL;
 }
 
+/*
+ * Validate serial-port IOCTL identifiers before a request reaches a host
+ * backend. Keeping the whitelist here prevents unsupported control operations
+ * from being confused with ordinary read/write IRPs.
+ */
 int rdp_port_redirection_ioctl_serial(uint32_t io_control_code)
 {
     switch (io_control_code)

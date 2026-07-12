@@ -212,6 +212,11 @@ librdp_settings* librdp_settings_new(void)
     return settings;
 }
 
+/*
+ * Clone every settings field through the public setters so validation and
+ * ownership rules match application-created settings. On any failed copy the
+ * partially built clone is destroyed before returning NULL.
+ */
 librdp_settings* librdp_settings_clone(const librdp_settings* settings)
 {
     librdp_settings* copy = NULL;

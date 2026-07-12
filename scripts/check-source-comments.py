@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,12 +20,48 @@ CHECKED_ROOTS = (
 CHECKED_SUFFIXES = {".c"}
 MIN_LARGE_FUNCTION_LINES = 160
 MIN_RISK_FUNCTION_LINES = 80
+MIN_COMPLEX_FUNCTION_LINES = 25
+MIN_COMPLEXITY_SCORE = 35
+MIN_FUNCTION_COMMENT_WORDS = 18
 MODULE_REQUIRED_FIELDS = (
     "Module:",
     "Invariants:",
     "Ownership:",
     "Threading:",
     "Trust boundary:",
+)
+COMMENT_DETAIL_TERMS = (
+    "backend",
+    "bounds",
+    "buffer",
+    "cache",
+    "callback",
+    "channel",
+    "clip",
+    "credential",
+    "decode",
+    "edge",
+    "encode",
+    "error",
+    "failure",
+    "handle",
+    "length",
+    "lifetime",
+    "ownership",
+    "coefficient",
+    "cursor",
+    "payload",
+    "protocol",
+    "operation",
+    "security",
+    "session",
+    "state",
+    "stream",
+    "surface",
+    "trace",
+    "transport",
+    "validate",
+    "wire",
 )
 CRITICAL_NAME_PARTS = (
     "avc",
@@ -81,6 +118,8 @@ class FunctionDefinition:
     end_line: int
     name: str
     has_comment: bool
+    comment: str
+    complexity_score: int
 
     @property
     def body_lines(self) -> int:
@@ -232,9 +271,39 @@ def previous_significant_line(lines: list[str], index: int) -> str:
     return ""
 
 
+def previous_comment(lines: list[str], index: int) -> str:
+    cursor = index - 1
+    while cursor >= 0 and not lines[cursor].strip():
+        cursor -= 1
+    if cursor < 0:
+        return ""
+    line = lines[cursor].strip()
+    if line.startswith("//"):
+        comments: list[str] = []
+        while cursor >= 0 and lines[cursor].strip().startswith("//"):
+            comments.append(lines[cursor].strip())
+            cursor -= 1
+        return "\n".join(reversed(comments))
+    if line.endswith("*/"):
+        comments = []
+        while cursor >= 0:
+            comments.append(lines[cursor].strip())
+            if lines[cursor].strip().startswith("/*"):
+                return "\n".join(reversed(comments))
+            cursor -= 1
+    return ""
+
+
 def has_nearby_comment(lines: list[str], index: int) -> bool:
     line = previous_significant_line(lines, index)
     return line.endswith("*/") or line.startswith("/*") or line.startswith("//")
+
+
+def complexity_score(body: str) -> int:
+    return (
+        len(re.findall(r"\b(if|for|while|case|switch)\b", body))
+        + len(re.findall(r"&&|\|\||\?", body))
+    )
 
 
 def collect_definitions(path: Path) -> list[FunctionDefinition]:
@@ -256,8 +325,17 @@ def collect_definitions(path: Path) -> list[FunctionDefinition]:
                     signature_start = start + signature_start_offset(statement, name)
                     start_line = sanitized.count("\n", 0, signature_start) + 1
                     end_line = sanitized.count("\n", 0, end) + 1
+                    body = sanitized[index : end + 1]
                     definitions.append(
-                        FunctionDefinition(path, start_line, end_line, name, has_nearby_comment(lines, start_line - 1))
+                        FunctionDefinition(
+                            path,
+                            start_line,
+                            end_line,
+                            name,
+                            has_nearby_comment(lines, start_line - 1),
+                            previous_comment(lines, start_line - 1),
+                            complexity_score(body),
+                        )
                     )
             depth += 1
         elif char == "}":
@@ -287,10 +365,33 @@ def has_module_comment(path: Path) -> bool:
 def is_documentation_target(definition: FunctionDefinition) -> bool:
     if definition.body_lines >= MIN_LARGE_FUNCTION_LINES:
         return True
+    if (
+        definition.body_lines >= MIN_COMPLEX_FUNCTION_LINES
+        and definition.complexity_score >= MIN_COMPLEXITY_SCORE
+    ):
+        return True
     if definition.body_lines < MIN_RISK_FUNCTION_LINES:
         return False
     lower = definition.name.lower()
     return any(part in lower for part in CRITICAL_NAME_PARTS)
+
+
+def normalize_comment(comment: str) -> str:
+    text = re.sub(r"/\*+|\*/|//", " ", comment)
+    text = re.sub(r"^\s*\*\s?", " ", text, flags=re.MULTILINE)
+    return " ".join(text.lower().split())
+
+
+def comment_quality_issue(definition: FunctionDefinition) -> str | None:
+    normalized = normalize_comment(definition.comment)
+    words = re.findall(r"[a-z0-9_]+", normalized)
+    if len(words) < MIN_FUNCTION_COMMENT_WORDS:
+        return "comment is too short to explain the contract"
+    if normalized.count(".") == 0:
+        return "comment should contain more than a label"
+    if not any(term in normalized for term in COMMENT_DETAIL_TERMS):
+        return "comment lacks validation, ownership, state, or boundary detail"
+    return None
 
 
 def main() -> int:
@@ -301,8 +402,26 @@ def main() -> int:
             module_findings.append(path)
         targets.extend(definition for definition in collect_definitions(path) if is_documentation_target(definition))
     findings = [definition for definition in targets if not definition.has_comment]
+    weak_comments = [
+        (definition, issue)
+        for definition in targets
+        if definition.has_comment
+        for issue in [comment_quality_issue(definition)]
+        if issue is not None
+    ]
+    seen_comments: dict[str, FunctionDefinition] = {}
+    duplicate_comments: list[tuple[FunctionDefinition, FunctionDefinition]] = []
+    for definition in targets:
+        if not definition.has_comment:
+            continue
+        normalized = normalize_comment(definition.comment)
+        previous = seen_comments.get(normalized)
+        if previous is not None:
+            duplicate_comments.append((previous, definition))
+        else:
+            seen_comments[normalized] = definition
 
-    if module_findings or findings:
+    if module_findings or findings or weak_comments or duplicate_comments:
         print("error: source comment guardrail failed:", file=sys.stderr)
         if module_findings:
             print("missing module comments:", file=sys.stderr)
@@ -313,6 +432,24 @@ def main() -> int:
         for finding in findings:
             rel = finding.path.relative_to(ROOT)
             print(f"  {rel}:{finding.line}: {finding.name} ({finding.body_lines} lines)", file=sys.stderr)
+        if weak_comments:
+            print("weak function comments:", file=sys.stderr)
+            for definition, issue in weak_comments:
+                rel = definition.path.relative_to(ROOT)
+                print(
+                    f"  {rel}:{definition.line}: {definition.name} ({issue})",
+                    file=sys.stderr,
+                )
+        if duplicate_comments:
+            print("duplicate function comments:", file=sys.stderr)
+            for first, second in duplicate_comments:
+                first_rel = first.path.relative_to(ROOT)
+                second_rel = second.path.relative_to(ROOT)
+                print(
+                    f"  {first_rel}:{first.line}: {first.name} duplicates "
+                    f"{second_rel}:{second.line}: {second.name}",
+                    file=sys.stderr,
+                )
         return 1
     print(f"Source comment guardrail passed ({len(checked_files())} files, {len(targets)} functions).")
     return 0

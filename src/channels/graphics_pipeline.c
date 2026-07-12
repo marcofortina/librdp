@@ -1892,6 +1892,12 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize one progressive region after reconciling count fields with the
+ * byte lengths of rectangle, quantization, and tile payload arrays. This keeps
+ * generated region packets internally consistent before they enter the graphics
+ * channel stream.
+ */
 librdp_status rdp_graphics_progressive_write_region(rdp_buffer* buffer,
                                                     const rdp_graphics_progressive_region* region)
 {

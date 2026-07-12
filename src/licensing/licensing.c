@@ -190,6 +190,11 @@ librdp_status rdp_license_classify_message(const void* data, size_t length, uint
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Advance the client licensing state machine for one validated message type
+ * and direction. Illegal ordering moves no state and returns a protocol error,
+ * which keeps handshake sequencing explicit for both legacy and bypass paths.
+ */
 librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
                                             rdp_license_direction direction,
                                             uint8_t message_type)
