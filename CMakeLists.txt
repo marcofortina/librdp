@@ -620,6 +620,15 @@ if(LIBRDP_BUILD_TESTS)
     target_compile_definitions(test_transport PRIVATE LIBRDP_TEST_TRANSPORT_MAIN)
     librdp_configure_test_executable(test_transport)
 
+    add_executable(test_interop_smoke tests/interop_smoke.c)
+    target_include_directories(test_interop_smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(test_interop_smoke PRIVATE librdp)
+    librdp_apply_warning_options(test_interop_smoke)
+    librdp_apply_sanitizer_compile_options(test_interop_smoke)
+    librdp_apply_sanitizer_link_options(test_interop_smoke)
+
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -629,15 +638,17 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_abi_probe
+        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME transport COMMAND test_transport)
+    add_test(NAME interop_smoke COMMAND test_interop_smoke)
     set_tests_properties(common core transport PROPERTIES TIMEOUT 30)
     set_tests_properties(protocol PROPERTIES TIMEOUT 90)
+    set_tests_properties(interop_smoke PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
     add_test(NAME core_optional_backends_off
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
