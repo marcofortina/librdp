@@ -52,6 +52,7 @@ LIBRDP_0.1 {
         librdp_credentials_clear;
         librdp_credentials_set;
         librdp_drive_policy_init;
+        librdp_usb_policy_init;
         librdp_settings_new;
         librdp_settings_clone;
         librdp_settings_free;
@@ -82,6 +83,8 @@ LIBRDP_0.1 {
         librdp_settings_add_camera;
         librdp_settings_add_smartcard;
         librdp_settings_add_usb_device;
+        librdp_settings_set_usb_policy;
+        librdp_settings_get_usb_policy;
         librdp_settings_add_pnp_device;
         librdp_settings_set_webauthn_provider;
         librdp_settings_add_rail_app;

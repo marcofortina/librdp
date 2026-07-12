@@ -44,6 +44,7 @@
 #include "channels/virtual_channel.h"
 #include "channels/webauthn_channel.h"
 #include "client/settings_internal.h"
+#include "client/usb_backend.h"
 #include "clipboard/clipboard.h"
 #include "common/charset.h"
 #include "common/stream.h"
@@ -20450,6 +20451,42 @@ static int rdp_session_usb_pair_is_bus_mode(const char* selector,
 static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second);
 
 #ifdef RDP_HAVE_LIBUSB
+static int rdp_session_usb_class_denied_by_policy(librdp_session* session,
+                                                  libusb_device* device,
+                                                  const struct libusb_device_descriptor* descriptor)
+{
+    const librdp_usb_policy* policy = rdp_settings_usb_policy_internal(session ? session->settings : NULL);
+    struct libusb_config_descriptor* config = NULL;
+    int denied = 0;
+    int rc = 0;
+
+    if (!policy || !device || !descriptor)
+        return 1;
+    if (descriptor->bDeviceClass == LIBUSB_CLASS_HID && !policy->allow_hid)
+        return 1;
+    if (descriptor->bDeviceClass == LIBUSB_CLASS_MASS_STORAGE && !policy->allow_mass_storage)
+        return 1;
+    rc = libusb_get_active_config_descriptor(device, &config);
+    if (rc != LIBUSB_SUCCESS || !config)
+        return 0;
+    for (uint8_t i = 0; i < config->bNumInterfaces && !denied; i++)
+    {
+        const struct libusb_interface* iface = &config->interface[i];
+
+        for (int j = 0; j < iface->num_altsetting && !denied; j++)
+        {
+            const struct libusb_interface_descriptor* alt = &iface->altsetting[j];
+
+            if (alt->bInterfaceClass == LIBUSB_CLASS_HID && !policy->allow_hid)
+                denied = 1;
+            if (alt->bInterfaceClass == LIBUSB_CLASS_MASS_STORAGE && !policy->allow_mass_storage)
+                denied = 1;
+        }
+    }
+    libusb_free_config_descriptor(config);
+    return denied;
+}
+
 static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
                                                  const char* selector,
                                                  uint32_t interface_id,
@@ -20494,6 +20531,20 @@ static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
         }
         if (!matched)
             continue;
+        if (rdp_session_usb_class_denied_by_policy(session, device, &descriptor))
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.urbdrc.policy.denied",
+                            "selector=\"%s\" vid=%04x pid=%04x class=%u bus=%u address=%u",
+                            selector,
+                            (unsigned)descriptor.idVendor,
+                            (unsigned)descriptor.idProduct,
+                            descriptor.bDeviceClass,
+                            libusb_get_bus_number(device),
+                            libusb_get_device_address(device));
+            status = LIBRDP_STATUS_STATE;
+            break;
+        }
         out->active = 1;
         out->interface_id = interface_id;
         out->descriptor = descriptor;
@@ -20862,25 +20913,17 @@ static rdp_session_usb_device* rdp_session_usb_device_by_interface_mut(librdp_se
 
 static uint32_t rdp_session_usb_libusb_status(int rc)
 {
-    switch (rc)
-    {
-        case LIBUSB_SUCCESS:
-            return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
-        case LIBUSB_ERROR_TIMEOUT:
-            return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
-        case LIBUSB_ERROR_NO_DEVICE:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
-        case LIBUSB_ERROR_PIPE:
-            return RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID;
-        case LIBUSB_ERROR_OVERFLOW:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DATA_OVERRUN;
-        case LIBUSB_ERROR_NO_MEM:
-            return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
-        case LIBUSB_ERROR_INVALID_PARAM:
-            return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-        default:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
-    }
+    return rdp_usb_backend_libusb_status(rc);
+}
+
+static uint32_t rdp_session_usb_transfer_timeout(const librdp_session* session, uint32_t requested_ms)
+{
+    const librdp_usb_policy* policy = rdp_settings_usb_policy_internal(session ? session->settings : NULL);
+    uint32_t cap = policy && policy->max_transfer_ms ? policy->max_transfer_ms : 5000u;
+
+    if (requested_ms == 0 || requested_ms > cap)
+        return cap;
+    return requested_ms;
 }
 
 static uint32_t rdp_session_usb_reset_interface(librdp_session* session, uint32_t interface_id)
@@ -21587,7 +21630,8 @@ static uint32_t rdp_session_usb_parse_ms_interface(const uint8_t* data,
     return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
 }
 
-static uint32_t rdp_session_usb_control_request(libusb_device_handle* handle,
+static uint32_t rdp_session_usb_control_request(librdp_session* session,
+                                                libusb_device_handle* handle,
                                                 uint8_t request_type,
                                                 uint8_t request,
                                                 uint16_t value,
@@ -21600,9 +21644,10 @@ static uint32_t rdp_session_usb_control_request(libusb_device_handle* handle,
                                                 uint32_t* output_len)
 {
     uint8_t* buffer = NULL;
-    int actual = 0;
+    uint32_t actual = 0;
+    uint32_t capped_timeout = rdp_session_usb_transfer_timeout(session, timeout);
 
-    if (!handle || (!input && input_len > 0) || !output || !output_len ||
+    if (!session || !session->usb_libusb || !handle || (!input && input_len > 0) || !output || !output_len ||
         output_buffer_size > UINT16_MAX)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     *output = NULL;
@@ -21622,18 +21667,23 @@ static uint32_t rdp_session_usb_control_request(libusb_device_handle* handle,
             memcpy(buffer, input, input_len);
         }
     }
-    actual = libusb_control_transfer(handle,
-                                    request_type,
-                                    request,
-                                    value,
-                                    index,
-                                    buffer,
-                                    (uint16_t)output_buffer_size,
-                                    timeout);
-    if (actual < 0)
     {
-        free(buffer);
-        return rdp_session_usb_libusb_status(actual);
+        uint32_t usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
+                                                               handle,
+                                                               request_type,
+                                                               request,
+                                                               value,
+                                                               index,
+                                                               buffer,
+                                                               output_buffer_size,
+                                                               capped_timeout,
+                                                               &actual);
+
+        if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
+        {
+            free(buffer);
+            return usbd_status;
+        }
     }
     if ((request_type & LIBUSB_ENDPOINT_IN) != 0 && actual > 0)
     {
@@ -21763,7 +21813,8 @@ static uint32_t rdp_session_usb_complete_select_interface(rdp_session_usb_device
                                                    alternate_setting);
 }
 
-static uint32_t rdp_session_usb_complete_descriptor_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_descriptor_request(librdp_session* session,
+                                                            rdp_session_usb_device* device,
                                                             const rdp_usb_redirection_transfer* transfer,
                                                             uint8_t recipient,
                                                             uint8_t get_request,
@@ -21803,7 +21854,8 @@ static uint32_t rdp_session_usb_complete_descriptor_request(rdp_session_usb_devi
         input = data + offset;
         input_len = output_buffer_size;
     }
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            request_type,
                                            get_request ? 0x06u : 0x07u,
                                            (uint16_t)(((uint16_t)descriptor_type << 8u) | descriptor_index),
@@ -21816,7 +21868,8 @@ static uint32_t rdp_session_usb_complete_descriptor_request(rdp_session_usb_devi
                                            output_len);
 }
 
-static uint32_t rdp_session_usb_complete_feature_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_feature_request(librdp_session* session,
+                                                         rdp_session_usb_device* device,
                                                          const rdp_usb_redirection_transfer* transfer,
                                                          uint8_t recipient,
                                                          uint8_t set_feature,
@@ -21854,7 +21907,8 @@ static uint32_t rdp_session_usb_complete_feature_request(rdp_session_usb_device*
         input = data + offset;
         input_len = output_buffer_size;
     }
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            request_type,
                                            set_feature ? 0x03u : 0x01u,
                                            feature_selector,
@@ -21867,7 +21921,8 @@ static uint32_t rdp_session_usb_complete_feature_request(rdp_session_usb_device*
                                            output_len);
 }
 
-static uint32_t rdp_session_usb_complete_get_status_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_get_status_request(librdp_session* session,
+                                                            rdp_session_usb_device* device,
                                                             const rdp_usb_redirection_transfer* transfer,
                                                             uint8_t recipient,
                                                             uint8_t** output,
@@ -21887,7 +21942,8 @@ static uint32_t rdp_session_usb_complete_get_status_request(rdp_session_usb_devi
     output_buffer_size = rdp_session_read_u32_le_unaligned(data + offset + 4u);
     if (output_buffer_size > RDP_SESSION_MAX_FILE_IO_BYTES)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            (uint8_t)(LIBUSB_ENDPOINT_IN | recipient),
                                            0x00u,
                                            0,
@@ -21900,7 +21956,8 @@ static uint32_t rdp_session_usb_complete_get_status_request(rdp_session_usb_devi
                                            output_len);
 }
 
-static uint32_t rdp_session_usb_complete_vendor_class_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_vendor_class_request(librdp_session* session,
+                                                              rdp_session_usb_device* device,
                                                               const rdp_usb_redirection_transfer* transfer,
                                                               uint8_t type,
                                                               uint8_t recipient,
@@ -21942,7 +21999,8 @@ static uint32_t rdp_session_usb_complete_vendor_class_request(rdp_session_usb_de
         input = data + offset;
         input_len = output_buffer_size;
     }
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            request_type,
                                            request,
                                            value,
@@ -21955,7 +22013,8 @@ static uint32_t rdp_session_usb_complete_vendor_class_request(rdp_session_usb_de
                                            output_len);
 }
 
-static uint32_t rdp_session_usb_complete_get_configuration_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_get_configuration_request(librdp_session* session,
+                                                                   rdp_session_usb_device* device,
                                                                    const rdp_usb_redirection_transfer* transfer,
                                                                    uint8_t** output,
                                                                    uint32_t* output_len)
@@ -21972,7 +22031,8 @@ static uint32_t rdp_session_usb_complete_get_configuration_request(rdp_session_u
     output_buffer_size = rdp_session_read_u32_le_unaligned(data + offset);
     if (output_buffer_size > RDP_SESSION_MAX_FILE_IO_BYTES)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            (uint8_t)(LIBUSB_ENDPOINT_IN | 0x00u),
                                            0x08u,
                                            0,
@@ -21985,7 +22045,8 @@ static uint32_t rdp_session_usb_complete_get_configuration_request(rdp_session_u
                                            output_len);
 }
 
-static uint32_t rdp_session_usb_complete_get_interface_request(rdp_session_usb_device* device,
+static uint32_t rdp_session_usb_complete_get_interface_request(librdp_session* session,
+                                                               rdp_session_usb_device* device,
                                                                const rdp_usb_redirection_transfer* transfer,
                                                                uint8_t** output,
                                                                uint32_t* output_len)
@@ -22004,7 +22065,8 @@ static uint32_t rdp_session_usb_complete_get_interface_request(rdp_session_usb_d
     output_buffer_size = rdp_session_read_u32_le_unaligned(data + offset + 4u);
     if (output_buffer_size > RDP_SESSION_MAX_FILE_IO_BYTES)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    return rdp_session_usb_control_request(device->handle,
+    return rdp_session_usb_control_request(session,
+                                           device->handle,
                                            (uint8_t)(LIBUSB_ENDPOINT_IN | 0x01u),
                                            0x0au,
                                            0,
@@ -22043,86 +22105,6 @@ static uint32_t rdp_session_usb_complete_pipe_request(rdp_session_usb_device* de
                                   rdp_session_usb_libusb_status(rc);
 }
 
-typedef struct rdp_session_usb_async_state
-{
-    int completed;
-    enum libusb_transfer_status transfer_status;
-} rdp_session_usb_async_state;
-
-static void LIBUSB_CALL rdp_session_usb_transfer_callback(struct libusb_transfer* transfer)
-{
-    rdp_session_usb_async_state* state = transfer ? (rdp_session_usb_async_state*)transfer->user_data : NULL;
-
-    if (!state)
-        return;
-    state->transfer_status = transfer->status;
-    state->completed = 1;
-}
-
-static uint32_t rdp_session_usb_transfer_status_to_usbd(enum libusb_transfer_status status)
-{
-    switch (status)
-    {
-        case LIBUSB_TRANSFER_COMPLETED:
-            return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
-        case LIBUSB_TRANSFER_TIMED_OUT:
-            return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
-        case LIBUSB_TRANSFER_STALL:
-            return RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID;
-        case LIBUSB_TRANSFER_NO_DEVICE:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
-        case LIBUSB_TRANSFER_OVERFLOW:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DATA_OVERRUN;
-        case LIBUSB_TRANSFER_CANCELLED:
-            return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
-        default:
-            return RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
-    }
-}
-
-static uint32_t rdp_session_usb_wait_transfer(librdp_session* session,
-                                              struct libusb_transfer* transfer,
-                                              rdp_session_usb_async_state* state,
-                                              uint32_t timeout_ms)
-{
-    uint64_t start_ms = 0;
-    int rc = 0;
-
-    if (!session || !transfer || !state)
-        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    start_ms = (uint64_t)rdp_session_usb_bus_time();
-    rc = libusb_submit_transfer(transfer);
-    if (rc != LIBUSB_SUCCESS)
-        return rdp_session_usb_libusb_status(rc);
-    while (!state->completed)
-    {
-        struct timeval tv;
-        uint64_t now_ms = (uint64_t)rdp_session_usb_bus_time();
-
-        if (timeout_ms > 0 && now_ms - start_ms >= timeout_ms)
-        {
-            (void)libusb_cancel_transfer(transfer);
-            while (!state->completed)
-            {
-                tv.tv_sec = 0;
-                tv.tv_usec = 10000;
-                rc = libusb_handle_events_timeout_completed(session->usb_libusb,
-                                                            &tv,
-                                                            &state->completed);
-                if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_INTERRUPTED)
-                    break;
-            }
-            return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
-        }
-        tv.tv_sec = 0;
-        tv.tv_usec = 10000;
-        rc = libusb_handle_events_timeout_completed(session->usb_libusb, &tv, &state->completed);
-        if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_INTERRUPTED)
-            return rdp_session_usb_libusb_status(rc);
-    }
-    return rdp_session_usb_transfer_status_to_usbd(state->transfer_status);
-}
-
 /*
  * Complete an isochronous USB transfer response. Per-packet statuses, payload
  * offsets, and backend transfer ownership are normalized before the URBDRC
@@ -22136,12 +22118,12 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
                                                       uint32_t* output_len)
 {
     rdp_session_usb_iso_transfer parsed;
-    rdp_session_usb_async_state state;
-    struct libusb_transfer* libusb_transfer = NULL;
+    rdp_usb_backend_iso_packet packets[256];
     uint8_t* buffer = NULL;
     uint32_t usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
     uint32_t error_count = 0;
     uint32_t actual_total = 0;
+    uint32_t payload_offset = 0;
     uint8_t endpoint = 0;
     uint32_t timeout = 2000u;
 
@@ -22174,67 +22156,51 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
         if (transfer->header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST)
             memcpy(buffer, parsed.data, parsed.data_len);
     }
-    memset(&state, 0, sizeof(state));
-    libusb_transfer = libusb_alloc_transfer((int)parsed.packet_count);
-    if (!libusb_transfer)
-    {
-        free(buffer);
-        return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
-    }
-    libusb_fill_iso_transfer(libusb_transfer,
-                             device->handle,
-                             endpoint,
-                             buffer,
-                             (int)parsed.output_buffer_size,
-                             (int)parsed.packet_count,
-                             rdp_session_usb_transfer_callback,
-                             &state,
-                             timeout);
     for (uint32_t i = 0; i < parsed.packet_count; i++)
     {
-        libusb_transfer->iso_packet_desc[i].length = (unsigned int)parsed.packets[i].length;
-        libusb_transfer->iso_packet_desc[i].actual_length = 0;
+        packets[i].length = parsed.packets[i].length;
+        packets[i].actual_length = 0;
+        packets[i].status = RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
     }
-    usbd_status = rdp_session_usb_wait_transfer(session, libusb_transfer, &state, timeout);
+    timeout = rdp_session_usb_transfer_timeout(session, timeout);
+    usbd_status = rdp_usb_backend_iso_transfer(session->usb_libusb,
+                                               device->handle,
+                                               endpoint,
+                                               buffer,
+                                               parsed.output_buffer_size,
+                                               packets,
+                                               parsed.packet_count,
+                                               timeout,
+                                               &actual_total);
     if (rdp_buffer_append_u32_le(result_payload, parsed.start_frame) != LIBRDP_STATUS_OK ||
         rdp_buffer_append_u32_le(result_payload,
                                  usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
                                      parsed.packet_count :
-                                     0u) != LIBRDP_STATUS_OK ||
+                                 0u) != LIBRDP_STATUS_OK ||
         rdp_buffer_append_u32_le(result_payload, parsed.error_count) != LIBRDP_STATUS_OK)
     {
-        libusb_free_transfer(libusb_transfer);
         free(buffer);
         return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
     }
     if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
     {
-        actual_total = 0;
+        payload_offset = 0;
         for (uint32_t i = 0; i < parsed.packet_count; i++)
         {
-            uint32_t packet_status =
-                rdp_session_usb_transfer_status_to_usbd(libusb_transfer->iso_packet_desc[i].status);
-            uint32_t packet_len = (uint32_t)libusb_transfer->iso_packet_desc[i].actual_length;
-            unsigned char* packet_buffer =
-                libusb_get_iso_packet_buffer_simple(libusb_transfer, (unsigned int)i);
+            uint32_t packet_status = packets[i].status;
+            uint32_t packet_len = packets[i].actual_length;
 
             if (packet_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
                 error_count++;
-            if (rdp_buffer_append_u32_le(result_payload, actual_total) != LIBRDP_STATUS_OK ||
+            if (rdp_buffer_append_u32_le(result_payload, payload_offset) != LIBRDP_STATUS_OK ||
                 rdp_buffer_append_u32_le(result_payload, packet_len) != LIBRDP_STATUS_OK ||
                 rdp_buffer_append_u32_le(result_payload, packet_status) != LIBRDP_STATUS_OK)
             {
-                libusb_free_transfer(libusb_transfer);
                 free(buffer);
                 return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
             }
-            if (packet_len <= parsed.output_buffer_size - actual_total)
-            {
-                if (packet_len > 0 && buffer && packet_buffer &&
-                    packet_buffer != buffer + actual_total)
-                    memmove(buffer + actual_total, packet_buffer, packet_len);
-                actual_total += packet_len;
-            }
+            if (packet_len <= parsed.output_buffer_size - payload_offset)
+                payload_offset += packet_len;
         }
         if (result_payload->length >= 12u)
         {
@@ -22262,12 +22228,20 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
                     parsed.output_buffer_size,
                     actual_total,
                     usbd_status);
-    libusb_free_transfer(libusb_transfer);
     free(buffer);
     return usbd_status;
 }
 
+/*
+ * Purpose: resolve Microsoft OS feature descriptor requests at the USB backend
+ * boundary without blocking the dispatch loop on synchronous provider calls.
+ * Invariant: parsed request lengths are bounded before transfer buffers are
+ * allocated, and returned bytes are copied only into caller-owned completion
+ * buffers. Failure policy: short vendor-code probes are rejected as STALL,
+ * while backend timeout, cancel, and unplug statuses are propagated unchanged.
+ */
 static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
+    librdp_session* session,
     rdp_session_usb_device* device,
     const rdp_usb_redirection_transfer* transfer,
     uint8_t** output,
@@ -22277,9 +22251,10 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
     uint8_t ms_string[18];
     uint8_t vendor_code = 0;
     uint8_t* buffer = NULL;
-    int actual = 0;
+    uint32_t actual = 0;
+    uint32_t usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
 
-    if (!device || !transfer || !output || !output_len)
+    if (!session || !session->usb_libusb || !device || !transfer || !output || !output_len)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     *output = NULL;
     *output_len = 0;
@@ -22288,15 +22263,19 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     if (request.output_buffer_size > UINT16_MAX)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    actual = libusb_control_transfer(device->handle,
-                                     (uint8_t)(LIBUSB_ENDPOINT_IN | request.recipient),
-                                     LIBUSB_REQUEST_GET_DESCRIPTOR,
-                                     0x03eeu,
-                                     0,
-                                     ms_string,
-                                     (uint16_t)sizeof(ms_string),
-                                     1000u);
-    if (actual < 17)
+    usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
+                                                   device->handle,
+                                                   (uint8_t)(LIBUSB_ENDPOINT_IN | request.recipient),
+                                                   LIBUSB_REQUEST_GET_DESCRIPTOR,
+                                                   0x03eeu,
+                                                   0,
+                                                   ms_string,
+                                                   (uint32_t)sizeof(ms_string),
+                                                   rdp_session_usb_transfer_timeout(session, 1000u),
+                                                   &actual);
+    if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
+        return usbd_status;
+    if (actual < 17u)
         return RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID;
     vendor_code = ms_string[16];
     if (request.output_buffer_size > 0)
@@ -22308,26 +22287,29 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
             request.data_len > 0)
             memcpy(buffer, request.data, request.data_len);
     }
-    actual = libusb_control_transfer(device->handle,
-                                     (uint8_t)(LIBUSB_ENDPOINT_IN |
-                                               LIBUSB_REQUEST_TYPE_VENDOR |
-                                               request.recipient),
-                                     vendor_code,
-                                     (uint16_t)(((uint16_t)request.interface_number << 8u) |
-                                                request.page_index),
-                                     request.feature_index,
-                                     buffer,
-                                     (uint16_t)request.output_buffer_size,
-                                     1000u);
-    if (actual < 0)
+    actual = 0;
+    usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
+                                                   device->handle,
+                                                   (uint8_t)(LIBUSB_ENDPOINT_IN |
+                                                             LIBUSB_REQUEST_TYPE_VENDOR |
+                                                             request.recipient),
+                                                   vendor_code,
+                                                   (uint16_t)(((uint16_t)request.interface_number << 8u) |
+                                                              request.page_index),
+                                                   request.feature_index,
+                                                   buffer,
+                                                   request.output_buffer_size,
+                                                   rdp_session_usb_transfer_timeout(session, 1000u),
+                                                   &actual);
+    if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
     {
         free(buffer);
-        return RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID;
+        return usbd_status;
     }
     if (buffer && actual > 0)
     {
         *output = buffer;
-        *output_len = (uint32_t)actual;
+        *output_len = actual;
     }
     else
         free(buffer);
@@ -22340,7 +22322,7 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
                     request.page_index,
                     request.feature_index,
                     request.output_buffer_size,
-                    actual);
+                    (int)actual);
     return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
 }
 #endif
@@ -22429,32 +22411,28 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                     usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
                 else
                 {
-                    int actual = 0;
+                    uint32_t actual = 0;
+                    uint32_t timeout = rdp_session_usb_transfer_timeout(session, control.timeout);
 
                     if (transfer->header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST &&
                         control.data_len > 0)
                         memcpy(output, control.data, control.data_len);
-                    actual = libusb_control_transfer(device->handle,
-                                                    control.request_type,
-                                                    control.request,
-                                                    control.value,
-                                                    control.index,
-                                                    output,
-                                                    (uint16_t)control.output_buffer_size,
-                                                    control.timeout);
-                    if (actual >= 0)
-                    {
-                        usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
-                        if ((control.request_type & LIBUSB_ENDPOINT_IN) != 0)
-                            output_len = (uint32_t)actual;
-                    }
-                    else
-                    {
-                        usbd_status = rdp_session_usb_libusb_status(actual);
-                    }
+                    usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
+                                                                   device->handle,
+                                                                   control.request_type,
+                                                                   control.request,
+                                                                   control.value,
+                                                                   control.index,
+                                                                   output,
+                                                                   control.output_buffer_size,
+                                                                   timeout,
+                                                                   &actual);
+                    if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS &&
+                        (control.request_type & LIBUSB_ENDPOINT_IN) != 0)
+                        output_len = actual;
                     rdp_trace_event(RDP_TRACE_CLIENT,
                                     "client.urbdrc.control_transfer",
-                                    "interface_id=%u endpoint=%u request=%u value=%u index=%u flags=%u direction=%u requested=%u actual=%d usbd_status=%u",
+                                    "interface_id=%u endpoint=%u request=%u value=%u index=%u flags=%u direction=%u requested=%u actual=%u timeout_ms=%u usbd_status=%u",
                                     transfer->header.interface_id,
                                     control.endpoint,
                                     control.request,
@@ -22464,27 +22442,31 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                     (control.request_type & LIBUSB_ENDPOINT_IN) != 0 ? 1u : 0u,
                                     control.output_buffer_size,
                                     actual,
+                                    timeout,
                                     usbd_status);
                 }
             }
             else
             {
-                int actual = libusb_control_transfer(device->handle,
-                                                    control.request_type,
-                                                    control.request,
-                                                    control.value,
-                                                    control.index,
-                                                    NULL,
-                                                    0,
-                                                    control.timeout);
+                uint32_t actual = 0;
+                uint32_t timeout = rdp_session_usb_transfer_timeout(session, control.timeout);
 
-                usbd_status = actual >= 0 ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
-                                            rdp_session_usb_libusb_status(actual);
+                usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
+                                                               device->handle,
+                                                               control.request_type,
+                                                               control.request,
+                                                               control.value,
+                                                               control.index,
+                                                               NULL,
+                                                               0,
+                                                               timeout,
+                                                               &actual);
             }
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_GET_DESCRIPTOR_FROM_DEVICE)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x00u,
                                                                       1,
@@ -22493,7 +22475,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_SET_DESCRIPTOR_TO_DEVICE)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x00u,
                                                                       0,
@@ -22502,7 +22485,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_GET_DESCRIPTOR_FROM_INTERFACE)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x01u,
                                                                       1,
@@ -22511,7 +22495,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_SET_DESCRIPTOR_TO_INTERFACE)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x01u,
                                                                       0,
@@ -22520,7 +22505,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_GET_DESCRIPTOR_FROM_ENDPOINT)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x02u,
                                                                       1,
@@ -22529,7 +22515,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_SET_DESCRIPTOR_TO_ENDPOINT)
         {
-            usbd_status = rdp_session_usb_complete_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_descriptor_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       0x02u,
                                                                       0,
@@ -22563,7 +22550,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
             else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_SET_FEATURE_TO_OTHER ||
                      transfer->urb.function == RDP_USB_REDIRECTION_URB_CLEAR_FEATURE_TO_OTHER)
                 recipient = 0x03u;
-            usbd_status = rdp_session_usb_complete_feature_request(device,
+            usbd_status = rdp_session_usb_complete_feature_request(session,
+                                                                   device,
                                                                    transfer,
                                                                    recipient,
                                                                    set_feature,
@@ -22583,7 +22571,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                 recipient = 0x02u;
             else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_GET_STATUS_FROM_OTHER)
                 recipient = 0x03u;
-            usbd_status = rdp_session_usb_complete_get_status_request(device,
+            usbd_status = rdp_session_usb_complete_get_status_request(session,
+                                                                      device,
                                                                       transfer,
                                                                       recipient,
                                                                       &output,
@@ -22615,7 +22604,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
             else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_VENDOR_OTHER ||
                      transfer->urb.function == RDP_USB_REDIRECTION_URB_CLASS_OTHER)
                 recipient = 0x03u;
-            usbd_status = rdp_session_usb_complete_vendor_class_request(device,
+            usbd_status = rdp_session_usb_complete_vendor_class_request(session,
+                                                                        device,
                                                                         transfer,
                                                                         type,
                                                                         recipient,
@@ -22624,14 +22614,16 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_CONTROL_GET_CONFIGURATION_REQUEST)
         {
-            usbd_status = rdp_session_usb_complete_get_configuration_request(device,
+            usbd_status = rdp_session_usb_complete_get_configuration_request(session,
+                                                                             device,
                                                                              transfer,
                                                                              &output,
                                                                              &output_len);
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_CONTROL_GET_INTERFACE_REQUEST)
         {
-            usbd_status = rdp_session_usb_complete_get_interface_request(device,
+            usbd_status = rdp_session_usb_complete_get_interface_request(session,
+                                                                         device,
                                                                          transfer,
                                                                          &output,
                                                                          &output_len);
@@ -22655,8 +22647,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
             }
             else
             {
-                int actual = 0;
-                int rc = 0;
+                uint32_t actual = 0;
+                uint32_t timeout = rdp_session_usb_transfer_timeout(session, 10000u);
 
                 endpoint = pipe.endpoint;
                 if (transfer->header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_IN_REQUEST)
@@ -22676,51 +22668,34 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                         }
                         if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
                         {
-                            if (transfer_type == LIBUSB_TRANSFER_TYPE_INTERRUPT)
-                                rc = libusb_interrupt_transfer(device->handle,
-                                                               endpoint,
-                                                               output,
-                                                               (int)pipe.output_buffer_size,
-                                                               &actual,
-                                                               10000u);
-                            else
-                                rc = libusb_bulk_transfer(device->handle,
-                                                          endpoint,
-                                                          output,
-                                                          (int)pipe.output_buffer_size,
-                                                          &actual,
-                                                          10000u);
-                            if (rc == LIBUSB_SUCCESS)
-                            {
-                                usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
-                                output_len = (uint32_t)actual;
-                            }
-                            else
-                                usbd_status = rdp_session_usb_libusb_status(rc);
+                            usbd_status = rdp_usb_backend_bulk_or_interrupt_transfer(
+                                session->usb_libusb,
+                                device->handle,
+                                endpoint,
+                                transfer_type,
+                                output,
+                                pipe.output_buffer_size,
+                                timeout,
+                                &actual);
+                            if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
+                                output_len = actual;
                         }
                     }
                     else
                     {
-                        if (transfer_type == LIBUSB_TRANSFER_TYPE_INTERRUPT)
-                            rc = libusb_interrupt_transfer(device->handle,
-                                                           endpoint,
-                                                           (uint8_t*)pipe.data,
-                                                           (int)pipe.data_len,
-                                                           &actual,
-                                                           10000u);
-                        else
-                            rc = libusb_bulk_transfer(device->handle,
-                                                      endpoint,
-                                                      (uint8_t*)pipe.data,
-                                                      (int)pipe.data_len,
-                                                      &actual,
-                                                      10000u);
-                        usbd_status = rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
-                                                             rdp_session_usb_libusb_status(rc);
+                        usbd_status = rdp_usb_backend_bulk_or_interrupt_transfer(
+                            session->usb_libusb,
+                            device->handle,
+                            endpoint,
+                            transfer_type,
+                            (uint8_t*)pipe.data,
+                            pipe.data_len,
+                            timeout,
+                            &actual);
                     }
                     rdp_trace_event(RDP_TRACE_CLIENT,
                                     "client.urbdrc.pipe_transfer",
-                                    "interface_id=%u endpoint=%u type=%u flags=%u direction=%u requested=%u actual=%d usbd_status=%u",
+                                    "interface_id=%u endpoint=%u type=%u flags=%u direction=%u requested=%u actual=%u timeout_ms=%u usbd_status=%u",
                                     transfer->header.interface_id,
                                     endpoint,
                                     transfer_type,
@@ -22731,6 +22706,7 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                         0u,
                                     pipe.output_buffer_size,
                                     actual,
+                                    timeout,
                                     usbd_status);
                 }
             }
@@ -22746,7 +22722,8 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
         }
         else if (transfer->urb.function == RDP_USB_REDIRECTION_URB_GET_OS_FEATURE_DESCRIPTOR_REQUEST)
         {
-            usbd_status = rdp_session_usb_complete_os_feature_descriptor_request(device,
+            usbd_status = rdp_session_usb_complete_os_feature_descriptor_request(session,
+                                                                                 device,
                                                                                  transfer,
                                                                                  &output,
                                                                                  &output_len);

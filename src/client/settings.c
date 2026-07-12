@@ -98,6 +98,7 @@ struct librdp_settings
     char* smartcards[LIBRDP_SETTINGS_MAX_SMARTCARDS];
     uint32_t usb_device_count;
     char* usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
+    librdp_usb_policy usb_policy;
     uint32_t rail_app_count;
     char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
     uint32_t pnp_device_count;
@@ -107,6 +108,8 @@ struct librdp_settings
 #define RDP_SETTINGS_TEXT_MAX 4096u
 #define RDP_SETTINGS_DRIVE_DEFAULT_MAX_OPEN_HANDLES 64u
 #define RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES 1024u
+#define RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS 5000u
+#define RDP_SETTINGS_USB_MAX_TRANSFER_MS 60000u
 
 static rdp_settings_secure_string_observer g_secure_string_observer;
 static void* g_secure_string_observer_user_data;
@@ -321,6 +324,19 @@ librdp_status librdp_drive_policy_init(librdp_drive_policy* policy)
     return LIBRDP_STATUS_OK;
 }
 
+void librdp_usb_policy_init(librdp_usb_policy* policy)
+{
+    if (!policy)
+        return;
+    memset(policy, 0, sizeof(*policy));
+    policy->version = LIBRDP_USB_POLICY_VERSION;
+    policy->size = (uint32_t)sizeof(*policy);
+    policy->require_explicit_consent = 1;
+    policy->allow_hid = 0;
+    policy->allow_mass_storage = 0;
+    policy->max_transfer_ms = RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS;
+}
+
 static int rdp_settings_valid_drive_name(const char* name)
 {
     size_t i = 0;
@@ -347,6 +363,15 @@ static int rdp_settings_drive_policy_valid(const librdp_drive_policy* policy)
     if (!policy || policy->version != LIBRDP_DRIVE_POLICY_VERSION || policy->size < sizeof(*policy))
         return 0;
     if (policy->max_open_handles > RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES)
+        return 0;
+    return 1;
+}
+
+static int rdp_settings_usb_policy_valid(const librdp_usb_policy* policy)
+{
+    if (!policy || policy->version != LIBRDP_USB_POLICY_VERSION || policy->size < sizeof(*policy))
+        return 0;
+    if (policy->max_transfer_ms > RDP_SETTINGS_USB_MAX_TRANSFER_MS)
         return 0;
     return 1;
 }
@@ -529,6 +554,7 @@ librdp_settings* librdp_settings_new(void)
     settings->security_mode = LIBRDP_SECURITY_AUTO;
     settings->tls_policy_mode = LIBRDP_TLS_POLICY_STRICT;
     settings->tls_use_system_store = 1;
+    librdp_usb_policy_init(&settings->usb_policy);
     return settings;
 }
 
@@ -559,6 +585,7 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->tls_use_system_store = settings->tls_use_system_store;
     copy->tls_certificate_callback = settings->tls_certificate_callback;
     copy->tls_certificate_callback_user_data = settings->tls_certificate_callback_user_data;
+    copy->usb_policy = settings->usb_policy;
 
     if ((settings->target && librdp_settings_set_target(copy, settings->target) != LIBRDP_STATUS_OK) ||
         (settings->username && librdp_settings_set_username(copy, settings->username) != LIBRDP_STATUS_OK) ||
@@ -1115,6 +1142,26 @@ librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const ch
                                  selector);
 }
 
+librdp_status librdp_settings_set_usb_policy(librdp_settings* settings,
+                                             const librdp_usb_policy* policy)
+{
+    if (!settings || !rdp_settings_usb_policy_valid(policy))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    settings->usb_policy = *policy;
+    if (settings->usb_policy.max_transfer_ms == 0)
+        settings->usb_policy.max_transfer_ms = RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_get_usb_policy(const librdp_settings* settings,
+                                             librdp_usb_policy* policy)
+{
+    if (!settings || !policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *policy = settings->usb_policy;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
                                              const char* hardware_id,
                                              const char* compatibility_id,
@@ -1431,6 +1478,11 @@ const librdp_drive_policy* rdp_settings_drive_policy_internal(const librdp_setti
     if (!settings || index >= settings->drive_count)
         return NULL;
     return &settings->drives[index].policy;
+}
+
+const librdp_usb_policy* rdp_settings_usb_policy_internal(const librdp_settings* settings)
+{
+    return settings ? &settings->usb_policy : NULL;
 }
 
 uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index)

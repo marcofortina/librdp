@@ -22,6 +22,8 @@
 #include "common/trace.h"
 #include "client/settings_internal.h"
 #include "client/smartcard_backend.h"
+#include "client/usb_backend.h"
+#include "channels/usb_redirection.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "protocol/mcs.h"
@@ -322,6 +324,62 @@ static int test_smartcard_backend_mock(void)
     CHECK(active_protocol == mock.next_protocol);
     CHECK(rdp_smartcard_backend_disconnect(&backend, handle, 0) == SCARD_S_SUCCESS);
     CHECK(rdp_smartcard_backend_release_context(&backend, context) == SCARD_S_SUCCESS);
+    return 0;
+}
+
+static int test_usb_backend_boundary(void)
+{
+#ifdef RDP_HAVE_LIBUSB
+    rdp_usb_backend_iso_packet packet;
+    uint32_t actual = 0;
+
+    memset(&packet, 0, sizeof(packet));
+    packet.length = 1;
+    CHECK(rdp_usb_backend_libusb_status(LIBUSB_SUCCESS) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS);
+    CHECK(rdp_usb_backend_libusb_status(LIBUSB_ERROR_TIMEOUT) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT);
+    CHECK(rdp_usb_backend_libusb_status(LIBUSB_ERROR_NO_DEVICE) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_libusb_status(LIBUSB_ERROR_PIPE) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID);
+    CHECK(rdp_usb_backend_transfer_status(LIBUSB_TRANSFER_CANCELLED) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT);
+    CHECK(rdp_usb_backend_transfer_status(LIBUSB_TRANSFER_NO_DEVICE) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_transfer_status(LIBUSB_TRANSFER_STALL) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_STALL_PID);
+    CHECK(rdp_usb_backend_control_transfer(NULL,
+                                           NULL,
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           NULL,
+                                           0,
+                                           1,
+                                           &actual) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    CHECK(rdp_usb_backend_bulk_or_interrupt_transfer(NULL,
+                                                     NULL,
+                                                     0,
+                                                     LIBUSB_TRANSFER_TYPE_BULK,
+                                                     NULL,
+                                                     0,
+                                                     1,
+                                                     &actual) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    CHECK(rdp_usb_backend_iso_transfer(NULL,
+                                       NULL,
+                                       0,
+                                       NULL,
+                                       0,
+                                       &packet,
+                                       1,
+                                       1,
+                                       &actual) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+#endif
     return 0;
 }
 
@@ -1405,6 +1463,8 @@ static int test_settings_surface_input_session(void)
     librdp_credentials credentials;
     librdp_drive_policy drive_policy;
     librdp_drive_policy drive_policy_out;
+    librdp_usb_policy usb_policy;
+    librdp_usb_policy usb_policy_out;
     librdp_trace_policy trace_policy;
     trace_capture trace;
     secure_string_capture secure_capture;
@@ -1565,6 +1625,38 @@ static int test_settings_surface_input_session(void)
     CHECK(drive_policy_out.read_only == 0);
     CHECK(drive_policy_out.max_file_size == 65536u);
     CHECK(drive_policy_out.max_open_handles == 2u);
+    librdp_usb_policy_init(NULL);
+    librdp_usb_policy_init(&usb_policy);
+    CHECK(usb_policy.version == LIBRDP_USB_POLICY_VERSION);
+    CHECK(usb_policy.size == sizeof(usb_policy));
+    CHECK(usb_policy.require_explicit_consent == 1);
+    CHECK(usb_policy.allow_hid == 0);
+    CHECK(usb_policy.allow_mass_storage == 0);
+    CHECK(usb_policy.max_transfer_ms > 0);
+    CHECK(librdp_settings_get_usb_policy(NULL, &usb_policy_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_usb_policy(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_usb_policy(settings, &usb_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(usb_policy_out.require_explicit_consent == 1);
+    CHECK(usb_policy_out.allow_hid == 0);
+    CHECK(usb_policy_out.allow_mass_storage == 0);
+    CHECK(librdp_settings_set_usb_policy(NULL, &usb_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_usb_policy(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    usb_policy.version = 0;
+    CHECK(librdp_settings_set_usb_policy(settings, &usb_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    librdp_usb_policy_init(&usb_policy);
+    usb_policy.max_transfer_ms = 60001u;
+    CHECK(librdp_settings_set_usb_policy(settings, &usb_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    librdp_usb_policy_init(&usb_policy);
+    usb_policy.require_explicit_consent = 1;
+    usb_policy.allow_hid = 1;
+    usb_policy.allow_mass_storage = 1;
+    usb_policy.max_transfer_ms = 0;
+    CHECK(librdp_settings_set_usb_policy(settings, &usb_policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_usb_policy(settings, &usb_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(usb_policy_out.require_explicit_consent == 1);
+    CHECK(usb_policy_out.allow_hid == 1);
+    CHECK(usb_policy_out.allow_mass_storage == 1);
+    CHECK(usb_policy_out.max_transfer_ms > 0);
     CHECK(librdp_settings_serial_port_count(settings) == 0);
     CHECK(librdp_settings_add_serial_port(settings, "COM1:", "/dev/ttyS0") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_serial_port_count(settings) == 1);
@@ -1776,6 +1868,10 @@ static int test_settings_surface_input_session(void)
     CHECK(drive_policy_out.read_only == 0);
     CHECK(drive_policy_out.max_file_size == 65536u);
     CHECK(drive_policy_out.max_open_handles == 2u);
+    CHECK(librdp_settings_get_usb_policy(copy, &usb_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(usb_policy_out.require_explicit_consent == 1);
+    CHECK(usb_policy_out.allow_hid == 1);
+    CHECK(usb_policy_out.allow_mass_storage == 1);
     CHECK(librdp_settings_serial_port_count(copy) == 1);
     CHECK(strcmp(librdp_settings_serial_port_name(copy, 0), "COM1:") == 0);
     CHECK(strcmp(librdp_settings_serial_port_path(copy, 0), "/dev/ttyS0") == 0);
@@ -2213,6 +2309,8 @@ int test_common(void)
 int test_client_core(void)
 {
     if (test_smartcard_backend_mock() != 0)
+        return 1;
+    if (test_usb_backend_boundary() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

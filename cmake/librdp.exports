@@ -48,6 +48,7 @@ _librdp_credentials_init
 _librdp_credentials_clear
 _librdp_credentials_set
 _librdp_drive_policy_init
+_librdp_usb_policy_init
 _librdp_settings_new
 _librdp_settings_clone
 _librdp_settings_free
@@ -78,6 +79,8 @@ _librdp_settings_set_video_output_path
 _librdp_settings_add_camera
 _librdp_settings_add_smartcard
 _librdp_settings_add_usb_device
+_librdp_settings_set_usb_policy
+_librdp_settings_get_usb_policy
 _librdp_settings_add_pnp_device
 _librdp_settings_set_webauthn_provider
 _librdp_settings_add_rail_app

@@ -190,6 +190,7 @@ set(LIBRDP_SOURCES
     src/client/settings.c
     src/client/session.c
     src/client/smartcard_backend.c
+    src/client/usb_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c
@@ -589,6 +590,9 @@ if(LIBRDP_BUILD_TESTS)
         endif()
         if(LIBRDP_OPENH264_AVC_FOUND)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_OPENH264_AVC=1)
+        endif()
+        if(LIBRDP_LIBUSB_FOUND)
+            target_compile_definitions(${target} PRIVATE RDP_HAVE_LIBUSB=1)
         endif()
     endfunction()
 

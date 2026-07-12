@@ -67,6 +67,7 @@ typedef enum librdp_security_mode
 #define LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH 64u /**< SHA-256 fingerprint length in lowercase hex. */
 #define LIBRDP_CREDENTIALS_VERSION 1u          /**< Current librdp_credentials version. */
 #define LIBRDP_DRIVE_POLICY_VERSION 1u         /**< Current librdp_drive_policy version. */
+#define LIBRDP_USB_POLICY_VERSION 1u           /**< Current librdp_usb_policy version. */
 
 /**
  * @brief TLS certificate trust policy used by TLS and NLA security modes.
@@ -235,6 +236,26 @@ typedef struct librdp_drive_policy
     uint64_t max_file_size;    /**< Maximum file size accepted for writes/truncation, or zero for no explicit cap. */
     uint32_t max_open_handles; /**< Maximum concurrently open drive handles, or zero to use the default. */
 } librdp_drive_policy;
+
+/**
+ * @brief Versioned policy for redirected USB devices.
+ *
+ * The default initialized policy is default-deny outside explicit selectors:
+ * a device must be configured with librdp_settings_add_usb_device(), HID and
+ * mass-storage classes are denied, and transfer waits are capped. Applications
+ * must opt in deliberately before exposing sensitive USB classes.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_usb_policy
+{
+    uint32_t version;             /**< Struct version, LIBRDP_USB_POLICY_VERSION. */
+    uint32_t size;                /**< Size of this struct in bytes. */
+    int require_explicit_consent; /**< Non-zero requires an explicit configured selector before opening. */
+    int allow_hid;                /**< Non-zero allows HID class devices and interfaces. */
+    int allow_mass_storage;       /**< Non-zero allows mass-storage class devices and interfaces. */
+    uint32_t max_transfer_ms;     /**< Maximum backend transfer wait in milliseconds, or zero for the default cap. */
+} librdp_usb_policy;
 
 /**
  * @brief Optional feature bit advertised or enabled for a client session.
@@ -960,6 +981,55 @@ LIBRDP_API librdp_status librdp_settings_add_smartcard(librdp_settings* settings
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector);
+
+/**
+ * @brief Initialize a USB redirection policy with conservative defaults.
+ *
+ * @param[out] policy Policy object to initialize; must not be NULL.
+ *
+ * @note Defaults require explicit selectors, deny HID and mass-storage
+ * classes, and cap backend transfers to an implementation default.
+ * @note Thread-safety: this function only writes caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_usb_policy_init(librdp_usb_policy* policy);
+
+/**
+ * @brief Set the USB redirection policy.
+ *
+ * The policy is copied into settings. Passing NULL is invalid. The policy must
+ * have a supported version and size.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] policy Policy to copy; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments, unsupported struct version or invalid size.
+ *
+ * @note Thread-safety: settings objects are not internally synchronized; the
+ * caller must serialize concurrent reads and writes.
+ * @warning Enabling HID or mass-storage redirection can expose keyboards,
+ * pointing devices, removable media, and filesystems to the remote session.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_usb_policy(librdp_settings* settings,
+                                                        const librdp_usb_policy* policy);
+
+/**
+ * @brief Return the active USB redirection policy.
+ *
+ * @param[in] settings Settings object to query; must not be NULL.
+ * @param[out] policy Receives a copy of the policy; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments.
+ *
+ * @note Thread-safety: settings objects are not internally synchronized; the
+ * caller must serialize concurrent reads and writes.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_usb_policy(const librdp_settings* settings,
+                                                        librdp_usb_policy* policy);
 
 /**
  * @brief Add a Plug and Play device advertisement.
