@@ -222,8 +222,20 @@ target_include_directories(librdp
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+set_target_properties(librdp PROPERTIES C_VISIBILITY_PRESET hidden)
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
 target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+if(BUILD_SHARED_LIBS)
+    if(APPLE)
+        set(LIBRDP_EXPORT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports)
+        target_link_options(librdp PRIVATE "LINKER:-exported_symbols_list,${LIBRDP_EXPORT_FILE}")
+        set_property(TARGET librdp APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_FILE})
+    elseif(UNIX)
+        set(LIBRDP_EXPORT_MAP ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports.map)
+        target_link_options(librdp PRIVATE "LINKER:--version-script=${LIBRDP_EXPORT_MAP}")
+        set_property(TARGET librdp APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_MAP})
+    endif()
+endif()
 if(LIBRDP_FFMPEG_AVC_FOUND)
     target_compile_definitions(librdp PRIVATE RDP_HAVE_FFMPEG_AVC=1)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
@@ -322,6 +334,16 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_optional_backends_off.cmake)
+    add_test(NAME shared_symbol_visibility
+        COMMAND ${CMAKE_COMMAND}
+            "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
     if(Python3_Interpreter_FOUND)
         add_test(NAME public_api_docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)

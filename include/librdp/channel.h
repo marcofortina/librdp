@@ -63,7 +63,7 @@ typedef uint32_t librdp_channel_id;
  * same thread that drives the session unless the application serializes access.
  * @since 0.1.0
  */
-librdp_status librdp_session_channel_send(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_channel_send(librdp_session* session,
                                           librdp_channel_id channel_id,
                                           const void* data,
                                           size_t data_len);
@@ -87,7 +87,7 @@ librdp_status librdp_session_channel_send(librdp_session* session,
  * same thread that drives the session unless the application serializes access.
  * @since 0.1.0
  */
-librdp_status librdp_session_channel_close(librdp_session* session, librdp_channel_id channel_id);
+LIBRDP_API librdp_status librdp_session_channel_close(librdp_session* session, librdp_channel_id channel_id);
 
 /** @} */
 

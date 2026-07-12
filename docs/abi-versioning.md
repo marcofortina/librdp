@@ -83,16 +83,16 @@ Removal requires a major version change unless the API was never part of a relea
 
 ## Symbol visibility
 
-Public symbols should use the `librdp_` prefix. Internal symbols should not be exported intentionally.
+Public symbols use the `librdp_` prefix and are marked with `LIBRDP_API` in public headers. Internal symbols must not be exported intentionally.
 
-Build-system support for explicit symbol visibility can be added without changing public headers, but exported symbol sets must be reviewed before release packaging.
+The library target builds with hidden symbol visibility by default. Shared builds use the platform export list in `cmake/` so the dynamic symbol table contains only approved public API symbols.
 
 Recommended exported-symbol review:
 
 1. Build the library with the intended packaging flags.
 2. List exported symbols with the platform toolchain.
 3. Confirm exported public symbols use the `librdp_` prefix.
-4. Confirm helper symbols from `src/` are not intentionally documented as public ABI.
+4. Confirm helper symbols from `src/` are not exported.
 5. Compare public headers, generated API docs, and exported symbols before packaging.
 
 ## Header policy

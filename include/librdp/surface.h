@@ -61,7 +61,7 @@ typedef enum librdp_pixel_format
  * Access it from one thread at a time unless the application provides locking.
  * @since 0.1.0
  */
-librdp_surface* librdp_surface_new(uint32_t width, uint32_t height, librdp_pixel_format format);
+LIBRDP_API librdp_surface* librdp_surface_new(uint32_t width, uint32_t height, librdp_pixel_format format);
 
 /**
  * @brief Free a surface and its framebuffer.
@@ -75,7 +75,7 @@ librdp_surface* librdp_surface_new(uint32_t width, uint32_t height, librdp_pixel
  * surface while it is being freed.
  * @since 0.1.0
  */
-void librdp_surface_free(librdp_surface* surface);
+LIBRDP_API void librdp_surface_free(librdp_surface* surface);
 
 /**
  * @brief Replace a surface framebuffer with a new zero-filled size.
@@ -94,7 +94,7 @@ void librdp_surface_free(librdp_surface* surface);
  * synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_surface_resize(librdp_surface* surface, uint32_t width, uint32_t height);
+LIBRDP_API librdp_status librdp_surface_resize(librdp_surface* surface, uint32_t width, uint32_t height);
 
 /**
  * @brief Copy a BGRA32 rectangle into a surface.
@@ -118,7 +118,7 @@ librdp_status librdp_surface_resize(librdp_surface* surface, uint32_t width, uin
  * synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_surface_blit_bgra32(librdp_surface* surface,
+LIBRDP_API librdp_status librdp_surface_blit_bgra32(librdp_surface* surface,
                                          uint32_t x,
                                          uint32_t y,
                                          uint32_t width,
@@ -137,7 +137,7 @@ librdp_status librdp_surface_blit_bgra32(librdp_surface* surface,
  * mutates or frees the surface.
  * @since 0.1.0
  */
-uint32_t librdp_surface_width(const librdp_surface* surface);
+LIBRDP_API uint32_t librdp_surface_width(const librdp_surface* surface);
 
 /**
  * @brief Return the current surface height.
@@ -150,7 +150,7 @@ uint32_t librdp_surface_width(const librdp_surface* surface);
  * mutates or frees the surface.
  * @since 0.1.0
  */
-uint32_t librdp_surface_height(const librdp_surface* surface);
+LIBRDP_API uint32_t librdp_surface_height(const librdp_surface* surface);
 
 /**
  * @brief Return the byte stride of a surface row.
@@ -163,7 +163,7 @@ uint32_t librdp_surface_height(const librdp_surface* surface);
  * mutates or frees the surface.
  * @since 0.1.0
  */
-size_t librdp_surface_stride(const librdp_surface* surface);
+LIBRDP_API size_t librdp_surface_stride(const librdp_surface* surface);
 
 /**
  * @brief Return the pixel format of a surface.
@@ -176,7 +176,7 @@ size_t librdp_surface_stride(const librdp_surface* surface);
  * mutates or frees the surface.
  * @since 0.1.0
  */
-librdp_pixel_format librdp_surface_format(const librdp_surface* surface);
+LIBRDP_API librdp_pixel_format librdp_surface_format(const librdp_surface* surface);
 
 /**
  * @brief Return a read-only pointer to the framebuffer.
@@ -193,7 +193,7 @@ librdp_pixel_format librdp_surface_format(const librdp_surface* surface);
  * or destruction of the same surface.
  * @since 0.1.0
  */
-const uint8_t* librdp_surface_pixels(const librdp_surface* surface);
+LIBRDP_API const uint8_t* librdp_surface_pixels(const librdp_surface* surface);
 
 /**
  * @brief Return a writable pointer to the framebuffer.
@@ -210,7 +210,7 @@ const uint8_t* librdp_surface_pixels(const librdp_surface* surface);
  * or destruction of the same surface by another thread.
  * @since 0.1.0
  */
-uint8_t* librdp_surface_pixels_mut(librdp_surface* surface);
+LIBRDP_API uint8_t* librdp_surface_pixels_mut(librdp_surface* surface);
 
 /** @} */
 

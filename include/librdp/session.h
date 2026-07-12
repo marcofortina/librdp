@@ -111,7 +111,7 @@ typedef void (*librdp_event_callback)(librdp_session* session, const librdp_even
  * application provides external locking.
  * @since 0.1.0
  */
-librdp_session* librdp_session_new(const librdp_settings* settings);
+LIBRDP_API librdp_session* librdp_session_new(const librdp_settings* settings);
 
 /**
  * @brief Disconnect and free a session.
@@ -128,7 +128,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings);
  * session surface and event payload pointers, become invalid.
  * @since 0.1.0
  */
-void librdp_session_free(librdp_session* session);
+LIBRDP_API void librdp_session_free(librdp_session* session);
 
 /**
  * @brief Install or clear the event callback for a session.
@@ -150,7 +150,7 @@ void librdp_session_free(librdp_session* session);
  * the pointed-to data.
  * @since 0.1.0
  */
-void librdp_session_set_event_callback(librdp_session* session, librdp_event_callback callback, void* user_data);
+LIBRDP_API void librdp_session_set_event_callback(librdp_session* session, librdp_event_callback callback, void* user_data);
 
 /**
  * @brief Establish the initial RDP connection and send client setup PDUs.
@@ -173,7 +173,7 @@ void librdp_session_set_event_callback(librdp_session* session, librdp_event_cal
  * selected security mode; applications should avoid tracing or storing them.
  * @since 0.1.0
  */
-librdp_status librdp_session_connect(librdp_session* session);
+LIBRDP_API librdp_status librdp_session_connect(librdp_session* session);
 
 /**
  * @brief Drive one iteration of network and protocol processing.
@@ -197,7 +197,7 @@ librdp_status librdp_session_connect(librdp_session* session);
  * function. Do not call it concurrently for the same session.
  * @since 0.1.0
  */
-librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
+LIBRDP_API librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
 
 /**
  * @brief Close the transport and reset negotiated session state.
@@ -216,7 +216,7 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
  * state is discarded.
  * @since 0.1.0
  */
-librdp_status librdp_session_disconnect(librdp_session* session);
+LIBRDP_API librdp_status librdp_session_disconnect(librdp_session* session);
 
 /**
  * @brief Request a single-monitor desktop size.
@@ -237,7 +237,7 @@ librdp_status librdp_session_disconnect(librdp_session* session);
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uint32_t height);
+LIBRDP_API librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uint32_t height);
 
 /**
  * @brief Request an explicit monitor layout.
@@ -259,7 +259,7 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_set_display_layout(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_set_display_layout(librdp_session* session,
                                                 const librdp_display_monitor* monitors,
                                                 uint32_t monitor_count);
 
@@ -283,7 +283,7 @@ librdp_status librdp_session_set_display_layout(librdp_session* session,
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+LIBRDP_API librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 
 /**
  * @brief Send one keyboard input event.
@@ -307,7 +307,7 @@ librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32
  * and for avoiding unintended credential or secret text injection.
  * @since 0.1.0
  */
-librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* event);
+LIBRDP_API librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* event);
 
 /**
  * @brief Send one mouse input event.
@@ -327,7 +327,7 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* event);
+LIBRDP_API librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* event);
 
 /**
  * @brief Send one or more touch frames through the input channel.
@@ -349,7 +349,7 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_send_touch(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_send_touch(librdp_session* session,
                                         uint32_t encode_time,
                                         const librdp_touch_frame* frames,
                                         uint16_t frame_count);
@@ -376,7 +376,7 @@ librdp_status librdp_session_send_touch(librdp_session* session,
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_send_pen(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_send_pen(librdp_session* session,
                                       uint32_t encode_time,
                                       const librdp_pen_frame* frames,
                                       uint16_t frame_count);
@@ -397,7 +397,7 @@ librdp_status librdp_session_send_pen(librdp_session* session,
  * @note Thread-safety: call from one serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t contact_id);
+LIBRDP_API librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t contact_id);
 
 /**
  * @brief Return the current session state.
@@ -410,7 +410,7 @@ librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t cont
  * mutates or frees the session.
  * @since 0.1.0
  */
-librdp_session_state librdp_session_get_state(const librdp_session* session);
+LIBRDP_API librdp_session_state librdp_session_get_state(const librdp_session* session);
 
 /**
  * @brief Return the primary session surface.
@@ -427,7 +427,7 @@ librdp_session_state librdp_session_get_state(const librdp_session* session);
  * context, or copy pixels while holding application-provided locking.
  * @since 0.1.0
  */
-const librdp_surface* librdp_session_get_surface(const librdp_session* session);
+LIBRDP_API const librdp_surface* librdp_session_get_surface(const librdp_session* session);
 
 /** @} */
 

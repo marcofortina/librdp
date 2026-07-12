@@ -95,7 +95,7 @@ typedef struct librdp_video_capture_media
  * responsible for capture consent, device access policy, and local buffering.
  * @since 0.1.0
  */
-librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
                                                        uint8_t stream_index,
                                                        const void* data,
                                                        size_t data_len);
@@ -119,7 +119,7 @@ librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
  * same serialized context that processes video capture events.
  * @since 0.1.0
  */
-librdp_status librdp_session_video_capture_send_error(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_video_capture_send_error(librdp_session* session,
                                                       uint8_t stream_index,
                                                       uint32_t error_code);
 

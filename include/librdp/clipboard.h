@@ -91,7 +91,7 @@ typedef struct librdp_clipboard_file
  * copy until it is replaced, cleared, or the session is freed.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_set_data(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_clipboard_set_data(librdp_session* session,
                                                 uint32_t format_id,
                                                 const void* data,
                                                 size_t data_len);
@@ -122,7 +122,7 @@ librdp_status librdp_session_clipboard_set_data(librdp_session* session,
  * The application is responsible for user consent and access policy.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_set_files(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_clipboard_set_files(librdp_session* session,
                                                  const librdp_clipboard_file* files,
                                                  uint32_t count);
 
@@ -143,7 +143,7 @@ librdp_status librdp_session_clipboard_set_files(librdp_session* session,
  * serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_clear(librdp_session* session);
+LIBRDP_API librdp_status librdp_session_clipboard_clear(librdp_session* session);
 
 /**
  * @brief Request clipboard data for a remote format.
@@ -162,7 +162,7 @@ librdp_status librdp_session_clipboard_clear(librdp_session* session);
  * serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_request_data(librdp_session* session, uint32_t format_id);
+LIBRDP_API librdp_status librdp_session_clipboard_request_data(librdp_session* session, uint32_t format_id);
 
 /**
  * @brief Request the size of a remote clipboard file.
@@ -182,7 +182,7 @@ librdp_status librdp_session_clipboard_request_data(librdp_session* session, uin
  * serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_request_file_size(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_clipboard_request_file_size(librdp_session* session,
                                                          uint32_t stream_id,
                                                          int32_t file_index);
 
@@ -210,7 +210,7 @@ librdp_status librdp_session_clipboard_request_file_size(librdp_session* session
  * store or expose returned data according to their own policy.
  * @since 0.1.0
  */
-librdp_status librdp_session_clipboard_request_file_range(librdp_session* session,
+LIBRDP_API librdp_status librdp_session_clipboard_request_file_range(librdp_session* session,
                                                           uint32_t stream_id,
                                                           int32_t file_index,
                                                           uint64_t position,

@@ -99,7 +99,7 @@ typedef enum librdp_feature
  * Mutate or read a settings object from one serialized context at a time.
  * @since 0.1.0
  */
-librdp_settings* librdp_settings_new(void);
+LIBRDP_API librdp_settings* librdp_settings_new(void);
 
 /**
  * @brief Deep-copy a settings object.
@@ -117,7 +117,7 @@ librdp_settings* librdp_settings_new(void);
  * @warning Password material, when configured, is copied into the clone.
  * @since 0.1.0
  */
-librdp_settings* librdp_settings_clone(const librdp_settings* settings);
+LIBRDP_API librdp_settings* librdp_settings_clone(const librdp_settings* settings);
 
 /**
  * @brief Free a settings object.
@@ -132,7 +132,7 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings);
  * @warning Any pointers returned by settings getter functions become invalid.
  * @since 0.1.0
  */
-void librdp_settings_free(librdp_settings* settings);
+LIBRDP_API void librdp_settings_free(librdp_settings* settings);
 
 /**
  * @brief Set the remote target host name or address.
@@ -148,7 +148,7 @@ void librdp_settings_free(librdp_settings* settings);
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_target(librdp_settings* settings, const char* target);
+LIBRDP_API librdp_status librdp_settings_set_target(librdp_settings* settings, const char* target);
 
 /**
  * @brief Set or clear the user name used by client authentication.
@@ -165,7 +165,7 @@ librdp_status librdp_settings_set_target(librdp_settings* settings, const char* 
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_username(librdp_settings* settings, const char* username);
+LIBRDP_API librdp_status librdp_settings_set_username(librdp_settings* settings, const char* username);
 
 /**
  * @brief Set or clear the password used by client authentication.
@@ -184,7 +184,7 @@ librdp_status librdp_settings_set_username(librdp_settings* settings, const char
  * settings object is freed.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_password(librdp_settings* settings, const char* password);
+LIBRDP_API librdp_status librdp_settings_set_password(librdp_settings* settings, const char* password);
 
 /**
  * @brief Set or clear the authentication domain.
@@ -201,7 +201,7 @@ librdp_status librdp_settings_set_password(librdp_settings* settings, const char
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* domain);
+LIBRDP_API librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* domain);
 
 /**
  * @brief Set the TCP port used for the RDP connection.
@@ -215,7 +215,7 @@ librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* 
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port);
+LIBRDP_API librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port);
 
 /**
  * @brief Set the requested initial desktop size.
@@ -232,7 +232,7 @@ librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port)
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32_t width, uint32_t height);
+LIBRDP_API librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32_t width, uint32_t height);
 
 /**
  * @brief Set the requested security mode.
@@ -248,7 +248,7 @@ librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32
  * be selected only when the deployment requires them.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
+LIBRDP_API librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
 
 /**
  * @brief Add a redirected filesystem drive.
@@ -269,7 +269,7 @@ librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librd
  * session according to later protocol requests and backend policy.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path);
+LIBRDP_API librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path);
 
 /**
  * @brief Add a redirected serial port.
@@ -290,7 +290,7 @@ librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* n
  * session.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_serial_port(librdp_settings* settings,
+LIBRDP_API librdp_status librdp_settings_add_serial_port(librdp_settings* settings,
                                               const char* name,
                                               const char* path);
 
@@ -313,7 +313,7 @@ librdp_status librdp_settings_add_serial_port(librdp_settings* settings,
  * session.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_parallel_port(librdp_settings* settings,
+LIBRDP_API librdp_status librdp_settings_add_parallel_port(librdp_settings* settings,
                                                 const char* name,
                                                 const char* path);
 
@@ -338,7 +338,7 @@ librdp_status librdp_settings_add_parallel_port(librdp_settings* settings,
  * backends according to the configured output path.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_printer(librdp_settings* settings,
+LIBRDP_API librdp_status librdp_settings_add_printer(librdp_settings* settings,
                                           const char* name,
                                           const char* driver,
                                           const char* output_path);
@@ -358,7 +358,7 @@ librdp_status librdp_settings_add_printer(librdp_settings* settings,
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_enable_feature(librdp_settings* settings,
+LIBRDP_API librdp_status librdp_settings_enable_feature(librdp_settings* settings,
                                              librdp_feature feature,
                                              int enabled);
 
@@ -375,7 +375,7 @@ librdp_status librdp_settings_enable_feature(librdp_settings* settings,
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feature feature);
+LIBRDP_API int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feature feature);
 
 /**
  * @brief Set or clear the audio output device selector.
@@ -393,7 +393,7 @@ int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feat
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_audio_output_device(librdp_settings* settings, const char* device);
+LIBRDP_API librdp_status librdp_settings_set_audio_output_device(librdp_settings* settings, const char* device);
 
 /**
  * @brief Set or clear the audio input device selector.
@@ -413,7 +413,7 @@ librdp_status librdp_settings_set_audio_output_device(librdp_settings* settings,
  * feature is used by a viewer backend.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_audio_input_device(librdp_settings* settings, const char* device);
+LIBRDP_API librdp_status librdp_settings_set_audio_input_device(librdp_settings* settings, const char* device);
 
 /**
  * @brief Set or clear the video output path selector.
@@ -431,7 +431,7 @@ librdp_status librdp_settings_set_audio_input_device(librdp_settings* settings, 
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_video_output_path(librdp_settings* settings, const char* path);
+LIBRDP_API librdp_status librdp_settings_set_video_output_path(librdp_settings* settings, const char* path);
 
 /**
  * @brief Add a camera source selector.
@@ -451,7 +451,7 @@ librdp_status librdp_settings_set_video_output_path(librdp_settings* settings, c
  * when the camera feature is enabled.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_camera(librdp_settings* settings, const char* source);
+LIBRDP_API librdp_status librdp_settings_add_camera(librdp_settings* settings, const char* source);
 
 /**
  * @brief Add a smartcard source selector.
@@ -471,7 +471,7 @@ librdp_status librdp_settings_add_camera(librdp_settings* settings, const char* 
  * to the remote session according to backend policy.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const char* source);
+LIBRDP_API librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const char* source);
 
 /**
  * @brief Add a USB device selector.
@@ -490,7 +490,7 @@ librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const cha
  * @warning USB redirection can expose host devices to the remote session.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector);
+LIBRDP_API librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector);
 
 /**
  * @brief Add a Plug and Play device advertisement.
@@ -515,7 +515,7 @@ librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const ch
  * session may discover and request.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
+LIBRDP_API librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
                                              const char* hardware_id,
                                              const char* compatibility_id,
                                              const char* description,
@@ -539,7 +539,7 @@ librdp_status librdp_settings_add_pnp_device(librdp_settings* settings,
  * remote session according to backend policy.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider);
+LIBRDP_API librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider);
 
 /**
  * @brief Add a remote application launch request.
@@ -560,7 +560,7 @@ librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, c
  * connection when RAIL is enabled.
  * @since 0.1.0
  */
-librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app);
+LIBRDP_API librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app);
 
 /**
  * @brief Set or clear the echo channel payload.
@@ -578,7 +578,7 @@ librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
  */
-librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const char* payload);
+LIBRDP_API librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const char* payload);
 /**
  * @brief Return the number of configured redirected drives.
  *
@@ -590,7 +590,7 @@ librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const 
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_drive_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_drive_count(const librdp_settings* settings);
 
 /**
  * @brief Return the advertised name of a configured redirected drive.
@@ -606,7 +606,7 @@ uint32_t librdp_settings_drive_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the host path of a configured redirected drive.
@@ -622,7 +622,7 @@ const char* librdp_settings_drive_name(const librdp_settings* settings, uint32_t
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured redirected serial ports.
@@ -635,7 +635,7 @@ const char* librdp_settings_drive_path(const librdp_settings* settings, uint32_t
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_serial_port_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_serial_port_count(const librdp_settings* settings);
 
 /**
  * @brief Return the advertised name of a configured serial port.
@@ -651,7 +651,7 @@ uint32_t librdp_settings_serial_port_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_serial_port_name(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_serial_port_name(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the host path of a configured serial port.
@@ -667,7 +667,7 @@ const char* librdp_settings_serial_port_name(const librdp_settings* settings, ui
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_serial_port_path(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_serial_port_path(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured redirected parallel ports.
@@ -680,7 +680,7 @@ const char* librdp_settings_serial_port_path(const librdp_settings* settings, ui
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_parallel_port_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_parallel_port_count(const librdp_settings* settings);
 
 /**
  * @brief Return the advertised name of a configured parallel port.
@@ -696,7 +696,7 @@ uint32_t librdp_settings_parallel_port_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_parallel_port_name(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_parallel_port_name(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the host path of a configured parallel port.
@@ -712,7 +712,7 @@ const char* librdp_settings_parallel_port_name(const librdp_settings* settings, 
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_parallel_port_path(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_parallel_port_path(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured redirected printers.
@@ -725,7 +725,7 @@ const char* librdp_settings_parallel_port_path(const librdp_settings* settings, 
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_printer_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_printer_count(const librdp_settings* settings);
 
 /**
  * @brief Return the advertised name of a configured printer.
@@ -741,7 +741,7 @@ uint32_t librdp_settings_printer_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_printer_name(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_printer_name(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the driver name of a configured printer.
@@ -757,7 +757,7 @@ const char* librdp_settings_printer_name(const librdp_settings* settings, uint32
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_printer_driver(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_printer_driver(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the output path of a configured printer.
@@ -773,7 +773,7 @@ const char* librdp_settings_printer_driver(const librdp_settings* settings, uint
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_printer_output_path(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_printer_output_path(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the configured audio output device selector.
@@ -787,7 +787,7 @@ const char* librdp_settings_printer_output_path(const librdp_settings* settings,
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_audio_output_device(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_audio_output_device(const librdp_settings* settings);
 
 /**
  * @brief Return the configured audio input device selector.
@@ -801,7 +801,7 @@ const char* librdp_settings_audio_output_device(const librdp_settings* settings)
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_audio_input_device(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_audio_input_device(const librdp_settings* settings);
 
 /**
  * @brief Return the configured video output path selector.
@@ -815,7 +815,7 @@ const char* librdp_settings_audio_input_device(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_video_output_path(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_video_output_path(const librdp_settings* settings);
 
 /**
  * @brief Return the number of configured camera sources.
@@ -828,7 +828,7 @@ const char* librdp_settings_video_output_path(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_camera_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_camera_count(const librdp_settings* settings);
 
 /**
  * @brief Return a configured camera source selector.
@@ -844,7 +844,7 @@ uint32_t librdp_settings_camera_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_camera_source(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_camera_source(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured smartcard sources.
@@ -857,7 +857,7 @@ const char* librdp_settings_camera_source(const librdp_settings* settings, uint3
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_smartcard_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_smartcard_count(const librdp_settings* settings);
 
 /**
  * @brief Return a configured smartcard source selector.
@@ -873,7 +873,7 @@ uint32_t librdp_settings_smartcard_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_smartcard_source(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_smartcard_source(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured USB device selectors.
@@ -886,7 +886,7 @@ const char* librdp_settings_smartcard_source(const librdp_settings* settings, ui
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_usb_device_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_usb_device_count(const librdp_settings* settings);
 
 /**
  * @brief Return a configured USB device selector.
@@ -902,7 +902,7 @@ uint32_t librdp_settings_usb_device_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_usb_device_selector(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_usb_device_selector(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured PNP device advertisements.
@@ -915,7 +915,7 @@ const char* librdp_settings_usb_device_selector(const librdp_settings* settings,
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_pnp_device_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_pnp_device_count(const librdp_settings* settings);
 
 /**
  * @brief Return a configured PNP hardware identifier.
@@ -931,7 +931,7 @@ uint32_t librdp_settings_pnp_device_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_pnp_device_hardware_id(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_pnp_device_hardware_id(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return a configured PNP compatibility identifier.
@@ -947,7 +947,7 @@ const char* librdp_settings_pnp_device_hardware_id(const librdp_settings* settin
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_pnp_device_compatibility_id(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_pnp_device_compatibility_id(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return a configured PNP device description.
@@ -963,7 +963,7 @@ const char* librdp_settings_pnp_device_compatibility_id(const librdp_settings* s
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_pnp_device_description(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_pnp_device_description(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return configured PNP device capability bits.
@@ -979,7 +979,7 @@ const char* librdp_settings_pnp_device_description(const librdp_settings* settin
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32_t index);
+LIBRDP_API uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the configured WebAuthn provider selector.
@@ -993,7 +993,7 @@ uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_webauthn_provider(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_webauthn_provider(const librdp_settings* settings);
 
 /**
  * @brief Return the number of configured remote application entries.
@@ -1006,7 +1006,7 @@ const char* librdp_settings_webauthn_provider(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_rail_app_count(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_rail_app_count(const librdp_settings* settings);
 
 /**
  * @brief Return a configured remote application entry.
@@ -1022,7 +1022,7 @@ uint32_t librdp_settings_rail_app_count(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t index);
+LIBRDP_API const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the configured echo channel payload.
@@ -1036,7 +1036,7 @@ const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t i
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_echo_payload(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_echo_payload(const librdp_settings* settings);
 
 /**
  * @brief Return the configured target host name or address.
@@ -1050,7 +1050,7 @@ const char* librdp_settings_echo_payload(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_target(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_target(const librdp_settings* settings);
 
 /**
  * @brief Return the configured user name.
@@ -1064,7 +1064,7 @@ const char* librdp_settings_target(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_username(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_username(const librdp_settings* settings);
 
 /**
  * @brief Return the configured authentication domain.
@@ -1078,7 +1078,7 @@ const char* librdp_settings_username(const librdp_settings* settings);
  * object is mutated or freed.
  * @since 0.1.0
  */
-const char* librdp_settings_domain(const librdp_settings* settings);
+LIBRDP_API const char* librdp_settings_domain(const librdp_settings* settings);
 
 /**
  * @brief Return the configured TCP port.
@@ -1091,7 +1091,7 @@ const char* librdp_settings_domain(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint16_t librdp_settings_port(const librdp_settings* settings);
+LIBRDP_API uint16_t librdp_settings_port(const librdp_settings* settings);
 
 /**
  * @brief Return the configured initial desktop width.
@@ -1104,7 +1104,7 @@ uint16_t librdp_settings_port(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_width(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_width(const librdp_settings* settings);
 
 /**
  * @brief Return the configured initial desktop height.
@@ -1117,7 +1117,7 @@ uint32_t librdp_settings_width(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-uint32_t librdp_settings_height(const librdp_settings* settings);
+LIBRDP_API uint32_t librdp_settings_height(const librdp_settings* settings);
 
 /**
  * @brief Return the configured security mode.
@@ -1131,7 +1131,7 @@ uint32_t librdp_settings_height(const librdp_settings* settings);
  * mutates or frees the settings object.
  * @since 0.1.0
  */
-librdp_security_mode librdp_settings_security_mode(const librdp_settings* settings);
+LIBRDP_API librdp_security_mode librdp_settings_security_mode(const librdp_settings* settings);
 
 /** @} */
 

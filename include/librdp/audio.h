@@ -77,7 +77,7 @@ typedef struct librdp_audio_format
  * serializes access.
  * @since 0.1.0
  */
-librdp_status librdp_session_audio_input_open_reply(librdp_session* session, uint32_t result);
+LIBRDP_API librdp_status librdp_session_audio_input_open_reply(librdp_session* session, uint32_t result);
 
 /**
  * @brief Send captured audio input data to the server.
@@ -100,7 +100,7 @@ librdp_status librdp_session_audio_input_open_reply(librdp_session* session, uin
  * application is responsible for capture consent and local data handling.
  * @since 0.1.0
  */
-librdp_status librdp_session_audio_input_send_data(librdp_session* session, const void* data, size_t data_len);
+LIBRDP_API librdp_status librdp_session_audio_input_send_data(librdp_session* session, const void* data, size_t data_len);
 
 /**
  * @brief Notify the server that the audio input format changed.
@@ -119,7 +119,7 @@ librdp_status librdp_session_audio_input_send_data(librdp_session* session, cons
  * serialized session-driving context.
  * @since 0.1.0
  */
-librdp_status librdp_session_audio_input_send_format_change(librdp_session* session, uint32_t new_format);
+LIBRDP_API librdp_status librdp_session_audio_input_send_format_change(librdp_session* session, uint32_t new_format);
 
 /** @} */
 

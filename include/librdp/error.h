@@ -6,6 +6,23 @@
 #ifndef LIBRDP_ERROR_H
 #define LIBRDP_ERROR_H
 
+/**
+ * @brief Public API export marker for shared-library symbols.
+ *
+ * LIBRDP_API marks functions that are part of the stable dynamic linking
+ * surface. Applications should not define this macro themselves unless they
+ * are integrating librdp into a non-standard build system.
+ *
+ * @since 0.1.0
+ */
+#ifndef LIBRDP_API
+#if defined(__GNUC__) || defined(__clang__)
+#define LIBRDP_API __attribute__((visibility("default"))) /**< Marks a public function for dynamic-library export. */
+#else
+#define LIBRDP_API /**< Marks a public function for dynamic-library export. */
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,7 +71,7 @@ typedef enum librdp_status
  * called concurrently.
  * @since 0.1.0
  */
-const char* librdp_status_string(librdp_status status);
+LIBRDP_API const char* librdp_status_string(librdp_status status);
 
 /** @} */
 

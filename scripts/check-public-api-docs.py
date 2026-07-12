@@ -47,7 +47,7 @@ class MacroDecl:
 
 
 DECL_RE = re.compile(
-    r"(?m)^(?P<return>[A-Za-z_][A-Za-z0-9_\s\*]*?)\s+"
+    r"(?m)^(?:LIBRDP_API\s+)?(?P<return>[A-Za-z_][A-Za-z0-9_\s\*]*?)\s+"
     r"(?P<name>librdp_[A-Za-z0-9_]+)\s*"
     r"\((?P<params>.*?)\)\s*;",
     re.S,
