@@ -20,6 +20,7 @@ librdp is a C client library for building RDP viewers and integration tools on U
 ## Engineering references
 
 - [Architecture](architecture.md)
+- [Lifecycle](lifecycle.md)
 - [Protocol support](protocol-support.md)
 - [Backends](backends.md)
 - [Backend guide](backend-guide.md)

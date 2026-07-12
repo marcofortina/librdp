@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 This manual describes how to build an application on top of librdp. It complements the API reference and examples.
 
+For protocol-facing sequence diagrams expressed as ordered call flows, see [Lifecycle](lifecycle.md).
+
 ## Application responsibilities
 
 An application owns:

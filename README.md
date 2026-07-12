@@ -24,6 +24,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Examples](docs/examples.md)
 - [ABI and versioning](docs/abi-versioning.md)
 - [Architecture](docs/architecture.md)
+- [Lifecycle](docs/lifecycle.md)
 - [Portability](docs/portability.md)
 - [Protocol support](docs/protocol-support.md)
 - [Security](docs/security.md)

@@ -25,6 +25,7 @@ REQUIRED_MARKDOWN = (
     "docs/examples.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
+    "docs/lifecycle.md",
     "docs/portability.md",
     "docs/protocol-support.md",
     "docs/security.md",

@@ -86,6 +86,7 @@ nav:
       - ABI and versioning: abi-versioning.md
   - Architecture and protocols:
       - Architecture: architecture.md
+      - Lifecycle: lifecycle.md
       - Protocol support: protocol-support.md
       - Backends: backends.md
       - Backend guide: backend-guide.md
