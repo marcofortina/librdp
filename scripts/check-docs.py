@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_MARKDOWN = (
     "README.md",
+    "docs/index.md",
     "docs/build.md",
     "docs/contributing.md",
     "docs/coding-standards.md",
@@ -35,6 +36,9 @@ REQUIRED_MARKDOWN = (
     "docs/viewer-x11.md",
 )
 REQUIRED_FILES = REQUIRED_MARKDOWN + (
+    "mkdocs.yml",
+    "docs/requirements.txt",
+    ".github/workflows/pages.yml",
     "docs/man/librdp.7",
     "docs/man/librdp-api.7",
     "docs/man/librdp-tracing.7",

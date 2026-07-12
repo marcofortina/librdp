@@ -13,6 +13,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 
 ## Documentation
 
+- [Documentation home](docs/index.md)
 - [Build](docs/build.md)
 - [Contributing](docs/contributing.md)
 - [Coding standards](docs/coding-standards.md)

@@ -1,0 +1,97 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+site_name: librdp
+site_description: C client library for RDP viewers and integration tools
+site_url: https://marcofortina.github.io/librdp/
+repo_url: https://github.com/marcofortina/librdp
+repo_name: marcofortina/librdp
+docs_dir: docs
+site_dir: _site
+strict: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.code.select
+    - search.suggest
+    - search.highlight
+  palette:
+    - scheme: default
+      media: "(prefers-color-scheme: light)"
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      media: "(prefers-color-scheme: dark)"
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+copyright: >-
+  Copyright &copy; 2026 Marco Fortina.
+  Documentation and source code are licensed under AGPL-3.0-or-later.
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/marcofortina/librdp
+      name: librdp on GitHub
+    - icon: material/file-document-outline
+      link: https://github.com/marcofortina/librdp/blob/master/LICENSE
+      name: AGPL-3.0-or-later license
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Build and integration:
+      - Build: build.md
+      - Contributing: contributing.md
+      - Coding standards: coding-standards.md
+      - Packaging: packaging.md
+      - Portability: portability.md
+  - API:
+      - API guide: api.md
+      - API reference: api-reference.md
+      - Programmer's reference: programmers-reference.md
+      - Examples: examples.md
+      - ABI and versioning: abi-versioning.md
+  - Architecture and protocols:
+      - Architecture: architecture.md
+      - Protocol support: protocol-support.md
+      - Backends: backends.md
+  - Operations:
+      - Security: security.md
+      - Tracing: tracing.md
+      - Diagnostics: diagnostics.md
+      - Testing: testing.md
+      - Fuzzing: fuzzing.md
+  - Viewer:
+      - X11 viewer: viewer-x11.md
