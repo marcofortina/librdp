@@ -20,6 +20,7 @@
 #include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
+#include "client/settings_internal.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "protocol/mcs.h"
@@ -82,6 +83,13 @@ typedef struct trace_capture
     int saw_ids;
     int saw_line;
 } trace_capture;
+
+typedef struct secure_string_capture
+{
+    uint32_t calls;
+    uint32_t failed;
+    size_t last_length;
+} secure_string_capture;
 
 int test_protocol(void);
 /*
@@ -187,6 +195,23 @@ static void on_trace(librdp_session* session, const librdp_trace_record* record,
         capture->saw_ids = 1;
     if (record->line && strstr(record->line, "trace_id=trace-1") != NULL)
         capture->saw_line = 1;
+}
+
+static void on_secure_string_cleanse(const void* data, size_t length, void* user_data)
+{
+    secure_string_capture* capture = (secure_string_capture*)user_data;
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t i = 0;
+
+    if (!capture || !bytes || length == 0)
+        return;
+    capture->calls++;
+    capture->last_length = length;
+    for (i = 0; i < length; i++)
+    {
+        if (bytes[i] != 0)
+            capture->failed++;
+    }
 }
 
 static librdp_tls_certificate_decision core_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
@@ -1255,6 +1280,7 @@ static int test_settings_surface_input_session(void)
     librdp_tls_policy tls_policy_out;
     librdp_trace_policy trace_policy;
     trace_capture trace;
+    secure_string_capture secure_capture;
     char trace_file_path[] = "/tmp/librdp-trace-XXXXXX";
     event_counter counter;
     uint16_t test_port = 0;
@@ -1264,6 +1290,7 @@ static int test_settings_surface_input_session(void)
 
     memset(&counter, 0, sizeof(counter));
     memset(&trace, 0, sizeof(trace));
+    memset(&secure_capture, 0, sizeof(secure_capture));
 
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED),
@@ -1329,6 +1356,17 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_height(settings) == 768);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
+    rdp_settings_secure_string_observer_for_tests(on_secure_string_cleanse, &secure_capture);
+    CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
+    CHECK(secure_capture.calls == 0);
+    CHECK(librdp_settings_set_password(settings, "replacement") == LIBRDP_STATUS_OK);
+    CHECK(secure_capture.calls == 1);
+    CHECK(secure_capture.failed == 0);
+    CHECK(secure_capture.last_length == sizeof("secret"));
+    CHECK(librdp_settings_set_password(settings, NULL) == LIBRDP_STATUS_OK);
+    CHECK(secure_capture.calls == 2);
+    CHECK(secure_capture.failed == 0);
+    CHECK(secure_capture.last_length == sizeof("replacement"));
     CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_domain(settings, "domain") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_port(settings, 3390) == LIBRDP_STATUS_OK);
@@ -1943,6 +1981,9 @@ static int test_settings_surface_input_session(void)
 
     librdp_settings_free(copy);
     librdp_settings_free(settings);
+    CHECK(secure_capture.calls >= 3);
+    CHECK(secure_capture.failed == 0);
+    rdp_settings_secure_string_observer_for_tests(NULL, NULL);
     return 0;
 }
 

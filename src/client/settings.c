@@ -19,6 +19,8 @@
 
 #include "client/settings_internal.h"
 
+#include <openssl/crypto.h>
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -101,6 +103,16 @@ struct librdp_settings
 
 #define RDP_SETTINGS_TEXT_MAX 4096u
 
+static rdp_settings_secure_string_observer g_secure_string_observer;
+static void* g_secure_string_observer_user_data;
+
+void rdp_settings_secure_string_observer_for_tests(rdp_settings_secure_string_observer observer,
+                                                   void* user_data)
+{
+    g_secure_string_observer = observer;
+    g_secure_string_observer_user_data = user_data;
+}
+
 static char* rdp_strdup(const char* value)
 {
     size_t length = 0;
@@ -132,6 +144,51 @@ static librdp_status rdp_set_string(char** field, const char* value)
     }
 
     free(*field);
+    *field = copy;
+    return LIBRDP_STATUS_OK;
+}
+
+static char* rdp_secure_string_dup(const char* value)
+{
+    size_t length = 0;
+    char* out = NULL;
+
+    if (!value)
+        return NULL;
+    length = strlen(value) + 1u;
+    out = (char*)malloc(length);
+    if (!out)
+        return NULL;
+    memcpy(out, value, length);
+    return out;
+}
+
+static void rdp_secure_string_free(char* value)
+{
+    size_t length = 0;
+
+    if (!value)
+        return;
+    length = strlen(value) + 1u;
+    OPENSSL_cleanse(value, length);
+    if (g_secure_string_observer)
+        g_secure_string_observer(value, length, g_secure_string_observer_user_data);
+    free(value);
+}
+
+static librdp_status rdp_set_secure_string(char** field, const char* value)
+{
+    char* copy = NULL;
+
+    if (!field)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (value)
+    {
+        copy = rdp_secure_string_dup(value);
+        if (!copy)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    rdp_secure_string_free(*field);
     *field = copy;
     return LIBRDP_STATUS_OK;
 }
@@ -479,7 +536,7 @@ void librdp_settings_free(librdp_settings* settings)
 
     free(settings->target);
     free(settings->username);
-    free(settings->password);
+    rdp_secure_string_free(settings->password);
     free(settings->domain);
     free(settings->audio_output_device);
     free(settings->audio_input_device);
@@ -534,7 +591,7 @@ librdp_status librdp_settings_set_password(librdp_settings* settings, const char
 {
     if (!settings)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    return rdp_set_string(&settings->password, password);
+    return rdp_set_secure_string(&settings->password, password);
 }
 
 librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* domain)
