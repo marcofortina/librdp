@@ -629,6 +629,9 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_compile_options(test_interop_smoke)
     librdp_apply_sanitizer_link_options(test_interop_smoke)
 
+    add_executable(test_optional_backend_probe tests/optional_backend_probe.c)
+    librdp_configure_test_executable(test_optional_backend_probe)
+
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -638,7 +641,7 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_abi_probe
+        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_optional_backend_probe test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
@@ -658,6 +661,16 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_optional_backends_off.cmake)
+    add_test(NAME optional_backend_matrix
+        COMMAND ${CMAKE_COMMAND}
+            "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/optional_backend_matrix.cmake)
+    set_tests_properties(optional_backend_matrix PROPERTIES TIMEOUT 180)
     add_test(NAME shared_symbol_visibility
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
