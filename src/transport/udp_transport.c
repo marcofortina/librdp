@@ -1084,6 +1084,8 @@ librdp_status rdp_udp2_unwrap_packet(rdp_buffer* output, const void* wire, size_
     status = rdp_buffer_reserve(output, output->length + layout_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    if (layout_len == 0)
+        return LIBRDP_STATUS_OK;
     if (layout_len <= 6u)
         memcpy(output->data + output->length, bytes + 1u, layout_len);
     else

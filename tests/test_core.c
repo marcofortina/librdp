@@ -1007,6 +1007,22 @@ static int test_buffer_stream(void)
     CHECK(rdp_stream_skip(&stream, 100) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_buffer_append_u8(&buffer, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u8(&buffer, 1) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u8(&buffer, 2) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u8(&buffer, 3) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u8(&buffer, 4) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u8(&buffer, 5) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append(&buffer, buffer.data + 1u, 4u) == LIBRDP_STATUS_OK);
+    CHECK(buffer.length == 10u);
+    CHECK(buffer.data[6] == 1u && buffer.data[7] == 2u && buffer.data[8] == 3u && buffer.data[9] == 4u);
+    buffer.length = 0;
+    CHECK(rdp_buffer_append(&buffer, buffer.data + 6u, 4u) == LIBRDP_STATUS_OK);
+    CHECK(buffer.length == 4u);
+    CHECK(buffer.data[0] == 1u && buffer.data[1] == 2u && buffer.data[2] == 3u && buffer.data[3] == 4u);
+
+    rdp_buffer_free(&buffer);
     return 0;
 }
 

@@ -70,18 +70,48 @@ librdp_status rdp_buffer_reserve(rdp_buffer* buffer, size_t capacity)
 librdp_status rdp_buffer_append(rdp_buffer* buffer, const void* data, size_t length)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    size_t source_offset = 0;
+    int source_in_buffer = 0;
+    uint8_t* snapshot = NULL;
 
     if (!buffer || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length > ((size_t)-1) - buffer->length)
         return LIBRDP_STATUS_NO_MEMORY;
+    if (data && buffer->data && buffer->capacity > 0)
+    {
+        uintptr_t base = (uintptr_t)buffer->data;
+        uintptr_t end = base + buffer->length;
+        uintptr_t capacity_end = base + buffer->capacity;
+        uintptr_t source = (uintptr_t)data;
+
+        if (end >= base && capacity_end >= base && source >= base && source < capacity_end)
+        {
+            source_offset = (size_t)(source - base);
+            if (length > buffer->capacity - source_offset)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            source_in_buffer = 1;
+        }
+    }
+    if (source_in_buffer && length > 0)
+    {
+        snapshot = (uint8_t*)malloc(length);
+        if (!snapshot)
+            return LIBRDP_STATUS_NO_MEMORY;
+        memcpy(snapshot, buffer->data + source_offset, length);
+        data = snapshot;
+    }
 
     status = rdp_buffer_reserve(buffer, buffer->length + length);
     if (status != LIBRDP_STATUS_OK)
+    {
+        free(snapshot);
         return status;
+    }
 
     if (length > 0)
-        memcpy(buffer->data + buffer->length, data, length);
+        memmove(buffer->data + buffer->length, data, length);
+    free(snapshot);
     buffer->length += length;
     return LIBRDP_STATUS_OK;
 }

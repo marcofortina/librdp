@@ -1554,6 +1554,33 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(summary.channel_count == 0);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_init(&client_blocks);
+    {
+        const char* const names[] = {
+            NULL,
+            "",
+            "a",
+            "exactly-15-char",
+            "this-client-name-is-longer-than-the-fixed-field"
+        };
+        size_t expected_length = 0;
+        size_t i = 0;
+
+        for (i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        {
+            config.client_name = names[i];
+            rdp_buffer_free(&client_blocks);
+            rdp_buffer_init(&client_blocks);
+            PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) ==
+                   LIBRDP_STATUS_OK);
+            if (i == 0)
+                expected_length = client_blocks.length;
+            PCHECK(client_blocks.length == expected_length);
+        }
+    }
+    rdp_buffer_free(&client_blocks);
+    rdp_buffer_init(&client_blocks);
+    config.client_name = "librdp";
     config.client_version = RDP_GCC_CLIENT_VERSION_10_12;
     config.early_capability_flags = RDP_GCC_EARLY_SUPPORT_ERRINFO | RDP_GCC_EARLY_SUPPORT_STATUSINFO |
                                     RDP_GCC_EARLY_WANT_32BPP |
@@ -9941,6 +9968,10 @@ static int test_device_redirection_channel(void)
            LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&packet);
     rdp_buffer_init(&packet);
+    PCHECK(rdp_device_redirection_parse_capability_list(buffer.data,
+                                                        buffer.length,
+                                                        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+                                                        &caps) == LIBRDP_STATUS_OK);
     PCHECK(rdp_device_redirection_write_capability_list(&packet,
                                                         RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
                                                         caps.capabilities,
@@ -15130,27 +15161,27 @@ static int test_video_redirection_channel(void)
                                                                      &caps) ==
            LIBRDP_STATUS_OK);
     PCHECK(caps.header.message_id == 2 && caps.capabilities.count == 2);
-    rdp_buffer_free(&payload);
-    rdp_buffer_init(&payload);
-    PCHECK(rdp_video_redirection_write_exchange_capabilities_response(&payload,
+    PCHECK(rdp_video_redirection_write_exchange_capabilities_response(&nested,
                                                                       0,
                                                                       caps.capabilities.capabilities,
                                                                       caps.capabilities.count,
                                                                       0) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_video_redirection_parse_exchange_capabilities_response(payload.data,
-                                                                      payload.length,
+    PCHECK(rdp_video_redirection_parse_exchange_capabilities_response(nested.data,
+                                                                      nested.length,
                                                                       &caps) ==
            LIBRDP_STATUS_OK);
     PCHECK(caps.has_result && caps.result == 0);
-    payload.data[3] = 0x40;
-    PCHECK(rdp_video_redirection_parse_exchange_capabilities_response(payload.data,
-                                                                      payload.length,
+    nested.data[3] = 0x40;
+    PCHECK(rdp_video_redirection_parse_exchange_capabilities_response(nested.data,
+                                                                      nested.length,
                                                                       &caps) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&buffer);
     rdp_buffer_free(&payload);
+    rdp_buffer_free(&nested);
     rdp_buffer_init(&buffer);
     rdp_buffer_init(&payload);
+    rdp_buffer_init(&nested);
 
     PCHECK(rdp_video_redirection_write_rim_capability_request(
                &buffer,

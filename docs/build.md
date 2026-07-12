@@ -39,6 +39,9 @@ The build does not require optional libraries unless the feature or viewer path 
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 - `LIBRDP_ABI_VERSION=<n>`: shared-library ABI version used as `SOVERSION`.
 - `LIBRDP_LIBRARY_TYPE=AUTO|STATIC|SHARED|BOTH`: choose the library artifacts to build. `AUTO` preserves the standard CMake `BUILD_SHARED_LIBS` behavior.
+- `LIBRDP_ENABLE_WERROR=ON|OFF`: treat project warnings as errors on supported compilers.
+- `LIBRDP_ENABLE_SANITIZERS=ON|OFF`: enable selected compiler sanitizers on project targets.
+- `LIBRDP_SANITIZERS=address,undefined`: comma- or semicolon-separated sanitizer selection used when `LIBRDP_ENABLE_SANITIZERS=ON`.
 
 Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the dependency when available, `ON` requires it during configuration, and `OFF` skips discovery and leaves the backend disabled.
 

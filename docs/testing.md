@@ -81,9 +81,7 @@ When using Clang or GCC, configure a separate build directory with the desired s
 Example:
 
 ```sh
-CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
-LDFLAGS="-fsanitize=address,undefined" \
-cmake -S . -B build-asan -DLIBRDP_BUILD_TESTS=ON
+cmake -S . -B build-asan -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_ENABLE_SANITIZERS=ON -DLIBRDP_SANITIZERS=address,undefined
 cmake --build build-asan -j$(nproc)
 ctest --test-dir build-asan --output-on-failure
 ```
