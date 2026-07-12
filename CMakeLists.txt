@@ -15,6 +15,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(OpenSSL 3.0 REQUIRED)
 find_package(Iconv REQUIRED)
+find_package(Doxygen QUIET)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(LIBRDP_FFMPEG_AVC QUIET IMPORTED_TARGET libavcodec libavutil libswscale)
@@ -175,6 +176,14 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
+if(DOXYGEN_FOUND)
+    add_custom_target(docs-api
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Build public API reference"
+        VERBATIM)
+endif()
+
 if(LIBRDP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)
@@ -203,7 +212,6 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-test-fuzz-comments.py)
         add_test(NAME docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-docs.py)
-        find_package(Doxygen QUIET)
         if(DOXYGEN_FOUND)
             add_test(NAME doxygen_public_headers
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-doxygen.py)

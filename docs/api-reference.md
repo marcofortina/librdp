@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # API Reference
 
-This document is a hand-written map of the public C API. The function-level reference is generated from Doxygen comments in `include/librdp/*.h`.
+This document is a hand-written map of the public C API. The function-level reference is produced from Doxygen comments in `include/librdp/*.h`.
 
 ## Header map
 
@@ -126,4 +126,12 @@ Use `librdp_status_string()` for stable diagnostic tokens. Do not use status str
 
 ## Doxygen reference
 
-Doxygen reads `include/librdp` and writes XML output under the configured build directory. The Doxygen guardrail fails on undocumented public API or documentation errors.
+Doxygen reads `include/librdp` and this API reference page. HTML output is written to `build/doxygen/html/index.html`; XML output is written to `build/doxygen/xml`.
+
+Build the local HTML reference with:
+
+```sh
+cmake --build build --target docs-api
+```
+
+The Doxygen guardrail fails on undocumented public API or documentation errors.
