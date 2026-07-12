@@ -149,11 +149,14 @@
     "librdp_surface_format",
     "librdp_surface_free",
     "librdp_surface_height",
+    "librdp_surface_map",
+    "librdp_surface_mapping_init",
     "librdp_surface_new",
     "librdp_surface_pixels",
     "librdp_surface_pixels_mut",
     "librdp_surface_resize",
     "librdp_surface_stride",
+    "librdp_surface_unmap",
     "librdp_surface_width"
   ],
   "layouts": {
@@ -162,6 +165,8 @@
       {"name":"librdp_client_ptr","size":8,"align":8},
       {"name":"librdp_client_config","size":64,"align":8},
       {"name":"librdp_settings_ptr","size":8,"align":8},
+      {"name":"librdp_surface_access","size":4,"align":4},
+      {"name":"librdp_surface_mapping","size":56,"align":8},
       {"name":"librdp_surface_ptr","size":8,"align":8},
       {"name":"librdp_event_callback","size":8,"align":8},
       {"name":"librdp_trace_level","size":4,"align":4},

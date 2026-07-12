@@ -1467,6 +1467,8 @@ static int test_settings_surface_input_session(void)
     librdp_client* client = NULL;
     librdp_client_config client_config;
     const librdp_surface* session_surface = NULL;
+    librdp_surface_mapping surface_map;
+    librdp_surface_mapping surface_map2;
     uint8_t pixels[16] = {
         1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16
@@ -2060,6 +2062,29 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_surface_blit_bgra32(surface, 3, 3, 2, 2, pixels, 8) == LIBRDP_STATUS_INVALID_ARGUMENT);
     out = librdp_surface_pixels(surface);
     CHECK(out[((size_t)1 * 16) + 4] == 1);
+    CHECK(librdp_surface_mapping_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_surface_mapping_init(&surface_map) == LIBRDP_STATUS_OK);
+    CHECK(surface_map.version == LIBRDP_SURFACE_MAPPING_VERSION);
+    CHECK(librdp_surface_map(NULL, LIBRDP_SURFACE_ACCESS_READ, &surface_map) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_surface_map(surface, (librdp_surface_access)99, &surface_map) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_surface_map(surface, LIBRDP_SURFACE_ACCESS_READ, &surface_map) == LIBRDP_STATUS_OK);
+    CHECK(surface_map.pixels == librdp_surface_pixels(surface));
+    CHECK(surface_map.writable_pixels == NULL);
+    CHECK(surface_map.width == 4 && surface_map.height == 4 && surface_map.stride == 16);
+    CHECK(librdp_surface_resize(surface, 2, 2) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_surface_blit_bgra32(surface, 0, 0, 1, 1, pixels, 4) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_surface_mapping_init(&surface_map2) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_map(surface, LIBRDP_SURFACE_ACCESS_READ, &surface_map2) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_unmap(surface, &surface_map2) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_unmap(surface, &surface_map) == LIBRDP_STATUS_OK);
+    CHECK(surface_map.pixels == NULL);
+    CHECK(librdp_surface_map(surface, LIBRDP_SURFACE_ACCESS_WRITE, &surface_map) == LIBRDP_STATUS_OK);
+    CHECK(surface_map.writable_pixels != NULL);
+    surface_map.writable_pixels[0] = 0xaau;
+    CHECK(librdp_surface_map(surface, LIBRDP_SURFACE_ACCESS_READ, &surface_map2) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_surface_unmap(surface, &surface_map) == LIBRDP_STATUS_OK);
+    CHECK(librdp_surface_pixels(surface)[0] == 0xaau);
     CHECK(librdp_surface_resize(surface, 2, 2) == LIBRDP_STATUS_OK);
     CHECK(librdp_surface_width(surface) == 2);
     CHECK(librdp_surface_pixels_mut(surface) != NULL);

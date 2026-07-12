@@ -37,12 +37,15 @@ LIBRDP_0.1 {
         librdp_surface_free;
         librdp_surface_resize;
         librdp_surface_blit_bgra32;
+        librdp_surface_mapping_init;
         librdp_surface_width;
         librdp_surface_height;
         librdp_surface_stride;
         librdp_surface_format;
         librdp_surface_pixels;
         librdp_surface_pixels_mut;
+        librdp_surface_map;
+        librdp_surface_unmap;
         librdp_session_new;
         librdp_session_free;
         librdp_session_set_event_callback;

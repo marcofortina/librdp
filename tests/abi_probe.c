@@ -65,6 +65,8 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_metrics", librdp_metrics, ",");
     ABI_TYPE_ENTRY("librdp_display_monitor", librdp_display_monitor, ",");
     ABI_TYPE_ENTRY("librdp_pixel_format", librdp_pixel_format, ",");
+    ABI_TYPE_ENTRY("librdp_surface_access", librdp_surface_access, ",");
+    ABI_TYPE_ENTRY("librdp_surface_mapping", librdp_surface_mapping, ",");
     ABI_TYPE_ENTRY("librdp_channel_id", librdp_channel_id, ",");
     ABI_TYPE_ENTRY("librdp_audio_format", librdp_audio_format, ",");
     ABI_TYPE_ENTRY("librdp_video_capture_media", librdp_video_capture_media, ",");

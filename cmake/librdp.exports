@@ -33,12 +33,15 @@ _librdp_surface_new
 _librdp_surface_free
 _librdp_surface_resize
 _librdp_surface_blit_bgra32
+_librdp_surface_mapping_init
 _librdp_surface_width
 _librdp_surface_height
 _librdp_surface_stride
 _librdp_surface_format
 _librdp_surface_pixels
 _librdp_surface_pixels_mut
+_librdp_surface_map
+_librdp_surface_unmap
 _librdp_session_new
 _librdp_session_free
 _librdp_session_set_event_callback

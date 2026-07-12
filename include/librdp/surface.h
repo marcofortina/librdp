@@ -43,6 +43,57 @@ typedef enum librdp_pixel_format
     LIBRDP_PIXEL_FORMAT_BGRA32 = 1 /**< Four bytes per pixel in blue, green, red, alpha order. */
 } librdp_pixel_format;
 
+#define LIBRDP_SURFACE_MAPPING_VERSION 1u /**< Current librdp_surface_mapping version. */
+
+/**
+ * @brief Requested access mode for librdp_surface_map().
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_surface_access
+{
+    LIBRDP_SURFACE_ACCESS_READ = 1, /**< Borrow framebuffer bytes for read-only inspection. */
+    LIBRDP_SURFACE_ACCESS_WRITE = 2 /**< Borrow framebuffer bytes for direct BGRA32 mutation. */
+} librdp_surface_access;
+
+/**
+ * @brief Versioned framebuffer mapping returned by librdp_surface_map().
+ *
+ * Initialize version and size by calling librdp_surface_mapping_init(). The
+ * mapped pointers are borrowed from the surface and remain valid only until
+ * librdp_surface_unmap() is called. Applications must not retain them.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_surface_mapping
+{
+    uint32_t version;                 /**< Struct version, LIBRDP_SURFACE_MAPPING_VERSION. */
+    uint32_t size;                    /**< Size of this struct in bytes. */
+    librdp_surface_access access;     /**< Access granted for this mapping. */
+    librdp_pixel_format format;       /**< Pixel format of the mapped surface. */
+    uint32_t width;                   /**< Width in pixels at map time. */
+    uint32_t height;                  /**< Height in pixels at map time. */
+    size_t stride;                    /**< Row stride in bytes at map time. */
+    const uint8_t* pixels;            /**< Borrowed read pointer; never NULL on successful map. */
+    uint8_t* writable_pixels;         /**< Borrowed write pointer for WRITE maps, otherwise NULL. */
+    uint64_t generation;              /**< Surface generation observed at map time. */
+} librdp_surface_mapping;
+
+/**
+ * @brief Initialize a surface mapping descriptor.
+ *
+ * The descriptor remains caller-owned. Call this before librdp_surface_map().
+ *
+ * @param[out] mapping Mapping descriptor to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * mapping is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_surface_mapping_init(librdp_surface_mapping* mapping);
+
 /**
  * @brief Allocate a BGRA surface.
  *
@@ -200,17 +251,64 @@ LIBRDP_API const uint8_t* librdp_surface_pixels(const librdp_surface* surface);
  *
  * The returned pointer is owned by the surface. It remains valid until the
  * surface is resized or freed. Applications that write through this pointer are
- * responsible for preserving BGRA32 layout and stride boundaries.
+ * responsible for preserving BGRA32 layout and stride boundaries. This legacy
+ * API cannot protect against concurrent resize or update; prefer
+ * librdp_surface_map() with LIBRDP_SURFACE_ACCESS_WRITE.
  *
  * @param[in,out] surface Surface to query, or NULL.
  *
  * @return Writable framebuffer pointer, or NULL when surface is NULL.
  *
- * @note Thread-safety: the pointer must not be used concurrently with mutation
- * or destruction of the same surface by another thread.
+ * @note Thread-safety: legacy direct access is not synchronized and bypasses
+ * map/unmap lifetime tracking.
+ * @warning Legacy API. New code should use librdp_surface_map() and
+ * librdp_surface_unmap() to make access lifetime explicit.
  * @since 0.1.0
  */
 LIBRDP_API uint8_t* librdp_surface_pixels_mut(librdp_surface* surface);
+
+/**
+ * @brief Borrow the framebuffer with explicit lifetime and access mode.
+ *
+ * A READ map may coexist with other READ maps. A WRITE map is exclusive and is
+ * rejected while any map is active. While mapped, librdp_surface_resize() and
+ * librdp_surface_blit_bgra32() fail with LIBRDP_STATUS_STATE so the borrowed
+ * pointers cannot be invalidated by public surface APIs.
+ *
+ * @param[in,out] surface Surface to map; must not be NULL.
+ * @param[in] access Requested access mode.
+ * @param[in,out] mapping Initialized mapping descriptor; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments, invalid descriptor version/size, or invalid access mode;
+ * LIBRDP_STATUS_STATE when an incompatible map is already active.
+ *
+ * @note Thread-safety: map/unmap is not internally synchronized. Serialize
+ * with all other surface access unless the application provides locking.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_surface_map(librdp_surface* surface,
+                                           librdp_surface_access access,
+                                           librdp_surface_mapping* mapping);
+
+/**
+ * @brief Release a mapping created by librdp_surface_map().
+ *
+ * On success all pointer fields in mapping are cleared. Passing a descriptor
+ * that was not produced by a successful map is invalid.
+ *
+ * @param[in,out] surface Surface that owns the mapping; must not be NULL.
+ * @param[in,out] mapping Mapping descriptor to release; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid descriptor metadata; LIBRDP_STATUS_STATE when the
+ * descriptor does not match an active mapping on the surface.
+ *
+ * @note Thread-safety: call from the same serialized surface access context
+ * used for librdp_surface_map().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_surface_unmap(librdp_surface* surface, librdp_surface_mapping* mapping);
 
 /** @} */
 
