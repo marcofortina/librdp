@@ -67,6 +67,13 @@ typedef struct rdp_dynamic_channel_create_request
     size_t name_len;
 } rdp_dynamic_channel_create_request;
 
+typedef struct rdp_dynamic_channel_create_response
+{
+    uint32_t channel_id;
+    uint8_t channel_id_bytes;
+    uint32_t status_code;
+} rdp_dynamic_channel_create_response;
+
 typedef struct rdp_dynamic_channel_data_pdu
 {
     uint32_t channel_id;
@@ -145,10 +152,19 @@ librdp_status rdp_dynamic_channel_write_capabilities_response(rdp_buffer* buffer
 librdp_status rdp_dynamic_channel_parse_create_request(const void* data,
                                                        size_t length,
                                                        rdp_dynamic_channel_create_request* request);
+librdp_status rdp_dynamic_channel_write_create_request(rdp_buffer* buffer,
+                                                       uint32_t channel_id,
+                                                       uint8_t channel_id_bytes,
+                                                       uint8_t priority,
+                                                       const char* name,
+                                                       size_t name_len);
 librdp_status rdp_dynamic_channel_write_create_response(rdp_buffer* buffer,
                                                        uint32_t channel_id,
                                                        uint8_t channel_id_bytes,
                                                        uint32_t status_code);
+librdp_status rdp_dynamic_channel_parse_create_response(const void* data,
+                                                        size_t length,
+                                                        rdp_dynamic_channel_create_response* response);
 librdp_status rdp_dynamic_channel_parse_data(const void* data,
                                              size_t length,
                                              rdp_dynamic_channel_data_pdu* pdu);

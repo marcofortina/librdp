@@ -1321,6 +1321,21 @@ static int build_dynamic_channel_close_packet(rdp_buffer* out)
     return ok;
 }
 
+static int build_dynamic_channel_create_response_packet(rdp_buffer* out, uint32_t channel_id)
+{
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_dynamic_channel_write_create_response(&payload,
+                                                   channel_id,
+                                                   rdp_dynamic_channel_select_channel_id_bytes(channel_id),
+                                                   RDP_DYNAMIC_CHANNEL_STATUS_OK) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
 {
     uint16_t total = 0;
@@ -1347,7 +1362,8 @@ static int start_handshake_server_ex(uint16_t* port,
                                      pid_t* child_pid,
                                      int encrypted,
                                      uint32_t error_info,
-                                     int extra_static_channel)
+                                     int extra_static_channel,
+                                     int client_dynamic_channel_open_response)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1393,6 +1409,7 @@ static int start_handshake_server_ex(uint16_t* port,
         rdp_buffer dvc_data_first;
         rdp_buffer dvc_data;
         rdp_buffer dvc_close;
+        rdp_buffer dvc_create_response;
         rdp_buffer static_first;
         rdp_buffer static_last;
         rdp_buffer error_update;
@@ -1437,6 +1454,7 @@ static int start_handshake_server_ex(uint16_t* port,
         rdp_buffer_init(&dvc_data_first);
         rdp_buffer_init(&dvc_data);
         rdp_buffer_init(&dvc_close);
+        rdp_buffer_init(&dvc_create_response);
         rdp_buffer_init(&static_first);
         rdp_buffer_init(&static_last);
         rdp_buffer_init(&error_update);
@@ -1500,7 +1518,13 @@ static int start_handshake_server_ex(uint16_t* port,
                          !build_dynamic_channel_data_packet(&dvc_data) ||
                          !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
                          !build_dynamic_channel_close_packet(&dvc_close) ||
-                         !write_exact_fd(client, dvc_close.data, dvc_close.length))
+                         !write_exact_fd(client, dvc_close.data, dvc_close.length) ||
+                         (client_dynamic_channel_open_response &&
+                          (!read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                           !build_dynamic_channel_create_response_packet(&dvc_create_response, 1u) ||
+                           !write_exact_fd(client,
+                                           dvc_create_response.data,
+                                           dvc_create_response.length))))
                     _exit(5);
             }
             ts.tv_sec = 1;
@@ -1512,6 +1536,7 @@ static int start_handshake_server_ex(uint16_t* port,
         rdp_buffer_free(&static_last);
         rdp_buffer_free(&static_first);
         rdp_buffer_free(&dvc_close);
+        rdp_buffer_free(&dvc_create_response);
         rdp_buffer_free(&dvc_data);
         rdp_buffer_free(&dvc_data_first);
         rdp_buffer_free(&dvc_create);
@@ -1529,7 +1554,7 @@ static int start_handshake_server_ex(uint16_t* port,
 
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
 {
-    return start_handshake_server_ex(port, child_pid, encrypted, error_info, 0);
+    return start_handshake_server_ex(port, child_pid, encrypted, error_info, 0, 0);
 }
 
 static int test_static_channels(void)
@@ -1583,7 +1608,7 @@ static int test_static_channels(void)
 
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
-    CHECK(start_handshake_server_ex(&test_port, &server_pid, 0, 0, 1));
+    CHECK(start_handshake_server_ex(&test_port, &server_pid, 0, 0, 1, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -2031,6 +2056,7 @@ static int test_settings_surface_input_session(void)
     librdp_channel_info channel_infos[2];
     librdp_channel_send_options channel_send_options;
     librdp_channel_handle channel_handle = 0;
+    librdp_channel_handle client_channel_handle = 0;
     trace_capture trace;
     event_envelope_capture envelope_capture;
     domain_event_capture domain_capture;
@@ -2877,7 +2903,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_set_credentials_provider(settings,
                                                    on_credentials_provider,
                                                    &credentials_capture) == LIBRDP_STATUS_OK);
-    CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
+    CHECK(start_handshake_server_ex(&test_port, &server_pid, 0, 0, 0, 1));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);
     session = librdp_session_new(settings);
@@ -3058,6 +3084,49 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_channel_close_handle(session, channel_handle) == LIBRDP_STATUS_STATE);
     CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
     CHECK(channel_count == 0);
+    CHECK(librdp_session_channel_open(NULL,
+                                      "APPCHAN",
+                                      LIBRDP_CHANNEL_PRIORITY_LOW,
+                                      &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_open(session,
+                                      NULL,
+                                      LIBRDP_CHANNEL_PRIORITY_LOW,
+                                      &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_open(session,
+                                      "",
+                                      LIBRDP_CHANNEL_PRIORITY_LOW,
+                                      &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_open(session,
+                                      "APPCHAN",
+                                      (librdp_channel_priority)3,
+                                      &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_channel_open(session,
+                                      "APPCHAN",
+                                      LIBRDP_CHANNEL_PRIORITY_HIGH,
+                                      &client_channel_handle) == LIBRDP_STATUS_OK);
+    CHECK(client_channel_handle != 0);
+    CHECK(librdp_channel_info_init(&channel_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_channel_get_info(session, client_channel_handle, &channel_info) == LIBRDP_STATUS_OK);
+    CHECK(channel_info.handle == client_channel_handle);
+    CHECK(channel_info.channel_id == 1);
+    CHECK(channel_info.priority == LIBRDP_CHANNEL_PRIORITY_HIGH);
+    CHECK(channel_info.active == 0);
+    CHECK(channel_info.application_owned == 1);
+    CHECK(channel_info.name_len == 7 && strcmp(channel_info.name, "APPCHAN") == 0);
+    channel_send_options.handle = client_channel_handle;
+    channel_send_options.priority = LIBRDP_CHANNEL_PRIORITY_LOW;
+    CHECK(librdp_session_channel_send_ex(session, &channel_send_options, "ping", 4) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
+    CHECK(channel_count == 0);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.channel_open == 2);
+    CHECK(domain_capture.channel == 4);
+    CHECK(counter.last_channel_id == 1);
+    CHECK(librdp_session_channel_get_info(session, client_channel_handle, &channel_info) == LIBRDP_STATUS_OK);
+    CHECK(channel_info.active == 1);
+    CHECK(librdp_session_channel_list(session, channel_infos, 2, &channel_count) == LIBRDP_STATUS_OK);
+    CHECK(channel_count == 1);
+    CHECK(channel_infos[0].handle == client_channel_handle);
     CHECK(librdp_session_refresh(session, 0, 0, 64, 48) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_refresh(session, 0, 0, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);
     key.state = LIBRDP_KEY_PRESSED;

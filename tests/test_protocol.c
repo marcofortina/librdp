@@ -3526,6 +3526,7 @@ static int test_path_security_license_channels(void)
     rdp_dynamic_channel_header dyn_header;
     rdp_dynamic_channel_capabilities dyn_parsed_caps;
     rdp_dynamic_channel_create_request dyn_create_request;
+    rdp_dynamic_channel_create_response dyn_create_response;
     rdp_dynamic_channel_data_pdu dyn_data_pdu;
     rdp_dynamic_channel_data_first_pdu dyn_first_pdu;
     rdp_dynamic_channel_close_pdu dyn_close_pdu;
@@ -6949,6 +6950,32 @@ static int test_path_security_license_channels(void)
     PCHECK(dyn_create_request.channel_id == 7 && dyn_create_request.channel_id_bytes == 1 &&
            dyn_create_request.priority == 2 &&
            dyn_create_request.name_len == 4 && memcmp(dyn_create_request.name, "ECHO", 4) == 0);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_create_request(&dyn_response,
+                                                    0x1234u,
+                                                    2,
+                                                    2,
+                                                    "APP",
+                                                    3) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 7 && dyn_response.data[0] == 0x19 &&
+           test_read_u16_le(dyn_response.data + 1) == 0x1234u &&
+           memcmp(dyn_response.data + 3, "APP", 4) == 0);
+    PCHECK(rdp_dynamic_channel_parse_create_request(dyn_response.data,
+                                                    dyn_response.length,
+                                                    &dyn_create_request) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_create_request.channel_id == 0x1234u && dyn_create_request.channel_id_bytes == 2 &&
+           dyn_create_request.priority == 2 &&
+           dyn_create_request.name_len == 3 && memcmp(dyn_create_request.name, "APP", 3) == 0);
+    PCHECK(rdp_dynamic_channel_write_create_request(&dyn_response, 1, 1, 3, "APP", 3) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_dynamic_channel_write_create_request(&dyn_response,
+                                                    1,
+                                                    1,
+                                                    0,
+                                                    NULL,
+                                                    0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
     {
         rdp_dynamic_channel_create_request valid_dyn_create_request = dyn_create_request;
 
@@ -6960,11 +6987,20 @@ static int test_path_security_license_channels(void)
                       sizeof(dyn_create_request)) == 0);
     }
     PCHECK(rdp_dynamic_channel_write_create_response(&dyn_response,
-                                                     dyn_create_request.channel_id,
-                                                     dyn_create_request.channel_id_bytes,
+                                                     7,
+                                                     1,
                                                      RDP_DYNAMIC_CHANNEL_STATUS_OK) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 6 && dyn_response.data[0] == 0x10 && dyn_response.data[1] == 7 &&
            test_read_u32_le(dyn_response.data + 2) == 0);
+    PCHECK(rdp_dynamic_channel_parse_create_response(dyn_response.data,
+                                                     dyn_response.length,
+                                                     &dyn_create_response) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_create_response.channel_id == 7 &&
+           dyn_create_response.channel_id_bytes == 1 &&
+           dyn_create_response.status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK);
+    PCHECK(rdp_dynamic_channel_parse_create_request(dyn_response.data,
+                                                    dyn_response.length,
+                                                    &dyn_create_request) == LIBRDP_STATUS_PROTOCOL_ERROR);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_dynamic_channel_parse_data(dyn_data, sizeof(dyn_data), &dyn_data_pdu) == LIBRDP_STATUS_OK);

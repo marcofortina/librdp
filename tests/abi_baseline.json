@@ -37,6 +37,7 @@
     "librdp_session_channel_get_info",
     "librdp_session_channel_handle_for_id",
     "librdp_session_channel_list",
+    "librdp_session_channel_open",
     "librdp_session_channel_send",
     "librdp_session_channel_send_ex",
     "librdp_session_static_channel_list",

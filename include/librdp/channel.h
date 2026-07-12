@@ -256,6 +256,47 @@ LIBRDP_API librdp_status librdp_settings_static_channel_info(const librdp_settin
                                                             librdp_static_channel_info* info);
 
 /**
+ * @brief Request creation of an application-owned dynamic virtual channel.
+ *
+ * The request is sent on the negotiated dynamic-channel control channel and is
+ * completed asynchronously by the server. On success this function returns a
+ * provisional handle in handle; the handle can be inspected immediately with
+ * librdp_session_channel_get_info(), but sends and closes fail with
+ * LIBRDP_STATUS_STATE until the server accepts the request. A
+ * LIBRDP_EVENT_CHANNEL_OPEN event is emitted only after the server returns an
+ * OK create response. If the server rejects the request, the provisional handle
+ * is invalidated and no open event is emitted.
+ *
+ * name must be 1 to LIBRDP_CHANNEL_NAME_MAX printable ASCII bytes and must not
+ * name an internal library channel. The name is copied during the call and is
+ * not retained by pointer.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] name NUL-terminated channel name; must not be NULL or empty.
+ * @param[in] priority Outbound channel priority for the create request.
+ * @param[out] handle Receives the provisional channel handle; must not be
+ * NULL. The handle remains valid until rejection, close, reconnect,
+ * disconnect, or session destruction.
+ *
+ * @return LIBRDP_STATUS_OK when the create request was queued;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL arguments, invalid names, invalid
+ * priority, or reserved channel names; LIBRDP_STATUS_STATE when the session is
+ * not connected or dynamic channels are unavailable; LIBRDP_STATUS_LIMIT_EXCEEDED
+ * when no channel slot or identifier is available; transport or allocation
+ * errors propagated from the send path.
+ *
+ * @note Thread-safety: call from the session owner thread.
+ * @warning Channel names may identify application features. Trace output logs
+ * the channel name but never channel payload bytes unless unsafe tracing is
+ * explicitly enabled.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_channel_open(librdp_session* session,
+                                                    const char* name,
+                                                    librdp_channel_priority priority,
+                                                    librdp_channel_handle* handle);
+
+/**
  * @brief List active dynamic virtual channels.
  *
  * If infos is NULL and capacity is zero, the function only reports the number
