@@ -99,6 +99,7 @@ struct librdp_settings
     uint32_t usb_device_count;
     char* usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
     librdp_usb_policy usb_policy;
+    librdp_limits limits;
     uint32_t rail_app_count;
     char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
     uint32_t pnp_device_count;
@@ -110,6 +111,18 @@ struct librdp_settings
 #define RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES 1024u
 #define RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS 5000u
 #define RDP_SETTINGS_USB_MAX_TRANSFER_MS 60000u
+#define RDP_SETTINGS_LIMIT_DYNAMIC_CHANNELS 64u
+#define RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES (64u * 1024u * 1024u)
+#define RDP_SETTINGS_LIMIT_FASTPATH_FRAGMENT_BYTES (16u * 1024u * 1024u)
+#define RDP_SETTINGS_LIMIT_GRAPHICS_SURFACES 64u
+#define RDP_SETTINGS_LIMIT_SURFACE_DIMENSION 8192u
+#define RDP_SETTINGS_LIMIT_CLIPBOARD_FORMATS 64u
+#define RDP_SETTINGS_LIMIT_CLIPBOARD_FILES 64u
+#define RDP_SETTINGS_LIMIT_CLIPBOARD_FILE_RANGE_BYTES (4u * 1024u * 1024u)
+#define RDP_SETTINGS_LIMIT_REDIRECTED_FILES 256u
+#define RDP_SETTINGS_LIMIT_FILE_IO_BYTES (4u * 1024u * 1024u)
+#define RDP_SETTINGS_LIMIT_DEVICE_IO_BYTES 65536u
+#define RDP_SETTINGS_LIMIT_PENDING_REQUESTS 64u
 
 static rdp_settings_secure_string_observer g_secure_string_observer;
 static void* g_secure_string_observer_user_data;
@@ -337,6 +350,30 @@ void librdp_usb_policy_init(librdp_usb_policy* policy)
     policy->max_transfer_ms = RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS;
 }
 
+librdp_status librdp_limits_init(librdp_limits* limits)
+{
+    if (!limits)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(limits, 0, sizeof(*limits));
+    limits->version = LIBRDP_LIMITS_VERSION;
+    limits->size = (uint32_t)sizeof(*limits);
+    limits->pdu_buffer_bytes = RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES;
+    limits->channel_buffer_bytes = RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES;
+    limits->dynamic_channel_count = RDP_SETTINGS_LIMIT_DYNAMIC_CHANNELS;
+    limits->dynamic_channel_message_bytes = RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES;
+    limits->clipboard_formats = RDP_SETTINGS_LIMIT_CLIPBOARD_FORMATS;
+    limits->clipboard_files = RDP_SETTINGS_LIMIT_CLIPBOARD_FILES;
+    limits->clipboard_file_range_bytes = RDP_SETTINGS_LIMIT_CLIPBOARD_FILE_RANGE_BYTES;
+    limits->file_handles = RDP_SETTINGS_LIMIT_REDIRECTED_FILES;
+    limits->file_io_bytes = RDP_SETTINGS_LIMIT_FILE_IO_BYTES;
+    limits->device_io_bytes = RDP_SETTINGS_LIMIT_DEVICE_IO_BYTES;
+    limits->surface_count = RDP_SETTINGS_LIMIT_GRAPHICS_SURFACES;
+    limits->surface_max_dimension = RDP_SETTINGS_LIMIT_SURFACE_DIMENSION;
+    limits->frame_bytes = RDP_SETTINGS_LIMIT_FASTPATH_FRAGMENT_BYTES;
+    limits->pending_requests = RDP_SETTINGS_LIMIT_PENDING_REQUESTS;
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_settings_valid_drive_name(const char* name)
 {
     size_t i = 0;
@@ -374,6 +411,58 @@ static int rdp_settings_usb_policy_valid(const librdp_usb_policy* policy)
     if (policy->max_transfer_ms > RDP_SETTINGS_USB_MAX_TRANSFER_MS)
         return 0;
     return 1;
+}
+
+/*
+ * Validate caller-provided runtime limits against the storage compiled into
+ * the current library. Limits may restrict existing arrays and buffers, but
+ * cannot expand them or disable a category by setting it to zero.
+ */
+static int rdp_settings_limits_valid(const librdp_limits* limits)
+{
+    if (!limits || limits->version != LIBRDP_LIMITS_VERSION || limits->size < sizeof(*limits))
+        return 0;
+    if (limits->pdu_buffer_bytes == 0 ||
+        limits->pdu_buffer_bytes > RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES)
+        return 0;
+    if (limits->channel_buffer_bytes == 0 ||
+        limits->channel_buffer_bytes > RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES)
+        return 0;
+    if (limits->dynamic_channel_count == 0 ||
+        limits->dynamic_channel_count > RDP_SETTINGS_LIMIT_DYNAMIC_CHANNELS)
+        return 0;
+    if (limits->dynamic_channel_message_bytes == 0 ||
+        limits->dynamic_channel_message_bytes > RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES)
+        return 0;
+    if (limits->clipboard_formats == 0 ||
+        limits->clipboard_formats > RDP_SETTINGS_LIMIT_CLIPBOARD_FORMATS)
+        return 0;
+    if (limits->clipboard_files == 0 ||
+        limits->clipboard_files > RDP_SETTINGS_LIMIT_CLIPBOARD_FILES)
+        return 0;
+    if (limits->clipboard_file_range_bytes == 0 ||
+        limits->clipboard_file_range_bytes > RDP_SETTINGS_LIMIT_CLIPBOARD_FILE_RANGE_BYTES)
+        return 0;
+    if (limits->file_handles == 0 ||
+        limits->file_handles > RDP_SETTINGS_LIMIT_REDIRECTED_FILES)
+        return 0;
+    if (limits->file_io_bytes == 0 ||
+        limits->file_io_bytes > RDP_SETTINGS_LIMIT_FILE_IO_BYTES)
+        return 0;
+    if (limits->device_io_bytes == 0 ||
+        limits->device_io_bytes > RDP_SETTINGS_LIMIT_DEVICE_IO_BYTES)
+        return 0;
+    if (limits->surface_count == 0 ||
+        limits->surface_count > RDP_SETTINGS_LIMIT_GRAPHICS_SURFACES)
+        return 0;
+    if (limits->surface_max_dimension == 0 ||
+        limits->surface_max_dimension > RDP_SETTINGS_LIMIT_SURFACE_DIMENSION)
+        return 0;
+    if (limits->frame_bytes == 0 ||
+        limits->frame_bytes > RDP_SETTINGS_LIMIT_FASTPATH_FRAGMENT_BYTES)
+        return 0;
+    return limits->pending_requests != 0 &&
+           limits->pending_requests <= RDP_SETTINGS_LIMIT_PENDING_REQUESTS;
 }
 
 static int rdp_settings_valid_port_name(const char* name)
@@ -555,6 +644,11 @@ librdp_settings* librdp_settings_new(void)
     settings->tls_policy_mode = LIBRDP_TLS_POLICY_STRICT;
     settings->tls_use_system_store = 1;
     librdp_usb_policy_init(&settings->usb_policy);
+    if (librdp_limits_init(&settings->limits) != LIBRDP_STATUS_OK)
+    {
+        free(settings);
+        return NULL;
+    }
     return settings;
 }
 
@@ -586,6 +680,7 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->tls_certificate_callback = settings->tls_certificate_callback;
     copy->tls_certificate_callback_user_data = settings->tls_certificate_callback_user_data;
     copy->usb_policy = settings->usb_policy;
+    copy->limits = settings->limits;
 
     if ((settings->target && librdp_settings_set_target(copy, settings->target) != LIBRDP_STATUS_OK) ||
         (settings->username && librdp_settings_set_username(copy, settings->username) != LIBRDP_STATUS_OK) ||
@@ -818,6 +913,35 @@ librdp_status librdp_settings_set_credentials_provider(librdp_settings* settings
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_settings_set_limits(librdp_settings* settings, const librdp_limits* limits)
+{
+    librdp_limits defaults;
+
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!limits)
+    {
+        if (librdp_limits_init(&defaults) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        limits = &defaults;
+    }
+    if (!rdp_settings_limits_valid(limits))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (settings->width > limits->surface_max_dimension ||
+        settings->height > limits->surface_max_dimension)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    settings->limits = *limits;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_get_limits(const librdp_settings* settings, librdp_limits* limits)
+{
+    if (!settings || !limits)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *limits = settings->limits;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port)
 {
     if (!settings || port == 0)
@@ -830,6 +954,8 @@ librdp_status librdp_settings_set_desktop_size(librdp_settings* settings, uint32
 {
     if (!settings || width == 0 || height == 0 || width > 8192 || height > 8192)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (width > settings->limits.surface_max_dimension || height > settings->limits.surface_max_dimension)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
     settings->width = width;
     settings->height = height;
     return LIBRDP_STATUS_OK;
@@ -1483,6 +1609,11 @@ const librdp_drive_policy* rdp_settings_drive_policy_internal(const librdp_setti
 const librdp_usb_policy* rdp_settings_usb_policy_internal(const librdp_settings* settings)
 {
     return settings ? &settings->usb_policy : NULL;
+}
+
+const librdp_limits* rdp_settings_limits_internal(const librdp_settings* settings)
+{
+    return settings ? &settings->limits : NULL;
 }
 
 uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index)

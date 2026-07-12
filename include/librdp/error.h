@@ -59,7 +59,8 @@ typedef enum librdp_status
     LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED = -10, /**< TLS peer certificate chain was rejected. */
     LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH = -11,    /**< TLS peer certificate does not match the target host. */
     LIBRDP_STATUS_TLS_HANDSHAKE_FAILED = -12,     /**< TLS handshake failed independently from verification. */
-    LIBRDP_STATUS_SECURITY_DOWNGRADE = -13        /**< Security negotiation would downgrade below policy. */
+    LIBRDP_STATUS_SECURITY_DOWNGRADE = -13,       /**< Security negotiation would downgrade below policy. */
+    LIBRDP_STATUS_LIMIT_EXCEEDED = -14            /**< Configured size, count, or pending-operation limit was exceeded. */
 } librdp_status;
 
 #define LIBRDP_ERROR_INFO_VERSION 1u /**< Current librdp_error_info version. */

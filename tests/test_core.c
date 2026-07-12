@@ -1481,7 +1481,8 @@ static int test_settings_surface_input_session(void)
         {LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED, "tls_certificate_rejected"},
         {LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH, "tls_hostname_mismatch"},
         {LIBRDP_STATUS_TLS_HANDSHAKE_FAILED, "tls_handshake_failed"},
-        {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"}
+        {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"},
+        {LIBRDP_STATUS_LIMIT_EXCEEDED, "limit_exceeded"}
     };
     librdp_credentials credentials;
     librdp_error_info error_info;
@@ -1490,6 +1491,9 @@ static int test_settings_surface_input_session(void)
     librdp_drive_policy drive_policy_out;
     librdp_usb_policy usb_policy;
     librdp_usb_policy usb_policy_out;
+    librdp_limits limits;
+    librdp_limits limits_out;
+    librdp_metrics metrics;
     librdp_trace_policy trace_policy;
     trace_capture trace;
     secure_string_capture secure_capture;
@@ -1572,6 +1576,21 @@ static int test_settings_surface_input_session(void)
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
+    CHECK(librdp_limits_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
+    CHECK(limits.version == LIBRDP_LIMITS_VERSION);
+    CHECK(limits.size == sizeof(limits));
+    CHECK(limits.dynamic_channel_message_bytes == 64u * 1024u * 1024u);
+    CHECK(librdp_settings_get_limits(NULL, &limits_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_limits(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_limits(settings, &limits_out) == LIBRDP_STATUS_OK);
+    CHECK(limits_out.surface_max_dimension == 8192u);
+    limits_out.surface_max_dimension = 512u;
+    CHECK(librdp_settings_set_limits(settings, &limits_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    limits_out.surface_max_dimension = 1024u;
+    CHECK(librdp_settings_set_limits(settings, &limits_out) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_desktop_size(settings, 1200, 768) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(librdp_settings_set_limits(settings, NULL) == LIBRDP_STATUS_OK);
     CHECK(librdp_tls_policy_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_get_tls_policy(NULL, &tls_policy_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_get_tls_policy(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -2065,6 +2084,19 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_last_error(NULL) == NULL);
     CHECK(librdp_session_get_lifecycle(NULL) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_NEW);
+    CHECK(librdp_metrics_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.version == LIBRDP_METRICS_VERSION);
+    CHECK(metrics.size == sizeof(metrics));
+    CHECK(librdp_session_get_metrics(NULL, &metrics) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_metrics(session, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    metrics.size = 0;
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 0);
+    CHECK(librdp_session_reset_metrics(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_reset_metrics(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_set_trace_policy(NULL, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
     trace_policy.callback = NULL;
@@ -2236,6 +2268,25 @@ static int test_settings_surface_input_session(void)
     }
     CHECK(librdp_session_dismiss_touch(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_dismiss_touch(session, 1) == LIBRDP_STATUS_STATE);
+    librdp_session_free(session);
+    session = NULL;
+    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
+    limits.dynamic_channel_message_bytes = 4;
+    CHECK(librdp_settings_set_limits(settings, &limits) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_session_clipboard_set_data(session, LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT, "abcdef", 6) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 1);
+    CHECK(librdp_session_reset_metrics(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 0);
+    librdp_session_free(session);
+    session = NULL;
+    CHECK(librdp_settings_set_limits(settings, NULL) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_credentials_provider(settings,
                                                    on_credentials_provider,

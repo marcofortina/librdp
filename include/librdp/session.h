@@ -86,6 +86,36 @@ typedef enum librdp_session_lifecycle
     LIBRDP_LIFECYCLE_FAILED = 11        /**< Session reached a terminal failure phase. */
 } librdp_session_lifecycle;
 
+#define LIBRDP_METRICS_VERSION 1u /**< Current librdp_metrics version. */
+
+/**
+ * @brief Versioned session metrics snapshot.
+ *
+ * Metrics are monotonic until librdp_session_reset_metrics() is called. They
+ * count only operations observed by the current implementation and are not a
+ * protocol conformance report. Overflow is saturated at UINT64_MAX.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_metrics
+{
+    uint32_t version;                 /**< Struct version, LIBRDP_METRICS_VERSION. */
+    uint32_t size;                    /**< Size of this struct in bytes. */
+    uint64_t transport_bytes_read;    /**< Bytes read from transport APIs. */
+    uint64_t transport_bytes_written; /**< Bytes written through transport APIs. */
+    uint64_t pdu_in;                  /**< Decoded incoming top-level PDUs or update packets. */
+    uint64_t pdu_out;                 /**< Encoded outgoing client PDUs or channel packets. */
+    uint64_t frames;                  /**< Completed graphics frame markers or equivalent frame updates. */
+    uint64_t surface_updates;         /**< Surface invalidation/update callbacks emitted. */
+    uint64_t channel_in;              /**< Incoming virtual-channel packets delivered to handlers. */
+    uint64_t channel_out;             /**< Outgoing virtual-channel packets sent. */
+    uint64_t channel_bytes_in;        /**< Incoming virtual-channel payload bytes. */
+    uint64_t channel_bytes_out;       /**< Outgoing virtual-channel payload bytes. */
+    uint64_t errors;                  /**< Errors recorded at public or internal session boundaries. */
+    uint64_t reconnects;              /**< Coordinated reconnect attempts started by public reconnect APIs. */
+    uint64_t limits_rejected;         /**< Operations rejected because a configured limit was exceeded. */
+} librdp_metrics;
+
 /**
  * @brief Monitor layout entry supplied to librdp_session_set_display_layout().
  *
@@ -259,6 +289,22 @@ typedef void (*librdp_event_callback)(librdp_session* session, const librdp_even
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_trace_policy_init(librdp_trace_policy* policy);
+
+/**
+ * @brief Initialize a metrics snapshot object.
+ *
+ * The object is cleared, versioned, and sized. Callers normally pass the
+ * initialized object to librdp_session_get_metrics().
+ *
+ * @param[out] metrics Caller-owned metrics object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metrics is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_metrics_init(librdp_metrics* metrics);
 
 /**
  * @brief Create a client session from immutable settings.
@@ -714,6 +760,41 @@ LIBRDP_API librdp_session_state librdp_session_get_state(const librdp_session* s
  * @since 0.1.0
  */
 LIBRDP_API librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session);
+
+/**
+ * @brief Copy current session metrics.
+ *
+ * The destination must be initialized or at least have version
+ * LIBRDP_METRICS_VERSION and a size large enough for librdp_metrics. The
+ * function writes a complete snapshot on success.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[out] metrics Destination metrics object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid metrics metadata.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_metrics(const librdp_session* session,
+                                                    librdp_metrics* metrics);
+
+/**
+ * @brief Reset all counters in the session metrics snapshot.
+ *
+ * The version and size of future snapshots remain LIBRDP_METRICS_VERSION and
+ * sizeof(librdp_metrics). Active protocol/channel state is not changed.
+ *
+ * @param[in,out] session Session whose metrics are reset; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * session is NULL.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_reset_metrics(librdp_session* session);
 
 /**
  * @brief Return the opaque last-error object owned by a session.

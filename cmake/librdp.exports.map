@@ -15,6 +15,12 @@ LIBRDP_0.1 {
         librdp_client_disconnect;
         librdp_client_state;
         librdp_client_lifecycle;
+        librdp_limits_init;
+        librdp_metrics_init;
+        librdp_session_get_metrics;
+        librdp_session_reset_metrics;
+        librdp_settings_get_limits;
+        librdp_settings_set_limits;
         librdp_session_video_capture_send_sample;
         librdp_session_video_capture_send_error;
         librdp_session_clipboard_set_data;

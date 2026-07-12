@@ -51,7 +51,10 @@ static const rdp_status_info RDP_STATUS_INFO[] = {
      "TLS handshake failed independently from verification."},
     {LIBRDP_STATUS_SECURITY_DOWNGRADE,
      "security_downgrade",
-     "Security negotiation would downgrade below policy."}
+     "Security negotiation would downgrade below policy."},
+    {LIBRDP_STATUS_LIMIT_EXCEEDED,
+     "limit_exceeded",
+     "Configured size, count, or pending-operation limit was exceeded."}
 };
 
 static const rdp_status_info* rdp_status_info_find(librdp_status status)

@@ -68,6 +68,7 @@ typedef enum librdp_security_mode
 #define LIBRDP_CREDENTIALS_VERSION 1u          /**< Current librdp_credentials version. */
 #define LIBRDP_DRIVE_POLICY_VERSION 1u         /**< Current librdp_drive_policy version. */
 #define LIBRDP_USB_POLICY_VERSION 1u           /**< Current librdp_usb_policy version. */
+#define LIBRDP_LIMITS_VERSION 1u               /**< Current librdp_limits version. */
 
 /**
  * @brief TLS certificate trust policy used by TLS and NLA security modes.
@@ -258,6 +259,37 @@ typedef struct librdp_usb_policy
 } librdp_usb_policy;
 
 /**
+ * @brief Versioned runtime limit policy copied from settings into sessions.
+ *
+ * Initialize with librdp_limits_init(). Values of zero are not valid in an
+ * installed policy; use the initialized defaults and then lower individual
+ * fields as needed. The limits are hard caps enforced before allocation,
+ * buffering, or outbound request queuing on the corresponding public/runtime
+ * paths. They can restrict but cannot expand compile-time storage arrays.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_limits
+{
+    uint32_t version;                       /**< Struct version, LIBRDP_LIMITS_VERSION. */
+    uint32_t size;                          /**< Size of this struct in bytes. */
+    uint32_t pdu_buffer_bytes;              /**< Maximum single decoded PDU/fragment buffer size in bytes. */
+    uint32_t channel_buffer_bytes;          /**< Maximum static virtual-channel reassembly buffer size in bytes. */
+    uint32_t dynamic_channel_count;         /**< Maximum active dynamic virtual channels. */
+    uint32_t dynamic_channel_message_bytes; /**< Maximum dynamic-channel message payload size in bytes. */
+    uint32_t clipboard_formats;             /**< Maximum remembered remote clipboard formats. */
+    uint32_t clipboard_files;               /**< Maximum local clipboard files advertised at once. */
+    uint32_t clipboard_file_range_bytes;    /**< Maximum bytes requested per clipboard file range. */
+    uint32_t file_handles;                  /**< Maximum concurrently tracked redirected file/device handles. */
+    uint32_t file_io_bytes;                 /**< Maximum file read/write IO payload size. */
+    uint32_t device_io_bytes;               /**< Maximum device/PNP IO payload size. */
+    uint32_t surface_count;                 /**< Maximum graphics surfaces tracked by the session. */
+    uint32_t surface_max_dimension;         /**< Maximum surface width or height in pixels. */
+    uint32_t frame_bytes;                   /**< Maximum frame/fast-path fragment buffer size in bytes. */
+    uint32_t pending_requests;              /**< Maximum pending asynchronous requests per bounded queue. */
+} librdp_limits;
+
+/**
  * @brief Optional feature bit advertised or enabled for a client session.
  *
  * Feature flags are stored in settings and copied into sessions. Enabling a
@@ -423,6 +455,64 @@ LIBRDP_API librdp_status librdp_credentials_set(librdp_credentials* credentials,
                                                 const char* username,
                                                 const char* password,
                                                 const char* domain);
+
+/**
+ * @brief Initialize runtime limits with conservative defaults.
+ *
+ * Defaults match the current bounded implementation: dynamic channel messages
+ * are capped at 64 MiB, fast-path/frame fragments at 16 MiB, clipboard file
+ * ranges and file IO at 4 MiB, and counts match the compiled session arrays.
+ *
+ * @param[out] limits Caller-owned limits object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * limits is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_limits_init(librdp_limits* limits);
+
+/**
+ * @brief Set runtime limits for sessions created from settings.
+ *
+ * The limits descriptor is copied into settings. The descriptor must have
+ * version LIBRDP_LIMITS_VERSION, a size large enough for librdp_limits, and
+ * non-zero fields no larger than the implementation maxima. Passing NULL
+ * restores defaults.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] limits Limits to copy, or NULL to restore defaults.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * settings, invalid metadata, zero fields, or values above implementation
+ * maxima.
+ *
+ * @note Thread-safety: configure before constructing sessions, or serialize
+ * externally with all settings readers.
+ * @warning Lowering limits can cause later session operations to fail with
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when remote or local data exceeds the cap.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_limits(librdp_settings* settings,
+                                                    const librdp_limits* limits);
+
+/**
+ * @brief Copy the currently configured runtime limits.
+ *
+ * @param[in] settings Settings object to query; must not be NULL.
+ * @param[out] limits Destination limits object; must not be NULL and is fully
+ * overwritten on success.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees settings.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_limits(const librdp_settings* settings,
+                                                    librdp_limits* limits);
 
 /**
  * @brief Set the remote target host name or address.

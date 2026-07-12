@@ -597,6 +597,8 @@ static librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* o
 struct librdp_session
 {
     librdp_settings* settings;
+    librdp_limits limits;
+    librdp_metrics metrics;
     librdp_surface* surface;
     rdp_transport transport;
     uint16_t mcs_user_id;
@@ -849,6 +851,23 @@ static void rdp_session_emit(librdp_session* session, const librdp_event* event)
         session->callback(session, event, session->callback_data);
 }
 
+static void rdp_session_metric_add(uint64_t* counter, uint64_t value)
+{
+    if (!counter)
+        return;
+    if (*counter > UINT64_MAX - value)
+        *counter = UINT64_MAX;
+    else
+        *counter += value;
+}
+
+static librdp_status rdp_session_limit_rejected(librdp_session* session)
+{
+    if (session)
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1);
+    return LIBRDP_STATUS_LIMIT_EXCEEDED;
+}
+
 static char* rdp_session_trace_strdup(const char* text)
 {
     size_t len = 0;
@@ -1013,6 +1032,7 @@ static void rdp_session_set_last_error(librdp_session* session,
 {
     if (!session || status == LIBRDP_STATUS_OK)
         return;
+    rdp_session_metric_add(&session->metrics.errors, 1);
     rdp_error_set(&session->last_error,
                   status,
                   os_errno,
@@ -1300,6 +1320,7 @@ static void rdp_session_emit_surface_invalidated(librdp_session* session,
     event.data.surface.width = width;
     event.data.surface.height = height;
     rdp_session_emit(session, &event);
+    rdp_session_metric_add(&session->metrics.surface_updates, 1);
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.surface.invalidated",
                     "x=%u y=%u width=%u height=%u output_width=%u output_height=%u frame_id=%u frame_active=%u",
@@ -1776,6 +1797,11 @@ static librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
                               packet.data,
                               packet.length);
         status = rdp_transport_write_all(&session->transport, packet.data, packet.length);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_session_metric_add(&session->metrics.transport_bytes_written, packet.length);
+            rdp_session_metric_add(&session->metrics.pdu_out, 1);
+        }
     }
 
     rdp_buffer_free(&packet);
@@ -1878,6 +1904,11 @@ static librdp_status rdp_session_write_channel_pdu(librdp_session* session,
                                                       security_payload.length);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_write_mcs_pdu(session, &send_data, event, 1);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_session_metric_add(&session->metrics.channel_out, 1);
+        rdp_session_metric_add(&session->metrics.channel_bytes_out, payload->length);
+    }
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&security_payload);
     rdp_buffer_free(&channel_packet);
@@ -2240,7 +2271,7 @@ static librdp_status rdp_session_pnp_build_read_data(const librdp_session* sessi
         rdp_buffer_append(out, description, strlen(description)) != LIBRDP_STATUS_OK ||
         rdp_buffer_append_u8(out, '\n') != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_NO_MEMORY;
-    if (out->length > RDP_SESSION_MAX_PNP_READ_BYTES)
+    if (out->length > session->limits.device_io_bytes)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
 }
@@ -2297,9 +2328,9 @@ static librdp_status rdp_session_pnp_write_storage(librdp_session* session,
 
     if (!session || (!data && data_len > 0) || !session->pnp_redirection_storage_active)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (offset > RDP_SESSION_MAX_PNP_READ_BYTES ||
-        data_len > RDP_SESSION_MAX_PNP_READ_BYTES ||
-        offset + data_len > RDP_SESSION_MAX_PNP_READ_BYTES)
+    if (offset > session->limits.device_io_bytes ||
+        data_len > session->limits.device_io_bytes ||
+        data_len > session->limits.device_io_bytes - offset)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     end = (size_t)offset + data_len;
     old_len = session->pnp_redirection_storage.length;
@@ -2705,7 +2736,7 @@ static void rdp_session_redirected_files_clear(librdp_session* session)
 
     if (!session)
         return;
-    for (i = 0; i < RDP_SESSION_MAX_REDIRECTED_FILES; i++)
+    for (i = 0; i < session->limits.file_handles; i++)
         rdp_session_redirected_file_reset(&session->redirected_files[i]);
     memset(session->redirected_files, 0, sizeof(session->redirected_files));
     session->next_redirected_file_id = 1;
@@ -2802,6 +2833,7 @@ static rdp_session_redirected_file* rdp_session_redirected_file_find(librdp_sess
             session->redirected_files[i].file_id == file_id)
             return &session->redirected_files[i];
     }
+    rdp_session_metric_add(&session->metrics.limits_rejected, 1);
     return NULL;
 }
 
@@ -6031,8 +6063,9 @@ static librdp_status rdp_session_handle_filesystem_read(librdp_session* session,
     if (status != LIBRDP_STATUS_OK)
         return status;
 
-    if (request.length > RDP_SESSION_MAX_FILE_IO_BYTES)
+    if (request.length > session->limits.file_io_bytes)
     {
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1);
         io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
     }
     else
@@ -6116,8 +6149,9 @@ static librdp_status rdp_session_handle_filesystem_write(librdp_session* session
     if (status != LIBRDP_STATUS_OK)
         return status;
 
-    if (request.length > RDP_SESSION_MAX_FILE_IO_BYTES)
+    if (request.length > session->limits.file_io_bytes)
     {
+        rdp_session_metric_add(&session->metrics.limits_rejected, 1);
         io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
     }
     else
@@ -14644,7 +14678,7 @@ static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
     entry = rdp_session_dynamic_channel_find(session, request->channel_id);
     if (!entry)
     {
-        for (i = 0; i < RDP_SESSION_MAX_DYNAMIC_CHANNELS; i++)
+        for (i = 0; i < session->limits.dynamic_channel_count; i++)
         {
             if (!session->dynamic_channels[i].active)
             {
@@ -14654,7 +14688,7 @@ static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
         }
     }
     if (!entry)
-        return LIBRDP_STATUS_UNSUPPORTED;
+        return rdp_session_limit_rejected(session);
 
     rdp_session_dynamic_channel_clear_entry(entry);
     rdp_graphics_decompressor_init(&entry->decompressor);
@@ -14799,7 +14833,7 @@ static rdp_session_graphics_surface* rdp_session_graphics_surface_find(librdp_se
 
     if (!session)
         return NULL;
-    for (i = 0; i < RDP_SESSION_MAX_GRAPHICS_SURFACES; i++)
+    for (i = 0; i < session->limits.surface_count; i++)
     {
         if (session->graphics_surfaces[i].active && session->graphics_surfaces[i].surface_id == surface_id)
             return &session->graphics_surfaces[i];
@@ -15015,6 +15049,9 @@ static librdp_status rdp_session_graphics_surface_create(librdp_session* session
         create->width > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION ||
         create->height > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (create->width > session->limits.surface_max_dimension ||
+        create->height > session->limits.surface_max_dimension)
+        return rdp_session_limit_rejected(session);
 
     stride = (size_t)create->width * 4u;
     if ((size_t)create->height > ((size_t)-1) / stride)
@@ -15106,6 +15143,9 @@ static librdp_status rdp_session_graphics_surface_flush_scaled(librdp_session* s
         surface->target_width > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION ||
         surface->target_height > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (surface->target_width > session->limits.surface_max_dimension ||
+        surface->target_height > session->limits.surface_max_dimension)
+        return rdp_session_limit_rejected(session);
 
     output_width = librdp_surface_width(session->surface);
     output_height = librdp_surface_height(session->surface);
@@ -15337,6 +15377,9 @@ static librdp_status rdp_session_graphics_surface_map_scaled(
         map->target_width > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION ||
         map->target_height > RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (map->target_width > session->limits.surface_max_dimension ||
+        map->target_height > session->limits.surface_max_dimension)
+        return rdp_session_limit_rejected(session);
     surface = rdp_session_graphics_surface_find(session, map->surface_id);
     if (!surface)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -18030,6 +18073,9 @@ static librdp_status rdp_session_request_display_control_layout(librdp_session* 
 
     if (!session || width == 0 || height == 0 || width > 8192u || height > 8192u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (width > session->limits.surface_max_dimension ||
+        height > session->limits.surface_max_dimension)
+        return rdp_session_limit_rejected(session);
 
     session->requested_desktop_width = width;
     session->requested_desktop_height = height;
@@ -18915,6 +18961,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
             session->graphics_frame_active = 0;
             rdp_session_graphics_dirty_flush(session);
             session->graphics_frames_decoded++;
+            rdp_session_metric_add(&session->metrics.frames, 1);
             rdp_trace_event_level(RDP_TRACE_CLIENT,
                                   RDP_TRACE_LEVEL_DEBUG,
                                   "client.graphics.frame.end",
@@ -26232,8 +26279,10 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                       &first_pdu);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        if (first_pdu.total_length == 0 || first_pdu.total_length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+        if (first_pdu.total_length == 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (first_pdu.total_length > session->limits.dynamic_channel_message_bytes)
+            return rdp_session_limit_rejected(session);
         entry = rdp_session_dynamic_channel_find(session, first_pdu.channel_id);
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -26336,8 +26385,10 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                                  &first_pdu);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        if (first_pdu.total_length == 0 || first_pdu.total_length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+        if (first_pdu.total_length == 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (first_pdu.total_length > session->limits.dynamic_channel_message_bytes)
+            return rdp_session_limit_rejected(session);
         entry = rdp_session_dynamic_channel_find(session, first_pdu.channel_id);
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -26641,6 +26692,10 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     status = rdp_transport_read_tpkt(&session->transport, packet);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    if (packet->length > session->limits.pdu_buffer_bytes)
+        return rdp_session_limit_rejected(session);
+    rdp_session_metric_add(&session->metrics.transport_bytes_read, packet->length);
+    rdp_session_metric_add(&session->metrics.pdu_in, 1);
     rdp_trace_hexdump(event,
                       rdp_session_trace_sensitivity_for_event(event),
                       packet->data,
@@ -26681,6 +26736,8 @@ static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, r
     }
     if (total < header_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (total > session->limits.frame_bytes)
+        return rdp_session_limit_rejected(session);
 
     status = rdp_buffer_append(packet, header, header_len);
     if (status != LIBRDP_STATUS_OK)
@@ -26691,7 +26748,11 @@ static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, r
     packet->length = total;
     status = rdp_transport_read_exact(&session->transport, packet->data + header_len, (size_t)total - header_len);
     if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_session_metric_add(&session->metrics.transport_bytes_read, packet->length);
+        rdp_session_metric_add(&session->metrics.pdu_in, 1);
         rdp_trace_hexdump("rdp.fastpath.pdu", RDP_TRACE_SENSITIVITY_VIDEO, packet->data, packet->length);
+    }
     return status;
 }
 
@@ -29625,6 +29686,7 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
             session->graphics_frame_active = 0;
             rdp_session_graphics_dirty_flush(session);
             session->graphics_frames_decoded++;
+            rdp_session_metric_add(&session->metrics.frames, 1);
         }
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
@@ -29818,9 +29880,9 @@ static librdp_status rdp_session_fastpath_payload(librdp_session* session,
         *complete = 1;
         return LIBRDP_STATUS_OK;
     }
-    if (payload_len > RDP_SESSION_MAX_FASTPATH_FRAGMENT ||
-        session->fastpath_fragment.length > RDP_SESSION_MAX_FASTPATH_FRAGMENT - payload_len)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (payload_len > session->limits.frame_bytes ||
+        session->fastpath_fragment.length > session->limits.frame_bytes - payload_len)
+        return rdp_session_limit_rejected(session);
     if (update->fragmentation == RDP_FASTPATH_FRAGMENT_FIRST)
     {
         rdp_session_fastpath_fragment_reset(session);
@@ -30120,6 +30182,7 @@ out:
 librdp_session* librdp_session_new(const librdp_settings* settings)
 {
     librdp_session* session = NULL;
+    const librdp_limits* limits = NULL;
 
     if (!settings)
         return NULL;
@@ -30131,6 +30194,21 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->settings = librdp_settings_clone(settings);
     if (!session->settings)
     {
+        free(session);
+        return NULL;
+    }
+    limits = rdp_settings_limits_internal(session->settings);
+    if (!limits || librdp_metrics_init(&session->metrics) != LIBRDP_STATUS_OK)
+    {
+        librdp_settings_free(session->settings);
+        free(session);
+        return NULL;
+    }
+    session->limits = *limits;
+    if (librdp_settings_width(session->settings) > session->limits.surface_max_dimension ||
+        librdp_settings_height(session->settings) > session->limits.surface_max_dimension)
+    {
+        librdp_settings_free(session->settings);
         free(session);
         return NULL;
     }
@@ -30266,6 +30344,16 @@ librdp_status librdp_trace_policy_init(librdp_trace_policy* policy)
     policy->categories = LIBRDP_TRACE_CATEGORY_ALL;
     policy->level = LIBRDP_TRACE_LEVEL_INFO;
     policy->sink = LIBRDP_TRACE_SINK_STDERR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_metrics_init(librdp_metrics* metrics)
+{
+    if (!metrics)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(metrics, 0, sizeof(*metrics));
+    metrics->version = LIBRDP_METRICS_VERSION;
+    metrics->size = (uint32_t)sizeof(*metrics);
     return LIBRDP_STATUS_OK;
 }
 
@@ -31804,6 +31892,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
+            rdp_session_metric_add(&session->metrics.channel_in, 1);
+            rdp_session_metric_add(&session->metrics.channel_bytes_in, channel_packet.payload_len);
             rdp_trace_event_level(RDP_TRACE_CLIENT,
                                   RDP_TRACE_LEVEL_DEBUG,
                                   "client.drdynvc.data",
@@ -31833,6 +31923,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
+            rdp_session_metric_add(&session->metrics.channel_in, 1);
+            rdp_session_metric_add(&session->metrics.channel_bytes_in, channel_packet.payload_len);
             fragment_flags = channel_packet.flags & (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST);
             if (fragment_flags == (RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST))
             {
@@ -31844,8 +31936,10 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             {
                 rdp_buffer_free(&session->clipboard_fragment);
                 rdp_buffer_init(&session->clipboard_fragment);
-                if (channel_packet.length == 0 || channel_packet.length > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+                if (channel_packet.length == 0)
                     status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else if (channel_packet.length > session->limits.channel_buffer_bytes)
+                    status = rdp_session_limit_rejected(session);
                 else
                     status = rdp_buffer_reserve(&session->clipboard_fragment, channel_packet.length);
                 if (status == LIBRDP_STATUS_OK)
@@ -32831,6 +32925,10 @@ librdp_status librdp_session_set_display_layout(librdp_session* session,
     status = rdp_session_copy_display_monitors(internal, monitors, monitor_count);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_display_layout_bounds(internal, monitor_count, &width, &height);
+    if (status == LIBRDP_STATUS_OK &&
+        (width > session->limits.surface_max_dimension ||
+         height > session->limits.surface_max_dimension))
+        status = rdp_session_limit_rejected(session);
     rdp_buffer_init(&validation);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_display_control_write_monitor_layout(&validation, internal, monitor_count);
@@ -32976,8 +33074,10 @@ librdp_status librdp_session_clipboard_set_data(librdp_session* session,
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || format_id == 0 || (!data && data_len > 0) || data_len > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+    if (!session || format_id == 0 || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > session->limits.dynamic_channel_message_bytes)
+        return rdp_session_limit_rejected(session);
 
     rdp_session_clipboard_local_clear(session);
     if (data_len > 0)
@@ -33007,8 +33107,10 @@ librdp_status librdp_session_clipboard_set_files(librdp_session* session,
     uint32_t i = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || !files || count == 0 || count > RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES)
+    if (!session || !files || count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (count > session->limits.clipboard_files)
+        return rdp_session_limit_rejected(session);
     rdp_session_clipboard_local_clear(session);
     for (i = 0; i < count; i++)
     {
@@ -33076,8 +33178,11 @@ static librdp_status rdp_session_clipboard_request_file(librdp_session* session,
     if (!session || stream_id == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (flags == RDP_CLIPBOARD_FILECONTENTS_RANGE &&
-        (requested == 0 || requested > RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX))
+        requested == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (flags == RDP_CLIPBOARD_FILECONTENTS_RANGE &&
+        requested > session->limits.clipboard_file_range_bytes)
+        return rdp_session_limit_rejected(session);
     if (!session->clipboard_ready || session->clipboard_channel_id == 0)
         return LIBRDP_STATUS_STATE;
 
@@ -33197,8 +33302,10 @@ librdp_status librdp_session_channel_send(librdp_session* session,
     rdp_session_dynamic_channel* entry = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if ((!data && data_len > 0) || data_len > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+    if (!session || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > session->limits.dynamic_channel_message_bytes)
+        return rdp_session_limit_rejected(session);
     status = rdp_session_require_user_channel(session, channel_id, &entry);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -33277,8 +33384,10 @@ librdp_status librdp_session_audio_input_send_data(librdp_session* session, cons
     rdp_buffer pdu;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if ((!data && data_len > 0) || data_len > RDP_SESSION_MAX_DYNAMIC_MESSAGE)
+    if ((!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session && data_len > session->limits.dynamic_channel_message_bytes)
+        return rdp_session_limit_rejected(session);
     status = rdp_session_require_audio_input_channel(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -33332,8 +33441,10 @@ librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || (!data && data_len > 0) || data_len > RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES)
+    if (!session || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > session->limits.frame_bytes)
+        return rdp_session_limit_rejected(session);
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
     if (session->video_capture_channel_id == 0 || session->video_capture_channel_id_bytes == 0 ||
@@ -33858,6 +33969,24 @@ librdp_session_state librdp_session_get_state(const librdp_session* session)
 librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session)
 {
     return session ? session->lifecycle : LIBRDP_LIFECYCLE_FAILED;
+}
+
+librdp_status librdp_session_get_metrics(const librdp_session* session, librdp_metrics* metrics)
+{
+    if (!session || !metrics || metrics->version != LIBRDP_METRICS_VERSION ||
+        metrics->size < sizeof(*metrics))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *metrics = session->metrics;
+    metrics->version = LIBRDP_METRICS_VERSION;
+    metrics->size = (uint32_t)sizeof(*metrics);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_reset_metrics(librdp_session* session)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return librdp_metrics_init(&session->metrics);
 }
 
 const librdp_error* librdp_session_last_error(const librdp_session* session)

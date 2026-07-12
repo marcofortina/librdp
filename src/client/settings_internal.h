@@ -32,6 +32,7 @@ const librdp_drive_policy* rdp_settings_drive_policy_internal(const librdp_setti
 uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_smartcard_device_id_internal(const librdp_settings* settings, uint32_t index);
 const librdp_usb_policy* rdp_settings_usb_policy_internal(const librdp_settings* settings);
+const librdp_limits* rdp_settings_limits_internal(const librdp_settings* settings);
 uint32_t rdp_settings_serial_port_device_id_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_parallel_port_device_id_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_pnp_device_id_internal(const librdp_settings* settings, uint32_t index);

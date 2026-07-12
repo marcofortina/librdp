@@ -56,11 +56,13 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_credentials_provider", librdp_credentials_provider, ",");
     ABI_TYPE_ENTRY("librdp_drive_policy", librdp_drive_policy, ",");
     ABI_TYPE_ENTRY("librdp_usb_policy", librdp_usb_policy, ",");
+    ABI_TYPE_ENTRY("librdp_limits", librdp_limits, ",");
     ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
     ABI_TYPE_ENTRY("librdp_feature_unavailable_reason", librdp_feature_unavailable_reason, ",");
     ABI_TYPE_ENTRY("librdp_feature_status", librdp_feature_status, ",");
     ABI_TYPE_ENTRY("librdp_session_state", librdp_session_state, ",");
     ABI_TYPE_ENTRY("librdp_session_lifecycle", librdp_session_lifecycle, ",");
+    ABI_TYPE_ENTRY("librdp_metrics", librdp_metrics, ",");
     ABI_TYPE_ENTRY("librdp_display_monitor", librdp_display_monitor, ",");
     ABI_TYPE_ENTRY("librdp_pixel_format", librdp_pixel_format, ",");
     ABI_TYPE_ENTRY("librdp_channel_id", librdp_channel_id, ",");
