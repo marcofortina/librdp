@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = (
     "README.md",
     "docs/build.md",
+    "docs/contributing.md",
+    "docs/coding-standards.md",
     "docs/api.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
