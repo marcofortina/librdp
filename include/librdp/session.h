@@ -59,6 +59,33 @@ typedef enum librdp_session_state
 } librdp_session_state;
 
 /**
+ * @brief Detailed public client lifecycle phase.
+ *
+ * This enum refines librdp_session_state for applications that need to report
+ * or supervise connection progress. Existing state-change events continue to
+ * use librdp_session_state; callers can query this lifecycle independently.
+ * Values that need future asynchronous DNS or reconnect machinery are reserved
+ * and returned only when that machinery is active.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_session_lifecycle
+{
+    LIBRDP_LIFECYCLE_NEW = 0,           /**< Session exists and no connection attempt is in progress. */
+    LIBRDP_LIFECYCLE_RESOLVING = 1,     /**< Reserved for asynchronous target resolution. */
+    LIBRDP_LIFECYCLE_CONNECTING = 2,    /**< TCP transport connection is being established. */
+    LIBRDP_LIFECYCLE_TLS_HANDSHAKE = 3, /**< TLS handshake is being established. */
+    LIBRDP_LIFECYCLE_AUTHENTICATING = 4, /**< NLA or credential-dependent authentication is running. */
+    LIBRDP_LIFECYCLE_NEGOTIATING = 5,   /**< X.224, MCS, GCC, security, channel, or client-info negotiation is running. */
+    LIBRDP_LIFECYCLE_ACTIVATING = 6,    /**< Session is connected and awaiting/processing activation. */
+    LIBRDP_LIFECYCLE_ACTIVE = 7,        /**< Session is active and processing updates/input. */
+    LIBRDP_LIFECYCLE_RECONNECTING = 8,  /**< Reserved for coordinated reconnect attempts. */
+    LIBRDP_LIFECYCLE_DISCONNECTING = 9, /**< Session teardown is in progress. */
+    LIBRDP_LIFECYCLE_DISCONNECTED = 10, /**< Session closed cleanly or was explicitly disconnected. */
+    LIBRDP_LIFECYCLE_FAILED = 11        /**< Session reached a terminal failure phase. */
+} librdp_session_lifecycle;
+
+/**
  * @brief Monitor layout entry supplied to librdp_session_set_display_layout().
  *
  * The array passed to the API is copied during the call. Coordinates are in the
@@ -579,6 +606,24 @@ LIBRDP_API librdp_status librdp_session_dismiss_touch(librdp_session* session, u
  * @since 0.1.0
  */
 LIBRDP_API librdp_session_state librdp_session_get_state(const librdp_session* session);
+
+/**
+ * @brief Return the detailed client lifecycle phase.
+ *
+ * The returned phase is a snapshot owned by the session. It can be more
+ * specific than librdp_session_get_state(), especially while
+ * librdp_session_connect() is executing a blocking connection attempt.
+ *
+ * @param[in] session Session to query, or NULL.
+ *
+ * @return Current lifecycle phase, or LIBRDP_LIFECYCLE_FAILED when session is
+ * NULL.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees the session.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session);
 
 /**
  * @brief Query runtime readiness for one optional feature.

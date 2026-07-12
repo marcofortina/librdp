@@ -823,6 +823,7 @@ struct librdp_session
     rdp_standard_security_context standard_security;
     uint32_t share_id;
     librdp_session_state state;
+    librdp_session_lifecycle lifecycle;
     uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
@@ -963,10 +964,24 @@ static void rdp_session_set_state(librdp_session* session, librdp_session_state 
     rdp_session_emit(session, &event);
 }
 
+static void rdp_session_set_lifecycle(librdp_session* session, librdp_session_lifecycle lifecycle)
+{
+    if (!session || session->lifecycle == lifecycle)
+        return;
+
+    session->lifecycle = lifecycle;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.lifecycle",
+                          "phase=%u",
+                          (unsigned)lifecycle);
+}
+
 static librdp_status rdp_session_fail(librdp_session* session, librdp_status status)
 {
     librdp_event event;
 
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_FAILED);
     rdp_session_set_state(session, LIBRDP_SESSION_FAILED);
     event.type = LIBRDP_EVENT_ERROR;
     event.data.error.status = status;
@@ -30070,6 +30085,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     }
 
     session->state = LIBRDP_SESSION_IDLE;
+    session->lifecycle = LIBRDP_LIFECYCLE_NEW;
     session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
@@ -30364,6 +30380,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         credential_domain = provider_credentials.domain;
     }
 
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_CONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
@@ -30508,6 +30525,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
 
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
     protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.start", "protocols=%u", protocols);
     status = rdp_x224_build_connection_request(&x224, credential_username, protocols);
@@ -30583,9 +30601,14 @@ librdp_status librdp_session_connect(librdp_session* session)
         tls_config.pinned_sha256 = tls_policy.pinned_sha256;
         tls_config.certificate_callback = tls_policy.certificate_callback;
         tls_config.certificate_callback_user_data = tls_policy.certificate_callback_user_data;
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_TLS_HANDSHAKE);
         status = rdp_transport_start_tls_with_config(&session->transport, &tls_config);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
+        rdp_session_set_lifecycle(session,
+                                  selected_protocol == RDP_X224_PROTOCOL_NLA ?
+                                      LIBRDP_LIFECYCLE_AUTHENTICATING :
+                                      LIBRDP_LIFECYCLE_NEGOTIATING);
         rdp_trace_event(RDP_TRACE_PROTOCOL, "transport.tls.ready", "selected_protocol=%u", selected_protocol);
     }
     if (selected_protocol == RDP_X224_PROTOCOL_NLA)
@@ -30618,6 +30641,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         memset(&ntlm_auth_result, 0, sizeof(ntlm_auth_result));
         memset(&ntlm_security, 0, sizeof(ntlm_security));
         memset(client_nonce, 0, sizeof(client_nonce));
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_AUTHENTICATING);
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.start", "state=begin");
         status = rdp_credssp_begin(true, &credssp_state);
         if (status == LIBRDP_STATUS_OK)
@@ -30848,6 +30872,7 @@ librdp_status librdp_session_connect(librdp_session* session)
             goto fail;
         }
         credssp_state = RDP_CREDSSP_COMPLETE;
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
         rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.done", "state=%u", (unsigned)credssp_state);
     }
 
@@ -31188,6 +31213,7 @@ librdp_status librdp_session_connect(librdp_session* session)
 
         memset(&public_key, 0, sizeof(public_key));
         rdp_buffer_init(&encrypted_client_random);
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_AUTHENTICATING);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "rdp.security_exchange.start",
                         "encryption_method=%u encryption_level=%u random_len=%u certificate_len=%u",
@@ -31238,6 +31264,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         rdp_buffer_free(&security_data);
         rdp_buffer_init(&security_payload);
         rdp_buffer_init(&security_data);
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
     }
 
     {
@@ -31257,6 +31284,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status != LIBRDP_STATUS_OK)
             goto fail;
     }
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_AUTHENTICATING);
     status = rdp_security_write_send_data_request(&security_data,
                                                   session->mcs_user_id,
                                                   (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
@@ -31293,6 +31321,7 @@ librdp_status librdp_session_connect(librdp_session* session)
             goto fail;
     }
 
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVATING);
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTED);
 
     rdp_session_emit_surface_invalidated(session,
@@ -31439,7 +31468,10 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                           "timeout_ms=%d",
                           timeout_ms);
     if (session->state == LIBRDP_SESSION_CONNECTED)
+    {
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVE);
         rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
+    }
 
     if (session->audio_output_udp_fd >= 0)
     {
@@ -32371,6 +32403,7 @@ static librdp_status rdp_session_disconnect_inner(librdp_session* session)
         return LIBRDP_STATUS_OK;
 
     rdp_trace_event(RDP_TRACE_CLIENT, "client.disconnect.start", "state=%d", (int)session->state);
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_DISCONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);
     rdp_session_graphics_dirty_reset(session);
     rdp_transport_close(&session->transport);
@@ -32501,6 +32534,7 @@ static librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
     rdp_session_smartcard_reset(session);
+    rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_DISCONNECTED);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSED);
 
     event.type = LIBRDP_EVENT_DISCONNECTED;
@@ -33571,6 +33605,11 @@ librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t cont
 librdp_session_state librdp_session_get_state(const librdp_session* session)
 {
     return session ? session->state : LIBRDP_SESSION_FAILED;
+}
+
+librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session)
+{
+    return session ? session->lifecycle : LIBRDP_LIFECYCLE_FAILED;
 }
 
 static int rdp_session_video_runtime_active(const librdp_session* session)

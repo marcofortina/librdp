@@ -1975,6 +1975,8 @@ static int test_settings_surface_input_session(void)
     display_monitors[1].device_scale_factor = 100;
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(librdp_session_get_lifecycle(NULL) == LIBRDP_LIFECYCLE_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_NEW);
     CHECK(librdp_session_set_trace_policy(NULL, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
     trace_policy.callback = NULL;
@@ -2177,6 +2179,7 @@ static int test_settings_surface_input_session(void)
     CHECK(trace.saw_ids);
     CHECK(trace.saw_line);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
     CHECK(counter.states == 2);
     CHECK(counter.surfaces == 1);
     CHECK(counter.pointer >= 1);
@@ -2185,6 +2188,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_surface_width(session_surface) == 64);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.surfaces == 2);
     session_surface = librdp_session_get_surface(session);
@@ -2230,6 +2234,7 @@ static int test_settings_surface_input_session(void)
     trace_policy.trace_id = "file-trace";
     CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
     CHECK(counter.disconnected == 1);
     {
         char file_trace[1024];
@@ -2261,6 +2266,7 @@ static int test_settings_surface_input_session(void)
     session = librdp_session_new(settings);
     CHECK(session != NULL);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(credentials_capture.calls == 2);
     librdp_session_free(session);
     session = NULL;
@@ -2279,6 +2285,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_PROTOCOL_ERROR);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
     librdp_session_free(session);
     if (server_pid > 0)
     {
@@ -2296,8 +2303,10 @@ static int test_settings_surface_input_session(void)
     librdp_session_set_event_callback(session, on_event, &counter);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
     CHECK(counter.states == 2);
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
     librdp_session_free(session);
     if (server_pid > 0)
     {

@@ -43,6 +43,7 @@ LIBRDP_0.1 {
         librdp_session_send_pen;
         librdp_session_dismiss_touch;
         librdp_session_get_state;
+        librdp_session_get_lifecycle;
         librdp_session_get_feature_status;
         librdp_session_get_surface;
         librdp_status_name;

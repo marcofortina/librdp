@@ -39,6 +39,7 @@ _librdp_session_send_touch
 _librdp_session_send_pen
 _librdp_session_dismiss_touch
 _librdp_session_get_state
+_librdp_session_get_lifecycle
 _librdp_session_get_feature_status
 _librdp_session_get_surface
 _librdp_status_name
