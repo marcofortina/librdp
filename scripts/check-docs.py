@@ -277,6 +277,12 @@ def validate_doxygen_config(errors: list[str]) -> None:
     expected = {
         "GENERATE_HTML": "YES",
         "GENERATE_XML": "YES",
+        "HAVE_DOT": "NO",
+        "CLASS_GRAPH": "NO",
+        "COLLABORATION_GRAPH": "NO",
+        "DIRECTORY_GRAPH": "NO",
+        "INCLUDE_GRAPH": "NO",
+        "INCLUDED_BY_GRAPH": "NO",
         "WARN_AS_ERROR": "YES",
         "WARN_IF_UNDOCUMENTED": "YES",
         "WARN_IF_DOC_ERROR": "YES",
