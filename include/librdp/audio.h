@@ -15,24 +15,41 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque client session handle used by audio APIs.
+ *
+ * The handle is owned by the caller after librdp_session_new() and remains
+ * valid until librdp_session_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_session librdp_session;
 
-#define LIBRDP_AUDIO_FORMAT_PCM 0x0001u
-#define LIBRDP_AUDIO_FORMAT_ALAW 0x0006u
-#define LIBRDP_AUDIO_FORMAT_MULAW 0x0007u
-#define LIBRDP_AUDIO_INPUT_RESULT_OK 0x00000000u
-#define LIBRDP_AUDIO_INPUT_RESULT_FAIL 0x80004005u
+#define LIBRDP_AUDIO_FORMAT_PCM 0x0001u     /**< Linear PCM audio format tag. */
+#define LIBRDP_AUDIO_FORMAT_ALAW 0x0006u    /**< A-law compressed audio format tag. */
+#define LIBRDP_AUDIO_FORMAT_MULAW 0x0007u   /**< mu-law compressed audio format tag. */
+#define LIBRDP_AUDIO_INPUT_RESULT_OK 0x00000000u   /**< Audio input open request accepted. */
+#define LIBRDP_AUDIO_INPUT_RESULT_FAIL 0x80004005u /**< Audio input open request rejected. */
 
+/**
+ * @brief Audio format advertised or selected by audio redirection.
+ *
+ * The structure is a borrowed view when delivered through events and a
+ * caller-owned value when supplied by applications. extra_data points to
+ * codec-specific bytes valid for the same lifetime as the containing object.
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_audio_format
 {
-    uint16_t format_tag;
-    uint16_t channels;
-    uint32_t samples_per_sec;
-    uint32_t avg_bytes_per_sec;
-    uint16_t block_align;
-    uint16_t bits_per_sample;
-    const uint8_t* extra_data;
-    size_t extra_data_len;
+    uint16_t format_tag;        /**< Audio encoding tag, for example LIBRDP_AUDIO_FORMAT_PCM. */
+    uint16_t channels;          /**< Number of interleaved audio channels. */
+    uint32_t samples_per_sec;   /**< Sample rate in frames per second. */
+    uint32_t avg_bytes_per_sec; /**< Average encoded byte rate for stream pacing. */
+    uint16_t block_align;       /**< Encoded block alignment in bytes. */
+    uint16_t bits_per_sample;   /**< Bits per sample for PCM-like formats. */
+    const uint8_t* extra_data;  /**< Optional codec-specific bytes; may be NULL when extra_data_len is 0. */
+    size_t extra_data_len;      /**< Length in bytes of extra_data. */
 } librdp_audio_format;
 
 /**

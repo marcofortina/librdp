@@ -10,18 +10,27 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Stable status codes returned by public APIs.
+ *
+ * Negative values represent failures. Applications should compare against the
+ * named constants instead of relying on numeric values except for logging or
+ * ABI diagnostics.
+ *
+ * @since 0.1.0
+ */
 typedef enum librdp_status
 {
-    LIBRDP_STATUS_OK = 0,
-    LIBRDP_STATUS_INVALID_ARGUMENT = -1,
-    LIBRDP_STATUS_NO_MEMORY = -2,
-    LIBRDP_STATUS_IO_ERROR = -3,
-    LIBRDP_STATUS_PROTOCOL_ERROR = -4,
-    LIBRDP_STATUS_UNSUPPORTED = -5,
-    LIBRDP_STATUS_TIMEOUT = -6,
-    LIBRDP_STATUS_CLOSED = -7,
-    LIBRDP_STATUS_AGAIN = -8,
-    LIBRDP_STATUS_STATE = -9
+    LIBRDP_STATUS_OK = 0,                 /**< Operation completed successfully. */
+    LIBRDP_STATUS_INVALID_ARGUMENT = -1,  /**< Caller supplied an invalid argument. */
+    LIBRDP_STATUS_NO_MEMORY = -2,         /**< Memory allocation failed. */
+    LIBRDP_STATUS_IO_ERROR = -3,          /**< Transport or host I/O operation failed. */
+    LIBRDP_STATUS_PROTOCOL_ERROR = -4,    /**< Remote protocol data was invalid or inconsistent. */
+    LIBRDP_STATUS_UNSUPPORTED = -5,       /**< Requested feature or wire path is not supported. */
+    LIBRDP_STATUS_TIMEOUT = -6,           /**< Operation reached its timeout without completion. */
+    LIBRDP_STATUS_CLOSED = -7,            /**< Session or transport was closed. */
+    LIBRDP_STATUS_AGAIN = -8,             /**< Operation should be retried later. */
+    LIBRDP_STATUS_STATE = -9              /**< Current object state does not permit the operation. */
 } librdp_status;
 
 /**

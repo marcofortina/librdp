@@ -15,38 +15,54 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque client session handle used by video capture APIs.
+ *
+ * The handle is owned by the caller after librdp_session_new() and remains
+ * valid until librdp_session_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_session librdp_session;
 
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_H264 0x01u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG 0x02u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_YUY2 0x03u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_NV12 0x04u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_I420 0x05u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_RGB24 0x06u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_RGB32 0x07u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED 0x01u
-#define LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_BOTTOM_UP 0x02u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_UNEXPECTED 0x00000001u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_MESSAGE 0x00000002u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_NOT_INITIALIZED 0x00000003u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_REQUEST 0x00000004u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_STREAM_NUMBER 0x00000005u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_MEDIA_TYPE 0x00000006u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_OUT_OF_MEMORY 0x00000007u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND 0x00000008u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_SET_NOT_FOUND 0x00000009u
-#define LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED 0x0000000au
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_H264 0x01u  /**< H.264 encoded camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG 0x02u  /**< Motion JPEG encoded camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_YUY2 0x03u  /**< Packed YUY2 camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_NV12 0x04u  /**< Semi-planar NV12 camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_I420 0x05u  /**< Planar I420 camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_RGB24 0x06u /**< Packed RGB24 camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_RGB32 0x07u /**< Packed RGB32 camera sample format. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED 0x01u /**< Server requires decoded output. */
+#define LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_BOTTOM_UP 0x02u         /**< Sample rows are bottom-up. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_UNEXPECTED 0x00000001u       /**< Unexpected capture failure. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_MESSAGE 0x00000002u  /**< Server request was invalid. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_NOT_INITIALIZED 0x00000003u  /**< Capture stream is not initialized. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_REQUEST 0x00000004u  /**< Capture request cannot be satisfied. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_STREAM_NUMBER 0x00000005u /**< Stream index is invalid. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_INVALID_MEDIA_TYPE 0x00000006u    /**< Requested media type is invalid. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_OUT_OF_MEMORY 0x00000007u         /**< Capture backend ran out of memory. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND 0x00000008u        /**< Requested capture item was not found. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_SET_NOT_FOUND 0x00000009u         /**< Requested capture set was not found. */
+#define LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED 0x0000000au         /**< Requested capture operation is unsupported. */
 
+/**
+ * @brief Camera media format requested by the server.
+ *
+ * Values are copied into events. Applications may use them to select a local
+ * camera mode and to format samples sent back through the video capture API.
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_video_capture_media
 {
-    uint8_t format;
-    uint32_t width;
-    uint32_t height;
-    uint32_t frame_rate_numerator;
-    uint32_t frame_rate_denominator;
-    uint32_t pixel_aspect_ratio_numerator;
-    uint32_t pixel_aspect_ratio_denominator;
-    uint8_t flags;
+    uint8_t format;                       /**< One LIBRDP_VIDEO_CAPTURE_MEDIA_* format value. */
+    uint32_t width;                       /**< Requested frame width in pixels. */
+    uint32_t height;                      /**< Requested frame height in pixels. */
+    uint32_t frame_rate_numerator;        /**< Frame-rate numerator. */
+    uint32_t frame_rate_denominator;      /**< Frame-rate denominator. */
+    uint32_t pixel_aspect_ratio_numerator; /**< Pixel aspect-ratio numerator. */
+    uint32_t pixel_aspect_ratio_denominator; /**< Pixel aspect-ratio denominator. */
+    uint8_t flags;                        /**< Bitmask of LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_* values. */
 } librdp_video_capture_media;
 
 /**

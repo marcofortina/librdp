@@ -15,7 +15,24 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque client session handle used by channel APIs.
+ *
+ * The handle is owned by the caller after librdp_session_new() and remains
+ * valid until librdp_session_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_session librdp_session;
+
+/**
+ * @brief Runtime identifier for an open dynamic virtual channel.
+ *
+ * Channel identifiers are assigned by the protocol layer and are valid only
+ * for the lifetime of the open-channel event and the corresponding session.
+ *
+ * @since 0.1.0
+ */
 typedef uint32_t librdp_channel_id;
 
 /**

@@ -197,6 +197,11 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)
         add_test(NAME source_comments
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-source-comments.py)
+        find_package(Doxygen QUIET)
+        if(DOXYGEN_FOUND)
+            add_test(NAME doxygen_public_headers
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-doxygen.py)
+        endif()
     endif()
 endif()
 

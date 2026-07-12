@@ -15,11 +15,26 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque BGRA framebuffer surface.
+ *
+ * The handle owns its pixel buffer and metadata. It is allocated with
+ * librdp_surface_new(), may be resized, and is freed with librdp_surface_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_surface librdp_surface;
 
+/**
+ * @brief Pixel format used by librdp_surface.
+ *
+ * Only BGRA32 is currently exposed through the public surface API.
+ *
+ * @since 0.1.0
+ */
 typedef enum librdp_pixel_format
 {
-    LIBRDP_PIXEL_FORMAT_BGRA32 = 1
+    LIBRDP_PIXEL_FORMAT_BGRA32 = 1 /**< Four bytes per pixel in blue, green, red, alpha order. */
 } librdp_pixel_format;
 
 /**

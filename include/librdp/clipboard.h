@@ -15,25 +15,49 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque client session handle used by clipboard APIs.
+ *
+ * The handle is owned by the caller after librdp_session_new() and remains
+ * valid until librdp_session_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_session librdp_session;
 
-#define LIBRDP_CLIPBOARD_FORMAT_TEXT 1u
-#define LIBRDP_CLIPBOARD_FORMAT_BITMAP 2u
-#define LIBRDP_CLIPBOARD_FORMAT_DIB 8u
-#define LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT 13u
-#define LIBRDP_CLIPBOARD_FORMAT_HDROP 15u
+#define LIBRDP_CLIPBOARD_FORMAT_TEXT 1u        /**< ANSI text clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_BITMAP 2u      /**< Bitmap clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_DIB 8u         /**< Device-independent bitmap clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT 13u /**< UTF-16 text clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_HDROP 15u      /**< File-list clipboard format identifier. */
 
+/**
+ * @brief Clipboard format descriptor delivered by format-list events.
+ *
+ * The name pointer is borrowed from the event payload and is valid only until
+ * the event callback returns. Applications must copy it if they need it later.
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_clipboard_format
 {
-    uint32_t format_id;
-    const uint8_t* name;
-    size_t name_len;
+    uint32_t format_id;     /**< Clipboard format identifier. */
+    const uint8_t* name;    /**< Optional UTF-16LE format name; may be NULL when name_len is 0. */
+    size_t name_len;        /**< Length in bytes of name. */
 } librdp_clipboard_format;
 
+/**
+ * @brief Local file entry advertised through clipboard file transfer.
+ *
+ * Both strings are borrowed during the API call and copied into session-owned
+ * storage by librdp_session_clipboard_set_files().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_clipboard_file
 {
-    const char* path;
-    const char* name;
+    const char* path; /**< Host filesystem path; must not be NULL when submitted. */
+    const char* name; /**< Advertised file name; must not be NULL when submitted. */
 } librdp_clipboard_file;
 
 /**

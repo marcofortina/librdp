@@ -17,36 +17,73 @@
 extern "C" {
 #endif
 
+/**
+ * @brief Opaque client session handle.
+ *
+ * The handle owns connection state, negotiated protocol state, graphics
+ * surfaces, caches, channels, and transient security material. It is allocated
+ * with librdp_session_new() and freed with librdp_session_free().
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_session librdp_session;
 
-#define LIBRDP_DISPLAY_MONITOR_PRIMARY 0x00000001u
-#define LIBRDP_DISPLAY_MAX_MONITORS 16u
+#define LIBRDP_DISPLAY_MONITOR_PRIMARY 0x00000001u /**< Monitor layout flag marking the primary monitor. */
+#define LIBRDP_DISPLAY_MAX_MONITORS 16u            /**< Maximum monitor count accepted by display layout APIs. */
 
+/**
+ * @brief Public client session lifecycle state.
+ *
+ * State-change events report old and new values from this enum. Session APIs
+ * that require a connected or active session return LIBRDP_STATUS_STATE when
+ * called in an incompatible state.
+ *
+ * @since 0.1.0
+ */
 typedef enum librdp_session_state
 {
-    LIBRDP_SESSION_IDLE = 0,
-    LIBRDP_SESSION_CONNECTING = 1,
-    LIBRDP_SESSION_CONNECTED = 2,
-    LIBRDP_SESSION_ACTIVE = 3,
-    LIBRDP_SESSION_CLOSING = 4,
-    LIBRDP_SESSION_CLOSED = 5,
-    LIBRDP_SESSION_FAILED = 6
+    LIBRDP_SESSION_IDLE = 0,       /**< Session has not started a connection. */
+    LIBRDP_SESSION_CONNECTING = 1, /**< Session is executing the connection sequence. */
+    LIBRDP_SESSION_CONNECTED = 2,  /**< Session transport and initial protocol setup completed. */
+    LIBRDP_SESSION_ACTIVE = 3,     /**< Session is activated and processing updates/input. */
+    LIBRDP_SESSION_CLOSING = 4,    /**< Session is closing transport and channel state. */
+    LIBRDP_SESSION_CLOSED = 5,     /**< Session closed cleanly or was explicitly disconnected. */
+    LIBRDP_SESSION_FAILED = 6      /**< Session reached a terminal failure state. */
 } librdp_session_state;
 
+/**
+ * @brief Monitor layout entry supplied to librdp_session_set_display_layout().
+ *
+ * The array passed to the API is copied during the call. Coordinates are in the
+ * remote desktop coordinate space and must form a layout accepted by the
+ * display-control channel.
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_display_monitor
 {
-    uint32_t flags;
-    int32_t left;
-    int32_t top;
-    uint32_t width;
-    uint32_t height;
-    uint32_t physical_width;
-    uint32_t physical_height;
-    uint32_t orientation;
-    uint32_t desktop_scale_factor;
-    uint32_t device_scale_factor;
+    uint32_t flags;                /**< Bitmask of LIBRDP_DISPLAY_MONITOR_* values. */
+    int32_t left;                  /**< Monitor left coordinate. */
+    int32_t top;                   /**< Monitor top coordinate. */
+    uint32_t width;                /**< Monitor width in pixels. */
+    uint32_t height;               /**< Monitor height in pixels. */
+    uint32_t physical_width;       /**< Physical monitor width in millimeters, or 0 when unknown. */
+    uint32_t physical_height;      /**< Physical monitor height in millimeters, or 0 when unknown. */
+    uint32_t orientation;          /**< Display orientation value sent on the display-control channel. */
+    uint32_t desktop_scale_factor; /**< Desktop scale factor percentage. */
+    uint32_t device_scale_factor;  /**< Device scale factor percentage. */
 } librdp_display_monitor;
 
+/**
+ * @brief Session event callback.
+ *
+ * The callback runs synchronously on the thread that drives the session API
+ * producing the event. session is the emitting session and event is valid only
+ * until the callback returns. user_data is the pointer previously supplied to
+ * librdp_session_set_event_callback().
+ *
+ * @since 0.1.0
+ */
 typedef void (*librdp_event_callback)(librdp_session* session, const librdp_event* event, void* user_data);
 
 /**

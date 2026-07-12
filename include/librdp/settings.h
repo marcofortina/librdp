@@ -14,46 +14,70 @@
 extern "C" {
 #endif
 
-#define LIBRDP_SETTINGS_MAX_DRIVES 8u
-#define LIBRDP_SETTINGS_MAX_PRINTERS 8u
-#define LIBRDP_SETTINGS_MAX_CAMERAS 8u
-#define LIBRDP_SETTINGS_MAX_SMARTCARDS 8u
-#define LIBRDP_SETTINGS_MAX_USB_DEVICES 16u
-#define LIBRDP_SETTINGS_MAX_RAIL_APPS 16u
-#define LIBRDP_SETTINGS_MAX_SERIAL_PORTS 8u
-#define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u
-#define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u
+#define LIBRDP_SETTINGS_MAX_DRIVES 8u         /**< Maximum configured redirected drives. */
+#define LIBRDP_SETTINGS_MAX_PRINTERS 8u       /**< Maximum configured redirected printers. */
+#define LIBRDP_SETTINGS_MAX_CAMERAS 8u        /**< Maximum configured redirected cameras. */
+#define LIBRDP_SETTINGS_MAX_SMARTCARDS 8u     /**< Maximum configured redirected smartcards. */
+#define LIBRDP_SETTINGS_MAX_USB_DEVICES 16u   /**< Maximum configured redirected USB devices. */
+#define LIBRDP_SETTINGS_MAX_RAIL_APPS 16u     /**< Maximum configured remote applications. */
+#define LIBRDP_SETTINGS_MAX_SERIAL_PORTS 8u   /**< Maximum configured redirected serial ports. */
+#define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u /**< Maximum configured redirected parallel ports. */
+#define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u   /**< Maximum configured redirected PNP devices. */
 
-#define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u
-#define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u
-#define LIBRDP_PNP_DEVICE_CAP_REMOVABLE 0x00000004u
-#define LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK 0x00000008u
+#define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u     /**< PNP device supports lock requests. */
+#define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u    /**< PNP device supports eject requests. */
+#define LIBRDP_PNP_DEVICE_CAP_REMOVABLE 0x00000004u          /**< PNP device is removable. */
+#define LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK 0x00000008u /**< PNP device tolerates surprise removal. */
 
+/**
+ * @brief Opaque settings object used to configure new sessions.
+ *
+ * Settings own copies of strings and device descriptors configured through the
+ * public setters. A session clones settings at construction time.
+ *
+ * @since 0.1.0
+ */
 typedef struct librdp_settings librdp_settings;
 
+/**
+ * @brief Security mode requested for the client connection.
+ *
+ * Values select the negotiation path used by librdp_session_connect().
+ * Unsupported or policy-rejected values are reported by the settings setter.
+ *
+ * @since 0.1.0
+ */
 typedef enum librdp_security_mode
 {
-    LIBRDP_SECURITY_AUTO = 0,
-    LIBRDP_SECURITY_STANDARD = 1,
-    LIBRDP_SECURITY_TLS = 2,
-    LIBRDP_SECURITY_NLA = 3
+    LIBRDP_SECURITY_AUTO = 0,     /**< Let negotiation choose the strongest supported mode. */
+    LIBRDP_SECURITY_STANDARD = 1, /**< Use legacy standard RDP security. */
+    LIBRDP_SECURITY_TLS = 2,      /**< Use TLS transport security without network-level authentication. */
+    LIBRDP_SECURITY_NLA = 3       /**< Use network-level authentication through CredSSP. */
 } librdp_security_mode;
 
+/**
+ * @brief Optional feature bit advertised or enabled for a client session.
+ *
+ * Feature flags are stored in settings and copied into sessions. Enabling a
+ * feature may require a corresponding backend in the viewer or application.
+ *
+ * @since 0.1.0
+ */
 typedef enum librdp_feature
 {
-    LIBRDP_FEATURE_AUDIO_OUTPUT = 0x00000001u,
-    LIBRDP_FEATURE_AUDIO_INPUT = 0x00000002u,
-    LIBRDP_FEATURE_VIDEO = 0x00000004u,
-    LIBRDP_FEATURE_CAMERA = 0x00000008u,
-    LIBRDP_FEATURE_SMARTCARD = 0x00000010u,
-    LIBRDP_FEATURE_USB = 0x00000020u,
-    LIBRDP_FEATURE_PNP = 0x00000040u,
-    LIBRDP_FEATURE_WEBAUTHN = 0x00000080u,
-    LIBRDP_FEATURE_RAIL = 0x00000100u,
-    LIBRDP_FEATURE_CR2 = 0x00000200u,
-    LIBRDP_FEATURE_ECHO = 0x00000400u,
-    LIBRDP_FEATURE_TELEMETRY = 0x00000800u,
-    LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u
+    LIBRDP_FEATURE_AUDIO_OUTPUT = 0x00000001u,   /**< Enable audio playback redirection. */
+    LIBRDP_FEATURE_AUDIO_INPUT = 0x00000002u,    /**< Enable microphone/audio capture redirection. */
+    LIBRDP_FEATURE_VIDEO = 0x00000004u,          /**< Enable video optimized remoting. */
+    LIBRDP_FEATURE_CAMERA = 0x00000008u,         /**< Enable camera/video capture redirection. */
+    LIBRDP_FEATURE_SMARTCARD = 0x00000010u,      /**< Enable smartcard redirection. */
+    LIBRDP_FEATURE_USB = 0x00000020u,            /**< Enable USB redirection. */
+    LIBRDP_FEATURE_PNP = 0x00000040u,            /**< Enable plug-and-play device redirection. */
+    LIBRDP_FEATURE_WEBAUTHN = 0x00000080u,       /**< Enable WebAuthn redirection. */
+    LIBRDP_FEATURE_RAIL = 0x00000100u,           /**< Enable remote application integration. */
+    LIBRDP_FEATURE_CR2 = 0x00000200u,            /**< Enable composited remoting. */
+    LIBRDP_FEATURE_ECHO = 0x00000400u,           /**< Enable echo diagnostics channel. */
+    LIBRDP_FEATURE_TELEMETRY = 0x00000800u,      /**< Enable telemetry channel. */
+    LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u  /**< Enable multitransport negotiation. */
 } librdp_feature;
 
 /**
