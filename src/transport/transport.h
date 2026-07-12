@@ -23,6 +23,7 @@
 #include <stdint.h>
 
 #include <librdp/error.h>
+#include <librdp/settings.h>
 
 #include "common/buffer.h"
 
@@ -35,6 +36,10 @@ typedef struct rdp_transport_tls_config
     const char* host;
     int use_system_store;
     X509* trust_anchor;
+    librdp_tls_policy_mode policy_mode;
+    const char* pinned_sha256;
+    librdp_tls_certificate_callback certificate_callback;
+    void* certificate_callback_user_data;
 } rdp_transport_tls_config;
 
 typedef struct rdp_transport

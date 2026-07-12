@@ -157,6 +157,14 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
     }
 }
 
+static librdp_tls_certificate_decision core_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
+                                                                    void* user_data)
+{
+    (void)certificate;
+    (void)user_data;
+    return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
+}
+
 static int capture_stderr(void (*fn)(void), char* out, size_t out_len)
 {
     int pipe_fds[2] = {-1, -1};
@@ -1144,6 +1152,8 @@ static int test_settings_surface_input_session(void)
     librdp_pen_contact pen_contact;
     librdp_pen_frame pen_frame;
     librdp_feature_status feature_status;
+    librdp_tls_policy tls_policy;
+    librdp_tls_policy tls_policy_out;
     event_counter counter;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
@@ -1162,6 +1172,46 @@ static int test_settings_surface_input_session(void)
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
+    CHECK(librdp_tls_policy_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_tls_policy(NULL, &tls_policy_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_tls_policy(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_tls_policy(settings, &tls_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(tls_policy_out.version == LIBRDP_TLS_POLICY_VERSION);
+    CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_STRICT);
+    CHECK(tls_policy_out.use_system_store == 1);
+    CHECK(tls_policy_out.pinned_sha256 == NULL);
+    CHECK(tls_policy_out.certificate_callback == NULL);
+    CHECK(librdp_tls_policy_init(&tls_policy) == LIBRDP_STATUS_OK);
+    tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
+    tls_policy.pinned_sha256 =
+        "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:"
+        "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99";
+    CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_tls_policy(settings, &tls_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_PINNED_FINGERPRINT);
+    CHECK(tls_policy_out.use_system_store == 1);
+    CHECK(strcmp(tls_policy_out.pinned_sha256,
+                 "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899") == 0);
+    tls_policy.mode = LIBRDP_TLS_POLICY_TOFU;
+    tls_policy.pinned_sha256 = NULL;
+    tls_policy.certificate_callback = NULL;
+    CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    tls_policy.certificate_callback = core_tls_certificate_callback;
+    tls_policy.certificate_callback_user_data = &counter;
+    CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_tls_policy(settings, &tls_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_TOFU);
+    CHECK(tls_policy_out.certificate_callback == core_tls_certificate_callback);
+    CHECK(tls_policy_out.certificate_callback_user_data == &counter);
+    CHECK(librdp_settings_set_tls_policy(settings, NULL) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_tls_policy(settings, &tls_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_STRICT);
+    CHECK(tls_policy_out.use_system_store == 1);
+    CHECK(tls_policy_out.pinned_sha256 == NULL);
+    CHECK(librdp_tls_policy_init(&tls_policy) == LIBRDP_STATUS_OK);
+    tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
+    tls_policy.pinned_sha256 = "not-a-sha256";
+    CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_port(settings) == 3389);
     CHECK(librdp_settings_width(settings) == 1024);
     CHECK(librdp_settings_height(settings) == 768);
@@ -1366,6 +1416,11 @@ static int test_settings_surface_input_session(void)
                                              &feature_status) == LIBRDP_STATUS_OK);
     CHECK(feature_status.requested && feature_status.backend_ready);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_tls_policy_init(&tls_policy) == LIBRDP_STATUS_OK);
+    tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
+    tls_policy.use_system_store = 0;
+    tls_policy.pinned_sha256 = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_OK);
 
     copy = librdp_settings_clone(settings);
     CHECK(copy != NULL);
@@ -1373,6 +1428,11 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_username(copy), "user") == 0);
     CHECK(strcmp(librdp_settings_domain(copy), "domain") == 0);
     CHECK(librdp_settings_security_mode(copy) == LIBRDP_SECURITY_TLS);
+    CHECK(librdp_settings_get_tls_policy(copy, &tls_policy_out) == LIBRDP_STATUS_OK);
+    CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_PINNED_FINGERPRINT);
+    CHECK(tls_policy_out.use_system_store == 0);
+    CHECK(strcmp(tls_policy_out.pinned_sha256,
+                 "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff") == 0);
     CHECK(librdp_settings_drive_count(copy) == 1);
     CHECK(strcmp(librdp_settings_drive_name(copy, 0), "C:") == 0);
     CHECK(strcmp(librdp_settings_drive_path(copy, 0), "/tmp") == 0);

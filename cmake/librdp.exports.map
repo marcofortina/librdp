@@ -56,6 +56,9 @@ LIBRDP_0.1 {
         librdp_settings_set_port;
         librdp_settings_set_desktop_size;
         librdp_settings_set_security_mode;
+        librdp_tls_policy_init;
+        librdp_settings_set_tls_policy;
+        librdp_settings_get_tls_policy;
         librdp_settings_add_drive;
         librdp_settings_add_serial_port;
         librdp_settings_add_parallel_port;

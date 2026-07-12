@@ -6,6 +6,7 @@
 #ifndef LIBRDP_SETTINGS_H
 #define LIBRDP_SETTINGS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <librdp/error.h>
@@ -60,6 +61,113 @@ typedef enum librdp_security_mode
     LIBRDP_SECURITY_TLS = 2,      /**< Use TLS transport security without network-level authentication. */
     LIBRDP_SECURITY_NLA = 3       /**< Use network-level authentication through CredSSP. */
 } librdp_security_mode;
+
+#define LIBRDP_TLS_POLICY_VERSION 1u           /**< Current librdp_tls_policy version. */
+#define LIBRDP_TLS_CERTIFICATE_INFO_VERSION 1u /**< Current librdp_tls_certificate_info version. */
+#define LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH 64u /**< SHA-256 fingerprint length in lowercase hex. */
+
+/**
+ * @brief TLS certificate trust policy used by TLS and NLA security modes.
+ *
+ * The default policy is LIBRDP_TLS_POLICY_STRICT with the system trust store
+ * enabled. Less strict modes require explicit application configuration.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_tls_policy_mode
+{
+    LIBRDP_TLS_POLICY_STRICT = 0,             /**< Require chain and hostname verification. */
+    LIBRDP_TLS_POLICY_PINNED_FINGERPRINT = 1, /**< Accept only a configured leaf SHA-256 fingerprint. */
+    LIBRDP_TLS_POLICY_TOFU = 2,               /**< Delegate trust-on-first-use decisions to the callback. */
+    LIBRDP_TLS_POLICY_INSECURE_LAB = 3        /**< Disable TLS verification for explicit lab use only. */
+} librdp_tls_policy_mode;
+
+/**
+ * @brief Certificate callback decision.
+ *
+ * The default decision keeps the configured policy result. ACCEPT is honored
+ * only by policies that explicitly delegate trust to the callback, such as
+ * TOFU. REJECT always rejects the certificate.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_tls_certificate_decision
+{
+    LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT = 0, /**< Keep the policy's default result. */
+    LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT = 1,  /**< Accept when the active policy allows callback trust. */
+    LIBRDP_TLS_CERTIFICATE_DECISION_REJECT = 2   /**< Reject the certificate. */
+} librdp_tls_certificate_decision;
+
+/**
+ * @brief TLS peer certificate information passed to policy callbacks.
+ *
+ * All pointer fields are borrowed and valid only for the duration of the
+ * callback. der points to the leaf certificate DER bytes; host points to the
+ * target host string from settings; subject and issuer are diagnostic strings
+ * owned by the core. The fingerprint is always lowercase hexadecimal without
+ * separators and is NUL-terminated.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_tls_certificate_info
+{
+    uint32_t version;        /**< Struct version, LIBRDP_TLS_CERTIFICATE_INFO_VERSION. */
+    uint32_t size;           /**< Size of this struct in bytes. */
+    const char* host;        /**< Target host being verified; borrowed and non-NULL. */
+    const uint8_t* der;      /**< Leaf certificate DER bytes; borrowed and non-NULL. */
+    size_t der_len;          /**< Length of der in bytes. */
+    char sha256_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u]; /**< Leaf SHA-256 hex. */
+    const char* subject;     /**< Leaf certificate subject string, or NULL when unavailable. */
+    const char* issuer;      /**< Leaf certificate issuer string, or NULL when unavailable. */
+    librdp_status verify_status; /**< Strict verification result before policy overrides. */
+    long native_verify_result;   /**< TLS backend verification result for diagnostics. */
+} librdp_tls_certificate_info;
+
+/**
+ * @brief Certificate policy callback.
+ *
+ * The callback runs synchronously on the thread performing
+ * librdp_session_connect(). It must not retain pointers from certificate
+ * beyond the call. user_data is the pointer stored in librdp_tls_policy.
+ *
+ * @param[in] certificate Certificate information; never NULL during callback.
+ * @param[in,out] user_data Opaque application pointer; may be NULL.
+ *
+ * @return Decision for the active policy.
+ *
+ * @note Thread-safety: the callback is invoked synchronously from the session
+ * connection thread; applications must serialize any state reached through
+ * user_data.
+ * @warning The callback receives certificate bytes and fingerprint material;
+ * avoid logging or persisting them except for deliberate pinning or TOFU state.
+ * @since 0.1.0
+ */
+typedef librdp_tls_certificate_decision (*librdp_tls_certificate_callback)(
+    const librdp_tls_certificate_info* certificate,
+    void* user_data);
+
+/**
+ * @brief Versioned TLS policy descriptor.
+ *
+ * Applications should initialize this struct with librdp_tls_policy_init()
+ * before overriding fields. pinned_sha256 is copied by
+ * librdp_settings_set_tls_policy() and may contain either 64 hexadecimal
+ * characters or colon-separated hexadecimal octets. The callback pointer and
+ * user_data are stored as-is and must remain valid until all sessions cloned
+ * from the settings are destroyed.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_tls_policy
+{
+    uint32_t version;  /**< Struct version, LIBRDP_TLS_POLICY_VERSION. */
+    uint32_t size;     /**< Size of this struct in bytes. */
+    librdp_tls_policy_mode mode; /**< Certificate trust policy mode. */
+    int use_system_store;        /**< Non-zero to load and use the operating-system trust store. */
+    const char* pinned_sha256;   /**< Optional leaf SHA-256 fingerprint for pinned mode; copied on set. */
+    librdp_tls_certificate_callback certificate_callback; /**< Optional certificate decision callback. */
+    void* certificate_callback_user_data; /**< Opaque pointer passed to certificate_callback. */
+} librdp_tls_policy;
 
 /**
  * @brief Optional feature bit advertised or enabled for a client session.
@@ -289,6 +397,67 @@ LIBRDP_API librdp_status librdp_settings_set_desktop_size(librdp_settings* setti
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
+
+/**
+ * @brief Initialize a TLS policy descriptor with strict defaults.
+ *
+ * The initialized policy uses LIBRDP_TLS_POLICY_STRICT, enables the system
+ * trust store, clears pinning, and clears the certificate callback. The caller
+ * owns the descriptor and may pass it to librdp_settings_set_tls_policy().
+ *
+ * @param[out] policy Policy descriptor to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * policy is NULL.
+ *
+ * @note Thread-safety: the function touches only caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_tls_policy_init(librdp_tls_policy* policy);
+
+/**
+ * @brief Set the TLS certificate policy used by TLS and NLA connections.
+ *
+ * The policy descriptor must have version LIBRDP_TLS_POLICY_VERSION and a size
+ * large enough for librdp_tls_policy. String fields are copied; callback and
+ * user_data are stored by value. Passing a NULL policy resets strict defaults.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] policy Policy descriptor to copy, or NULL to restore defaults.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * settings, invalid versions, invalid modes, missing pin data for pinned mode,
+ * missing callback for TOFU mode, or malformed fingerprints;
+ * LIBRDP_STATUS_NO_MEMORY when the fingerprint copy fails.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @warning LIBRDP_TLS_POLICY_INSECURE_LAB disables certificate verification and
+ * is intended only for controlled lab testing.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_tls_policy(librdp_settings* settings,
+                                             const librdp_tls_policy* policy);
+
+/**
+ * @brief Copy the currently configured TLS policy into a caller descriptor.
+ *
+ * The returned pinned_sha256 pointer is borrowed from settings and remains
+ * valid until the settings object is mutated or freed. Callback and user_data
+ * are returned exactly as configured.
+ *
+ * @param[in] settings Settings object to query; must not be NULL.
+ * @param[out] policy Destination descriptor; must not be NULL and is fully
+ * overwritten on success.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees the settings object.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_tls_policy(const librdp_settings* settings,
+                                             librdp_tls_policy* policy);
 
 /**
  * @brief Add a redirected filesystem drive.

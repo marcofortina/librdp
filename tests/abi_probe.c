@@ -37,6 +37,11 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_event_callback", librdp_event_callback, ",");
     ABI_TYPE_ENTRY("librdp_status", librdp_status, ",");
     ABI_TYPE_ENTRY("librdp_security_mode", librdp_security_mode, ",");
+    ABI_TYPE_ENTRY("librdp_tls_policy_mode", librdp_tls_policy_mode, ",");
+    ABI_TYPE_ENTRY("librdp_tls_certificate_decision", librdp_tls_certificate_decision, ",");
+    ABI_TYPE_ENTRY("librdp_tls_certificate_callback", librdp_tls_certificate_callback, ",");
+    ABI_TYPE_ENTRY("librdp_tls_certificate_info", librdp_tls_certificate_info, ",");
+    ABI_TYPE_ENTRY("librdp_tls_policy", librdp_tls_policy, ",");
     ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
     ABI_TYPE_ENTRY("librdp_feature_unavailable_reason", librdp_feature_unavailable_reason, ",");
     ABI_TYPE_ENTRY("librdp_feature_status", librdp_feature_status, ",");

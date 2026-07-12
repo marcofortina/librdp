@@ -74,6 +74,11 @@ struct librdp_settings
     uint32_t height;
     uint32_t features;
     librdp_security_mode security_mode;
+    librdp_tls_policy_mode tls_policy_mode;
+    int tls_use_system_store;
+    char* tls_pinned_sha256;
+    librdp_tls_certificate_callback tls_certificate_callback;
+    void* tls_certificate_callback_user_data;
     uint32_t drive_count;
     rdp_settings_drive drives[LIBRDP_SETTINGS_MAX_DRIVES];
     uint32_t serial_port_count;
@@ -175,6 +180,40 @@ static int rdp_settings_valid_text(const char* value)
         return 0;
     length = strlen(value);
     return length <= RDP_SETTINGS_TEXT_MAX;
+}
+
+static int rdp_settings_hex_value(unsigned char value)
+{
+    if (value >= (unsigned char)'0' && value <= (unsigned char)'9')
+        return (int)(value - (unsigned char)'0');
+    if (value >= (unsigned char)'a' && value <= (unsigned char)'f')
+        return (int)(value - (unsigned char)'a') + 10;
+    if (value >= (unsigned char)'A' && value <= (unsigned char)'F')
+        return (int)(value - (unsigned char)'A') + 10;
+    return -1;
+}
+
+static int rdp_settings_normalize_sha256_fingerprint(const char* value,
+                                                     char output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u])
+{
+    size_t written = 0;
+
+    if (!value || !output)
+        return 0;
+    for (; *value; value++)
+    {
+        int hex = rdp_settings_hex_value((unsigned char)*value);
+
+        if (*value == ':' || *value == '-' || *value == ' ')
+            continue;
+        if (hex < 0 || written >= LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH)
+            return 0;
+        output[written++] = (char)((hex < 10) ? ('0' + hex) : ('a' + (hex - 10)));
+    }
+    if (written != LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH)
+        return 0;
+    output[written] = '\0';
+    return 1;
 }
 
 static int rdp_settings_valid_webauthn_provider(const char* value)
@@ -294,6 +333,8 @@ librdp_settings* librdp_settings_new(void)
     settings->width = 1024;
     settings->height = 768;
     settings->security_mode = LIBRDP_SECURITY_AUTO;
+    settings->tls_policy_mode = LIBRDP_TLS_POLICY_STRICT;
+    settings->tls_use_system_store = 1;
     return settings;
 }
 
@@ -318,6 +359,10 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->height = settings->height;
     copy->features = settings->features;
     copy->security_mode = settings->security_mode;
+    copy->tls_policy_mode = settings->tls_policy_mode;
+    copy->tls_use_system_store = settings->tls_use_system_store;
+    copy->tls_certificate_callback = settings->tls_certificate_callback;
+    copy->tls_certificate_callback_user_data = settings->tls_certificate_callback_user_data;
 
     if ((settings->target && librdp_settings_set_target(copy, settings->target) != LIBRDP_STATUS_OK) ||
         (settings->username && librdp_settings_set_username(copy, settings->username) != LIBRDP_STATUS_OK) ||
@@ -331,6 +376,8 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
          librdp_settings_set_video_output_path(copy, settings->video_output_path) != LIBRDP_STATUS_OK) ||
         (settings->webauthn_provider &&
          librdp_settings_set_webauthn_provider(copy, settings->webauthn_provider) != LIBRDP_STATUS_OK) ||
+        (settings->tls_pinned_sha256 &&
+         rdp_set_string(&copy->tls_pinned_sha256, settings->tls_pinned_sha256) != LIBRDP_STATUS_OK) ||
         (settings->echo_payload &&
          librdp_settings_set_echo_payload(copy, settings->echo_payload) != LIBRDP_STATUS_OK))
     {
@@ -439,6 +486,7 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->video_output_path);
     free(settings->webauthn_provider);
     free(settings->echo_payload);
+    free(settings->tls_pinned_sha256);
     for (uint32_t i = 0; i < settings->drive_count; i++)
         free(settings->drives[i].path);
     for (uint32_t i = 0; i < settings->serial_port_count; i++)
@@ -518,6 +566,81 @@ librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librd
     if (!settings || mode < LIBRDP_SECURITY_AUTO || mode > LIBRDP_SECURITY_NLA)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     settings->security_mode = mode;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_tls_policy_init(librdp_tls_policy* policy)
+{
+    if (!policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(policy, 0, sizeof(*policy));
+    policy->version = LIBRDP_TLS_POLICY_VERSION;
+    policy->size = (uint32_t)sizeof(*policy);
+    policy->mode = LIBRDP_TLS_POLICY_STRICT;
+    policy->use_system_store = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Copy TLS policy into settings with all externally supplied fingerprint text
+ * normalized once. TOFU is callback-controlled because the core has no hidden
+ * persistent store and must not invent host-specific trust state.
+ */
+librdp_status librdp_settings_set_tls_policy(librdp_settings* settings, const librdp_tls_policy* policy)
+{
+    librdp_tls_policy defaults;
+    char normalized[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+    char* pinned_copy = NULL;
+
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!policy)
+    {
+        if (librdp_tls_policy_init(&defaults) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        policy = &defaults;
+    }
+    if (policy->version != LIBRDP_TLS_POLICY_VERSION || policy->size < sizeof(*policy) ||
+        policy->mode < LIBRDP_TLS_POLICY_STRICT || policy->mode > LIBRDP_TLS_POLICY_INSECURE_LAB)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (policy->mode == LIBRDP_TLS_POLICY_PINNED_FINGERPRINT)
+    {
+        if (!rdp_settings_normalize_sha256_fingerprint(policy->pinned_sha256, normalized))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        pinned_copy = rdp_strdup(normalized);
+        if (!pinned_copy)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    else if (policy->pinned_sha256)
+    {
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    if (policy->mode == LIBRDP_TLS_POLICY_TOFU && !policy->certificate_callback)
+    {
+        free(pinned_copy);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+
+    free(settings->tls_pinned_sha256);
+    settings->tls_pinned_sha256 = pinned_copy;
+    settings->tls_policy_mode = policy->mode;
+    settings->tls_use_system_store = policy->use_system_store ? 1 : 0;
+    settings->tls_certificate_callback = policy->certificate_callback;
+    settings->tls_certificate_callback_user_data = policy->certificate_callback_user_data;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_get_tls_policy(const librdp_settings* settings, librdp_tls_policy* policy)
+{
+    if (!settings || !policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (librdp_tls_policy_init(policy) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    policy->mode = settings->tls_policy_mode;
+    policy->use_system_store = settings->tls_use_system_store;
+    policy->pinned_sha256 = settings->tls_pinned_sha256;
+    policy->certificate_callback = settings->tls_certificate_callback;
+    policy->certificate_callback_user_data = settings->tls_certificate_callback_user_data;
     return LIBRDP_STATUS_OK;
 }
 

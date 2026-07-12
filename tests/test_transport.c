@@ -27,6 +27,7 @@
 #include <openssl/x509v3.h>
 
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,6 +159,56 @@ static int make_test_self_signed_server_certificate(EVP_PKEY** key, X509** cert)
     return add_test_certificate_extension(*cert, *cert, NID_subject_alt_name, "DNS:localhost");
 }
 
+static int test_certificate_fingerprint(X509* cert,
+                                        char output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u])
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    static const char hex[] = "0123456789abcdef";
+
+    if (!cert || !output)
+        return 0;
+    if (X509_digest(cert, EVP_sha256(), digest, &digest_len) != 1 || digest_len != 32u)
+        return 0;
+    for (size_t i = 0; i < 32u; i++)
+    {
+        output[i * 2u] = hex[(digest[i] >> 4) & 0x0fu];
+        output[(i * 2u) + 1u] = hex[digest[i] & 0x0fu];
+    }
+    output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH] = '\0';
+    return 1;
+}
+
+typedef struct test_tls_callback_state
+{
+    int calls;
+    int accept;
+    int reject;
+    librdp_status verify_status;
+    char fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+} test_tls_callback_state;
+
+static librdp_tls_certificate_decision test_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
+                                                                    void* user_data)
+{
+    test_tls_callback_state* state = (test_tls_callback_state*)user_data;
+
+    if (!certificate || !state || certificate->version != LIBRDP_TLS_CERTIFICATE_INFO_VERSION ||
+        certificate->size < sizeof(*certificate) || !certificate->host || !certificate->der ||
+        certificate->der_len == 0 || certificate->sha256_fingerprint[0] == '\0')
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    state->calls += 1;
+    state->verify_status = certificate->verify_status;
+    memcpy(state->fingerprint,
+           certificate->sha256_fingerprint,
+           LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u);
+    if (state->reject)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    if (state->accept)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
+    return LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+}
+
 /*
  * Fixture: runs a local TLS peer for deterministic read/write coverage. It
  * validates TLS shutdown and descriptor lifetime without external network
@@ -169,7 +220,9 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
     SSL* tls = NULL;
     char input[4];
     int ok = 0;
+    int do_shutdown = 0;
 
+    (void)signal(SIGPIPE, SIG_IGN);
     context = SSL_CTX_new(TLS_server_method());
     if (!context)
         goto out;
@@ -196,13 +249,17 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
         goto out;
     if (SSL_write(tls, "pong", 4) != 4)
         goto out;
+    do_shutdown = 1;
     ok = 1;
 
 out:
     if (tls)
     {
-        SSL_set_quiet_shutdown(tls, 1);
-        (void)SSL_shutdown(tls);
+        if (do_shutdown)
+        {
+            SSL_set_quiet_shutdown(tls, 1);
+            (void)SSL_shutdown(tls);
+        }
         SSL_free(tls);
     }
     if (context)
@@ -215,6 +272,11 @@ static int run_tls_client_case(EVP_PKEY* key,
                                X509* cert,
                                X509* trust_anchor,
                                const char* host,
+                               librdp_tls_policy_mode policy_mode,
+                               int use_system_store,
+                               const char* pinned_sha256,
+                               librdp_tls_certificate_callback callback,
+                               void* callback_user_data,
                                librdp_status expected_status,
                                int exchange_data,
                                rdp_buffer* public_key)
@@ -231,8 +293,12 @@ static int run_tls_client_case(EVP_PKEY* key,
     rdp_transport_init(&transport);
     memset(&tls_config, 0, sizeof(tls_config));
     tls_config.host = host;
-    tls_config.use_system_store = trust_anchor ? 0 : 1;
+    tls_config.use_system_store = use_system_store;
     tls_config.trust_anchor = trust_anchor;
+    tls_config.policy_mode = policy_mode;
+    tls_config.pinned_sha256 = pinned_sha256;
+    tls_config.certificate_callback = callback;
+    tls_config.certificate_callback_user_data = callback_user_data;
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, tls_pair) != 0)
         goto out;
@@ -249,10 +315,17 @@ static int run_tls_client_case(EVP_PKEY* key,
     rdp_transport_attach_fd(&transport, tls_pair[0], 1);
     tls_pair[0] = -1;
 
-    status = trust_anchor ? rdp_transport_start_tls_with_config(&transport, &tls_config) :
-                            rdp_transport_start_tls(&transport, host);
+    status = rdp_transport_start_tls_with_config(&transport, &tls_config);
     if (status != expected_status)
+    {
+        fprintf(stderr,
+                "tls case status=%s expected=%s policy=%d use_system_store=%d\n",
+                librdp_status_string(status),
+                librdp_status_string(expected_status),
+                (int)policy_mode,
+                use_system_store);
         goto out;
+    }
     if (status == LIBRDP_STATUS_OK)
     {
         if (public_key && rdp_transport_get_tls_public_key(&transport, public_key) != LIBRDP_STATUS_OK)
@@ -272,7 +345,14 @@ static int run_tls_client_case(EVP_PKEY* key,
             goto out;
         child = -1;
         if (!WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
+        {
+            fprintf(stderr,
+                    "tls server exited abnormally status=%d policy=%d expected_success=%d\n",
+                    child_status,
+                    (int)policy_mode,
+                    expected_status == LIBRDP_STATUS_OK);
             goto out;
+        }
     }
     ok = 1;
 
@@ -813,6 +893,10 @@ int test_transport(void)
     X509* self_signed_cert = NULL;
     X509* wrong_host_cert = NULL;
     X509* expired_cert = NULL;
+    test_tls_callback_state tofu_accept;
+    test_tls_callback_state tofu_reject;
+    char self_signed_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+    char wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
     rdp_transport transport;
     char data[8];
     size_t got = 0;
@@ -918,10 +1002,19 @@ int test_transport(void)
                                         -7200,
                                         -3600));
     TCHECK(make_test_self_signed_server_certificate(&self_signed_key, &self_signed_cert));
+    TCHECK(test_certificate_fingerprint(self_signed_cert, self_signed_fingerprint));
+    memcpy(wrong_fingerprint, self_signed_fingerprint, sizeof(wrong_fingerprint));
+    wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH - 1u] =
+        wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH - 1u] == '0' ? '1' : '0';
     TCHECK(run_tls_client_case(self_signed_key,
                               self_signed_cert,
                               NULL,
                               "localhost",
+                              LIBRDP_TLS_POLICY_STRICT,
+                              1,
+                              NULL,
+                              NULL,
+                              NULL,
                               LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
                               0,
                               NULL));
@@ -929,6 +1022,11 @@ int test_transport(void)
                               wrong_host_cert,
                               ca_cert,
                               "localhost",
+                              LIBRDP_TLS_POLICY_STRICT,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
                               LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH,
                               0,
                               NULL));
@@ -936,6 +1034,11 @@ int test_transport(void)
                               expired_cert,
                               ca_cert,
                               "localhost",
+                              LIBRDP_TLS_POLICY_STRICT,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
                               LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
                               0,
                               NULL));
@@ -943,9 +1046,81 @@ int test_transport(void)
                               server_cert,
                               ca_cert,
                               "localhost",
+                              LIBRDP_TLS_POLICY_STRICT,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
                               LIBRDP_STATUS_OK,
                               1,
                               &tls_public_key));
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_PINNED_FINGERPRINT,
+                              0,
+                              self_signed_fingerprint,
+                              NULL,
+                              NULL,
+                              LIBRDP_STATUS_OK,
+                              1,
+                              NULL));
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_PINNED_FINGERPRINT,
+                              0,
+                              wrong_fingerprint,
+                              NULL,
+                              NULL,
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    memset(&tofu_accept, 0, sizeof(tofu_accept));
+    tofu_accept.accept = 1;
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_TOFU,
+                              1,
+                              NULL,
+                              test_tls_certificate_callback,
+                              &tofu_accept,
+                              LIBRDP_STATUS_OK,
+                              1,
+                              NULL));
+    TCHECK(tofu_accept.calls == 1);
+    TCHECK(strcmp(tofu_accept.fingerprint, self_signed_fingerprint) == 0);
+    memset(&tofu_reject, 0, sizeof(tofu_reject));
+    tofu_reject.reject = 1;
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_TOFU,
+                              1,
+                              NULL,
+                              test_tls_certificate_callback,
+                              &tofu_reject,
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    TCHECK(tofu_reject.calls == 1);
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_INSECURE_LAB,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
+                              LIBRDP_STATUS_OK,
+                              1,
+                              NULL));
     expected_public_key_len = i2d_PublicKey(server_key, NULL);
     TCHECK(expected_public_key_len > 0);
     expected_public_key = (unsigned char*)malloc((size_t)expected_public_key_len);

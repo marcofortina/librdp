@@ -29661,7 +29661,21 @@ librdp_status librdp_session_connect(librdp_session* session)
     selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0;
     if (selected_protocol == RDP_X224_PROTOCOL_TLS || selected_protocol == RDP_X224_PROTOCOL_NLA)
     {
-        status = rdp_transport_start_tls(&session->transport, librdp_settings_target(session->settings));
+        librdp_tls_policy tls_policy;
+        rdp_transport_tls_config tls_config;
+
+        memset(&tls_policy, 0, sizeof(tls_policy));
+        memset(&tls_config, 0, sizeof(tls_config));
+        status = librdp_settings_get_tls_policy(session->settings, &tls_policy);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        tls_config.host = librdp_settings_target(session->settings);
+        tls_config.use_system_store = tls_policy.use_system_store;
+        tls_config.policy_mode = tls_policy.mode;
+        tls_config.pinned_sha256 = tls_policy.pinned_sha256;
+        tls_config.certificate_callback = tls_policy.certificate_callback;
+        tls_config.certificate_callback_user_data = tls_policy.certificate_callback_user_data;
+        status = rdp_transport_start_tls_with_config(&session->transport, &tls_config);
         if (status != LIBRDP_STATUS_OK)
             goto fail;
         rdp_trace_event(RDP_TRACE_PROTOCOL, "transport.tls.ready", "selected_protocol=%u", selected_protocol);

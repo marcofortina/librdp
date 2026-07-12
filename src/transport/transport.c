@@ -24,6 +24,7 @@
 #include "transport/tcp.h"
 
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -84,22 +85,44 @@ static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
 
 static librdp_status rdp_transport_tls_verify_status(long verify_result)
 {
+    if (verify_result == X509_V_OK)
+        return LIBRDP_STATUS_OK;
     if (verify_result == X509_V_ERR_HOSTNAME_MISMATCH)
         return LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH;
-    if (verify_result != X509_V_OK)
-        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
-    return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+}
+
+static int rdp_transport_tls_verify_peer_required(const rdp_transport_tls_config* config)
+{
+    if (!config)
+        return 0;
+    if (config->policy_mode == LIBRDP_TLS_POLICY_INSECURE_LAB)
+        return 0;
+    return config->policy_mode == LIBRDP_TLS_POLICY_STRICT || config->use_system_store ||
+           config->trust_anchor != NULL;
+}
+
+static int rdp_transport_tls_allow_verify_callback(int preverify_ok, X509_STORE_CTX* store)
+{
+    (void)preverify_ok;
+    (void)store;
+    return 1;
 }
 
 static librdp_status rdp_transport_tls_configure_context(SSL_CTX* context,
                                                         const rdp_transport_tls_config* config)
 {
     X509_STORE* store = NULL;
+    int verify_peer = 0;
 
     if (!context || !config)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+    verify_peer = rdp_transport_tls_verify_peer_required(config);
+    SSL_CTX_set_verify(context,
+                       verify_peer ? SSL_VERIFY_PEER : SSL_VERIFY_NONE,
+                       config->policy_mode == LIBRDP_TLS_POLICY_TOFU ? rdp_transport_tls_allow_verify_callback
+                                                                     : NULL);
     if (config->use_system_store && SSL_CTX_set_default_verify_paths(context) != 1)
         return LIBRDP_STATUS_IO_ERROR;
     if (config->trust_anchor)
@@ -109,6 +132,151 @@ static librdp_status rdp_transport_tls_configure_context(SSL_CTX* context,
             return LIBRDP_STATUS_IO_ERROR;
     }
     return LIBRDP_STATUS_OK;
+}
+
+static void rdp_transport_tls_sha256_hex(const unsigned char* digest,
+                                         char output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u])
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t i = 0;
+
+    for (i = 0; i < 32u; i++)
+    {
+        output[i * 2u] = hex[(digest[i] >> 4) & 0x0fu];
+        output[(i * 2u) + 1u] = hex[digest[i] & 0x0fu];
+    }
+    output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH] = '\0';
+}
+
+static librdp_status rdp_transport_tls_leaf_fingerprint(
+    X509* cert,
+    char output[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u])
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+
+    if (!cert || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (X509_digest(cert, EVP_sha256(), digest, &digest_len) != 1 || digest_len != 32u)
+        return LIBRDP_STATUS_IO_ERROR;
+    rdp_transport_tls_sha256_hex(digest, output);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_tls_certificate_decision rdp_transport_tls_call_certificate_callback(
+    const rdp_transport_tls_config* config,
+    X509* cert,
+    const char fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u],
+    librdp_status verify_status,
+    long verify_result)
+{
+    librdp_tls_certificate_info info;
+    unsigned char* der = NULL;
+    unsigned char* der_write = NULL;
+    char* subject = NULL;
+    char* issuer = NULL;
+    int der_len = 0;
+    librdp_tls_certificate_decision decision = LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+
+    if (!config || !config->certificate_callback || !cert)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+
+    der_len = i2d_X509(cert, NULL);
+    if (der_len <= 0)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    der = (unsigned char*)OPENSSL_malloc((size_t)der_len);
+    if (!der)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    der_write = der;
+    if (i2d_X509(cert, &der_write) != der_len)
+    {
+        OPENSSL_free(der);
+        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
+    }
+
+    subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
+    issuer = X509_NAME_oneline(X509_get_issuer_name(cert), NULL, 0);
+    memset(&info, 0, sizeof(info));
+    info.version = LIBRDP_TLS_CERTIFICATE_INFO_VERSION;
+    info.size = (uint32_t)sizeof(info);
+    info.host = config->host;
+    info.der = der;
+    info.der_len = (size_t)der_len;
+    memcpy(info.sha256_fingerprint, fingerprint, LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u);
+    info.subject = subject;
+    info.issuer = issuer;
+    info.verify_status = verify_status;
+    info.native_verify_result = verify_result;
+    decision = config->certificate_callback(&info, config->certificate_callback_user_data);
+    OPENSSL_free(subject);
+    OPENSSL_free(issuer);
+    OPENSSL_free(der);
+    if (decision != LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT &&
+        decision != LIBRDP_TLS_CERTIFICATE_DECISION_REJECT)
+        return LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+    return decision;
+}
+
+/*
+ * Apply the configured certificate policy after TLS has produced the peer
+ * certificate. Callback ACCEPT is intentionally limited to TOFU so strict and
+ * pinned policies cannot be silently weakened by application code.
+ */
+static librdp_status rdp_transport_tls_evaluate_certificate(SSL* tls,
+                                                            const rdp_transport_tls_config* config,
+                                                            long verify_result)
+{
+    X509* cert = NULL;
+    char fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+    librdp_status status = LIBRDP_STATUS_OK;
+    librdp_status verify_status = rdp_transport_tls_verify_status(verify_result);
+    librdp_tls_certificate_decision decision = LIBRDP_TLS_CERTIFICATE_DECISION_DEFAULT;
+
+    if (!tls || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    cert = SSL_get1_peer_certificate(tls);
+    if (!cert)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_transport_tls_leaf_fingerprint(cert, fingerprint);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        X509_free(cert);
+        return status;
+    }
+    decision = rdp_transport_tls_call_certificate_callback(config, cert, fingerprint, verify_status, verify_result);
+    X509_free(cert);
+    if (decision == LIBRDP_TLS_CERTIFICATE_DECISION_REJECT)
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+
+    if (config->policy_mode == LIBRDP_TLS_POLICY_INSECURE_LAB)
+    {
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_WARN,
+                              "transport.tls.insecure_lab.warning",
+                              "host=%s verification=disabled",
+                              config->host);
+        return LIBRDP_STATUS_OK;
+    }
+    if (config->policy_mode == LIBRDP_TLS_POLICY_STRICT)
+        return verify_status;
+    if (config->policy_mode == LIBRDP_TLS_POLICY_PINNED_FINGERPRINT)
+    {
+        if (!config->pinned_sha256 ||
+            strcmp(config->pinned_sha256, fingerprint) != 0)
+            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+        if (rdp_transport_tls_verify_peer_required(config) && verify_status != LIBRDP_STATUS_OK)
+            return verify_status;
+        return LIBRDP_STATUS_OK;
+    }
+    if (config->policy_mode == LIBRDP_TLS_POLICY_TOFU)
+    {
+        if (rdp_transport_tls_verify_peer_required(config) && verify_status == LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_OK;
+        return decision == LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT ? LIBRDP_STATUS_OK
+                                                                  : LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    return LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
 static librdp_status rdp_transport_tls_configure_hostname(SSL* tls, const char* host)
@@ -171,13 +339,16 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
         SSL_CTX_free(context);
         return LIBRDP_STATUS_IO_ERROR;
     }
-    status = rdp_transport_tls_configure_hostname(tls, config->host);
-    if (status != LIBRDP_STATUS_OK)
+    if (rdp_transport_tls_verify_peer_required(config))
     {
-        SSL_free(tls);
-        SSL_CTX_free(context);
-        ERR_clear_error();
-        return status;
+        status = rdp_transport_tls_configure_hostname(tls, config->host);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            SSL_free(tls);
+            SSL_CTX_free(context);
+            ERR_clear_error();
+            return status;
+        }
     }
 
     rc = SSL_connect(tls);
@@ -185,12 +356,14 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
     {
         verify_result = SSL_get_verify_result(tls);
         status = rdp_transport_tls_verify_status(verify_result);
-        if (status == LIBRDP_STATUS_TLS_HANDSHAKE_FAILED)
+        if (status == LIBRDP_STATUS_OK)
         {
             librdp_status io_status = rdp_transport_tls_status(tls, rc);
 
-            if (io_status == LIBRDP_STATUS_CLOSED || io_status == LIBRDP_STATUS_AGAIN)
-                status = io_status;
+            status = LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+            if (io_status == LIBRDP_STATUS_CLOSED || io_status == LIBRDP_STATUS_AGAIN ||
+                io_status == LIBRDP_STATUS_IO_ERROR)
+                status = io_status == LIBRDP_STATUS_IO_ERROR ? LIBRDP_STATUS_TLS_HANDSHAKE_FAILED : io_status;
         }
         rdp_trace_event(RDP_TRACE_TRANSPORT,
                         "transport.tls.connect.failed",
@@ -203,9 +376,9 @@ librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, cons
         return status;
     }
     verify_result = SSL_get_verify_result(tls);
-    if (verify_result != X509_V_OK)
+    status = rdp_transport_tls_evaluate_certificate(tls, config, verify_result);
+    if (status != LIBRDP_STATUS_OK)
     {
-        status = rdp_transport_tls_verify_status(verify_result);
         rdp_trace_event(RDP_TRACE_TRANSPORT,
                         "transport.tls.verify.failed",
                         "status=%s verify_result=%ld",
@@ -235,6 +408,7 @@ librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host
     memset(&config, 0, sizeof(config));
     config.host = host;
     config.use_system_store = 1;
+    config.policy_mode = LIBRDP_TLS_POLICY_STRICT;
     return rdp_transport_start_tls_with_config(transport, &config);
 }
 
