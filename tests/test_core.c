@@ -2190,12 +2190,16 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_client_lifecycle(client) == LIBRDP_LIFECYCLE_NEW);
     CHECK(librdp_client_dispatch(client, 0) == LIBRDP_STATUS_STATE);
     CHECK(librdp_client_cancel(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_reconnect(NULL, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_reconnect(client, NULL) == LIBRDP_STATUS_STATE);
     CHECK(librdp_client_connect(client) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
     CHECK(librdp_error_copy_info(librdp_session_last_error(librdp_client_session(client)), &error_info) ==
           LIBRDP_STATUS_OK);
     CHECK(error_info.status == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
+    CHECK(librdp_client_state(client) == LIBRDP_SESSION_IDLE);
+    CHECK(librdp_client_reconnect(client, NULL) == LIBRDP_STATUS_STATE);
     CHECK(librdp_client_disconnect(client) == LIBRDP_STATUS_OK);
     librdp_client_free(client);
     client = NULL;

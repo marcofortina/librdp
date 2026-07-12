@@ -11,6 +11,7 @@
     "librdp_client_free",
     "librdp_client_lifecycle",
     "librdp_client_new",
+    "librdp_client_reconnect",
     "librdp_client_session",
     "librdp_client_settings",
     "librdp_client_state",

@@ -11,6 +11,7 @@ LIBRDP_0.1 {
         librdp_client_settings;
         librdp_client_session;
         librdp_client_connect;
+        librdp_client_reconnect;
         librdp_client_dispatch;
         librdp_client_cancel;
         librdp_client_disconnect;

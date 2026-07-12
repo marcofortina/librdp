@@ -157,6 +157,29 @@ LIBRDP_API librdp_session* librdp_client_session(librdp_client* client);
 LIBRDP_API librdp_status librdp_client_connect(librdp_client* client);
 
 /**
+ * @brief Reconnect the client using the owned session.
+ *
+ * This is a compatibility wrapper around librdp_session_reconnect(). The
+ * optional policy is borrowed for the duration of the call and is not retained.
+ * Reconnect reuses the settings and credential state owned by the client.
+ *
+ * @param[in,out] client Client to reconnect; must not be NULL.
+ * @param[in] policy Optional reconnect policy, or NULL for session defaults.
+ *
+ * @return Status returned by librdp_session_reconnect(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: call from the serialized client-driving context. The
+ * only cross-thread exception remains librdp_client_cancel(), which may
+ * interrupt a reconnect delay.
+ * @warning Reconnect can reuse credentials stored in the owned settings; avoid
+ * logging client configuration or trace output in unsafe mode.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_reconnect(librdp_client* client,
+                                                 const librdp_reconnect_policy* policy);
+
+/**
  * @brief Dispatch one client event-loop iteration.
  *
  * This is a compatibility wrapper around librdp_session_run_once().

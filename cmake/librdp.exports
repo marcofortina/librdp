@@ -9,6 +9,7 @@ _librdp_client_free
 _librdp_client_settings
 _librdp_client_session
 _librdp_client_connect
+_librdp_client_reconnect
 _librdp_client_dispatch
 _librdp_client_cancel
 _librdp_client_disconnect
