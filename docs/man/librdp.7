@@ -1,0 +1,45 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP 7 "2026-07-12" "librdp 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+librdp \- C client library for RDP viewers and integration tools
+.SH DESCRIPTION
+.B librdp
+is a C client library for building RDP viewers and integration tools on Unix-like systems. The library exposes opaque settings, session, event, surface, input, clipboard, audio, video, and channel APIs.
+.P
+The core library is platform-neutral. Host windowing, media, device, authenticator, and clipboard integration belong to applications or viewer backends.
+.SH OBJECTS
+.TP
+.B librdp_settings
+Configuration object for target, credentials, security mode, desktop size, feature flags, and redirected devices. Sessions clone settings during construction.
+.TP
+.B librdp_session
+Client session object owning transport, protocol, channel, cache, graphics, and active surface state.
+.TP
+.B librdp_surface
+Framebuffer surface object exposing BGRA pixel data to viewers.
+.TP
+.B librdp_event
+Callback-delivered event object. Payloads are borrowed and valid only until the callback returns.
+.SH LIFECYCLE
+A typical application allocates settings, configures them, creates a session, registers an event callback, connects, repeatedly calls
+.BR librdp_session_run_once (),
+presents surface updates, sends input or feature responses, disconnects, and frees objects.
+.SH THREADING
+Objects are not internally synchronized. Applications must serialize calls operating on the same settings, session, or surface object unless they provide external locking.
+.SH SECURITY
+Credentials and sensitive user data must not be logged. Trace is disabled by default and protocol hexdumps are bounded. Applications own user consent for clipboard, audio, camera, filesystem, smartcard, USB, WebAuthn, printer, and other host resources.
+.SH FILES
+.TP
+.I include/librdp/*.h
+Public headers.
+.TP
+.I docs/api-reference.md
+Header-oriented API map.
+.TP
+.I docs/programmers-reference.md
+Application integration manual.
+.SH SEE ALSO
+.BR librdp-api (7),
+.BR librdp-tracing (7),
+.BR librdp-x11-viewer (1)

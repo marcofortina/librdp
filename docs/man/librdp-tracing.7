@@ -1,0 +1,47 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-TRACING 7 "2026-07-12" "librdp 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+librdp-tracing \- runtime trace controls for librdp
+.SH DESCRIPTION
+librdp trace is disabled by default and writes structured key-value lines to standard error. It is intended for interoperability, performance, parser, transport, graphics, input, channel, and backend diagnostics.
+.SH ENVIRONMENT
+.TP
+.B LIBRDP_TRACE_CLIENT
+Enable client lifecycle, viewer, framebuffer, input, pointer, clipboard, channel, audio, video, and backend events.
+.TP
+.B LIBRDP_TRACE_TRANSPORT
+Enable TCP, TLS, UDP, read, write, wait, timeout, EOF, and close events.
+.TP
+.B LIBRDP_TRACE_PROTOCOL
+Enable handshake, parser, PDU, capability, slow-path, fast-path, security, channel, and codec events.
+.TP
+.B LIBRDP_TRACE_LEVEL
+Set verbosity. Accepted names are error, warn, info, debug, and trace. Numeric values 0 through 4 are also accepted.
+.TP
+.B LIBRDP_TRACE_HEX_BYTES
+Maximum number of bytes emitted by bounded protocol hexdumps. Invalid or unset values use zero.
+.SH FORMAT
+Normal events use:
+.P
+.nf
+librdp trace seq=<n> ts_ns=<n> elapsed_us=<n> category=<category> event=<name> level=<level> message="<fields>"
+.fi
+.P
+Protocol hexdumps use:
+.P
+.nf
+librdp trace seq=<n> ts_ns=<n> elapsed_us=<n> category=protocol event=<name> level=trace payload_len=<n> dumped=<n> hex=<bytes> ascii="<ascii>"
+.fi
+.SH SECURITY
+Trace must not print passwords, authentication tokens, private keys, WebAuthn secrets, smartcard PIN-like data, clipboard contents, file contents, audio samples, or video frames. Prefer identifiers, sizes, result codes, flags, and timing data.
+.SH EXAMPLES
+.nf
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla
+
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 librdp-x11-viewer --target host --security nla
+.fi
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-api (7),
+.BR librdp-x11-viewer (1)

@@ -1,0 +1,54 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-API 7 "2026-07-12" "librdp 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+librdp-api \- public API families for librdp
+.SH DESCRIPTION
+The public librdp API is declared under
+.IR include/librdp .
+Applications may include
+.B <librdp/librdp.h>
+for the full public API or include specific headers for narrower integration.
+.SH HEADERS
+.TP
+.B <librdp/error.h>
+Status codes and status-string helper.
+.TP
+.B <librdp/settings.h>
+Settings object, security mode, feature flags, and redirected device configuration.
+.TP
+.B <librdp/session.h>
+Session lifecycle, event callback registration, connection loop, resize, refresh, display layout, state, surface, and input APIs.
+.TP
+.B <librdp/event.h>
+Event types and callback payload structures.
+.TP
+.B <librdp/surface.h>
+BGRA framebuffer surface allocation, resize, blit, and pixel access.
+.TP
+.B <librdp/input.h>
+Keyboard, mouse, touch, and pen structures and flags.
+.TP
+.B <librdp/clipboard.h>
+Clipboard format, data, file publication, and request APIs.
+.TP
+.B <librdp/channel.h>
+Application-owned dynamic virtual channel send and close APIs.
+.TP
+.B <librdp/audio.h>
+Audio format and audio input response APIs.
+.TP
+.B <librdp/video.h>
+Video capture media and sample response APIs.
+.SH OWNERSHIP
+Settings own copied configuration values. Sessions own protocol state and active surfaces. Event payloads are borrowed. Applications must copy event data that must outlive the callback.
+.SH ERRORS
+Public functions return
+.B librdp_status
+where failure is possible. Applications should compare against named status constants and use
+.BR librdp_status_string ()
+for stable diagnostic tokens.
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-tracing (7),
+.BR librdp-x11-viewer (1)

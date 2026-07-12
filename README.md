@@ -32,4 +32,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Packaging](docs/packaging.md)
 - [Diagnostics](docs/diagnostics.md)
 - [X11 viewer](docs/viewer-x11.md)
+- [librdp man page](docs/man/librdp.7)
+- [librdp API man page](docs/man/librdp-api.7)
+- [librdp tracing man page](docs/man/librdp-tracing.7)
 - [librdp-x11-viewer man page](docs/man/librdp-x11-viewer.1)
