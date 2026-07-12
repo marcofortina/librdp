@@ -23,6 +23,8 @@
 
 #define RDP_DISPLAY_CONTROL_MIN_DIMENSION 200u
 #define RDP_DISPLAY_CONTROL_MAX_DIMENSION 8192u
+#define RDP_DISPLAY_CONTROL_MIN_PHYSICAL_MM 10u
+#define RDP_DISPLAY_CONTROL_MAX_PHYSICAL_MM 10000u
 #define RDP_DISPLAY_CONTROL_MAX_MONITORS 16u
 
 static uint32_t rdp_display_control_clamp_dimension(uint32_t value, int even)
@@ -59,6 +61,25 @@ static int rdp_display_control_valid_device_scale(uint32_t scale)
     return scale == 100 || scale == 140 || scale == 180;
 }
 
+static int rdp_display_control_valid_physical_size(uint32_t millimeters)
+{
+    return millimeters == 0 ||
+           (millimeters >= RDP_DISPLAY_CONTROL_MIN_PHYSICAL_MM &&
+            millimeters <= RDP_DISPLAY_CONTROL_MAX_PHYSICAL_MM);
+}
+
+static int rdp_display_control_caps_valid(const rdp_display_control_caps* caps)
+{
+    if (!caps)
+        return 0;
+    return caps->max_num_monitors > 0 &&
+           caps->max_num_monitors <= RDP_DISPLAY_CONTROL_MAX_MONITORS &&
+           caps->max_monitor_area_factor_a > 0 &&
+           caps->max_monitor_area_factor_a <= RDP_DISPLAY_CONTROL_MAX_DIMENSION &&
+           caps->max_monitor_area_factor_b > 0 &&
+           caps->max_monitor_area_factor_b <= RDP_DISPLAY_CONTROL_MAX_DIMENSION;
+}
+
 static int rdp_display_control_monitors_overlap(const rdp_display_control_monitor* a,
                                                 const rdp_display_control_monitor* b)
 {
@@ -90,8 +111,13 @@ static librdp_status rdp_display_control_validate_layout(const rdp_display_contr
 
     if (!monitors || monitor_count == 0 || monitor_count > RDP_DISPLAY_CONTROL_MAX_MONITORS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (caps && caps->max_num_monitors != 0 && monitor_count > caps->max_num_monitors)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (caps)
+    {
+        if (!rdp_display_control_caps_valid(caps))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (monitor_count > caps->max_num_monitors)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
     for (i = 0; i < monitor_count; i++)
     {
         if ((monitors[i].flags & ~RDP_DISPLAY_CONTROL_MONITOR_PRIMARY) != 0)
@@ -112,6 +138,8 @@ static librdp_status rdp_display_control_validate_layout(const rdp_display_contr
             monitors[i].height < RDP_DISPLAY_CONTROL_MIN_DIMENSION ||
             monitors[i].height > RDP_DISPLAY_CONTROL_MAX_DIMENSION ||
             (monitors[i].width & 1u) != 0 ||
+            !rdp_display_control_valid_physical_size(monitors[i].physical_width) ||
+            !rdp_display_control_valid_physical_size(monitors[i].physical_height) ||
             !rdp_display_control_valid_orientation(monitors[i].orientation) ||
             monitors[i].desktop_scale_factor < 100 ||
             monitors[i].desktop_scale_factor > 500 ||
@@ -159,6 +187,8 @@ librdp_status rdp_display_control_parse_caps(const void* data,
     if (rdp_stream_read_u32_le(&stream, &caps->max_num_monitors) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &caps->max_monitor_area_factor_a) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &caps->max_monitor_area_factor_b) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_display_control_caps_valid(caps))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
