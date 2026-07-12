@@ -2,6 +2,16 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: transport, TLS, UDP, UDP2, and multitransport unit tests.
+ * Coverage: fixtures use local sockets and generated certificates to avoid
+ * external network dependencies.
+ * Bug classes: framing bounds, TLS I/O lifetime, timeout handling, UDP
+ * sequence validation, and packet classification.
+ * Determinism: tests are self-contained and avoid external services unless
+ * using local loopback fixtures.
+ */
+
 
 #include "common/buffer.h"
 #include "platform/socket.h"
@@ -33,6 +43,11 @@
         }                                                                                                              \
     } while (0)
 
+/*
+ * Fixture: generates an in-memory TLS certificate for local transport tests.
+ * It avoids external certificate files while exercising OpenSSL ownership and
+ * handshake setup.
+ */
 static int make_test_certificate(EVP_PKEY** key, X509** cert)
 {
     X509_NAME* name = NULL;
@@ -66,6 +81,11 @@ static int make_test_certificate(EVP_PKEY** key, X509** cert)
     return X509_sign(*cert, *key, EVP_sha256()) > 0;
 }
 
+/*
+ * Fixture: runs a local TLS peer for deterministic read/write coverage. It
+ * validates TLS shutdown and descriptor lifetime without external network
+ * dependencies.
+ */
 static int run_tls_server(int fd, EVP_PKEY* key, X509* cert)
 {
     SSL_CTX* context = NULL;
@@ -106,6 +126,10 @@ out:
     return ok;
 }
 
+/*
+ * Coverage: validates low-level UDP and UDP2 packet parser/writer vectors with
+ * malformed padding, ACK, correlation, and sequence fields.
+ */
 static int test_udp_transport_protocols(void)
 {
     const uint8_t payload[] = {0xaa, 0xbb, 0xcc, 0xdd};
@@ -503,6 +527,10 @@ static int test_udp_transport_protocols(void)
     return 0;
 }
 
+/*
+ * Coverage: validates multitransport protocol records, request IDs, security
+ * fields, and malformed packet rejection.
+ */
 static int test_multitransport_protocol(void)
 {
     uint8_t cookie[RDP_MULTITRANSPORT_COOKIE_LENGTH];
@@ -606,6 +634,10 @@ static int test_multitransport_protocol(void)
     return 0;
 }
 
+/*
+ * Coverage: validates TCP/TLS transport setup, local socket I/O, timeout
+ * handling, EOF behavior, and transport-owned resource lifetime.
+ */
 int test_transport(void)
 {
     int pair[2] = {-1, -1};

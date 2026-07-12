@@ -2,6 +2,17 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: fuzz target for AVC chroma reconstruction and optional decoder
+ * conversion paths.
+ * Coverage: feeds arbitrary bytes through parser, decoder, and writer paths
+ * selected by this target.
+ * Bug classes: malformed PDU bounds, integer overflows, state-independent
+ * decoder edge cases, and cleanup lifetime.
+ * Determinism: no network, clock, filesystem mutation, or host backend
+ * dependency is used by the fuzz entrypoint.
+ */
+
 
 #include "graphics/avc.h"
 
@@ -13,6 +24,12 @@ static uint8_t fuzz_byte(const uint8_t* data, size_t size, size_t index)
     return size == 0 ? 0 : data[index % size];
 }
 
+/*
+ * Fuzz target: exercises AVC chroma reconstruction and optional decoder
+ * conversion paths with one arbitrary input buffer.
+ * Bug classes: truncated payloads, inconsistent length fields, count
+ * overflows, decoder edge cases, and ownership cleanup.
+ */
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     uint8_t aux_y[16u * 16u];

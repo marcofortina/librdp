@@ -2,6 +2,17 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: fuzz target for standalone fuzz harness main used when libFuzzer is
+ * not linked by the compiler.
+ * Coverage: feeds arbitrary bytes through parser, decoder, and writer paths
+ * selected by this target.
+ * Bug classes: malformed PDU bounds, integer overflows, state-independent
+ * decoder edge cases, and cleanup lifetime.
+ * Determinism: no network, clock, filesystem mutation, or host backend
+ * dependency is used by the fuzz entrypoint.
+ */
+
 
 #include <stdint.h>
 #include <stdio.h>

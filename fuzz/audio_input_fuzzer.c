@@ -2,9 +2,25 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: fuzz target for audio input channel parser and writer.
+ * Coverage: feeds arbitrary bytes through parser, decoder, and writer paths
+ * selected by this target.
+ * Bug classes: malformed PDU bounds, integer overflows, state-independent
+ * decoder edge cases, and cleanup lifetime.
+ * Determinism: no network, clock, filesystem mutation, or host backend
+ * dependency is used by the fuzz entrypoint.
+ */
+
 
 #include "channels/audio_input.h"
 
+/*
+ * Fuzz target: exercises audio input channel parser and writer with one
+ * arbitrary input buffer.
+ * Bug classes: truncated payloads, inconsistent length fields, count
+ * overflows, decoder edge cases, and ownership cleanup.
+ */
 int LLVMFuzzerTestOneInput(const unsigned char* data, unsigned long size)
 {
     rdp_audio_input_header header;

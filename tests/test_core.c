@@ -2,6 +2,17 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: core public API, trace, settings, surface, input, and session
+ * lifecycle tests.
+ * Coverage: fixture code builds handshake, bitmap, GDI, and event vectors
+ * without network dependencies except local sockets.
+ * Bug classes: bounds, ownership, callback lifetime, trace filtering, state
+ * transitions, and malformed local fixtures.
+ * Determinism: tests are self-contained and avoid external services unless
+ * using local loopback fixtures.
+ */
+
 
 #include <librdp/librdp.h>
 
@@ -62,6 +73,10 @@ typedef struct event_counter
 } event_counter;
 
 int test_protocol(void);
+/*
+ * Coverage: validates TCP/TLS transport setup, local socket I/O, timeout
+ * handling, EOF behavior, and transport-owned resource lifetime.
+ */
 int test_transport(void);
 
 static void on_event(librdp_session* session, const librdp_event* event, void* user_data)
@@ -240,6 +255,11 @@ static int append_gcc_block(rdp_buffer* buffer, uint16_t type, const rdp_buffer*
            rdp_buffer_append(buffer, payload->data, payload->length) == LIBRDP_STATUS_OK;
 }
 
+/*
+ * Fixture: builds a deterministic MCS/GCC connect response with security
+ * blocks and certificate bytes. It validates handshake parsers, length fields,
+ * and encrypted-path setup without using a real server.
+ */
 static int build_server_connect_response(rdp_buffer* out, int encrypted)
 {
     static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
@@ -477,6 +497,11 @@ static int validate_confirm_active(const uint8_t* input, size_t input_len)
            payload[9] == 0x10;
 }
 
+/*
+ * Fixture: builds bitmap update payloads with explicit rectangle and pixel
+ * lengths. It targets surface invalidation, bounds checks, and malformed
+ * bitmap update handling.
+ */
 static int build_bitmap_update_packet(rdp_buffer* out)
 {
     static const uint8_t pixels[] = {
@@ -542,6 +567,11 @@ static int build_bitmap_update_packet(rdp_buffer* out)
     return ok;
 }
 
+/*
+ * Fixture: builds a slow-path GDI orders update with cache and render
+ * operations. It exercises order sequencing, cache lifetime, and renderer
+ * bounds handling.
+ */
 static int build_gdi_orders_update_packet(rdp_buffer* out)
 {
     static const uint8_t render_opaque[] = {
@@ -689,6 +719,11 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
     return 1;
 }
 
+/*
+ * Fixture: starts a local handshake peer that feeds deterministic protocol
+ * bytes to the client session. It isolates connection state-machine coverage
+ * from external network and credential dependencies.
+ */
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
 {
     int fd = -1;
@@ -868,6 +903,10 @@ static void trace_level_debug_event(void)
     unsetenv("LIBRDP_TRACE_LEVEL");
 }
 
+/*
+ * Coverage: validates trace environment parsing, category filtering, monotonic
+ * formatting, redaction boundaries, and bounded hexdump behavior.
+ */
 static int test_trace(void)
 {
     char output[2048];
@@ -1058,6 +1097,11 @@ static int test_pointer_decode(void)
     return 0;
 }
 
+/*
+ * Coverage: exercises public settings, surface, input, callback, clipboard,
+ * channel, audio, video, and session lifecycle APIs together to catch
+ * ownership and state regressions.
+ */
 static int test_settings_surface_input_session(void)
 {
     librdp_settings* settings = NULL;

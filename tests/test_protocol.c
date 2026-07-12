@@ -2,6 +2,17 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: protocol, channel, graphics, security, and codec conformance
+ * vectors.
+ * Coverage: fixtures synthesize valid and malformed PDUs to exercise parsers,
+ * serializers, decoders, and state machines.
+ * Bug classes: malformed PDU bounds, length overflows, codec edge cases, cache
+ * state, security vectors, and channel lifetime.
+ * Determinism: tests are self-contained and avoid external services unless
+ * using local loopback fixtures.
+ */
+
 
 #include "channels/virtual_channel.h"
 #include "channels/audio_format.h"
@@ -145,6 +156,11 @@ static librdp_status test_rfx_stream_tile(const rdp_rfx_stream_tile* tile, void*
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Fixture: builds counted RemoteFX stream blocks with adjustable invalid
+ * counts and quant indexes. It targets parser bounds, tile routing, and
+ * progressive stream edge cases.
+ */
 static int test_build_rfx_stream_counted(rdp_buffer* out,
                                          uint8_t bad_quant_index,
                                          uint8_t channel_variant,
@@ -263,6 +279,11 @@ static int test_build_rfx_stream(rdp_buffer* out, uint8_t bad_quant_index)
     return test_build_rfx_stream_ex(out, bad_quant_index, 0);
 }
 
+/*
+ * Fixture: appends RemoteFX region and tile-set blocks with caller-controlled
+ * metadata. It validates block length accounting and tile payload ownership in
+ * codec tests.
+ */
 static int test_append_rfx_region_tileset(rdp_buffer* out,
                                           uint16_t rect_x,
                                           uint16_t rect_y,
@@ -474,6 +495,10 @@ static int test_session_selection_and_echo(void)
     return 0;
 }
 
+/*
+ * Coverage: validates serial and parallel redirection parsers, IOCTL
+ * filtering, and request serialization against malformed port payloads.
+ */
 static int test_port_redirection_channel(void)
 {
     const uint8_t input[] = {0x80, 0x25, 0x00, 0x00};
@@ -566,6 +591,10 @@ static int test_port_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates camera capability, open, sample request, sample
+ * response, and error paths for bounds and stream-state regressions.
+ */
 static int test_video_capture_channel(void)
 {
     const uint8_t device_name[] = {'C', 0, 'a', 0, 'm', 0};
@@ -844,6 +873,10 @@ static int test_video_capture_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates WebAuthn CBOR/RPC request and response vectors,
+ * including malformed length fields and provider boundary handling.
+ */
 static int test_webauthn_channel(void)
 {
     const uint8_t command_payload[] = {RDP_WEBAUTHN_CMD_MAKE_CREDENTIAL, 0xa0};
@@ -1060,6 +1093,10 @@ static int test_webauthn_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates remote-application order parsing and writing, including
+ * startup, window lifecycle, and shell command payload boundaries.
+ */
 static int test_remote_programs_channel(void)
 {
     const uint8_t exe[] = {'n', 0, 'o', 0, 't', 0, 'e', 0, 'p', 0, 'a', 0, 'd', 0};
@@ -1311,6 +1348,10 @@ static librdp_status test_append_device_io_request(rdp_buffer* buffer,
                                                    0);
 }
 
+/*
+ * Coverage: validates TPKT and X.224 framing, negotiation, and malformed
+ * header handling at the transport/protocol boundary.
+ */
 static int test_tpkt_x224(void)
 {
     rdp_buffer x224;
@@ -1372,6 +1413,10 @@ static int test_tpkt_x224(void)
     return 0;
 }
 
+/*
+ * Coverage: validates MCS, GCC, and capability vectors, including nested
+ * length fields and capability serialization round trips.
+ */
 static int test_mcs_gcc_capabilities(void)
 {
     const uint8_t ber_short[] = {0x7f};
@@ -1599,6 +1644,10 @@ static int test_mcs_gcc_capabilities(void)
     return 0;
 }
 
+/*
+ * Coverage: validates audio input/output format negotiation, data framing, UDP
+ * audio payloads, and channel close semantics.
+ */
 static int test_audio_channels(void)
 {
     static const uint8_t pcm_format[] = {
@@ -2054,6 +2103,11 @@ static int test_audio_channels(void)
     return 0;
 }
 
+/*
+ * Coverage: validates path helpers, security packet vectors, licensing state
+ * transitions, and many channel parsers against malformed lengths and
+ * unsupported values.
+ */
 static int test_path_security_license_channels(void)
 {
     const uint8_t fast_short[] = {0x00, 0x06, 1, 2, 3, 4};
@@ -9710,6 +9764,10 @@ static int test_path_security_license_channels(void)
     return 0;
 }
 
+/*
+ * Coverage: validates device redirection capabilities, announcements, and IRP
+ * parsing for ID lifetime and malformed request boundaries.
+ */
 static int test_device_redirection_channel(void)
 {
     const uint8_t server_announce[] = {
@@ -10049,6 +10107,10 @@ static int test_device_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates filesystem metadata, directory, lock, notify, and
+ * security request vectors with host-independent malformed payload checks.
+ */
 static int test_filesystem_redirection_channel(void)
 {
     const uint8_t path[] = {'f', 0, 'i', 0, 'l', 0, 'e', 0, 0, 0};
@@ -11004,6 +11066,10 @@ static int test_filesystem_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates printer redirection cache, document format detection,
+ * job metadata, and spool payload length handling.
+ */
 static int test_printer_redirection_channel(void)
 {
     const uint8_t driver[] = {'D', 0, 'r', 0, 'v', 0, 0, 0};
@@ -11337,6 +11403,10 @@ static int test_printer_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates telemetry and multiparty parser/writer vectors,
+ * including unknown message rejection and bounded string handling.
+ */
 static int test_telemetry_multiparty_channels(void)
 {
     const uint8_t name[] = {'A', 0};
@@ -11638,6 +11708,10 @@ static int test_telemetry_multiparty_channels(void)
     return 0;
 }
 
+/*
+ * Coverage: validates XPS print package construction and malformed
+ * archive/document metadata handling without invoking external spoolers.
+ */
 static int test_xps_print_channel(void)
 {
     const uint8_t guid[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -11797,6 +11871,10 @@ static int test_xps_print_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates authentication redirection and smartcard PC/SC vectors,
+ * including IOCTL dispatch, cache payloads, and handle-state boundaries.
+ */
 static int test_auth_smartcard_redirection_channels(void)
 {
     const uint8_t call_payload[] = {0xaa, 0xbb, 0xcc};
@@ -13496,6 +13574,10 @@ static int test_auth_smartcard_redirection_channels(void)
     return 0;
 }
 
+/*
+ * Coverage: validates desktop composition parser/writer vectors and surface
+ * metadata bounds independent of a compositor backend.
+ */
 static int test_desktop_composition_channel(void)
 {
     const uint8_t payload[] = {0xde, 0xad, 0xbe, 0xef};
@@ -13734,6 +13816,10 @@ static int test_desktop_composition_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates composited remoting command streams, render-tree
+ * mutations, object lifetime, and damage invalidation vectors.
+ */
 static int test_composited_remoting_channel(void)
 {
     const uint8_t color[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x3f};
@@ -14958,6 +15044,10 @@ static int test_composited_remoting_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates video redirection presentation, media packet, and
+ * stream-state vectors for malformed payload and lifetime bugs.
+ */
 static int test_video_redirection_channel(void)
 {
     const uint8_t guid[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -15403,6 +15493,10 @@ static int test_video_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates video optimized remoting control/data vectors and
+ * presentation request bounds.
+ */
 static int test_video_optimized_channel(void)
 {
     const uint8_t extra[] = {0x67, 0x42, 0xc0, 0x15};
@@ -15601,6 +15695,10 @@ static int test_video_optimized_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates GDI order parsing and rendering vectors across cache,
+ * brush, glyph, bitmap, and raster-operation edge cases.
+ */
 static int test_gdi_orders(void)
 {
     const uint8_t secondary_payload[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -17699,6 +17797,10 @@ static int test_gdi_orders(void)
     return 0;
 }
 
+/*
+ * Coverage: validates USB descriptor, URB, transfer, and completion vectors
+ * with direction, length, and endpoint edge cases.
+ */
 static int test_usb_redirection_channel(void)
 {
     const uint8_t text[] = {'D', 0, 0, 0};
@@ -18267,6 +18369,10 @@ static int test_usb_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates PNP device descriptions, capabilities, and request
+ * vectors for host-device mapping and malformed metadata.
+ */
 static int test_pnp_redirection_channel(void)
 {
     const uint8_t hwid[] = {'H', 0, 'W', 0, 0, 0, 0, 0};
@@ -18514,6 +18620,10 @@ static int test_pnp_redirection_channel(void)
     return 0;
 }
 
+/*
+ * Coverage: validates multitransport request/response vectors and correlation
+ * fields without external transport negotiation.
+ */
 static int test_multitransport(void)
 {
     const uint8_t autodetect_payload[] = {0x01u, 0x02u, 0x03u};
@@ -18617,6 +18727,10 @@ static int test_multitransport(void)
     return 0;
 }
 
+/*
+ * Coverage: validates UDP transport packet vectors, sequence state, FEC/ACK
+ * framing, and malformed datagram rejection.
+ */
 static int test_udp_transport(void)
 {
     const uint8_t ack_payload[] = {0xaau, 0xbbu, 0xccu};
