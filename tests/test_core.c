@@ -1384,18 +1384,21 @@ static int reserve_closed_loopback_port(uint16_t* port)
  * bytes to the client session. It isolates connection state-machine coverage
  * from external network and credential dependencies.
  */
-static int start_handshake_server_ex(uint16_t* port,
-                                     pid_t* child_pid,
-                                     int encrypted,
-                                     uint32_t error_info,
-                                     int extra_static_channel,
-                                     int client_dynamic_channel_open_response)
+static int start_handshake_server_multi(uint16_t* port,
+                                        pid_t* child_pid,
+                                        int encrypted,
+                                        uint32_t error_info,
+                                        int extra_static_channel,
+                                        int client_dynamic_channel_open_response,
+                                        int connection_count)
 {
     int fd = -1;
     struct sockaddr_in addr;
     socklen_t addr_len = (socklen_t)sizeof(addr);
 
     if (!port || !child_pid)
+        return 0;
+    if (connection_count <= 0 || connection_count > 4)
         return 0;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1409,7 +1412,7 @@ static int start_handshake_server_ex(uint16_t* port,
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0 ||
         getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0 ||
-        listen(fd, 1) != 0)
+        listen(fd, connection_count) != 0)
     {
         close(fd);
         return 0;
@@ -1425,20 +1428,6 @@ static int start_handshake_server_ex(uint16_t* port,
 
     if (*child_pid == 0)
     {
-        uint8_t input[4096];
-        size_t input_len = 0;
-        rdp_buffer mcs_response;
-        rdp_buffer demand_active;
-        rdp_buffer bitmap_update;
-        rdp_buffer gdi_orders_update;
-        rdp_buffer dvc_create;
-        rdp_buffer dvc_data_first;
-        rdp_buffer dvc_data;
-        rdp_buffer dvc_close;
-        rdp_buffer dvc_create_response;
-        rdp_buffer static_first;
-        rdp_buffer static_last;
-        rdp_buffer error_update;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
             0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1471,21 +1460,40 @@ static int start_handshake_server_ex(uint16_t* port,
             0x3e, 0x00, 0x00, 0x03, 0x03, 0xee, 0x03, 0xee
         };
         struct timespec ts;
-        int client = accept(fd, NULL, NULL);
-        rdp_buffer_init(&mcs_response);
-        rdp_buffer_init(&demand_active);
-        rdp_buffer_init(&bitmap_update);
-        rdp_buffer_init(&gdi_orders_update);
-        rdp_buffer_init(&dvc_create);
-        rdp_buffer_init(&dvc_data_first);
-        rdp_buffer_init(&dvc_data);
-        rdp_buffer_init(&dvc_close);
-        rdp_buffer_init(&dvc_create_response);
-        rdp_buffer_init(&static_first);
-        rdp_buffer_init(&static_last);
-        rdp_buffer_init(&error_update);
-        if (client >= 0)
+        int connection = 0;
+
+        for (connection = 0; connection < connection_count; connection++)
         {
+            uint8_t input[4096];
+            size_t input_len = 0;
+            rdp_buffer mcs_response;
+            rdp_buffer demand_active;
+            rdp_buffer bitmap_update;
+            rdp_buffer gdi_orders_update;
+            rdp_buffer dvc_create;
+            rdp_buffer dvc_data_first;
+            rdp_buffer dvc_data;
+            rdp_buffer dvc_close;
+            rdp_buffer dvc_create_response;
+            rdp_buffer static_first;
+            rdp_buffer static_last;
+            rdp_buffer error_update;
+            int client = accept(fd, NULL, NULL);
+
+            rdp_buffer_init(&mcs_response);
+            rdp_buffer_init(&demand_active);
+            rdp_buffer_init(&bitmap_update);
+            rdp_buffer_init(&gdi_orders_update);
+            rdp_buffer_init(&dvc_create);
+            rdp_buffer_init(&dvc_data_first);
+            rdp_buffer_init(&dvc_data);
+            rdp_buffer_init(&dvc_close);
+            rdp_buffer_init(&dvc_create_response);
+            rdp_buffer_init(&static_first);
+            rdp_buffer_init(&static_last);
+            rdp_buffer_init(&error_update);
+            if (client < 0)
+                _exit(6);
             if (!build_server_connect_response(&mcs_response, encrypted, extra_static_channel))
                 _exit(1);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
@@ -1557,25 +1565,41 @@ static int start_handshake_server_ex(uint16_t* port,
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);
             close(client);
+            rdp_buffer_free(&error_update);
+            rdp_buffer_free(&static_last);
+            rdp_buffer_free(&static_first);
+            rdp_buffer_free(&dvc_close);
+            rdp_buffer_free(&dvc_create_response);
+            rdp_buffer_free(&dvc_data);
+            rdp_buffer_free(&dvc_data_first);
+            rdp_buffer_free(&dvc_create);
+            rdp_buffer_free(&gdi_orders_update);
+            rdp_buffer_free(&bitmap_update);
+            rdp_buffer_free(&demand_active);
+            rdp_buffer_free(&mcs_response);
         }
-        rdp_buffer_free(&error_update);
-        rdp_buffer_free(&static_last);
-        rdp_buffer_free(&static_first);
-        rdp_buffer_free(&dvc_close);
-        rdp_buffer_free(&dvc_create_response);
-        rdp_buffer_free(&dvc_data);
-        rdp_buffer_free(&dvc_data_first);
-        rdp_buffer_free(&dvc_create);
-        rdp_buffer_free(&gdi_orders_update);
-        rdp_buffer_free(&bitmap_update);
-        rdp_buffer_free(&demand_active);
-        rdp_buffer_free(&mcs_response);
         close(fd);
         _exit(0);
     }
 
     close(fd);
     return 1;
+}
+
+static int start_handshake_server_ex(uint16_t* port,
+                                     pid_t* child_pid,
+                                     int encrypted,
+                                     uint32_t error_info,
+                                     int extra_static_channel,
+                                     int client_dynamic_channel_open_response)
+{
+    return start_handshake_server_multi(port,
+                                        child_pid,
+                                        encrypted,
+                                        error_info,
+                                        extra_static_channel,
+                                        client_dynamic_channel_open_response,
+                                        1);
 }
 
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
@@ -3353,6 +3377,59 @@ static int test_reconnect_policy(void)
     return 0;
 }
 
+/*
+ * Coverage: validates reconnect success against a deterministic loopback peer
+ * that accepts two handshakes on the same listener. It catches stale state,
+ * missed activation transitions, and reconnect metrics drift without requiring
+ * an external desktop endpoint.
+ */
+static int test_reconnect_success(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_reconnect_policy policy;
+    librdp_metrics metrics;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port, &server_pid, 0, 0, 0, 0, 2));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
+    for (i = 0; i < 6u; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+
+    CHECK(librdp_reconnect_policy_init(&policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_reconnect(session, &policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
+    for (i = 0; i < 6u; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.reconnects == 1);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
 int test_common(void)
 {
     if (test_trace() != 0)
@@ -3375,6 +3452,8 @@ int test_client_core(void)
     if (test_static_channels() != 0)
         return 1;
     if (test_reconnect_policy() != 0)
+        return 1;
+    if (test_reconnect_success() != 0)
         return 1;
     return test_settings_surface_input_session();
 }
