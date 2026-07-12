@@ -52,7 +52,9 @@ endif()
 file(WRITE "${archive_dir}/bad-license.c"
     "/*\n"
     " * Copyright (C) 2026 Marco Fortina\n"
-    " * SPDX-License-Identifier: AGPL-3.0-only\n"
+    " * SPDX-License"
+    "-Identifier: AGPL-3.0"
+    "-only\n"
     " */\n"
     "int bad_license_fixture(void) { return 0; }\n"
 )
