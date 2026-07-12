@@ -15347,16 +15347,21 @@ static librdp_status rdp_session_dynamic_channel_add(librdp_session* session,
     if (!session || !request || !request->name)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    entry = rdp_session_dynamic_channel_find(session, request->channel_id);
-    if (!entry)
+    entry = rdp_session_dynamic_channel_find_any(session, request->channel_id);
+    if (entry)
     {
-        for (i = 0; i < session->limits.dynamic_channel_count; i++)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.drdynvc.create.failed",
+                        "channel_id=%u reason=duplicate",
+                        request->channel_id);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    for (i = 0; i < session->limits.dynamic_channel_count; i++)
+    {
+        if (!session->dynamic_channels[i].active && !session->dynamic_channels[i].opening)
         {
-            if (!session->dynamic_channels[i].active)
-            {
-                entry = &session->dynamic_channels[i];
-                break;
-            }
+            entry = &session->dynamic_channels[i];
+            break;
         }
     }
     if (!entry)
