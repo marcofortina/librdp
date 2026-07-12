@@ -88,6 +88,7 @@
 #include <limits.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -594,6 +595,12 @@ typedef struct rdp_session_clipboard_file_request
 } rdp_session_clipboard_file_request;
 
 static librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* out, uint8_t append_null);
+static void rdp_session_set_last_error(librdp_session* session,
+                                       librdp_status status,
+                                       int system_error,
+                                       librdp_error_component component,
+                                       const char* phase,
+                                       const char* message);
 
 struct librdp_session
 {
@@ -829,6 +836,9 @@ struct librdp_session
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
     librdp_error last_error;
+    pthread_mutex_t owner_mutex;
+    pthread_t owner_thread;
+    uint8_t owner_thread_valid;
     short pending_tcp_revents;
     short pending_wakeup_revents;
     short pending_udp_revents;
@@ -862,6 +872,65 @@ struct librdp_session
     uint64_t trace_sequence;
     uint64_t trace_first_ns;
 };
+
+static librdp_status rdp_session_owner_violation(librdp_session* session, const char* phase)
+{
+    rdp_session_set_last_error(session,
+                               LIBRDP_STATUS_STATE,
+                               0,
+                               LIBRDP_ERROR_COMPONENT_CLIENT,
+                               phase ? phase : "client.owner_thread",
+                               "session API called from non-owner thread");
+    return LIBRDP_STATUS_STATE;
+}
+
+static librdp_status rdp_session_bind_owner(librdp_session* session, const char* phase)
+{
+    pthread_t self;
+    int violation = 0;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    self = pthread_self();
+    (void)pthread_mutex_lock(&session->owner_mutex);
+    if (!session->owner_thread_valid)
+    {
+        session->owner_thread = self;
+        session->owner_thread_valid = 1;
+    }
+    else if (!pthread_equal(session->owner_thread, self))
+        violation = 1;
+    (void)pthread_mutex_unlock(&session->owner_mutex);
+
+    if (violation)
+        return rdp_session_owner_violation(session, phase);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_require_owner(librdp_session* session, const char* phase)
+{
+    pthread_t self;
+    int violation = 0;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    self = pthread_self();
+    (void)pthread_mutex_lock(&session->owner_mutex);
+    if (session->owner_thread_valid && !pthread_equal(session->owner_thread, self))
+        violation = 1;
+    (void)pthread_mutex_unlock(&session->owner_mutex);
+
+    if (violation)
+        return rdp_session_owner_violation(session, phase);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_require_owner_const(const librdp_session* session, const char* phase)
+{
+    return rdp_session_require_owner((librdp_session*)session, phase);
+}
 
 /*
  * Event envelopes expose only the active legacy union member and its exact
@@ -30541,6 +30610,14 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
 
     session->state = LIBRDP_SESSION_IDLE;
     session->lifecycle = LIBRDP_LIFECYCLE_NEW;
+    if (pthread_mutex_init(&session->owner_mutex, NULL) != 0)
+    {
+        rdp_session_wakeup_close(session);
+        librdp_surface_free(session->surface);
+        librdp_settings_free(session->settings);
+        free(session);
+        return NULL;
+    }
     session->gdi_current_surface_id = RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE;
     session->requested_desktop_width = librdp_settings_width(session->settings);
     session->requested_desktop_height = librdp_settings_height(session->settings);
@@ -30577,6 +30654,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         rdp_graphics_decompressor_free(&session->graphics_decompressor);
         rdp_transport_close(&session->transport);
         rdp_session_wakeup_close(session);
+        pthread_mutex_destroy(&session->owner_mutex);
         librdp_surface_free(session->surface);
         librdp_settings_free(session->settings);
         free(session);
@@ -30641,12 +30719,15 @@ void librdp_session_free(librdp_session* session)
     rdp_session_trace_policy_clear(session);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
+    pthread_mutex_destroy(&session->owner_mutex);
     free(session);
 }
 
 void librdp_session_set_event_callback(librdp_session* session, librdp_event_callback callback, void* user_data)
 {
     if (!session)
+        return;
+    if (rdp_session_require_owner(session, "client.callback.event") != LIBRDP_STATUS_OK)
         return;
     session->callback = callback;
     session->callback_data = user_data;
@@ -30668,6 +30749,8 @@ void librdp_session_set_event_envelope_callback(librdp_session* session,
 {
     if (!session)
         return;
+    if (rdp_session_require_owner(session, "client.callback.envelope") != LIBRDP_STATUS_OK)
+        return;
     session->envelope_callback = callback;
     session->envelope_callback_data = user_data;
 }
@@ -30677,6 +30760,8 @@ void librdp_session_set_graphics_callback(librdp_session* session,
                                           void* user_data)
 {
     if (!session)
+        return;
+    if (rdp_session_require_owner(session, "client.callback.graphics") != LIBRDP_STATUS_OK)
         return;
     session->graphics_callback = callback;
     session->graphics_callback_data = user_data;
@@ -30688,6 +30773,8 @@ void librdp_session_set_pointer_callback(librdp_session* session,
 {
     if (!session)
         return;
+    if (rdp_session_require_owner(session, "client.callback.pointer") != LIBRDP_STATUS_OK)
+        return;
     session->pointer_callback = callback;
     session->pointer_callback_data = user_data;
 }
@@ -30697,6 +30784,8 @@ void librdp_session_set_channel_callback(librdp_session* session,
                                          void* user_data)
 {
     if (!session)
+        return;
+    if (rdp_session_require_owner(session, "client.callback.channel") != LIBRDP_STATUS_OK)
         return;
     session->channel_callback = callback;
     session->channel_callback_data = user_data;
@@ -30708,6 +30797,8 @@ void librdp_session_set_clipboard_callback(librdp_session* session,
 {
     if (!session)
         return;
+    if (rdp_session_require_owner(session, "client.callback.clipboard") != LIBRDP_STATUS_OK)
+        return;
     session->clipboard_callback = callback;
     session->clipboard_callback_data = user_data;
 }
@@ -30718,6 +30809,8 @@ void librdp_session_set_audio_callback(librdp_session* session,
 {
     if (!session)
         return;
+    if (rdp_session_require_owner(session, "client.callback.audio") != LIBRDP_STATUS_OK)
+        return;
     session->audio_callback = callback;
     session->audio_callback_data = user_data;
 }
@@ -30727,6 +30820,8 @@ void librdp_session_set_video_callback(librdp_session* session,
                                        void* user_data)
 {
     if (!session)
+        return;
+    if (rdp_session_require_owner(session, "client.callback.video") != LIBRDP_STATUS_OK)
         return;
     session->video_callback = callback;
     session->video_callback_data = user_data;
@@ -30766,6 +30861,8 @@ librdp_status librdp_session_set_trace_policy(librdp_session* session, const lib
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_session_require_owner(session, "client.trace.policy") != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_STATE;
     if (!policy)
     {
         rdp_session_trace_policy_clear(session);
@@ -30878,6 +30975,9 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_bind_owner(session, "client.connect.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (session->state != LIBRDP_SESSION_IDLE && session->state != LIBRDP_SESSION_CLOSED &&
         session->state != LIBRDP_SESSION_FAILED && session->state != LIBRDP_SESSION_CANCELLED)
     {
@@ -33075,6 +33175,9 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
 
     if (!session)
         return rdp_session_run_once_inner(session, timeout_ms);
+    status = rdp_session_bind_owner(session, "client.dispatch.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_run_once_inner(session, timeout_ms);
     rdp_session_trace_scope_end(session);
@@ -33104,6 +33207,9 @@ librdp_status librdp_session_get_pollfds(librdp_session* session,
 
     if (!count)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.pollfds.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -33126,6 +33232,9 @@ librdp_status librdp_session_notify_poll(librdp_session* session, const struct p
 
     if (!fds || count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.notify_poll.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -33160,8 +33269,11 @@ librdp_status librdp_session_notify_poll(librdp_session* session, const struct p
 
 librdp_status librdp_session_dispatch_pending(librdp_session* session)
 {
-    librdp_status status = rdp_session_require_pollable(session);
+    librdp_status status = rdp_session_bind_owner(session, "client.dispatch_pending.owner");
 
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (!session->pending_poll &&
@@ -33176,6 +33288,9 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
 
     if (!timeout_ms)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner_const(session, "client.next_timeout.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -33351,6 +33466,9 @@ librdp_status librdp_session_disconnect(librdp_session* session)
 
     if (!session)
         return rdp_session_disconnect_inner(session);
+    status = rdp_session_require_owner(session, "client.disconnect.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_disconnect_inner(session);
     rdp_session_trace_scope_end(session);
@@ -33363,6 +33481,9 @@ librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uin
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.resize.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     status = rdp_session_request_display_control_layout(session, width, height);
     return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_OK : status;
@@ -33380,6 +33501,9 @@ librdp_status librdp_session_set_display_layout(librdp_session* session,
 
     if (!session || !monitors || monitor_count == 0 || monitor_count > LIBRDP_DISPLAY_MAX_MONITORS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.display_layout.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     memset(internal, 0, sizeof(internal));
     status = rdp_session_copy_display_monitors(internal, monitors, monitor_count);
     if (status == LIBRDP_STATUS_OK)
@@ -33427,6 +33551,9 @@ librdp_status librdp_session_refresh(librdp_session* session, uint32_t x, uint32
     if (!session || width == 0 || height == 0 || x > 0xffffu || y > 0xffffu ||
         width > 0xffffu || height > 0xffffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.refresh.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (x + width - 1u > 0xffffu || y + height - 1u > 0xffffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
@@ -33535,6 +33662,9 @@ librdp_status librdp_session_clipboard_set_data(librdp_session* session,
 
     if (!session || format_id == 0 || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.clipboard.set_data.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (data_len > session->limits.dynamic_channel_message_bytes)
         return rdp_session_limit_rejected(session);
 
@@ -33568,6 +33698,9 @@ librdp_status librdp_session_clipboard_set_files(librdp_session* session,
 
     if (!session || !files || count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.clipboard.set_files.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (count > session->limits.clipboard_files)
         return rdp_session_limit_rejected(session);
     rdp_session_clipboard_local_clear(session);
@@ -33591,8 +33724,13 @@ librdp_status librdp_session_clipboard_set_files(librdp_session* session,
 
 librdp_status librdp_session_clipboard_clear(librdp_session* session)
 {
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.clipboard.clear.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_session_clipboard_local_clear(session);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.clipboard.local_clear", "formats=0");
     return rdp_session_send_clipboard_format_list(session);
@@ -33605,6 +33743,9 @@ librdp_status librdp_session_clipboard_request_data(librdp_session* session, uin
 
     if (!session || format_id == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.clipboard.request_data.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (!session->clipboard_ready || session->clipboard_channel_id == 0)
         return LIBRDP_STATUS_STATE;
 
@@ -33636,6 +33777,9 @@ static librdp_status rdp_session_clipboard_request_file(librdp_session* session,
 
     if (!session || stream_id == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.clipboard.request_file.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (flags == RDP_CLIPBOARD_FILECONTENTS_RANGE &&
         requested == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -33763,6 +33907,9 @@ librdp_status librdp_session_channel_send(librdp_session* session,
 
     if (!session || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.channel.send.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (data_len > session->limits.dynamic_channel_message_bytes)
         return rdp_session_limit_rejected(session);
     status = rdp_session_require_user_channel(session, channel_id, &entry);
@@ -33788,8 +33935,10 @@ librdp_status librdp_session_channel_close(librdp_session* session, librdp_chann
 {
     rdp_session_dynamic_channel* entry = NULL;
     rdp_buffer close_pdu;
-    librdp_status status = rdp_session_require_user_channel(session, channel_id, &entry);
+    librdp_status status = rdp_session_require_owner(session, "client.channel.close.owner");
 
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_require_user_channel(session, channel_id, &entry);
     if (status != LIBRDP_STATUS_OK)
         return status;
     rdp_buffer_init(&close_pdu);
@@ -33815,8 +33964,10 @@ librdp_status librdp_session_channel_close(librdp_session* session, librdp_chann
 librdp_status librdp_session_audio_input_open_reply(librdp_session* session, uint32_t result)
 {
     rdp_buffer reply;
-    librdp_status status = rdp_session_require_audio_input_channel(session);
+    librdp_status status = rdp_session_require_owner(session, "client.audio_input.open_reply.owner");
 
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_require_audio_input_channel(session);
     rdp_buffer_init(&reply);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_session_send_audio_input_incoming(session);
@@ -33845,6 +33996,9 @@ librdp_status librdp_session_audio_input_send_data(librdp_session* session, cons
 
     if ((!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.audio_input.data.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (session && data_len > session->limits.dynamic_channel_message_bytes)
         return rdp_session_limit_rejected(session);
     status = rdp_session_require_audio_input_channel(session);
@@ -33872,8 +34026,10 @@ librdp_status librdp_session_audio_input_send_data(librdp_session* session, cons
 librdp_status librdp_session_audio_input_send_format_change(librdp_session* session, uint32_t new_format)
 {
     rdp_buffer pdu;
-    librdp_status status = rdp_session_require_audio_input_channel(session);
+    librdp_status status = rdp_session_require_owner(session, "client.audio_input.format.owner");
 
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_require_audio_input_channel(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (!session->audio_input_ready)
@@ -33902,6 +34058,9 @@ librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
 
     if (!session || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.video_capture.sample.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (data_len > session->limits.frame_bytes)
         return rdp_session_limit_rejected(session);
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
@@ -33925,6 +34084,11 @@ librdp_status librdp_session_video_capture_send_error(librdp_session* session,
 {
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    {
+        librdp_status status = rdp_session_require_owner(session, "client.video_capture.error.owner");
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
     if (session->video_capture_channel_id == 0 || session->video_capture_channel_id_bytes == 0 ||
@@ -34142,6 +34306,9 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
 
     if (!session)
         return rdp_session_send_key_inner(session, key);
+    status = rdp_session_require_owner(session, "client.input.key.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_send_key_inner(session, key);
     rdp_session_trace_scope_end(session);
@@ -34243,6 +34410,9 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
 
     if (!session)
         return rdp_session_send_mouse_inner(session, mouse);
+    status = rdp_session_require_owner(session, "client.input.mouse.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_session_trace_scope_begin(session, &trace_scope);
     status = rdp_session_send_mouse_inner(session, mouse);
     rdp_session_trace_scope_end(session);
@@ -34262,6 +34432,9 @@ librdp_status librdp_session_send_touch(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.input.touch.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_validate_touch_frames(frames,
                                                frame_count,
                                                RDP_INPUT_CHANNEL_MAX_FRAME_CONTACTS);
@@ -34338,6 +34511,9 @@ librdp_status librdp_session_send_pen(librdp_session* session,
 
     if (!session || !frames || frame_count == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.input.pen.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_session_validate_pen_frames(frames, frame_count);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -34399,8 +34575,10 @@ librdp_status librdp_session_send_pen(librdp_session* session,
 librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t contact_id)
 {
     rdp_buffer input;
-    librdp_status status = rdp_session_require_input_channel(session);
+    librdp_status status = rdp_session_require_owner(session, "client.input.dismiss_touch.owner");
 
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_require_input_channel(session);
     rdp_buffer_init(&input);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_input_channel_write_dismiss_hovering(&input, contact_id);
@@ -34435,6 +34613,8 @@ librdp_status librdp_session_get_metrics(const librdp_session* session, librdp_m
     if (!session || !metrics || metrics->version != LIBRDP_METRICS_VERSION ||
         metrics->size < sizeof(*metrics))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_session_require_owner_const(session, "client.metrics.get.owner") != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_STATE;
     *metrics = session->metrics;
     metrics->version = LIBRDP_METRICS_VERSION;
     metrics->size = (uint32_t)sizeof(*metrics);
@@ -34445,6 +34625,11 @@ librdp_status librdp_session_reset_metrics(librdp_session* session)
 {
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    {
+        librdp_status status = rdp_session_require_owner(session, "client.metrics.reset.owner");
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
     return librdp_metrics_init(&session->metrics);
 }
 
@@ -34455,7 +34640,7 @@ const librdp_error* librdp_session_last_error(const librdp_session* session)
 
 void librdp_session_clear_last_error(librdp_session* session)
 {
-    if (session)
+    if (session && rdp_session_require_owner(session, "client.error.clear.owner") == LIBRDP_STATUS_OK)
         rdp_error_clear(&session->last_error);
 }
 
@@ -34509,6 +34694,9 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
 
     if (!session || !status)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rc = rdp_session_require_owner_const(session, "client.feature_status.owner");
+    if (rc != LIBRDP_STATUS_OK)
+        return rc;
 
     rc = librdp_settings_get_feature_status(session->settings, feature, status);
     if (rc != LIBRDP_STATUS_OK)

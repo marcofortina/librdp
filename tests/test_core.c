@@ -96,6 +96,7 @@ typedef struct domain_event_capture
     int clipboard;
     int audio;
     int video;
+    int reentrant_metrics;
     int invalid;
 } domain_event_capture;
 
@@ -128,6 +129,12 @@ typedef struct cancel_thread_capture
     unsigned delay_ms;
     librdp_status status;
 } cancel_thread_capture;
+
+typedef struct owner_thread_capture
+{
+    librdp_session* session;
+    librdp_status status;
+} owner_thread_capture;
 
 int test_protocol(void);
 /*
@@ -247,7 +254,7 @@ static void on_event_envelope(librdp_session* session, const librdp_event_envelo
 static void on_domain_event(librdp_session* session, const librdp_event_envelope* envelope, void* user_data)
 {
     domain_event_capture* capture = (domain_event_capture*)user_data;
-    (void)session;
+    librdp_metrics metrics;
 
     if (!capture || !envelope || envelope->version != LIBRDP_EVENT_ENVELOPE_VERSION ||
         envelope->size < sizeof(*envelope) || !envelope->legacy_event ||
@@ -257,6 +264,9 @@ static void on_domain_event(librdp_session* session, const librdp_event_envelope
             capture->invalid++;
         return;
     }
+    if (librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK &&
+        librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK)
+        capture->reentrant_metrics++;
 
     switch (envelope->type)
     {
@@ -309,6 +319,16 @@ static void* cancel_thread_main(void* user_data)
     ts.tv_nsec = (long)capture->delay_ms * 1000000L;
     (void)nanosleep(&ts, NULL);
     capture->status = librdp_session_cancel(capture->session);
+    return NULL;
+}
+
+static void* owner_thread_main(void* user_data)
+{
+    owner_thread_capture* capture = (owner_thread_capture*)user_data;
+
+    if (!capture)
+        return NULL;
+    capture->status = librdp_session_refresh(capture->session, 0, 0, 1, 1);
     return NULL;
 }
 
@@ -1631,7 +1651,9 @@ static int test_settings_surface_input_session(void)
     secure_string_capture secure_capture;
     credentials_provider_capture credentials_capture;
     cancel_thread_capture cancel_capture;
+    owner_thread_capture owner_capture;
     pthread_t cancel_thread;
+    pthread_t owner_thread;
     char trace_file_path[] = "/tmp/librdp-trace-XXXXXX";
     event_counter counter;
     uint16_t test_port = 0;
@@ -1649,6 +1671,7 @@ static int test_settings_surface_input_session(void)
     memset(&secure_capture, 0, sizeof(secure_capture));
     memset(&credentials_capture, 0, sizeof(credentials_capture));
     memset(&cancel_capture, 0, sizeof(cancel_capture));
+    memset(&owner_capture, 0, sizeof(owner_capture));
 
     for (size_t i = 0; i < sizeof(status_cases) / sizeof(status_cases[0]); i++)
     {
@@ -2510,6 +2533,16 @@ static int test_settings_surface_input_session(void)
     CHECK(domain_capture.clipboard == 0);
     CHECK(domain_capture.audio == 0);
     CHECK(domain_capture.video == 0);
+    CHECK(domain_capture.reentrant_metrics == domain_capture.graphics + domain_capture.pointer);
+    owner_capture.session = session;
+    owner_capture.status = LIBRDP_STATUS_OK;
+    CHECK(pthread_create(&owner_thread, NULL, owner_thread_main, &owner_capture) == 0);
+    CHECK(pthread_join(owner_thread, NULL) == 0);
+    CHECK(owner_capture.status == LIBRDP_STATUS_STATE);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_STATE);
+    CHECK(error_info.phase != NULL && strcmp(error_info.phase, "client.refresh.owner") == 0);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
