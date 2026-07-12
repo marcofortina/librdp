@@ -71,6 +71,7 @@ struct x11_pipewire_audio
 
 #define X11_PIPEWIRE_RING_BYTES (4u * 1024u * 1024u)
 
+#ifdef LIBRDP_HAVE_PIPEWIRE
 static void x11_audio_ring_free(x11_audio_ring* ring)
 {
     if (!ring)
@@ -149,6 +150,7 @@ static size_t x11_audio_ring_read(x11_audio_ring* ring, uint8_t* data, size_t le
     ring->size -= length;
     return length;
 }
+#endif
 
 #ifdef LIBRDP_HAVE_PIPEWIRE
 static int x11_pipewire_map_format(const librdp_audio_format* format,

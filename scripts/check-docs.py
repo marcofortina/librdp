@@ -58,8 +58,8 @@ DOC_OPTION_RE = re.compile(r"--[a-z0-9-]+")
 NON_VIEWER_OPTIONS = {
     "--build",
 }
-CMAKE_OPTION_RE = re.compile(r"option\((LIBRDP_BUILD_[A-Z0-9_]+)\b")
-DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_BUILD_[A-Z0-9_]+")
+CMAKE_OPTION_RE = re.compile(r"(?:option|librdp_feature_option)\((LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+)\b")
+DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+")
 FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c)\)")
 PATH_IN_BACKTICKS_RE = re.compile(r"`([^`]+)`")
 MANPAGE_RE = re.compile(r"^docs/man/(.+)\.(\d)$")

@@ -2940,6 +2940,7 @@ static uint32_t rdp_session_read_u32_le_raw(const uint8_t* data)
            ((uint32_t)data[3] << 24);
 }
 
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
 static void rdp_session_write_u32_le_raw(uint8_t* data, uint32_t value)
 {
     if (!data)
@@ -2949,6 +2950,7 @@ static void rdp_session_write_u32_le_raw(uint8_t* data, uint32_t value)
     data[2] = (uint8_t)((value >> 16) & 0xffu);
     data[3] = (uint8_t)((value >> 24) & 0xffu);
 }
+#endif
 
 static uint16_t rdp_session_read_u16_le_raw(const uint8_t* data)
 {
@@ -3707,12 +3709,14 @@ static librdp_status rdp_session_write_file_u32_information(rdp_buffer* buffer,
     return status;
 }
 
+#if defined(RDP_HAVE_ATTR) && defined(__linux__)
 static size_t rdp_session_file_ea_entry_stride(size_t name_len, size_t value_len)
 {
     size_t length = 8u + name_len + 1u + value_len;
 
     return (length + 3u) & ~(size_t)3u;
 }
+#endif
 
 static librdp_status rdp_session_file_ea_size(int fd, uint32_t* ea_size)
 {
@@ -18596,6 +18600,7 @@ static const char* rdp_session_webauthn_mock_path(const librdp_session* session)
     return provider + 5u;
 }
 
+#if defined(RDP_HAVE_FIDO2) && defined(__linux__)
 static const char* rdp_session_webauthn_fido2_requested_path(const librdp_session* session)
 {
     const char* provider = rdp_session_webauthn_provider(session);
@@ -18604,6 +18609,7 @@ static const char* rdp_session_webauthn_fido2_requested_path(const librdp_sessio
         return NULL;
     return provider + 6u;
 }
+#endif
 
 typedef struct rdp_session_webauthn_fido2_device
 {
@@ -20200,6 +20206,7 @@ typedef struct rdp_session_usb_os_feature_request
     uint32_t data_len;
 } rdp_session_usb_os_feature_request;
 
+#ifdef RDP_HAVE_LIBUSB
 static uint16_t rdp_session_usb_read_u16_le_unaligned(const uint8_t* data)
 {
     if (!data)
@@ -20431,6 +20438,7 @@ static librdp_status rdp_session_usb_parse_os_feature_request(
     }
     return LIBRDP_STATUS_OK;
 }
+#endif
 
 static uint32_t rdp_session_usb_port_status(const librdp_session* session, uint32_t interface_id)
 {

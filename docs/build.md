@@ -38,6 +38,21 @@ The build does not require optional libraries unless the feature or viewer path 
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 
+Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the dependency when available, `ON` requires it during configuration, and `OFF` skips discovery and leaves the backend disabled.
+
+- `LIBRDP_WITH_FFMPEG_AVC=AUTO|ON|OFF`: FFmpeg AVC decoder backend.
+- `LIBRDP_WITH_OPENH264_AVC=AUTO|ON|OFF`: OpenH264 AVC decoder backend.
+- `LIBRDP_WITH_PCSC=AUTO|ON|OFF`: PC/SC smartcard backend.
+- `LIBRDP_WITH_LIBUSB=AUTO|ON|OFF`: libusb device backend.
+- `LIBRDP_WITH_FIDO2=AUTO|ON|OFF`: FIDO2 authenticator backend.
+- `LIBRDP_WITH_CBOR=AUTO|ON|OFF`: CBOR helpers for WebAuthn data.
+- `LIBRDP_WITH_CUPS=AUTO|ON|OFF`: CUPS printer backend.
+- `LIBRDP_WITH_ACL=AUTO|ON|OFF`: POSIX ACL filesystem metadata backend.
+- `LIBRDP_WITH_ATTR=AUTO|ON|OFF`: extended attribute filesystem metadata backend.
+- `LIBRDP_WITH_ARCHIVE=AUTO|ON|OFF`: archive-backed print payload support.
+- `LIBRDP_WITH_PIPEWIRE=AUTO|ON|OFF`: PipeWire audio backend in the X11 viewer.
+- `LIBRDP_WITH_JPEG=AUTO|ON|OFF`: JPEG camera conversion backend in the X11 viewer.
+
 ## Library and tests
 
 ```sh
