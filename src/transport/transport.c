@@ -26,6 +26,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -81,20 +82,83 @@ static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
     return LIBRDP_STATUS_IO_ERROR;
 }
 
-librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host)
+static librdp_status rdp_transport_tls_verify_status(long verify_result)
+{
+    if (verify_result == X509_V_ERR_HOSTNAME_MISMATCH)
+        return LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH;
+    if (verify_result != X509_V_OK)
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+}
+
+static librdp_status rdp_transport_tls_configure_context(SSL_CTX* context,
+                                                        const rdp_transport_tls_config* config)
+{
+    X509_STORE* store = NULL;
+
+    if (!context || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+    if (config->use_system_store && SSL_CTX_set_default_verify_paths(context) != 1)
+        return LIBRDP_STATUS_IO_ERROR;
+    if (config->trust_anchor)
+    {
+        store = SSL_CTX_get_cert_store(context);
+        if (!store || X509_STORE_add_cert(store, config->trust_anchor) != 1)
+            return LIBRDP_STATUS_IO_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_transport_tls_configure_hostname(SSL* tls, const char* host)
+{
+    X509_VERIFY_PARAM* verify_param = NULL;
+
+    if (!tls || !host || host[0] == '\0')
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    verify_param = SSL_get0_param(tls);
+    if (!verify_param)
+        return LIBRDP_STATUS_IO_ERROR;
+    X509_VERIFY_PARAM_set_hostflags(verify_param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+    if (X509_VERIFY_PARAM_set1_host(verify_param, host, 0) != 1)
+        return LIBRDP_STATUS_IO_ERROR;
+    if (SSL_set_tlsext_host_name(tls, host) != 1)
+        return LIBRDP_STATUS_IO_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Start TLS with strict peer verification. The handshake is not committed to
+ * the transport until context setup, trust anchors, hostname verification, and
+ * certificate validation all succeed; failures keep the TCP transport intact
+ * and preserve distinct status codes for certificate rejection, hostname
+ * mismatch, and non-certificate handshake errors.
+ */
+librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, const rdp_transport_tls_config* config)
 {
     SSL_CTX* context = NULL;
     SSL* tls = NULL;
     int rc = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    long verify_result = X509_V_OK;
 
-    if (!transport || transport->fd < 0 || !host || transport->tls_active)
+    if (!transport || transport->fd < 0 || !config || !config->host || config->host[0] == '\0' ||
+        transport->tls_active)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.start", "host=%s", host);
+    rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.start", "host=%s", config->host);
     context = SSL_CTX_new(TLS_client_method());
     if (!context)
         return LIBRDP_STATUS_IO_ERROR;
-    SSL_CTX_set_verify(context, SSL_VERIFY_NONE, NULL);
+    status = rdp_transport_tls_configure_context(context, config);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        SSL_CTX_free(context);
+        ERR_clear_error();
+        return status;
+    }
     tls = SSL_new(context);
     if (!tls)
     {
@@ -107,13 +171,46 @@ librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host
         SSL_CTX_free(context);
         return LIBRDP_STATUS_IO_ERROR;
     }
-    (void)SSL_set_tlsext_host_name(tls, host);
+    status = rdp_transport_tls_configure_hostname(tls, config->host);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        SSL_free(tls);
+        SSL_CTX_free(context);
+        ERR_clear_error();
+        return status;
+    }
 
     rc = SSL_connect(tls);
     if (rc != 1)
     {
-        librdp_status status = rdp_transport_tls_status(tls, rc);
-        rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.tls.connect.failed", "status=%d", (int)status);
+        verify_result = SSL_get_verify_result(tls);
+        status = rdp_transport_tls_verify_status(verify_result);
+        if (status == LIBRDP_STATUS_TLS_HANDSHAKE_FAILED)
+        {
+            librdp_status io_status = rdp_transport_tls_status(tls, rc);
+
+            if (io_status == LIBRDP_STATUS_CLOSED || io_status == LIBRDP_STATUS_AGAIN)
+                status = io_status;
+        }
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.tls.connect.failed",
+                        "status=%s verify_result=%ld",
+                        librdp_status_string(status),
+                        verify_result);
+        SSL_free(tls);
+        SSL_CTX_free(context);
+        ERR_clear_error();
+        return status;
+    }
+    verify_result = SSL_get_verify_result(tls);
+    if (verify_result != X509_V_OK)
+    {
+        status = rdp_transport_tls_verify_status(verify_result);
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.tls.verify.failed",
+                        "status=%s verify_result=%ld",
+                        librdp_status_string(status),
+                        verify_result);
         SSL_free(tls);
         SSL_CTX_free(context);
         ERR_clear_error();
@@ -129,6 +226,16 @@ librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host
                     SSL_get_version(tls),
                     SSL_get_cipher(tls));
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host)
+{
+    rdp_transport_tls_config config;
+
+    memset(&config, 0, sizeof(config));
+    config.host = host;
+    config.use_system_store = 1;
+    return rdp_transport_start_tls_with_config(transport, &config);
 }
 
 librdp_status rdp_transport_get_tls_public_key(rdp_transport* transport, rdp_buffer* public_key)

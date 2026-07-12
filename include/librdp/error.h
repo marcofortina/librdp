@@ -53,7 +53,10 @@ typedef enum librdp_status
     LIBRDP_STATUS_TIMEOUT = -6,           /**< Operation reached its timeout without completion. */
     LIBRDP_STATUS_CLOSED = -7,            /**< Session or transport was closed. */
     LIBRDP_STATUS_AGAIN = -8,             /**< Operation should be retried later. */
-    LIBRDP_STATUS_STATE = -9              /**< Current object state does not permit the operation. */
+    LIBRDP_STATUS_STATE = -9,             /**< Current object state does not permit the operation. */
+    LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED = -10, /**< TLS peer certificate chain was rejected. */
+    LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH = -11,    /**< TLS peer certificate does not match the target host. */
+    LIBRDP_STATUS_TLS_HANDSHAKE_FAILED = -12      /**< TLS handshake failed independently from verification. */
 } librdp_status;
 
 /**

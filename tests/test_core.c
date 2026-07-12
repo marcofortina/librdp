@@ -1152,6 +1152,12 @@ static int test_settings_surface_input_session(void)
     memset(&counter, 0, sizeof(counter));
 
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
+    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED),
+                 "tls_certificate_rejected") == 0);
+    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH),
+                 "tls_hostname_mismatch") == 0);
+    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_HANDSHAKE_FAILED),
+                 "tls_handshake_failed") == 0);
     CHECK(strcmp(librdp_status_string((librdp_status)-1000), "unknown") == 0);
 
     settings = librdp_settings_new();

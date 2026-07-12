@@ -94,7 +94,10 @@ endif()
 
 set(consumer_binary "${consumer_build_dir}/librdp-installed-consumer")
 if(DEFINED LIBRDP_BUILD_CONFIG AND NOT "${LIBRDP_BUILD_CONFIG}" STREQUAL "")
-    set(consumer_binary "${consumer_build_dir}/${LIBRDP_BUILD_CONFIG}/librdp-installed-consumer")
+    set(configured_consumer_binary "${consumer_build_dir}/${LIBRDP_BUILD_CONFIG}/librdp-installed-consumer")
+    if(EXISTS "${configured_consumer_binary}")
+        set(consumer_binary "${configured_consumer_binary}")
+    endif()
 endif()
 
 execute_process(

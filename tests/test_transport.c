@@ -24,6 +24,7 @@
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include <poll.h>
 #include <stdio.h>
@@ -43,12 +44,48 @@
         }                                                                                                              \
     } while (0)
 
+static int add_test_certificate_extension(X509* cert, X509* issuer, int nid, const char* value)
+{
+    X509V3_CTX context;
+    X509_EXTENSION* extension = NULL;
+    int ok = 0;
+
+    if (!cert || !issuer || !value)
+        return 0;
+    X509V3_set_ctx_nodb(&context);
+    X509V3_set_ctx(&context, issuer, cert, NULL, NULL, 0);
+    extension = X509V3_EXT_conf_nid(NULL, &context, nid, (char*)value);
+    if (!extension)
+        return 0;
+    ok = X509_add_ext(cert, extension, -1) == 1;
+    X509_EXTENSION_free(extension);
+    return ok;
+}
+
+static int set_test_certificate_name(X509* cert, const char* common_name)
+{
+    X509_NAME* name = NULL;
+
+    if (!cert || !common_name)
+        return 0;
+    name = X509_get_subject_name(cert);
+    if (!name)
+        return 0;
+    return X509_NAME_add_entry_by_txt(name,
+                                      "CN",
+                                      MBSTRING_ASC,
+                                      (const unsigned char*)common_name,
+                                      -1,
+                                      -1,
+                                      0) == 1;
+}
+
 /*
- * Fixture: generates an in-memory TLS certificate for local transport tests.
- * It avoids external certificate files while exercising OpenSSL ownership and
- * handshake setup.
+ * Fixture: generates an in-memory CA for strict TLS tests. The trust anchor is
+ * added explicitly to the client store, so successful handshakes do not depend
+ * on disabling certificate verification.
  */
-static int make_test_certificate(EVP_PKEY** key, X509** cert)
+static int make_test_ca_certificate(EVP_PKEY** key, X509** cert)
 {
     X509_NAME* name = NULL;
 
@@ -65,20 +102,60 @@ static int make_test_certificate(EVP_PKEY** key, X509** cert)
         return 0;
     if (X509_set_version(*cert, 2) != 1 || X509_set_pubkey(*cert, *key) != 1)
         return 0;
+    if (!set_test_certificate_name(*cert, "librdp-test-ca"))
+        return 0;
     name = X509_get_subject_name(*cert);
-    if (!name)
-        return 0;
-    if (X509_NAME_add_entry_by_txt(name,
-                                   "CN",
-                                   MBSTRING_ASC,
-                                   (const unsigned char*)"librdp-test",
-                                   -1,
-                                   -1,
-                                   0) != 1)
-        return 0;
     if (X509_set_issuer_name(*cert, name) != 1)
         return 0;
+    if (!add_test_certificate_extension(*cert, *cert, NID_basic_constraints, "critical,CA:TRUE") ||
+        !add_test_certificate_extension(*cert, *cert, NID_key_usage, "critical,keyCertSign,cRLSign"))
+        return 0;
     return X509_sign(*cert, *key, EVP_sha256()) > 0;
+}
+
+static int make_test_server_certificate(EVP_PKEY** key,
+                                        X509** cert,
+                                        EVP_PKEY* issuer_key,
+                                        X509* issuer,
+                                        int serial,
+                                        const char* common_name,
+                                        const char* san,
+                                        long not_before_offset,
+                                        long not_after_offset)
+{
+    X509_NAME* issuer_name = NULL;
+
+    if (!key || !cert || !issuer_key || !issuer || !common_name || !san)
+        return 0;
+    *key = EVP_RSA_gen(2048);
+    *cert = X509_new();
+    if (!*key || !*cert)
+        return 0;
+    if (ASN1_INTEGER_set(X509_get_serialNumber(*cert), serial) != 1)
+        return 0;
+    if (!X509_gmtime_adj(X509_get_notBefore(*cert), not_before_offset) ||
+        !X509_gmtime_adj(X509_get_notAfter(*cert), not_after_offset))
+        return 0;
+    if (X509_set_version(*cert, 2) != 1 || X509_set_pubkey(*cert, *key) != 1)
+        return 0;
+    if (!set_test_certificate_name(*cert, common_name))
+        return 0;
+    issuer_name = X509_get_subject_name(issuer);
+    if (!issuer_name || X509_set_issuer_name(*cert, issuer_name) != 1)
+        return 0;
+    if (!add_test_certificate_extension(*cert, issuer, NID_basic_constraints, "critical,CA:FALSE") ||
+        !add_test_certificate_extension(*cert, issuer, NID_key_usage, "digitalSignature,keyEncipherment") ||
+        !add_test_certificate_extension(*cert, issuer, NID_ext_key_usage, "serverAuth") ||
+        !add_test_certificate_extension(*cert, issuer, NID_subject_alt_name, san))
+        return 0;
+    return X509_sign(*cert, issuer_key, EVP_sha256()) > 0;
+}
+
+static int make_test_self_signed_server_certificate(EVP_PKEY** key, X509** cert)
+{
+    if (!make_test_ca_certificate(key, cert))
+        return 0;
+    return add_test_certificate_extension(*cert, *cert, NID_subject_alt_name, "DNS:localhost");
 }
 
 /*
@@ -86,7 +163,7 @@ static int make_test_certificate(EVP_PKEY** key, X509** cert)
  * validates TLS shutdown and descriptor lifetime without external network
  * dependencies.
  */
-static int run_tls_server(int fd, EVP_PKEY* key, X509* cert)
+static int run_tls_server(int fd, EVP_PKEY* key, X509* cert, int expect_success)
 {
     SSL_CTX* context = NULL;
     SSL* tls = NULL;
@@ -104,7 +181,15 @@ static int run_tls_server(int fd, EVP_PKEY* key, X509* cert)
     if (SSL_set_fd(tls, fd) != 1)
         goto out;
     if (SSL_accept(tls) != 1)
+    {
+        ok = expect_success ? 0 : 1;
         goto out;
+    }
+    if (!expect_success)
+    {
+        ok = 1;
+        goto out;
+    }
     if (SSL_read(tls, input, sizeof(input)) != (int)sizeof(input))
         goto out;
     if (memcmp(input, "ping", 4) != 0)
@@ -123,6 +208,82 @@ out:
     if (context)
         SSL_CTX_free(context);
     close(fd);
+    return ok;
+}
+
+static int run_tls_client_case(EVP_PKEY* key,
+                               X509* cert,
+                               X509* trust_anchor,
+                               const char* host,
+                               librdp_status expected_status,
+                               int exchange_data,
+                               rdp_buffer* public_key)
+{
+    int tls_pair[2] = {-1, -1};
+    int child_status = 0;
+    int ok = 0;
+    pid_t child = -1;
+    rdp_transport transport;
+    rdp_transport_tls_config tls_config;
+    char data[4];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_transport_init(&transport);
+    memset(&tls_config, 0, sizeof(tls_config));
+    tls_config.host = host;
+    tls_config.use_system_store = trust_anchor ? 0 : 1;
+    tls_config.trust_anchor = trust_anchor;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, tls_pair) != 0)
+        goto out;
+    child = fork();
+    if (child < 0)
+        goto out;
+    if (child == 0)
+    {
+        close(tls_pair[0]);
+        _exit(run_tls_server(tls_pair[1], key, cert, expected_status == LIBRDP_STATUS_OK) ? 0 : 1);
+    }
+    close(tls_pair[1]);
+    tls_pair[1] = -1;
+    rdp_transport_attach_fd(&transport, tls_pair[0], 1);
+    tls_pair[0] = -1;
+
+    status = trust_anchor ? rdp_transport_start_tls_with_config(&transport, &tls_config) :
+                            rdp_transport_start_tls(&transport, host);
+    if (status != expected_status)
+        goto out;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (public_key && rdp_transport_get_tls_public_key(&transport, public_key) != LIBRDP_STATUS_OK)
+            goto out;
+        if (exchange_data)
+        {
+            if (rdp_transport_write_all(&transport, "ping", 4) != LIBRDP_STATUS_OK ||
+                rdp_transport_read_exact(&transport, data, sizeof(data)) != LIBRDP_STATUS_OK ||
+                memcmp(data, "pong", sizeof(data)) != 0)
+                goto out;
+        }
+    }
+    rdp_transport_close(&transport);
+    if (child > 0)
+    {
+        if (waitpid(child, &child_status, 0) != child)
+            goto out;
+        child = -1;
+        if (!WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
+            goto out;
+    }
+    ok = 1;
+
+out:
+    rdp_transport_close(&transport);
+    if (tls_pair[0] >= 0)
+        close(tls_pair[0]);
+    if (tls_pair[1] >= 0)
+        close(tls_pair[1]);
+    if (child > 0)
+        (void)waitpid(child, &child_status, 0);
     return ok;
 }
 
@@ -641,12 +802,17 @@ static int test_multitransport_protocol(void)
 int test_transport(void)
 {
     int pair[2] = {-1, -1};
-    int tls_pair[2] = {-1, -1};
     int tcp_fd = -1;
-    int child_status = 0;
-    pid_t child = -1;
-    EVP_PKEY* key = NULL;
-    X509* cert = NULL;
+    EVP_PKEY* ca_key = NULL;
+    EVP_PKEY* server_key = NULL;
+    EVP_PKEY* self_signed_key = NULL;
+    EVP_PKEY* wrong_host_key = NULL;
+    EVP_PKEY* expired_key = NULL;
+    X509* ca_cert = NULL;
+    X509* server_cert = NULL;
+    X509* self_signed_cert = NULL;
+    X509* wrong_host_cert = NULL;
+    X509* expired_cert = NULL;
     rdp_transport transport;
     char data[8];
     size_t got = 0;
@@ -723,38 +889,82 @@ int test_transport(void)
     rdp_transport_close(&transport);
 
     rdp_transport_init(&transport);
-    TCHECK(make_test_certificate(&key, &cert));
-    TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, tls_pair) == 0);
-    child = fork();
-    TCHECK(child >= 0);
-    if (child == 0)
-    {
-        close(tls_pair[0]);
-        _exit(run_tls_server(tls_pair[1], key, cert) ? 0 : 1);
-    }
-    close(tls_pair[1]);
-    tls_pair[1] = -1;
-    rdp_transport_attach_fd(&transport, tls_pair[0], 1);
-    tls_pair[0] = -1;
-    TCHECK(rdp_transport_start_tls(&transport, "localhost") == LIBRDP_STATUS_OK);
-    TCHECK(rdp_transport_get_tls_public_key(&transport, &tls_public_key) == LIBRDP_STATUS_OK);
-    expected_public_key_len = i2d_PublicKey(key, NULL);
+    TCHECK(make_test_ca_certificate(&ca_key, &ca_cert));
+    TCHECK(make_test_server_certificate(&server_key,
+                                        &server_cert,
+                                        ca_key,
+                                        ca_cert,
+                                        2,
+                                        "localhost",
+                                        "DNS:localhost",
+                                        0,
+                                        3600));
+    TCHECK(make_test_server_certificate(&wrong_host_key,
+                                        &wrong_host_cert,
+                                        ca_key,
+                                        ca_cert,
+                                        3,
+                                        "wronghost",
+                                        "DNS:wronghost",
+                                        0,
+                                        3600));
+    TCHECK(make_test_server_certificate(&expired_key,
+                                        &expired_cert,
+                                        ca_key,
+                                        ca_cert,
+                                        4,
+                                        "localhost",
+                                        "DNS:localhost",
+                                        -7200,
+                                        -3600));
+    TCHECK(make_test_self_signed_server_certificate(&self_signed_key, &self_signed_cert));
+    TCHECK(run_tls_client_case(self_signed_key,
+                              self_signed_cert,
+                              NULL,
+                              "localhost",
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    TCHECK(run_tls_client_case(wrong_host_key,
+                              wrong_host_cert,
+                              ca_cert,
+                              "localhost",
+                              LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH,
+                              0,
+                              NULL));
+    TCHECK(run_tls_client_case(expired_key,
+                              expired_cert,
+                              ca_cert,
+                              "localhost",
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    TCHECK(run_tls_client_case(server_key,
+                              server_cert,
+                              ca_cert,
+                              "localhost",
+                              LIBRDP_STATUS_OK,
+                              1,
+                              &tls_public_key));
+    expected_public_key_len = i2d_PublicKey(server_key, NULL);
     TCHECK(expected_public_key_len > 0);
     expected_public_key = (unsigned char*)malloc((size_t)expected_public_key_len);
     TCHECK(expected_public_key != NULL);
     expected_public_key_ptr = expected_public_key;
-    TCHECK(i2d_PublicKey(key, &expected_public_key_ptr) == expected_public_key_len);
+    TCHECK(i2d_PublicKey(server_key, &expected_public_key_ptr) == expected_public_key_len);
     TCHECK(tls_public_key.length == (size_t)expected_public_key_len);
     TCHECK(memcmp(tls_public_key.data, expected_public_key, tls_public_key.length) == 0);
-    TCHECK(rdp_transport_write_all(&transport, "ping", 4) == LIBRDP_STATUS_OK);
-    TCHECK(rdp_transport_read_exact(&transport, data, 4) == LIBRDP_STATUS_OK);
-    TCHECK(memcmp(data, "pong", 4) == 0);
-    rdp_transport_close(&transport);
-    TCHECK(waitpid(child, &child_status, 0) == child);
-    TCHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
 
-    X509_free(cert);
-    EVP_PKEY_free(key);
+    X509_free(expired_cert);
+    X509_free(wrong_host_cert);
+    X509_free(self_signed_cert);
+    X509_free(server_cert);
+    X509_free(ca_cert);
+    EVP_PKEY_free(expired_key);
+    EVP_PKEY_free(wrong_host_key);
+    EVP_PKEY_free(self_signed_key);
+    EVP_PKEY_free(server_key);
+    EVP_PKEY_free(ca_key);
     free(expected_public_key);
     rdp_buffer_free(&tls_public_key);
     return 0;

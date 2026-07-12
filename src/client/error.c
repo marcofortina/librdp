@@ -41,6 +41,12 @@ const char* librdp_status_string(librdp_status status)
             return "again";
         case LIBRDP_STATUS_STATE:
             return "state";
+        case LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED:
+            return "tls_certificate_rejected";
+        case LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH:
+            return "tls_hostname_mismatch";
+        case LIBRDP_STATUS_TLS_HANDSHAKE_FAILED:
+            return "tls_handshake_failed";
         default:
             return "unknown";
     }
