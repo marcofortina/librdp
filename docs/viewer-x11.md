@@ -29,6 +29,8 @@ Supported security values are:
 - `tls`;
 - `nla`.
 
+`nla` selects the CredSSP-based network-level authentication path. `tls` selects TLS transport security without NLA. `rdp` selects legacy standard security. `auto` lets negotiation select the security path.
+
 ## Options
 
 ```text
@@ -66,6 +68,10 @@ The viewer creates an X11 window matching the requested desktop size. Resize req
 
 Pointer shape, pointer cache, pointer visibility, and local cursor presentation are driven by pointer events received from the session.
 
+Resize is viewer-driven: X11 configure events update the requested desktop layout and the session receives a display-control request. The viewer should repaint from the current surface after local expose events and after remote surface invalidation.
+
+Pointer updates are server-driven. The viewer does not infer local cursor shape from coordinates or window contents. It applies default, hidden, position, and shape events from the session and keeps a local X11 cursor cache for the active window.
+
 ## Input
 
 Keyboard input is translated through the local X11/XKB stack. The viewer handles focus, keyboard grabs, modifier state, AltGr, dead-key text paths, and remote scancode submission.
@@ -73,6 +79,10 @@ Keyboard input is translated through the local X11/XKB stack. The viewer handles
 Mouse movement, primary buttons, middle button, secondary button, vertical wheel, horizontal wheel, and extra button events are forwarded through the public input API.
 
 When the viewer has focus and the pointer is inside the window, keyboard grab behavior keeps combinations such as Alt+Tab in the remote session where the window manager allows grabs.
+
+On focus loss, the viewer releases remote key state before releasing the local grab. This avoids leaving remote modifiers pressed when the host window manager or compositor changes focus.
+
+For Xwayland, the viewer sets `_XWAYLAND_MAY_GRAB_KEYBOARD` before requesting keyboard grabs.
 
 ## Optional backends
 
@@ -83,6 +93,30 @@ When the viewer has focus and the pointer is inside the window, keyboard grab be
 - `--webauthn` uses libfido2, a hidraw device, or a controlled mock provider.
 - `--printer` can route output through the configured printer backend path.
 - `--video` can write selected video output to a file path.
+
+Device and media options are safe to combine:
+
+```sh
+build/librdp-x11-viewer \
+    --target host \
+    --security nla \
+    --audio-output \
+    --audio-input \
+    --camera device=/dev/video0 \
+    --smartcard pcsc \
+    --webauthn fido2
+```
+
+Filesystem, printer, serial, and parallel paths are interpreted on the local host:
+
+```sh
+build/librdp-x11-viewer \
+    --target host \
+    --drive work=/home/user/work \
+    --printer printer=Generic=/tmp/print-output \
+    --serial COM1=/dev/ttyUSB0 \
+    --parallel LPT1=/tmp/lpt-output
+```
 
 ## Trace examples
 
@@ -99,3 +133,11 @@ LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TR
 ```
 
 Do not place passwords in shell history on shared systems. Prefer controlled test credentials for viewer runs.
+
+Useful event families while debugging the viewer include:
+
+- `x11.keyboard.*` for keyboard translation and grabs;
+- `x11.pointer.*` for cursor shape, visibility, and local cursor changes;
+- `client.active.framebuffer.*` for surface presentation;
+- `client.display_control.*` for resize requests;
+- `x11.audio.*`, `x11.camera.*`, `x11.smartcard.*`, `x11.usb.*`, and `x11.webauthn.*` for backend setup.
