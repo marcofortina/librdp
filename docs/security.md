@@ -46,6 +46,13 @@ Applications should free settings and sessions as soon as they are no longer nee
 
 Credential-bearing APIs must treat `NULL` and empty strings exactly as documented in the public headers. Optional username and domain values may be cleared; target and port configuration must remain explicit and valid before connecting.
 
+Operational rules:
+
+- do not pass credentials on shared shell history when an application can prompt securely;
+- do not include credentials in trace, screenshots, crash names, or issue titles;
+- clear application-owned credential buffers according to the application policy after session creation;
+- treat reconnect loops as credential reuse and gate them through the application policy.
+
 ## Cryptography
 
 Cryptographic primitives are delegated to system libraries where practical. TLS, hashing, signing, and legacy stream cipher behavior use OpenSSL-backed paths. Character conversion uses iconv where available through the configured build.
@@ -102,6 +109,22 @@ Host devices, local files, printers, cameras, USB devices, smartcards, and authe
 Backends must validate local paths, device selectors, payload lengths, and permissions before advertising capabilities to a remote peer.
 
 Backend code should fail closed when a local resource cannot be opened, probed, or mapped safely. A backend failure should not expose a partially initialized device to the remote peer.
+
+## Backend permission model
+
+| Feature | Local authority | Required policy |
+| --- | --- | --- |
+| Clipboard | user clipboard contents and file transfer list | publish only selected formats and copy remote data into application-owned buffers before use. |
+| Filesystem | configured host directory root | reject traversal outside the root and avoid exposing private absolute paths in remote-visible names. |
+| Printer | local print queue or output file | create jobs only for configured printers and cancel incomplete jobs on disconnect. |
+| Audio input | microphone capture device | require explicit application selection before opening capture. |
+| Audio output | local playback stream | select compatible format and close streams on channel close. |
+| Camera | camera device and frames | require explicit device selector and do not trace frame payloads. |
+| Smartcard | card reader, card session, APDU data | preserve ordering, close handles on removal, and avoid tracing secret-bearing APDUs. |
+| USB | host USB device ownership | claim only configured devices and release claims on detach or disconnect. |
+| WebAuthn | authenticator and user-presence action | preserve user presence semantics and do not trace assertions or credential secrets. |
+
+Each backend should report local permission failure separately from protocol parse failure. This distinction matters because parser failure indicates untrusted remote input, while permission failure indicates host policy or environment.
 
 ## Sensitive feature policy
 

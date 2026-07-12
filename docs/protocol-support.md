@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 This document maps RDP protocol areas to implementation modules, public surfaces, host backends, and parser or codec test entry points.
 
+Rows describe behavior ownership, not release status. A protocol appears here when it has source modules, packet-facing tests or fuzz targets, and a documented public API or backend integration point.
+
 ## Core, graphics, and transport
 
 | Protocol | Area | Modules | Tests and fuzz targets |
@@ -30,6 +32,21 @@ This document maps RDP protocol areas to implementation modules, public surfaces
 | MS-RDPEECO | Echo diagnostics channel behavior | `src/channels/echo_channel.c` | `librdp_settings_set_echo_payload()`, `fuzz/echo_channel_fuzzer.c` |
 | MS-RDPET | Telemetry channel behavior | `src/channels/telemetry.c` | `LIBRDP_FEATURE_TELEMETRY`, `fuzz/telemetry_fuzzer.c` |
 | MS-RDPEMC | Multiparty channel behavior | `src/channels/multiparty.c` | `fuzz/multiparty_fuzzer.c` |
+
+## Public behavior map
+
+| Protocol family | Public API or viewer surface | Primary events | Trace families |
+| --- | --- | --- | --- |
+| Connection, security, activation | `librdp_settings_*`, `librdp_session_connect()`, `librdp_session_run_once()` | state, error, disconnected | `client.connect.*`, `transport.*`, `x224.*`, `mcs.*`, `rdp.activation.*` |
+| Graphics and surfaces | `librdp_session_get_surface()`, `librdp_surface_*` | surface invalidation, error | `rdp.fastpath.*`, `rdp.slowpath.*`, `rdp.gfx.*`, `client.active.framebuffer.*` |
+| Pointer | event callback pointer payloads, X11 viewer cursor path | pointer default, hidden, position, shape | `client.pointer.*`, `x11.pointer.*` |
+| Keyboard and pointer input | `librdp_session_send_key()`, `librdp_session_send_mouse()` | sent input, error | `client.input.*`, `x11.keyboard.*`, `x11.pointer.*` |
+| Touch and pen input | `librdp_session_send_touch()`, `librdp_session_send_pen()` | sent input, error | `client.input.*`, `client.core_input.*` |
+| Clipboard | `librdp_session_clipboard_*` | format list, data, request, file contents | `client.clipboard.*`, `client.drdynvc.*` |
+| Dynamic channels | `librdp_session_channel_send()`, `librdp_session_channel_close()` | channel open, data, close | `client.channel.*`, `client.drdynvc.*` |
+| Device redirection | settings device APIs and viewer backend options | backend errors, device events | `client.rdpdr.*`, device-specific client trace |
+| Audio, video, camera | audio/video public response APIs and viewer backend options | audio formats, audio data, capture request | `client.rdpsnd.*`, `client.audin.*`, `client.video.*`, `client.camera.*` |
+| Display control | `librdp_session_resize()`, `librdp_session_set_display_layout()` | surface invalidation, state, error | `client.display_control.*`, `client.active.framebuffer.*` |
 
 ## Input, audio, and video
 
