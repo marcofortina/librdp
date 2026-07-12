@@ -1413,6 +1413,59 @@ static int test_tpkt_x224(void)
     return 0;
 }
 
+#define TEST_GCC_BASE_CLIENT_BLOCKS_WIRE_LENGTH 254u
+#define TEST_GCC_CORE_CLIENT_NAME_OFFSET 24u
+#define TEST_GCC_CORE_CLIENT_NAME_BYTES 32u
+
+/*
+ * Regression: GCC client-name serialization keeps a fixed 32-byte UTF-16LE
+ * field for NULL, empty, short, exact-fit, and overlong names. The test locks
+ * the total wire length so ASan/UBSan builds catch stale reads, missing
+ * terminators, and buffer growth regressions.
+ */
+static int test_gcc_client_name_regression(void)
+{
+    const struct
+    {
+        const char* name;
+        uint8_t first_wire_byte;
+    } cases[] = {
+        {NULL, 'l'},
+        {"", 0},
+        {"a", 'a'},
+        {"exactly-15-char", 'e'},
+        {"this-client-name-is-longer-than-the-fixed-field", 't'}
+    };
+    rdp_gcc_client_config config;
+    rdp_gcc_client_data_summary summary;
+    size_t i = 0;
+
+    memset(&config, 0, sizeof(config));
+    config.desktop_width = 1024;
+    config.desktop_height = 768;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        rdp_buffer client_blocks;
+
+        rdp_buffer_init(&client_blocks);
+        config.client_name = cases[i].name;
+        PCHECK(rdp_gcc_write_client_data_blocks(&client_blocks, &config) == LIBRDP_STATUS_OK);
+        PCHECK(client_blocks.length == TEST_GCC_BASE_CLIENT_BLOCKS_WIRE_LENGTH);
+        PCHECK(rdp_gcc_parse_client_data_blocks(client_blocks.data, client_blocks.length, &summary) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(summary.has_core && summary.has_security && summary.has_network);
+        PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
+        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET] == cases[i].first_wire_byte);
+        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + 1u] == 0);
+        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + TEST_GCC_CORE_CLIENT_NAME_BYTES - 2u] == 0);
+        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + TEST_GCC_CORE_CLIENT_NAME_BYTES - 1u] == 0);
+        rdp_buffer_free(&client_blocks);
+    }
+
+    return 0;
+}
+
 /*
  * Coverage: validates MCS, GCC, and capability vectors, including nested
  * length fields and capability serialization round trips.
@@ -19131,6 +19184,8 @@ int test_protocol(void)
     if (test_session_selection_and_echo() != 0)
         return 1;
     if (test_tpkt_x224() != 0)
+        return 1;
+    if (test_gcc_client_name_regression() != 0)
         return 1;
     if (test_mcs_gcc_capabilities() != 0)
         return 1;
