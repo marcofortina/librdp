@@ -1143,6 +1143,7 @@ static int test_settings_surface_input_session(void)
     librdp_touch_frame touch_frame;
     librdp_pen_contact pen_contact;
     librdp_pen_frame pen_frame;
+    librdp_feature_status feature_status;
     event_counter counter;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
@@ -1195,7 +1196,33 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_printer_name(settings, 1) == NULL);
     CHECK(librdp_settings_printer_driver(settings, 1) == NULL);
     CHECK(librdp_settings_printer_output_path(settings, 1) == NULL);
+    CHECK(librdp_settings_get_feature_status(NULL,
+                                             LIBRDP_FEATURE_AUDIO_OUTPUT,
+                                             &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             (librdp_feature)0,
+                                             &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             (librdp_feature)0x80000000u,
+                                             &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_AUDIO_OUTPUT,
+                                             NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_AUDIO_OUTPUT,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.feature == LIBRDP_FEATURE_AUDIO_OUTPUT);
+    CHECK(!feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_REQUESTED);
     CHECK(!librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT));
+    CHECK(librdp_settings_enable_feature(settings,
+                                         (librdp_feature)(LIBRDP_FEATURE_AUDIO_OUTPUT |
+                                                         LIBRDP_FEATURE_VIDEO),
+                                         1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_feature_enabled(settings,
+                                          (librdp_feature)(LIBRDP_FEATURE_AUDIO_OUTPUT |
+                                                          LIBRDP_FEATURE_VIDEO)));
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_INPUT, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_VIDEO, 1) == LIBRDP_STATUS_OK);
@@ -1210,9 +1237,25 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT));
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_AUDIO_OUTPUT,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             (librdp_feature)(LIBRDP_FEATURE_AUDIO_OUTPUT |
+                                                             LIBRDP_FEATURE_VIDEO),
+                                             &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 0) == LIBRDP_STATUS_OK);
     CHECK(!librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT));
     CHECK(librdp_settings_set_audio_output_device(settings, "pipewire") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_AUDIO_OUTPUT,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 0) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_audio_input_device(settings, "pipewire") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_video_output_path(settings, "/tmp/video.bin") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_camera(settings, "device=/dev/video0") == LIBRDP_STATUS_OK);
@@ -1271,6 +1314,13 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_add_printer(settings, "Print", "", "/tmp") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_printer(settings, "Print", "Generic", "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_enable_feature(settings, (librdp_feature)0, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_enable_feature(settings,
+                                         (librdp_feature)0x80000000u,
+                                         1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(!librdp_settings_feature_enabled(settings, (librdp_feature)0x80000000u));
+    CHECK(!librdp_settings_feature_enabled(settings,
+                                           (librdp_feature)(LIBRDP_FEATURE_AUDIO_INPUT |
+                                                           0x80000000u)));
     CHECK(librdp_settings_set_audio_output_device(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_audio_input_device(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_video_output_path(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -1305,6 +1355,11 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_set_webauthn_provider(settings, "mock=/tmp/auth.json") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_rail_app(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_echo_payload(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_TELEMETRY,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
     copy = librdp_settings_clone(settings);
     CHECK(copy != NULL);
@@ -1398,6 +1453,25 @@ static int test_settings_surface_input_session(void)
     display_monitors[1].device_scale_factor = 100;
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(librdp_session_get_feature_status(NULL,
+                                            LIBRDP_FEATURE_TELEMETRY,
+                                            &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_feature_status(session,
+                                            (librdp_feature)(LIBRDP_FEATURE_AUDIO_INPUT |
+                                                            LIBRDP_FEATURE_VIDEO),
+                                            &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_AUDIO_INPUT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_TELEMETRY,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_session_set_display_layout(NULL, display_monitors, 1) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_set_display_layout(session, NULL, 1) ==

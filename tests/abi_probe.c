@@ -38,6 +38,8 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_status", librdp_status, ",");
     ABI_TYPE_ENTRY("librdp_security_mode", librdp_security_mode, ",");
     ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
+    ABI_TYPE_ENTRY("librdp_feature_unavailable_reason", librdp_feature_unavailable_reason, ",");
+    ABI_TYPE_ENTRY("librdp_feature_status", librdp_feature_status, ",");
     ABI_TYPE_ENTRY("librdp_session_state", librdp_session_state, ",");
     ABI_TYPE_ENTRY("librdp_display_monitor", librdp_display_monitor, ",");
     ABI_TYPE_ENTRY("librdp_pixel_format", librdp_pixel_format, ",");

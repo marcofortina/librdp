@@ -748,6 +748,8 @@ struct librdp_session
     uint32_t usb_message_id;
     uint32_t usb_request_completion_interface_id;
     uint32_t usb_device_count_sent;
+    uint8_t multitransport_negotiated;
+    uint32_t multitransport_flags;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_graphics_decompressor bulk_rdp8_decompressor;
     rdp_bulk_decompressor bulk_decompressor;
@@ -29580,6 +29582,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    session->multitransport_negotiated = 0;
+    session->multitransport_flags = 0;
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
@@ -30065,6 +30069,8 @@ librdp_status librdp_session_connect(librdp_session* session)
                         server_data.server_certificate_len);
         if (server_data.has_multitransport)
         {
+            session->multitransport_negotiated = 1;
+            session->multitransport_flags = server_data.multitransport_flags;
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "gcc.server.multitransport",
                             "flags=%u udp_fecr=%u udp_fecl=%u udp_preferred=%u softsync=%u",
@@ -30426,6 +30432,8 @@ fail:
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    session->multitransport_negotiated = 0;
+    session->multitransport_flags = 0;
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
@@ -31522,6 +31530,8 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     session->audio_input_version = 0;
     session->audio_input_selected_format_count = 0;
     memset(session->audio_input_selected_formats, 0, sizeof(session->audio_input_selected_formats));
+    session->multitransport_negotiated = 0;
+    session->multitransport_flags = 0;
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
@@ -32580,6 +32590,149 @@ librdp_status librdp_session_dismiss_touch(librdp_session* session, uint8_t cont
 librdp_session_state librdp_session_get_state(const librdp_session* session)
 {
     return session ? session->state : LIBRDP_SESSION_FAILED;
+}
+
+static int rdp_session_video_runtime_active(const librdp_session* session)
+{
+    if (!session)
+        return 0;
+    for (uint32_t i = 0; i < RDP_SESSION_VIDEO_STREAMS; i++)
+    {
+        if (session->video_streams[i].active)
+            return 1;
+    }
+    for (uint32_t i = 0; i < RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS; i++)
+    {
+        if (session->video_optimized_presentations[i].active)
+            return 1;
+    }
+    return 0;
+}
+
+static void rdp_session_finish_feature_status(librdp_feature_status* status,
+                                              int negotiated,
+                                              int active,
+                                              int parser_only)
+{
+    if (!status)
+        return;
+
+    status->negotiated = negotiated ? 1 : 0;
+    status->active = active ? 1 : 0;
+    if (parser_only)
+        status->reason = LIBRDP_FEATURE_REASON_PARSER_ONLY;
+    else if (!status->negotiated)
+        status->reason = LIBRDP_FEATURE_REASON_NOT_NEGOTIATED;
+    else if (!status->active)
+        status->reason = LIBRDP_FEATURE_REASON_NOT_ACTIVE;
+    else
+        status->reason = LIBRDP_FEATURE_REASON_NONE;
+}
+
+/*
+ * Runtime feature status must be derived from real negotiated channel state.
+ * The enabled bit only expresses intent; it cannot make parser-only helpers or
+ * unavailable OS backends appear active to public callers.
+ */
+librdp_status librdp_session_get_feature_status(const librdp_session* session,
+                                                librdp_feature feature,
+                                                librdp_feature_status* status)
+{
+    librdp_status rc = LIBRDP_STATUS_OK;
+
+    if (!session || !status)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rc = librdp_settings_get_feature_status(session->settings, feature, status);
+    if (rc != LIBRDP_STATUS_OK)
+        return rc;
+    if (!status->requested || !status->built || !status->backend_ready)
+        return LIBRDP_STATUS_OK;
+
+    switch (feature)
+    {
+        case LIBRDP_FEATURE_AUDIO_OUTPUT:
+            rdp_session_finish_feature_status(status,
+                                              session->audio_output_channel_id != 0,
+                                              session->audio_output_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_AUDIO_INPUT:
+            rdp_session_finish_feature_status(status,
+                                              session->audio_input_channel_id != 0,
+                                              session->audio_input_open != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_VIDEO:
+            rdp_session_finish_feature_status(status,
+                                              session->video_redirection_channel_id != 0 ||
+                                                  session->video_optimized_control_channel_id != 0 ||
+                                                  session->video_optimized_data_channel_id != 0,
+                                              rdp_session_video_runtime_active(session),
+                                              0);
+            break;
+        case LIBRDP_FEATURE_CAMERA:
+            rdp_session_finish_feature_status(status,
+                                              session->video_capture_control_channel_id != 0 ||
+                                                  session->video_capture_channel_id != 0,
+                                              session->video_capture_active != 0 ||
+                                                  session->video_capture_streaming != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_SMARTCARD:
+            rdp_session_finish_feature_status(status,
+                                              session->device_redirection_channel_id != 0,
+                                              session->device_redirection_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_USB:
+            rdp_session_finish_feature_status(status,
+                                              session->usb_redirection_channel_id != 0,
+                                              session->usb_redirection_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_PNP:
+            rdp_session_finish_feature_status(status,
+                                              session->pnp_redirection_channel_id != 0,
+                                              session->pnp_redirection_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_WEBAUTHN:
+            rdp_session_finish_feature_status(status,
+                                              session->auth_redirection_channel_id != 0,
+                                              session->auth_redirection_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_RAIL:
+            rdp_session_finish_feature_status(status,
+                                              session->remote_programs_channel_id != 0,
+                                              session->remote_programs_ready != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_CR2:
+            rdp_session_finish_feature_status(status,
+                                              session->composited_channel_id != 0,
+                                              session->composited_connection_open != 0,
+                                              0);
+            break;
+        case LIBRDP_FEATURE_ECHO:
+            rdp_session_finish_feature_status(status, 0, 0, 0);
+            break;
+        case LIBRDP_FEATURE_TELEMETRY:
+            rdp_session_finish_feature_status(status, 0, 0, 1);
+            break;
+        case LIBRDP_FEATURE_MULTITRANSPORT:
+            rdp_session_finish_feature_status(status,
+                                              session->multitransport_negotiated != 0 &&
+                                                  session->multitransport_flags != 0,
+                                              0,
+                                              0);
+            break;
+        default:
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+
+    return LIBRDP_STATUS_OK;
 }
 
 const librdp_surface* librdp_session_get_surface(const librdp_session* session)

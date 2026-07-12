@@ -22,6 +22,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RDP_SETTINGS_KNOWN_FEATURES \
+    ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT | \
+     (uint32_t)LIBRDP_FEATURE_VIDEO | (uint32_t)LIBRDP_FEATURE_CAMERA | \
+     (uint32_t)LIBRDP_FEATURE_SMARTCARD | (uint32_t)LIBRDP_FEATURE_USB | \
+     (uint32_t)LIBRDP_FEATURE_PNP | (uint32_t)LIBRDP_FEATURE_WEBAUTHN | \
+     (uint32_t)LIBRDP_FEATURE_RAIL | (uint32_t)LIBRDP_FEATURE_CR2 | \
+     (uint32_t)LIBRDP_FEATURE_ECHO | (uint32_t)LIBRDP_FEATURE_TELEMETRY | \
+     (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT)
+
 typedef struct rdp_settings_drive
 {
     char name[8];
@@ -196,6 +205,82 @@ static librdp_status rdp_settings_add_text(char** values,
     values[*count] = copy;
     *count += 1u;
     return LIBRDP_STATUS_OK;
+}
+
+static int rdp_settings_valid_feature_mask(librdp_feature feature)
+{
+    uint32_t value = (uint32_t)feature;
+
+    return value != 0 && (value & ~RDP_SETTINGS_KNOWN_FEATURES) == 0;
+}
+
+static int rdp_settings_valid_single_feature(librdp_feature feature)
+{
+    uint32_t value = (uint32_t)feature;
+
+    return rdp_settings_valid_feature_mask(feature) && (value & (value - 1u)) == 0;
+}
+
+/*
+ * Backend readiness is deliberately stricter than the feature bit. It models
+ * whether an application supplied the host-side object needed to make the
+ * negotiated protocol useful, not merely whether the protocol parser exists.
+ */
+static int rdp_settings_feature_backend_ready(const librdp_settings* settings, librdp_feature feature)
+{
+    const char* provider = NULL;
+
+    if (!settings)
+        return 0;
+
+    switch (feature)
+    {
+        case LIBRDP_FEATURE_AUDIO_OUTPUT:
+            return settings->audio_output_device != NULL;
+        case LIBRDP_FEATURE_AUDIO_INPUT:
+            return settings->audio_input_device != NULL;
+        case LIBRDP_FEATURE_VIDEO:
+            return settings->video_output_path != NULL;
+        case LIBRDP_FEATURE_CAMERA:
+            return settings->camera_count > 0;
+        case LIBRDP_FEATURE_SMARTCARD:
+#if defined(RDP_HAVE_PCSC) || defined(RDP_HAVE_WINPR_SMARTCARD)
+            return settings->smartcard_count > 0;
+#else
+            return 0;
+#endif
+        case LIBRDP_FEATURE_USB:
+#ifdef RDP_HAVE_LIBUSB
+            return settings->usb_device_count > 0;
+#else
+            return 0;
+#endif
+        case LIBRDP_FEATURE_PNP:
+            return settings->pnp_device_count > 0;
+        case LIBRDP_FEATURE_WEBAUTHN:
+            provider = settings->webauthn_provider;
+            if (!provider || strcmp(provider, "mock") == 0 || strncmp(provider, "mock=", 5u) == 0)
+                return 1;
+            if (strcmp(provider, "fido2") == 0 || strncmp(provider, "fido2=", 6u) == 0)
+            {
+#ifdef RDP_HAVE_FIDO2
+                return 1;
+#else
+                return 0;
+#endif
+            }
+            return 0;
+        case LIBRDP_FEATURE_RAIL:
+            return settings->rail_app_count > 0;
+        case LIBRDP_FEATURE_CR2:
+        case LIBRDP_FEATURE_TELEMETRY:
+        case LIBRDP_FEATURE_MULTITRANSPORT:
+            return 1;
+        case LIBRDP_FEATURE_ECHO:
+            return settings->echo_payload != NULL;
+        default:
+            return 0;
+    }
 }
 
 librdp_settings* librdp_settings_new(void)
@@ -540,7 +625,7 @@ librdp_status librdp_settings_enable_feature(librdp_settings* settings,
                                              librdp_feature feature,
                                              int enabled)
 {
-    if (!settings || feature == 0)
+    if (!settings || !rdp_settings_valid_feature_mask(feature))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (enabled)
         settings->features |= (uint32_t)feature;
@@ -551,9 +636,33 @@ librdp_status librdp_settings_enable_feature(librdp_settings* settings,
 
 int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feature feature)
 {
-    if (!settings || feature == 0)
+    if (!settings || !rdp_settings_valid_feature_mask(feature))
         return 0;
     return (settings->features & (uint32_t)feature) != 0;
+}
+
+librdp_status librdp_settings_get_feature_status(const librdp_settings* settings,
+                                                 librdp_feature feature,
+                                                 librdp_feature_status* status)
+{
+    if (!settings || !status || !rdp_settings_valid_single_feature(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(status, 0, sizeof(*status));
+    status->feature = feature;
+    status->requested = librdp_settings_feature_enabled(settings, feature) ? 1 : 0;
+    status->built = 1;
+    if (!status->requested)
+    {
+        status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
+        return LIBRDP_STATUS_OK;
+    }
+    status->backend_ready = rdp_settings_feature_backend_ready(settings, feature) ? 1 : 0;
+    if (!status->backend_ready)
+        status->reason = LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE;
+    else
+        status->reason = LIBRDP_FEATURE_REASON_NONE;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status librdp_settings_set_audio_output_device(librdp_settings* settings, const char* device)

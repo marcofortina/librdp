@@ -413,6 +413,35 @@ LIBRDP_API librdp_status librdp_session_dismiss_touch(librdp_session* session, u
 LIBRDP_API librdp_session_state librdp_session_get_state(const librdp_session* session);
 
 /**
+ * @brief Query runtime readiness for one optional feature.
+ *
+ * The function starts from the session's cloned settings and augments the
+ * status with negotiated and active information observed during the current
+ * session. Parser-only helpers and channels that are not wired to runtime
+ * state are reported as not active rather than being promoted by the enabled
+ * feature bit alone.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[in] feature Single known librdp_feature value to query; bitmasks with
+ * multiple bits, zero, and unknown bits are rejected.
+ * @param[out] status Destination status object; must not be NULL. The object is
+ * written completely on success and contains no borrowed pointers.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers, zero features, multiple feature bits, or unknown feature bits.
+ *
+ * @note Thread-safety: call from the same serialized context that drives the
+ * session, or protect the session externally while querying.
+ * @warning negotiated and active are runtime observations only; applications
+ * must still handle channel closure or reconnect events after a successful
+ * query.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_feature_status(const librdp_session* session,
+                                                librdp_feature feature,
+                                                librdp_feature_status* status);
+
+/**
  * @brief Return the primary session surface.
  *
  * The returned surface is owned by the session. It remains valid until the

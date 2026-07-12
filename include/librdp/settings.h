@@ -87,6 +87,46 @@ typedef enum librdp_feature
 } librdp_feature;
 
 /**
+ * @brief Reason why an optional feature is not currently usable.
+ *
+ * The value LIBRDP_FEATURE_REASON_NONE means the queried feature is usable at
+ * the level reported by the status object. Other values identify the first
+ * gating stage that prevents the feature from being used.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_feature_unavailable_reason
+{
+    LIBRDP_FEATURE_REASON_NONE = 0,                /**< No feature gate currently blocks use. */
+    LIBRDP_FEATURE_REASON_NOT_REQUESTED = 1,       /**< The feature bit is not enabled in settings. */
+    LIBRDP_FEATURE_REASON_NOT_BUILT = 2,           /**< Required protocol support was not compiled. */
+    LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE = 3, /**< Required application or OS backend is missing. */
+    LIBRDP_FEATURE_REASON_NOT_NEGOTIATED = 4,      /**< The active session has not negotiated the feature. */
+    LIBRDP_FEATURE_REASON_NOT_ACTIVE = 5,          /**< The feature is negotiated but has no active runtime stream. */
+    LIBRDP_FEATURE_REASON_PARSER_ONLY = 6          /**< The implementation can parse the protocol but has no runtime path. */
+} librdp_feature_unavailable_reason;
+
+/**
+ * @brief Public readiness snapshot for one optional feature.
+ *
+ * All boolean fields use 0 for false and non-zero for true. Settings-level
+ * queries fill requested, built, backend_ready, and reason; session-level
+ * queries additionally fill negotiated and active from live session state.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_feature_status
+{
+    librdp_feature feature;                         /**< Single feature represented by this status. */
+    int requested;                                  /**< Non-zero when the feature is enabled in settings. */
+    int built;                                      /**< Non-zero when protocol support was compiled into the library. */
+    int backend_ready;                              /**< Non-zero when required viewer or OS backend configuration exists. */
+    int negotiated;                                 /**< Non-zero when a session negotiated the needed channel or capability. */
+    int active;                                     /**< Non-zero when the negotiated feature currently has an active runtime. */
+    librdp_feature_unavailable_reason reason;       /**< First reason preventing active use, or NONE when usable. */
+} librdp_feature_status;
+
+/**
  * @brief Allocate a settings object with default client values.
  *
  * Defaults are port 3389, desktop size 1024x768, no credentials, no target,
@@ -346,14 +386,18 @@ LIBRDP_API librdp_status librdp_settings_add_printer(librdp_settings* settings,
  * @brief Enable or disable an optional client feature flag.
  *
  * Feature flags control whether optional protocol channels or viewer-backed
- * features are advertised or used later by a session.
+ * features are advertised or used later by a session. feature may be a bitmask
+ * containing one or more known librdp_feature values. Unknown bits are
+ * rejected so parser-only or unavailable protocols cannot be made visible as
+ * enabled by mistake.
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
- * @param[in] feature Feature bit to change; must be non-zero.
+ * @param[in] feature Feature bitmask to change; must contain only known
+ * librdp_feature bits and must be non-zero.
  * @param[in] enabled Non-zero to enable the feature, zero to disable it.
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
- * settings or a zero feature value.
+ * settings, a zero feature value, or any unknown feature bit.
  *
  * @note Thread-safety: settings are not internally synchronized.
  * @since 0.1.0
@@ -366,16 +410,45 @@ LIBRDP_API librdp_status librdp_settings_enable_feature(librdp_settings* setting
  * @brief Test whether an optional client feature flag is enabled.
  *
  * @param[in] settings Settings object to query, or NULL.
- * @param[in] feature Feature bit to test; zero is treated as disabled.
+ * @param[in] feature Feature bitmask to test; zero or any unknown bit is
+ * treated as disabled.
  *
  * @return Non-zero when the feature is enabled; 0 when settings is NULL,
- * feature is zero, or the feature is disabled.
+ * feature is zero, feature contains unknown bits, or the feature is disabled.
  *
  * @note Thread-safety: concurrent reads are safe only while no other thread
  * mutates or frees the settings object.
  * @since 0.1.0
  */
 LIBRDP_API int librdp_settings_feature_enabled(const librdp_settings* settings, librdp_feature feature);
+
+/**
+ * @brief Query local readiness for one optional feature.
+ *
+ * The function validates one known feature bit and reports whether settings
+ * request it, whether librdp was built with the relevant protocol path, and
+ * whether the application supplied the required backend configuration. It does
+ * not inspect a live server negotiation; use librdp_session_get_feature_status()
+ * after creating a session for negotiated and active state.
+ *
+ * @param[in] settings Settings object to query; must not be NULL.
+ * @param[in] feature Single known librdp_feature value to query; bitmasks with
+ * multiple bits, zero, and unknown bits are rejected.
+ * @param[out] status Destination status object; must not be NULL. The object is
+ * written completely on success and contains no borrowed pointers.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers, zero features, multiple feature bits, or unknown feature bits.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees the settings object.
+ * @warning A feature can be requested and backend-ready while still unavailable
+ * in a session if the server does not negotiate it.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_feature_status(const librdp_settings* settings,
+                                                 librdp_feature feature,
+                                                 librdp_feature_status* status);
 
 /**
  * @brief Set or clear the audio output device selector.

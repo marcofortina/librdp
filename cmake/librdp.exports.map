@@ -41,6 +41,7 @@ LIBRDP_0.1 {
         librdp_session_send_pen;
         librdp_session_dismiss_touch;
         librdp_session_get_state;
+        librdp_session_get_feature_status;
         librdp_session_get_surface;
         librdp_status_string;
         librdp_session_channel_send;
@@ -61,6 +62,7 @@ LIBRDP_0.1 {
         librdp_settings_add_printer;
         librdp_settings_enable_feature;
         librdp_settings_feature_enabled;
+        librdp_settings_get_feature_status;
         librdp_settings_set_audio_output_device;
         librdp_settings_set_audio_input_device;
         librdp_settings_set_video_output_path;
