@@ -24,6 +24,11 @@
 #include <limits.h>
 #include <string.h>
 
+static uint16_t rdp_gdi_read_u16_le_unchecked(const uint8_t* data)
+{
+    return (uint16_t)((uint32_t)data[0] | ((uint32_t)data[1] << 8u));
+}
+
 static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
 {
     switch (order_type)
@@ -113,7 +118,7 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
 
                 if (available < 8u)
                     return LIBRDP_STATUS_PROTOCOL_ERROR;
-                delete_count = (uint16_t)payload[6] | ((uint16_t)payload[7] << 8u);
+                delete_count = rdp_gdi_read_u16_le_unchecked(payload + 6u);
                 if (delete_count > RDP_GDI_MAX_OFFSCREEN_DELETE_INDICES)
                     return LIBRDP_STATUS_UNSUPPORTED;
                 need = 8u + ((size_t)delete_count * 2u);
@@ -128,12 +133,12 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
 
                 if (available < 14u)
                     return LIBRDP_STATUS_PROTOCOL_ERROR;
-                block_len = (uint16_t)payload[12] | ((uint16_t)payload[13] << 8u);
+                block_len = rdp_gdi_read_u16_le_unchecked(payload + 12u);
                 need = 14u + block_len;
             }
             else
             {
-                uint16_t block_len = (uint16_t)payload[10] | ((uint16_t)payload[11] << 8u);
+                uint16_t block_len = rdp_gdi_read_u16_le_unchecked(payload + 10u);
 
                 need = 12u + block_len;
             }
@@ -141,29 +146,29 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
         case RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT:
             if (available < 5u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            need = 5u + ((uint16_t)payload[3] | ((uint16_t)payload[4] << 8u));
+            need = 5u + rdp_gdi_read_u16_le_unchecked(payload + 3u);
             break;
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST:
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_END:
             if (available < 10u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            need = 10u + ((uint16_t)payload[0] | ((uint16_t)payload[1] << 8u));
+            need = 10u + rdp_gdi_read_u16_le_unchecked(payload);
             break;
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT:
             if (available < 2u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            need = 2u + ((uint16_t)payload[0] | ((uint16_t)payload[1] << 8u));
+            need = 2u + rdp_gdi_read_u16_le_unchecked(payload);
             break;
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST:
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END:
             if (available < 11u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            need = 11u + ((uint16_t)payload[5] | ((uint16_t)payload[6] << 8u));
+            need = 11u + rdp_gdi_read_u16_le_unchecked(payload + 5u);
             break;
         case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT:
             if (available < 7u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            need = 7u + ((uint16_t)payload[5] | ((uint16_t)payload[6] << 8u));
+            need = 7u + rdp_gdi_read_u16_le_unchecked(payload + 5u);
             break;
         case RDP_GDI_ALTSEC_WINDOW:
         {
@@ -171,7 +176,7 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
 
             if (available < 2u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            order_size = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8u);
+            order_size = rdp_gdi_read_u16_le_unchecked(payload);
             if (order_size < 3u)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             need = (size_t)order_size - 1u;
@@ -1259,7 +1264,7 @@ librdp_status rdp_gdi_write_altsec_order(rdp_buffer* buffer,
         (!payload && payload_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     start = buffer->length;
-    control_flags = (uint8_t)((order_type << 2u) | RDP_GDI_TS_SECONDARY);
+    control_flags = (uint8_t)(((uint32_t)order_type << 2u) | (uint32_t)RDP_GDI_TS_SECONDARY);
     status = rdp_buffer_append_u8(buffer, control_flags);
     if (status != LIBRDP_STATUS_OK)
         return rdp_gdi_restore_on_error(buffer, start, status);

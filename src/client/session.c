@@ -18842,7 +18842,7 @@ static librdp_status rdp_session_ctaphid_recv(uint32_t cid,
         }
         if (command != expected_command)
             continue;
-        total = ((uint16_t)frame[5] << 8) | (uint16_t)frame[6];
+        total = (uint16_t)(((uint16_t)frame[5] << 8) | (uint16_t)frame[6]);
         if (total > RDP_SESSION_CTAPHID_MAX_PAYLOAD)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         chunk = total < RDP_SESSION_CTAPHID_INIT_PAYLOAD_LENGTH ?
@@ -21168,7 +21168,7 @@ static uint32_t rdp_session_usb_complete_pipe_request(rdp_session_usb_device* de
 typedef struct rdp_session_usb_async_state
 {
     int completed;
-    int transfer_status;
+    enum libusb_transfer_status transfer_status;
 } rdp_session_usb_async_state;
 
 static void LIBUSB_CALL rdp_session_usb_transfer_callback(struct libusb_transfer* transfer)
@@ -21181,7 +21181,7 @@ static void LIBUSB_CALL rdp_session_usb_transfer_callback(struct libusb_transfer
     state->completed = 1;
 }
 
-static uint32_t rdp_session_usb_transfer_status_to_usbd(int status)
+static uint32_t rdp_session_usb_transfer_status_to_usbd(enum libusb_transfer_status status)
 {
     switch (status)
     {

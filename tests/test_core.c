@@ -1115,7 +1115,12 @@ static int test_settings_surface_input_session(void)
     };
     const uint8_t* out = NULL;
     uint16_t flags = 0;
-    librdp_key_event key = {30, LIBRDP_KEY_PRESSED};
+    librdp_key_event key = {
+        .scancode = 30,
+        .state = LIBRDP_KEY_PRESSED,
+        .flags = 0,
+        .unicode = 0
+    };
     librdp_mouse_event mouse = {10, 11, LIBRDP_MOUSE_BUTTON_LEFT, LIBRDP_MOUSE_PRESSED};
     librdp_display_monitor display_monitors[2];
     librdp_touch_contact touch_contact;

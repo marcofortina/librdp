@@ -20,6 +20,7 @@
 
 #include "common/trace.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -253,8 +254,15 @@ static const struct spa_pod* x11_pipewire_format_param(uint8_t* storage,
                                                        enum spa_audio_format spa_format)
 {
     struct spa_audio_info_raw info;
-    struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, storage_len);
+    uint32_t builder_len = 0;
+    struct spa_pod_builder builder;
 
+    if (!storage || !format || storage_len > UINT32_MAX)
+        return NULL;
+    builder_len = (uint32_t)storage_len;
+    memset(&builder, 0, sizeof(builder));
+    builder.data = storage;
+    builder.size = builder_len;
     memset(&info, 0, sizeof(info));
     info.format = spa_format;
     info.rate = format->samples_per_sec;

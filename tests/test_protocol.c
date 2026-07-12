@@ -7800,7 +7800,7 @@ static int test_path_security_license_channels(void)
     graphics_capset.version = RDP_GRAPHICS_CAPVERSION_106_ERR;
     PCHECK(rdp_graphics_capset_is_default_supported(&graphics_capset) == 0);
     PCHECK(rdp_graphics_default_capsets(graphics_default_capsets,
-                                        graphics_default_capset_count - 1u,
+                                        (uint16_t)(graphics_default_capset_count - 1u),
                                         &graphics_default_capset_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(dyn_response.length == 34 || dyn_response.length == 46 || dyn_response.length == 70);
     PCHECK(test_read_u16_le(dyn_response.data) == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);

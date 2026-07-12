@@ -319,27 +319,30 @@ static librdp_status rdp_webauthn_cbor_read_slice(const uint8_t* data,
 
 static librdp_status rdp_webauthn_write_type_len(rdp_buffer* buffer, uint8_t major, size_t length)
 {
+    uint8_t type = 0;
+
     if (!buffer || major > 7u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    type = (uint8_t)((uint32_t)major << 5u);
     if (length < 24u)
-        return rdp_buffer_append_u8(buffer, (uint8_t)((major << 5) | (uint8_t)length));
+        return rdp_buffer_append_u8(buffer, (uint8_t)(type | (uint8_t)length));
     if (length <= UINT8_MAX)
     {
-        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)((major << 5) | 24u));
+        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)(type | 24u));
         if (status != LIBRDP_STATUS_OK)
             return status;
         return rdp_buffer_append_u8(buffer, (uint8_t)length);
     }
     if (length <= UINT16_MAX)
     {
-        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)((major << 5) | 25u));
+        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)(type | 25u));
         if (status != LIBRDP_STATUS_OK)
             return status;
         return rdp_buffer_append_u16_be(buffer, (uint16_t)length);
     }
     if (length <= UINT32_MAX)
     {
-        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)((major << 5) | 26u));
+        librdp_status status = rdp_buffer_append_u8(buffer, (uint8_t)(type | 26u));
         if (status != LIBRDP_STATUS_OK)
             return status;
         return rdp_buffer_append_u32_be(buffer, (uint32_t)length);
