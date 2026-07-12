@@ -27,4 +27,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Testing](docs/testing.md)
 - [Fuzzing](docs/fuzzing.md)
 - [Backends](docs/backends.md)
+- [Packaging](docs/packaging.md)
+- [Diagnostics](docs/diagnostics.md)
 - [X11 viewer](docs/viewer-x11.md)
+- [librdp-x11-viewer man page](docs/man/librdp-x11-viewer.1)

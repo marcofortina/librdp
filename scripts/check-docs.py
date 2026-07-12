@@ -28,6 +28,8 @@ REQUIRED = (
     "docs/testing.md",
     "docs/fuzzing.md",
     "docs/backends.md",
+    "docs/packaging.md",
+    "docs/diagnostics.md",
     "docs/viewer-x11.md",
 )
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")

@@ -1,0 +1,118 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-X11-VIEWER 1 "2026-07-12" "librdp 0.1.0" "User Commands"
+.SH NAME
+librdp-x11-viewer \- minimal X11 RDP client viewer for librdp
+.SH SYNOPSIS
+.B librdp-x11-viewer
+.B --target
+.I host
+[
+.I options
+]
+.SH DESCRIPTION
+.B librdp-x11-viewer
+is a minimal X11 frontend for exercising the public librdp client APIs. It opens an X11 window, connects to an RDP target, presents framebuffer updates, forwards keyboard and pointer input, and exposes optional device and media feature paths.
+.SH OPTIONS
+.TP
+.BI --target " host"
+Remote host name or address.
+.TP
+.BI --port " port"
+Remote TCP port. The default is 3389.
+.TP
+.BI --user " name"
+User name for authentication.
+.TP
+.BI --password " value"
+Password for authentication. Avoid placing credentials in shell history on shared systems.
+.TP
+.BI --domain " name"
+Authentication domain.
+.TP
+.BI --width " px"
+Initial desktop width.
+.TP
+.BI --height " px"
+Initial desktop height.
+.TP
+.BI --security " auto|rdp|tls|nla"
+Security negotiation mode.
+.TP
+.BI --drive " name=path"
+Redirect a local directory as a remote drive.
+.TP
+.BI --serial " name=path"
+Redirect a local serial endpoint.
+.TP
+.BI --parallel " name=path"
+Redirect a local parallel endpoint.
+.TP
+.BI --printer " name=driver=path"
+Configure printer redirection with output path.
+.TP
+.BI --clipboard-file " path"
+Expose a local file through clipboard file-transfer behavior.
+.TP
+.BI --audio-output " [device=name]"
+Enable audio output. The viewer uses PipeWire when available.
+.TP
+.BI --audio-input " [device=name]"
+Enable audio input. The viewer uses PipeWire when available.
+.TP
+.BI --video " [file=path]"
+Enable video output handling and optionally write payloads to a file.
+.TP
+.BI --camera " device=/dev/videoN"
+Enable camera capture from a V4L2 device.
+.TP
+.BI --smartcard " [pcsc|vsmartcard=path]"
+Enable smartcard redirection through PC/SC or a controlled virtual source.
+.TP
+.BI --usb " vid:pid|bus:dev"
+Enable USB redirection for the selected local device.
+.TP
+.B --pnp
+Enable plug-and-play device redirection behavior.
+.TP
+.BI --webauthn " [fido2|fido2=/dev/hidrawN|mock|mock=path]"
+Enable WebAuthn redirection through libfido2, a hidraw device, or a controlled mock provider.
+.TP
+.BI --rail " app=path"
+Configure a remote application request.
+.TP
+.B --cr2
+Enable composited remoting behavior.
+.TP
+.BI --echo " [payload]"
+Enable the echo diagnostics channel and optionally set a payload string.
+.TP
+.B --telemetry
+Enable telemetry channel behavior.
+.TP
+.B --multitransport
+Enable multitransport negotiation behavior.
+.SH ENVIRONMENT
+.TP
+.B LIBRDP_TRACE_CLIENT
+Enable client, viewer, surface, input, channel, audio, video, and backend trace events.
+.TP
+.B LIBRDP_TRACE_TRANSPORT
+Enable TCP, TLS, UDP, read, write, wait, timeout, and close trace events.
+.TP
+.B LIBRDP_TRACE_PROTOCOL
+Enable handshake, parser, PDU, capability, slow-path, fast-path, channel, and codec trace events.
+.TP
+.B LIBRDP_TRACE_LEVEL
+Set trace verbosity: error, warn, info, debug, trace, or the numeric values 0 through 4.
+.TP
+.B LIBRDP_TRACE_HEX_BYTES
+Set the maximum number of bytes emitted by bounded protocol hexdumps.
+.SH EXAMPLES
+.nf
+librdp-x11-viewer --target host --user user --password password --security nla --width 1024 --height 768
+
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla
+.fi
+.SH SEE ALSO
+.BR librdp (7)
