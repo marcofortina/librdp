@@ -617,8 +617,16 @@ if(LIBRDP_BUILD_TESTS)
     target_compile_definitions(test_transport PRIVATE LIBRDP_TEST_TRANSPORT_MAIN)
     librdp_configure_test_executable(test_transport)
 
+    add_executable(test_abi_probe tests/abi_probe.c)
+    target_include_directories(test_abi_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    librdp_apply_warning_options(test_abi_probe)
+    librdp_apply_sanitizer_compile_options(test_abi_probe)
+    librdp_apply_sanitizer_link_options(test_abi_probe)
+
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport
+        DEPENDS test_common test_core test_protocol test_transport test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
@@ -658,6 +666,19 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DLIBRDP_STATIC_LIBRARY_SUFFIX=${CMAKE_STATIC_LIBRARY_SUFFIX}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/library_type_selection.cmake)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME abi_baseline
+            COMMAND ${CMAKE_COMMAND}
+                "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+                "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+                "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+                "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+                "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
+                "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/abi_baseline.cmake)
+    endif()
     add_test(NAME installed_public_api_consumer
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"

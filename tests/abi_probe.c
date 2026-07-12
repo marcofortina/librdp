@@ -1,0 +1,80 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+ * Module: public ABI layout probe.
+ * Coverage: emits machine-readable size and alignment values for public
+ * value types and opaque handle pointer representations.
+ * Bug classes: accidental public struct layout changes, enum size changes,
+ * and callback handle ABI drift.
+ * Determinism: output depends only on the local C ABI and public headers.
+ */
+
+#include <librdp/librdp.h>
+
+#include <stdio.h>
+#include <stddef.h>
+
+#define ABI_TYPE_ENTRY(name, type, suffix)                                                                             \
+    printf("    {\"name\":\"%s\",\"size\":%zu,\"align\":%zu}%s\n",                                                  \
+           (name),                                                                                                     \
+           sizeof(type),                                                                                               \
+           (size_t)_Alignof(type),                                                                                     \
+           (suffix))
+
+int main(void)
+{
+    printf("{\n");
+    printf("  \"abi\": {\"pointer_size\":%zu,\"long_size\":%zu,\"size_t_size\":%zu},\n",
+           sizeof(void*),
+           sizeof(long),
+           sizeof(size_t));
+    printf("  \"types\": [\n");
+    ABI_TYPE_ENTRY("librdp_session_ptr", librdp_session*, ",");
+    ABI_TYPE_ENTRY("librdp_settings_ptr", librdp_settings*, ",");
+    ABI_TYPE_ENTRY("librdp_surface_ptr", librdp_surface*, ",");
+    ABI_TYPE_ENTRY("librdp_event_callback", librdp_event_callback, ",");
+    ABI_TYPE_ENTRY("librdp_status", librdp_status, ",");
+    ABI_TYPE_ENTRY("librdp_security_mode", librdp_security_mode, ",");
+    ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
+    ABI_TYPE_ENTRY("librdp_session_state", librdp_session_state, ",");
+    ABI_TYPE_ENTRY("librdp_display_monitor", librdp_display_monitor, ",");
+    ABI_TYPE_ENTRY("librdp_pixel_format", librdp_pixel_format, ",");
+    ABI_TYPE_ENTRY("librdp_channel_id", librdp_channel_id, ",");
+    ABI_TYPE_ENTRY("librdp_audio_format", librdp_audio_format, ",");
+    ABI_TYPE_ENTRY("librdp_video_capture_media", librdp_video_capture_media, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_format", librdp_clipboard_format, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_file", librdp_clipboard_file, ",");
+    ABI_TYPE_ENTRY("librdp_key_state", librdp_key_state, ",");
+    ABI_TYPE_ENTRY("librdp_mouse_button", librdp_mouse_button, ",");
+    ABI_TYPE_ENTRY("librdp_mouse_state", librdp_mouse_state, ",");
+    ABI_TYPE_ENTRY("librdp_key_event", librdp_key_event, ",");
+    ABI_TYPE_ENTRY("librdp_mouse_event", librdp_mouse_event, ",");
+    ABI_TYPE_ENTRY("librdp_touch_contact", librdp_touch_contact, ",");
+    ABI_TYPE_ENTRY("librdp_touch_frame", librdp_touch_frame, ",");
+    ABI_TYPE_ENTRY("librdp_pen_contact", librdp_pen_contact, ",");
+    ABI_TYPE_ENTRY("librdp_pen_frame", librdp_pen_frame, ",");
+    ABI_TYPE_ENTRY("librdp_event_type", librdp_event_type, ",");
+    ABI_TYPE_ENTRY("librdp_pointer_update_type", librdp_pointer_update_type, ",");
+    ABI_TYPE_ENTRY("librdp_rect", librdp_rect, ",");
+    ABI_TYPE_ENTRY("librdp_pointer_event", librdp_pointer_event, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_formats_event", librdp_clipboard_formats_event, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_data_event", librdp_clipboard_data_event, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_request_event", librdp_clipboard_request_event, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_file_contents_event", librdp_clipboard_file_contents_event, ",");
+    ABI_TYPE_ENTRY("librdp_channel_open_event", librdp_channel_open_event, ",");
+    ABI_TYPE_ENTRY("librdp_channel_data_event", librdp_channel_data_event, ",");
+    ABI_TYPE_ENTRY("librdp_channel_close_event", librdp_channel_close_event, ",");
+    ABI_TYPE_ENTRY("librdp_audio_output_formats_event", librdp_audio_output_formats_event, ",");
+    ABI_TYPE_ENTRY("librdp_audio_output_data_event", librdp_audio_output_data_event, ",");
+    ABI_TYPE_ENTRY("librdp_audio_input_formats_event", librdp_audio_input_formats_event, ",");
+    ABI_TYPE_ENTRY("librdp_audio_input_open_event", librdp_audio_input_open_event, ",");
+    ABI_TYPE_ENTRY("librdp_video_capture_open_event", librdp_video_capture_open_event, ",");
+    ABI_TYPE_ENTRY("librdp_video_capture_sample_request_event", librdp_video_capture_sample_request_event, ",");
+    ABI_TYPE_ENTRY("librdp_video_capture_close_event", librdp_video_capture_close_event, ",");
+    ABI_TYPE_ENTRY("librdp_event", librdp_event, "");
+    printf("  ]\n");
+    printf("}\n");
+    return 0;
+}
