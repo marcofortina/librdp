@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 Backends adapt host facilities to protocol features without leaking platform handles into the core API. Applications own local device policy, permissions, and user consent. The library owns protocol packet sequencing, negotiated channel state, and event delivery.
 
+Backend configuration starts from public settings in `include/librdp/settings.h`. Runtime investigation uses the structured trace format described in [Tracing](tracing.md).
+
 ## Common backend contract
 
 Every backend should follow the same lifecycle:

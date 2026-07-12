@@ -65,6 +65,7 @@ PATH_IN_BACKTICKS_RE = re.compile(r"`([^`]+)`")
 MANPAGE_RE = re.compile(r"^docs/man/(.+)\.(\d)$")
 SEE_ALSO_RE = re.compile(r"\.BR\s+([A-Za-z0-9_.-]+)\s*\((\d)\)")
 Doxygen_SETTING_RE = re.compile(r"^([A-Z0-9_]+)\s*=\s*(.*?)\s*$", re.MULTILINE)
+DEFGROUP_RE = re.compile(r"@defgroup\s+(librdp_[A-Za-z0-9_]+)\b")
 DISALLOWED_PHRASES = (
     "Source complete",
     "source complete",
@@ -348,6 +349,31 @@ def validate_generated_api_page(errors: list[str]) -> None:
     if "generated-api.md" not in read("mkdocs.yml"):
         errors.append("mkdocs.yml missing generated API page")
 
+    for path in sorted((ROOT / "include/librdp").glob("*.h")):
+        for group in DEFGROUP_RE.findall(path.read_text(encoding="utf-8")):
+            group_page = "group__" + group.replace("_", "__", 1) + ".html"
+            if group_page not in page and group_page not in read("docs/api-reference.md"):
+                errors.append(f"generated API docs missing Doxygen group link for {group}")
+
+
+def validate_cross_document_links(errors: list[str]) -> None:
+    required_links = {
+        "docs/api.md": ("lifecycle.md", "examples.md"),
+        "docs/api-reference.md": ("generated-api.md",),
+        "docs/programmers-reference.md": ("lifecycle.md",),
+        "docs/backends.md": ("backend-guide.md",),
+        "docs/backend-guide.md": ("tracing.md", "settings.h"),
+        "docs/diagnostics.md": ("tracing.md",),
+        "docs/portability.md": ("backends.md",),
+        "docs/packaging.md": ("abi-versioning.md",),
+        "docs/generated-api.md": ("api/doxygen/html/index.html",),
+    }
+    for rel, snippets in required_links.items():
+        text = read(rel)
+        for snippet in snippets:
+            if snippet not in text:
+                errors.append(f"{rel} missing cross-document reference: {snippet}")
+
 
 def main() -> int:
     errors: list[str] = []
@@ -391,6 +417,7 @@ def main() -> int:
     validate_mkdocs(errors)
     validate_pages_workflow(errors)
     validate_generated_api_page(errors)
+    validate_cross_document_links(errors)
 
     if errors:
         print("error: documentation guardrail failed:", file=sys.stderr)

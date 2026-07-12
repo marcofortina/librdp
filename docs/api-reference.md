@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 This document is a hand-written map of the public C API. The function-level reference is produced from Doxygen comments in `include/librdp/*.h`.
 
+The published entry point for generated per-symbol pages is `docs/generated-api.md`.
+
 ## Header map
 
 | Header | Purpose | Generated group |

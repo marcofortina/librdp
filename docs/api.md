@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 The public API lives under `include/librdp/`. Public handles are opaque where callers do not need protocol internals. Detailed ownership, nullability, error, and threading rules are documented in the headers with Doxygen comments.
 
-For end-to-end call ordering, see [Lifecycle](lifecycle.md).
+For end-to-end call ordering, see [Lifecycle](lifecycle.md). For standalone source examples, see [Examples](examples.md).
 
 ## Object model
 

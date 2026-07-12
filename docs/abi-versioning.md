@@ -87,6 +87,14 @@ Public symbols should use the `librdp_` prefix. Internal symbols should not be e
 
 Build-system support for explicit symbol visibility can be added without changing public headers, but exported symbol sets must be reviewed before release packaging.
 
+Recommended exported-symbol review:
+
+1. Build the library with the intended packaging flags.
+2. List exported symbols with the platform toolchain.
+3. Confirm exported public symbols use the `librdp_` prefix.
+4. Confirm helper symbols from `src/` are not intentionally documented as public ABI.
+5. Compare public headers, generated API docs, and exported symbols before packaging.
+
 ## Header policy
 
 Public headers should remain self-contained and usable from C and C++:

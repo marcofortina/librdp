@@ -52,17 +52,36 @@ Linux provides the richest backend set for the current viewer:
 
 Linux-only backends must be compiled conditionally and must not be required for the core library.
 
+## Backend portability matrix
+
+| Feature | Linux provider | macOS provider expectation | FreeBSD provider expectation | Public API stability rule |
+| --- | --- | --- | --- | --- |
+| Window presentation | X11/Xwayland viewer | Native viewer outside core | X11 or native viewer outside core | Keep window handles out of public headers. |
+| Keyboard and pointer | X11/XKB/xkbcommon | Native input stack translated to public input structs | X11/XKB or native stack translated to public input structs | Public input structs remain platform-neutral. |
+| Audio output/input | PipeWire | Native audio backend outside core | Native or PipeWire-compatible backend outside core | Audio public API carries formats and bytes only. |
+| Camera | V4L2 | Native capture backend outside core | V4L2-compatible or native capture backend outside core | Camera device handles remain backend-owned. |
+| Clipboard | Viewer integration | Native pasteboard integration outside core | Viewer integration outside core | Clipboard APIs carry copied bytes and borrowed events. |
+| Smartcard | PC/SC | PC/SC-compatible provider outside core | PC/SC-compatible provider outside core | Card handles are never public API types. |
+| USB | libusb | libusb or native USB backend outside core | libusb backend outside core | USB selectors are settings strings or descriptors. |
+| WebAuthn | libfido2/libcbor | platform or libfido2 provider outside core | libfido2 provider outside core | Authenticator handles and assertions remain backend-private. |
+| Printer | CUPS or file path | native print backend or file path outside core | CUPS or file path outside core | Printer configuration uses portable settings strings. |
+| Filesystem metadata | POSIX, ACL, xattr, archive libs | native metadata adapter outside core | POSIX, ACL, xattr adapters outside core | Remote-visible metadata is normalized by protocol code. |
+
 ## macOS
 
 macOS integration should use platform-native frontend code outside the core. A macOS viewer should translate Cocoa input, display, clipboard, audio, device, and security UI into the same public `librdp_settings`, `librdp_session`, `librdp_event`, and `librdp_surface` APIs used by other frontends.
 
 macOS code should not introduce Objective-C or framework headers into public core headers.
 
+macOS-specific implementation should keep Objective-C, CoreFoundation, Security framework, audio, camera, pasteboard, and display objects in a platform viewer or backend layer. Core code should see only public settings, copied bytes, event payloads, and protocol-neutral descriptors.
+
 ## FreeBSD
 
 FreeBSD integration should use portable socket, file, USB, PC/SC, and X11 paths where available. Backend detection should be CMake-driven and should fail closed when a provider is unavailable.
 
 FreeBSD-specific behavior belongs behind platform or backend boundaries, not in protocol parsers or public API types.
+
+FreeBSD backend code should avoid Linux-only device assumptions. When an optional provider differs from Linux, the backend should expose the same public behavior and trace failure stage through the same event family.
 
 ## Data model rules
 
@@ -91,3 +110,15 @@ New backend work should follow this pattern:
 6. Document the backend in [Backends](backends.md).
 
 If a feature cannot be implemented on all target platforms, the API should still fail predictably and document which backend providers can satisfy it.
+
+## Portability review checklist
+
+Before merging platform-specific code:
+
+1. Confirm no native platform type appears in `include/librdp/*.h`.
+2. Confirm optional provider detection is CMake-driven.
+3. Confirm the core build succeeds without the optional provider.
+4. Confirm unavailable providers fail closed with traceable errors.
+5. Confirm callbacks and public structs keep the same ownership rules across platforms.
+6. Confirm path, locale, endian, and alignment assumptions are explicit.
+7. Confirm docs identify the backend provider and trust boundary.
