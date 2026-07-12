@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -29,20 +30,39 @@ EXEMPT_SUFFIXES = {
 
 EXEMPT_DIRS = {
     ".git",
+    "__pycache__",
     "build",
 }
 
+EXEMPT_DIR_PREFIXES = (
+    "build-",
+    "cmake-build-",
+)
+
 
 def tracked_files(repo: Path) -> list[Path]:
+    if not (repo / ".git").exists() or not shutil.which("git"):
+        return filesystem_files(repo)
+
     result = subprocess.run(
         ["git", "ls-files"],
         cwd=repo,
-        check=True,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    if result.returncode != 0:
+        return filesystem_files(repo)
     return [repo / line for line in result.stdout.splitlines() if line]
+
+
+def filesystem_files(repo: Path) -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(repo.rglob("*")):
+        if path.is_file() and not is_exempt(path, repo):
+            files.append(path)
+    return files
 
 
 def is_exempt(path: Path, repo: Path) -> bool:
@@ -51,7 +71,12 @@ def is_exempt(path: Path, repo: Path) -> bool:
         return True
     if path.suffix.lower() in EXEMPT_SUFFIXES:
         return True
-    return any(part in EXEMPT_DIRS for part in rel.parts)
+    for part in rel.parts:
+        if part in EXEMPT_DIRS:
+            return True
+        if any(part.startswith(prefix) for prefix in EXEMPT_DIR_PREFIXES):
+            return True
+    return False
 
 
 def read_prefix(path: Path, limit: int = 4096) -> str:

@@ -705,6 +705,12 @@ if(LIBRDP_BUILD_TESTS)
         set_tests_properties(license_headers PROPERTIES
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(NAME license_archive_fallback
+            COMMAND ${CMAKE_COMMAND}
+                "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/license_archive_fallback.cmake)
         add_test(NAME public_api_docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)
         add_test(NAME source_comments
