@@ -35,6 +35,9 @@ REQUIRED_MARKDOWN = (
     "docs/viewer-x11.md",
 )
 REQUIRED_FILES = REQUIRED_MARKDOWN + (
+    "docs/man/librdp.7",
+    "docs/man/librdp-api.7",
+    "docs/man/librdp-tracing.7",
     "docs/man/librdp-x11-viewer.1",
 )
 FORBIDDEN_DOCS = (
@@ -51,6 +54,8 @@ CMAKE_OPTION_RE = re.compile(r"option\((LIBRDP_BUILD_[A-Z0-9_]+)\b")
 DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_BUILD_[A-Z0-9_]+")
 FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c)\)")
 PATH_IN_BACKTICKS_RE = re.compile(r"`([^`]+)`")
+MANPAGE_RE = re.compile(r"^docs/man/(.+)\.(\d)$")
+SEE_ALSO_RE = re.compile(r"\.BR\s+([A-Za-z0-9_.-]+)\s*\((\d)\)")
 DISALLOWED_PHRASES = (
     "Source complete",
     "source complete",
@@ -217,6 +222,42 @@ def validate_fuzz_targets(errors: list[str]) -> None:
             errors.append(f"fuzz target not referenced by docs: {target}")
 
 
+def manpage_index() -> set[tuple[str, str]]:
+    index: set[tuple[str, str]] = set()
+    for path in (ROOT / "docs/man").glob("*.[0-9]"):
+        rel = str(path.relative_to(ROOT))
+        match = MANPAGE_RE.match(rel)
+        if match:
+            index.add((match.group(1), match.group(2)))
+    return index
+
+
+def validate_manpages(errors: list[str]) -> None:
+    index = manpage_index()
+    for rel in REQUIRED_FILES:
+        match = MANPAGE_RE.match(rel)
+        if match and (match.group(1), match.group(2)) not in index:
+            errors.append(f"required manpage missing: {rel}")
+
+    for path in sorted((ROOT / "docs/man").glob("*.[0-9]")):
+        text = path.read_text(encoding="utf-8")
+        for name, section in SEE_ALSO_RE.findall(text):
+            if (name, section) not in index:
+                errors.append(f"unresolved SEE ALSO in {path.relative_to(ROOT)}: {name}({section})")
+
+
+def validate_public_headers(errors: list[str]) -> None:
+    api_reference = read("docs/api-reference.md")
+    umbrella = read("include/librdp/librdp.h")
+    for path in sorted((ROOT / "include/librdp").glob("*.h")):
+        rel = str(path.relative_to(ROOT))
+        include_name = f"<librdp/{path.name}>"
+        if rel not in api_reference and include_name not in api_reference:
+            errors.append(f"public header missing from api-reference.md: {rel}")
+        if path.name != "librdp.h" and include_name not in umbrella:
+            errors.append(f"public header missing from umbrella header: {include_name}")
+
+
 def main() -> int:
     errors: list[str] = []
     required_set = set(REQUIRED_MARKDOWN)
@@ -253,6 +294,8 @@ def main() -> int:
     validate_viewer_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)
+    validate_manpages(errors)
+    validate_public_headers(errors)
 
     if errors:
         print("error: documentation guardrail failed:", file=sys.stderr)
