@@ -52,7 +52,7 @@ if(NOT configure_result EQUAL 0)
     message(FATAL_ERROR "sanitizer core configure failed with ${configure_result}")
 endif()
 
-set(build_args --build "${sanitizer_binary_dir}" --target test_core)
+set(build_args --build "${sanitizer_binary_dir}" --target librdp_tests)
 if(DEFINED LIBRDP_BUILD_CONFIG AND NOT "${LIBRDP_BUILD_CONFIG}" STREQUAL "")
     list(APPEND build_args --config "${LIBRDP_BUILD_CONFIG}")
 endif()
@@ -68,7 +68,7 @@ execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
         "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"
         "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
-        "${CMAKE_CTEST_COMMAND}" --test-dir "${sanitizer_binary_dir}" -R "^core$" --output-on-failure
+        "${CMAKE_CTEST_COMMAND}" --test-dir "${sanitizer_binary_dir}" -R "^(common|core|protocol|transport)$" --output-on-failure
     RESULT_VARIABLE test_result
 )
 if(NOT test_result EQUAL 0)

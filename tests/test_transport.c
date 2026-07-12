@@ -759,3 +759,10 @@ int test_transport(void)
     rdp_buffer_free(&tls_public_key);
     return 0;
 }
+
+#ifdef LIBRDP_TEST_TRANSPORT_MAIN
+int main(void)
+{
+    return test_transport();
+}
+#endif

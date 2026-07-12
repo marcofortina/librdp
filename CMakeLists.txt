@@ -571,26 +571,62 @@ endif()
 if(LIBRDP_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter)
+    function(librdp_configure_test_compile target)
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
+        librdp_apply_warning_options(${target})
+        librdp_apply_sanitizer_compile_options(${target})
+        if(LIBRDP_FFMPEG_AVC_FOUND)
+            target_compile_definitions(${target} PRIVATE RDP_HAVE_FFMPEG_AVC=1)
+        endif()
+        if(LIBRDP_OPENH264_AVC_FOUND)
+            target_compile_definitions(${target} PRIVATE RDP_HAVE_OPENH264_AVC=1)
+        endif()
+    endfunction()
+
+    function(librdp_configure_test_executable target)
+        librdp_configure_test_compile(${target})
+        librdp_link_internal_runtime(${target})
+        librdp_apply_sanitizer_link_options(${target})
+    endfunction()
+
+    add_library(test_core_units OBJECT tests/test_core.c)
+    target_compile_definitions(test_core_units PRIVATE LIBRDP_TEST_NO_MAIN)
+    librdp_configure_test_compile(test_core_units)
+
+    add_executable(test_common
+        tests/test_common_main.c
+        $<TARGET_OBJECTS:test_core_units>
+    )
+    librdp_configure_test_executable(test_common)
+
     add_executable(test_core
-        tests/test_core.c
-        tests/test_protocol.c
-        tests/test_transport.c
+        tests/test_core_main.c
+        $<TARGET_OBJECTS:test_core_units>
     )
-    target_include_directories(test_core PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    librdp_configure_test_executable(test_core)
+
+    add_executable(test_protocol tests/test_protocol.c)
+    target_compile_definitions(test_protocol PRIVATE LIBRDP_TEST_PROTOCOL_MAIN)
+    librdp_configure_test_executable(test_protocol)
+
+    add_executable(test_transport tests/test_transport.c)
+    target_compile_definitions(test_transport PRIVATE LIBRDP_TEST_TRANSPORT_MAIN)
+    librdp_configure_test_executable(test_transport)
+
+    add_custom_target(librdp_tests
+        DEPENDS test_common test_core test_protocol test_transport
     )
-    librdp_link_internal_runtime(test_core)
-    librdp_apply_warning_options(test_core)
-    librdp_apply_sanitizer_compile_options(test_core)
-    librdp_apply_sanitizer_link_options(test_core)
-    if(LIBRDP_FFMPEG_AVC_FOUND)
-        target_compile_definitions(test_core PRIVATE RDP_HAVE_FFMPEG_AVC=1)
-    endif()
-    if(LIBRDP_OPENH264_AVC_FOUND)
-        target_compile_definitions(test_core PRIVATE RDP_HAVE_OPENH264_AVC=1)
-    endif()
+
+    add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
+    add_test(NAME protocol COMMAND test_protocol)
+    add_test(NAME transport COMMAND test_transport)
+    set_tests_properties(common core transport PROPERTIES TIMEOUT 30)
+    set_tests_properties(protocol PROPERTIES TIMEOUT 90)
     add_test(NAME core_optional_backends_off
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -822,7 +858,7 @@ if(LIBRDP_ENABLE_SANITIZERS)
 else()
     librdp_summary_line(sanitizers OFF not-applicable project-targets no disabled-by-user)
 endif()
-librdp_summary_build_target(tests LIBRDP_BUILD_TESTS test_core)
+librdp_summary_build_target(tests LIBRDP_BUILD_TESTS librdp_tests)
 librdp_summary_build_target(examples LIBRDP_BUILD_EXAMPLES examples)
 librdp_summary_build_target(fuzz LIBRDP_BUILD_FUZZ fuzz-targets)
 if(LIBRDP_BUILD_X11_VIEWER)

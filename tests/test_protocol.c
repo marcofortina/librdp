@@ -19178,3 +19178,10 @@ int test_protocol(void)
         return 1;
     return 0;
 }
+
+#ifdef LIBRDP_TEST_PROTOCOL_MAIN
+int main(void)
+{
+    return test_protocol();
+}
+#endif

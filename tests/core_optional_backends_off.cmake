@@ -57,7 +57,7 @@ foreach(shared_mode IN ITEMS OFF ON)
         message(FATAL_ERROR "optional backend OFF configure failed for BUILD_SHARED_LIBS=${shared_mode} with ${configure_result}")
     endif()
 
-    set(build_args --build "${optional_off_binary_dir}" --target librdp test_core)
+    set(build_args --build "${optional_off_binary_dir}" --target librdp librdp_tests)
     if(DEFINED LIBRDP_BUILD_CONFIG AND NOT "${LIBRDP_BUILD_CONFIG}" STREQUAL "")
         list(APPEND build_args --config "${LIBRDP_BUILD_CONFIG}")
     endif()

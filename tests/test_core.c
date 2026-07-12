@@ -1635,7 +1635,7 @@ static int test_settings_surface_input_session(void)
     return 0;
 }
 
-int main(void)
+int test_common(void)
 {
     if (test_trace() != 0)
         return 1;
@@ -1645,11 +1645,25 @@ int main(void)
         return 1;
     if (test_pointer_decode() != 0)
         return 1;
+    return 0;
+}
+
+int test_client_core(void)
+{
+    return test_settings_surface_input_session();
+}
+
+#ifndef LIBRDP_TEST_NO_MAIN
+int main(void)
+{
+    if (test_common() != 0)
+        return 1;
     if (test_protocol() != 0)
         return 1;
     if (test_transport() != 0)
         return 1;
-    if (test_settings_surface_input_session() != 0)
+    if (test_client_core() != 0)
         return 1;
     return 0;
 }
+#endif
