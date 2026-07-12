@@ -757,6 +757,12 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-examples.py)
         add_test(NAME docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-docs.py)
+        add_test(NAME sbom_generation
+            COMMAND ${CMAKE_COMMAND}
+                "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/sbom_generation.cmake)
         if(DOXYGEN_FOUND)
             add_test(NAME doxygen_public_headers
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-doxygen.py)
