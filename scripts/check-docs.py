@@ -60,6 +60,7 @@ FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c
 PATH_IN_BACKTICKS_RE = re.compile(r"`([^`]+)`")
 MANPAGE_RE = re.compile(r"^docs/man/(.+)\.(\d)$")
 SEE_ALSO_RE = re.compile(r"\.BR\s+([A-Za-z0-9_.-]+)\s*\((\d)\)")
+Doxygen_SETTING_RE = re.compile(r"^([A-Z0-9_]+)\s*=\s*(.*?)\s*$", re.MULTILINE)
 DISALLOWED_PHRASES = (
     "Source complete",
     "source complete",
@@ -260,6 +261,71 @@ def validate_public_headers(errors: list[str]) -> None:
             errors.append(f"public header missing from api-reference.md: {rel}")
         if path.name != "librdp.h" and include_name not in umbrella:
             errors.append(f"public header missing from umbrella header: {include_name}")
+        header_text = path.read_text(encoding="utf-8")
+        if "@defgroup" not in header_text:
+            errors.append(f"public header missing Doxygen group: {rel}")
+        if "/** @} */" not in header_text:
+            errors.append(f"public header missing Doxygen group close: {rel}")
+
+
+def doxygen_settings() -> dict[str, str]:
+    return {match.group(1): match.group(2).strip() for match in Doxygen_SETTING_RE.finditer(read("Doxyfile"))}
+
+
+def validate_doxygen_config(errors: list[str]) -> None:
+    settings = doxygen_settings()
+    expected = {
+        "GENERATE_HTML": "YES",
+        "GENERATE_XML": "YES",
+        "WARN_AS_ERROR": "YES",
+        "WARN_IF_UNDOCUMENTED": "YES",
+        "WARN_IF_DOC_ERROR": "YES",
+        "USE_MDFILE_AS_MAINPAGE": "docs/api-reference.md",
+    }
+    for key, value in expected.items():
+        if settings.get(key) != value:
+            errors.append(f"Doxyfile {key} must be {value}")
+    inputs = settings.get("INPUT", "")
+    for required_input in ("include/librdp", "docs/api-reference.md"):
+        if required_input not in inputs:
+            errors.append(f"Doxyfile INPUT missing {required_input}")
+
+
+def validate_mkdocs(errors: list[str]) -> None:
+    config = read("mkdocs.yml")
+    required_snippets = (
+        "site_name: librdp",
+        "strict: true",
+        "theme:",
+        "name: material",
+        "docs_dir: docs",
+        "site_dir: _site",
+    )
+    for snippet in required_snippets:
+        if snippet not in config:
+            errors.append(f"mkdocs.yml missing required setting: {snippet}")
+    for rel in REQUIRED_MARKDOWN:
+        if rel == "README.md":
+            continue
+        nav_name = rel.removeprefix("docs/")
+        if nav_name not in config:
+            errors.append(f"mkdocs.yml nav missing document: {nav_name}")
+
+
+def validate_pages_workflow(errors: list[str]) -> None:
+    workflow = read(".github/workflows/pages.yml")
+    required_snippets = (
+        "actions/deploy-pages@v4",
+        "actions/upload-pages-artifact@v3",
+        "python3 scripts/check-docs.py",
+        "python3 scripts/check-public-api-docs.py",
+        "python3 scripts/check-doxygen.py",
+        "mkdocs build --strict --site-dir _site",
+        "build/doxygen/html",
+    )
+    for snippet in required_snippets:
+        if snippet not in workflow:
+            errors.append(f"pages workflow missing required step content: {snippet}")
 
 
 def main() -> int:
@@ -300,6 +366,9 @@ def main() -> int:
     validate_fuzz_targets(errors)
     validate_manpages(errors)
     validate_public_headers(errors)
+    validate_doxygen_config(errors)
+    validate_mkdocs(errors)
+    validate_pages_workflow(errors)
 
     if errors:
         print("error: documentation guardrail failed:", file=sys.stderr)

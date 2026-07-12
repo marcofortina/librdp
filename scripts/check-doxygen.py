@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DOXYGEN_OUTPUT = ROOT / "build" / "doxygen"
 
 
 def main() -> int:
@@ -20,6 +21,7 @@ def main() -> int:
     if doxygen is None:
         print("error: doxygen executable not found", file=sys.stderr)
         return 1
+    DOXYGEN_OUTPUT.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [doxygen, "Doxyfile"],
         cwd=ROOT,
