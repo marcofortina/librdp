@@ -1428,13 +1428,14 @@ static int test_gcc_client_name_regression(void)
     const struct
     {
         const char* name;
-        uint8_t first_wire_byte;
+        const char* wire_name;
+        size_t wire_chars;
     } cases[] = {
-        {NULL, 'l'},
-        {"", 0},
-        {"a", 'a'},
-        {"exactly-15-char", 'e'},
-        {"this-client-name-is-longer-than-the-fixed-field", 't'}
+        {NULL, "librdp", 6u},
+        {"", "", 0u},
+        {"a", "a", 1u},
+        {"exactly-15-char", "exactly-15-char", 15u},
+        {"this-client-name-is-longer-than-the-fixed-field", "this-client-nam", 15u}
     };
     rdp_gcc_client_config config;
     rdp_gcc_client_data_summary summary;
@@ -1456,10 +1457,13 @@ static int test_gcc_client_name_regression(void)
                LIBRDP_STATUS_OK);
         PCHECK(summary.has_core && summary.has_security && summary.has_network);
         PCHECK(summary.desktop_width == 1024 && summary.desktop_height == 768);
-        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET] == cases[i].first_wire_byte);
-        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + 1u] == 0);
-        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + TEST_GCC_CORE_CLIENT_NAME_BYTES - 2u] == 0);
-        PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + TEST_GCC_CORE_CLIENT_NAME_BYTES - 1u] == 0);
+        for (size_t j = 0; j < TEST_GCC_CORE_CLIENT_NAME_BYTES / 2u; j++)
+        {
+            uint8_t expected = j < cases[i].wire_chars ? (uint8_t)cases[i].wire_name[j] : 0;
+
+            PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + (j * 2u)] == expected);
+            PCHECK(client_blocks.data[TEST_GCC_CORE_CLIENT_NAME_OFFSET + (j * 2u) + 1u] == 0);
+        }
         rdp_buffer_free(&client_blocks);
     }
 

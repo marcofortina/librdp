@@ -197,24 +197,27 @@ static librdp_status rdp_gcc_write_utf16le_fixed(rdp_buffer* buffer, const char*
 {
     size_t i = 0;
     size_t chars = 0;
-    int terminated = 0;
+    size_t text_chars = 0;
+    size_t max_text_chars = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || bytes % 2u != 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     chars = bytes / 2u;
+    max_text_chars = chars > 0 ? chars - 1u : 0;
+    if (text)
+    {
+        while (text_chars < max_text_chars && text[text_chars] != '\0')
+            text_chars++;
+    }
+
     for (i = 0; i < chars; i++)
     {
         uint16_t ch = 0;
-        if (text && !terminated && i + 1u < chars)
-        {
-            unsigned char c = (unsigned char)text[i];
-            if (c != '\0')
-                ch = c;
-            else
-                terminated = 1;
-        }
+
+        if (i < text_chars)
+            ch = (uint16_t)(unsigned char)text[i];
         status = rdp_buffer_append_u16_le(buffer, ch);
         if (status != LIBRDP_STATUS_OK)
             return status;
