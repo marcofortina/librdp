@@ -1,0 +1,23 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+channel_rdpdr="rdpdr"
+channel_rdpsnd="rdpsnd"
+channel_audin="audin"
+channel_cliprdr="cliprdr"
+channel_drdynvc="drdynvc"
+channel_rdpgfx="Microsoft::Windows::RDS::Graphics"
+channel_disp="disp"
+channel_rail="rail"
+channel_encomsp="encomsp"
+channel_rdpecam="rdpecam"
+pdu_tpkt="\x03\x00"
+pdu_x224="\x0e\xd0"
+pdu_gcc="\x00\xc0"
+pdu_fastpath="\x00\x00"
+codec_rfx="RFX"
+codec_avc420="AVC420"
+codec_avc444="AVC444"
+codec_nsc="NSCodec"
+security_nla="CredSSP"
+security_tls="TLS"

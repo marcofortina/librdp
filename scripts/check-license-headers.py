@@ -19,6 +19,7 @@ EXEMPT_NAMES = {
 }
 
 EXEMPT_SUFFIXES = {
+    ".bin",
     ".gz",
     ".png",
     ".jpg",

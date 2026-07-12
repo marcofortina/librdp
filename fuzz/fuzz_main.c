@@ -20,14 +20,14 @@
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
-int main(void)
+static int fuzz_main_run_stream(FILE* input)
 {
     uint8_t* data = NULL;
     size_t length = 0;
     size_t capacity = 0;
     int c = 0;
 
-    while ((c = fgetc(stdin)) != EOF)
+    while ((c = fgetc(input)) != EOF)
     {
         if (length == capacity)
         {
@@ -46,5 +46,27 @@ int main(void)
 
     (void)LLVMFuzzerTestOneInput(data, length);
     free(data);
+    return 0;
+}
+
+int main(int argc, char** argv)
+{
+    int i = 0;
+
+    if (argc <= 1)
+        return fuzz_main_run_stream(stdin);
+
+    for (i = 1; i < argc; i++)
+    {
+        FILE* input = fopen(argv[i], "rb");
+        int status = 0;
+
+        if (!input)
+            return 1;
+        status = fuzz_main_run_stream(input);
+        fclose(input);
+        if (status != 0)
+            return status;
+    }
     return 0;
 }

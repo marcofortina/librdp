@@ -568,8 +568,11 @@ if(DOXYGEN_FOUND)
         VERBATIM)
 endif()
 
-if(LIBRDP_BUILD_TESTS)
+if(LIBRDP_BUILD_TESTS OR LIBRDP_BUILD_FUZZ)
     enable_testing()
+endif()
+
+if(LIBRDP_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter)
     function(librdp_configure_test_compile target)
         target_include_directories(${target} PRIVATE
@@ -745,7 +748,9 @@ if(LIBRDP_BUILD_FUZZ)
         if(LIBRDP_OPENH264_AVC_FOUND)
             target_compile_definitions(${name} PRIVATE RDP_HAVE_OPENH264_AVC=1)
         endif()
+        set(librdp_fuzzer_uses_libfuzzer 0)
         if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+            set(librdp_fuzzer_uses_libfuzzer 1)
             set(fuzzer_sanitizers fuzzer)
             if(LIBRDP_ENABLE_SANITIZERS)
                 list(APPEND fuzzer_sanitizers ${LIBRDP_SANITIZER_FLAGS})
@@ -761,6 +766,14 @@ if(LIBRDP_BUILD_FUZZ)
             librdp_apply_sanitizer_compile_options(${name})
             librdp_apply_sanitizer_link_options(${name})
         endif()
+        add_test(NAME ${name}_seed_smoke
+            COMMAND ${CMAKE_COMMAND}
+                "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DLIBRDP_FUZZ_TARGET=${name}"
+                "-DLIBRDP_FUZZ_EXECUTABLE=$<TARGET_FILE:${name}>"
+                "-DLIBRDP_FUZZ_USES_LIBFUZZER=${librdp_fuzzer_uses_libfuzzer}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_seed_smoke.cmake)
+        set_tests_properties(${name}_seed_smoke PROPERTIES TIMEOUT 20)
     endfunction()
 
     add_librdp_fuzzer(fuzz_x224 fuzz/x224_fuzzer.c)
