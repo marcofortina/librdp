@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Validate required Markdown documentation and local links."""
+"""Validate required documentation, local links, and source consistency."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED = (
+REQUIRED_MARKDOWN = (
     "README.md",
     "docs/build.md",
     "docs/contributing.md",
@@ -32,7 +32,23 @@ REQUIRED = (
     "docs/diagnostics.md",
     "docs/viewer-x11.md",
 )
+REQUIRED_FILES = REQUIRED_MARKDOWN + (
+    "docs/man/librdp-x11-viewer.1",
+)
+FORBIDDEN_DOCS = (
+    "docs/roadmap.md",
+    "docs/release.md",
+)
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
+VIEWER_OPTION_RE = re.compile(r'"(--[a-z0-9-]+)"')
+DOC_OPTION_RE = re.compile(r"--[a-z0-9-]+")
+NON_VIEWER_OPTIONS = {
+    "--build",
+}
+CMAKE_OPTION_RE = re.compile(r"option\((LIBRDP_BUILD_[A-Z0-9_]+)\b")
+DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_BUILD_[A-Z0-9_]+")
+FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c)\)")
+PATH_IN_BACKTICKS_RE = re.compile(r"`([^`]+)`")
 DISALLOWED_PHRASES = (
     "Source complete",
     "source complete",
@@ -115,11 +131,99 @@ def required_doc_links_from_readme() -> set[str]:
     return links
 
 
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def markdown_files() -> list[str]:
+    return sorted(str(path.relative_to(ROOT)) for path in (ROOT / "docs").glob("*.md"))
+
+
+def viewer_source_options() -> set[str]:
+    return set(VIEWER_OPTION_RE.findall(read("apps/x11-viewer/main.c")))
+
+
+def documented_options(path: str) -> set[str]:
+    return set(DOC_OPTION_RE.findall(read(path))) - NON_VIEWER_OPTIONS
+
+
+def cmake_options() -> set[str]:
+    return set(CMAKE_OPTION_RE.findall(read("CMakeLists.txt")))
+
+
+def documented_cmake_options() -> set[str]:
+    docs = "\n".join(read(rel) for rel in REQUIRED_MARKDOWN if rel != "README.md")
+    return set(DOC_CMAKE_OPTION_RE.findall(docs))
+
+
+def fuzz_targets() -> dict[str, str]:
+    return {match.group(1): match.group(2) for match in FUZZER_RE.finditer(read("CMakeLists.txt"))}
+
+
+def validate_protocol_rows(errors: list[str]) -> None:
+    text = read("docs/protocol-support.md")
+    for protocol in PROTOCOLS:
+        if protocol not in text:
+            errors.append(f"protocol missing from protocol-support.md: {protocol}")
+
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.startswith("| MS-"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 4:
+            errors.append(f"protocol row has too few columns at docs/protocol-support.md:{line_no}")
+            continue
+        for target in PATH_IN_BACKTICKS_RE.findall(line):
+            if target.startswith("src/") or target.startswith("include/") or target.startswith("tests/") or target.startswith("fuzz/"):
+                if "*" in target:
+                    base = ROOT / target.split("*", 1)[0]
+                    if not base.parent.exists():
+                        errors.append(f"protocol row path parent missing at line {line_no}: {target}")
+                elif not (ROOT / target).exists():
+                    errors.append(f"protocol row path missing at line {line_no}: {target}")
+
+
+def validate_viewer_options(errors: list[str]) -> None:
+    source = viewer_source_options()
+    viewer_doc = documented_options("docs/viewer-x11.md")
+    manpage = documented_options("docs/man/librdp-x11-viewer.1")
+
+    for option in sorted(source - viewer_doc):
+        errors.append(f"viewer option missing from docs/viewer-x11.md: {option}")
+    for option in sorted(source - manpage):
+        errors.append(f"viewer option missing from docs/man/librdp-x11-viewer.1: {option}")
+    for option in sorted((viewer_doc | manpage) - source):
+        errors.append(f"documented viewer option not present in source: {option}")
+
+
+def validate_cmake_options(errors: list[str]) -> None:
+    source = cmake_options()
+    documented = documented_cmake_options()
+    for option in sorted(source - documented):
+        errors.append(f"CMake option missing from docs: {option}")
+
+
+def validate_fuzz_targets(errors: list[str]) -> None:
+    targets = fuzz_targets()
+    fuzzing_doc = read("docs/fuzzing.md")
+    protocol_doc = read("docs/protocol-support.md")
+    for target, source in sorted(targets.items()):
+        if not (ROOT / source).exists():
+            errors.append(f"fuzz target source missing in CMake: {target} {source}")
+        stem = source.split("/", 1)[-1].replace("_fuzzer.c", "")
+        if stem not in fuzzing_doc and source not in protocol_doc:
+            errors.append(f"fuzz target not referenced by docs: {target}")
+
+
 def main() -> int:
     errors: list[str] = []
-    required_set = set(REQUIRED)
+    required_set = set(REQUIRED_MARKDOWN)
     readme_links = required_doc_links_from_readme()
-    docs_files = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "docs").glob("*.md"))
+    docs_files = markdown_files()
+
+    for rel in FORBIDDEN_DOCS:
+        if (ROOT / rel).exists():
+            errors.append(f"forbidden planning document present: {rel}")
 
     for rel in docs_files:
         if rel not in required_set:
@@ -127,7 +231,7 @@ def main() -> int:
         if rel not in readme_links:
             errors.append(f"document not linked from README.md: {rel}")
 
-    for rel in REQUIRED:
+    for rel in REQUIRED_FILES:
         path = ROOT / rel
         if not path.is_file():
             errors.append(f"missing required document: {rel}")
@@ -143,17 +247,17 @@ def main() -> int:
             if not link_target_exists(path, target):
                 errors.append(f"broken link in {rel}: {target}")
 
-    protocol_doc = (ROOT / "docs/protocol-support.md").read_text(encoding="utf-8")
-    for protocol in PROTOCOLS:
-        if protocol not in protocol_doc:
-            errors.append(f"protocol missing from protocol-support.md: {protocol}")
+    validate_protocol_rows(errors)
+    validate_viewer_options(errors)
+    validate_cmake_options(errors)
+    validate_fuzz_targets(errors)
 
     if errors:
         print("error: documentation guardrail failed:", file=sys.stderr)
         for error in errors:
             print(f"  {error}", file=sys.stderr)
         return 1
-    print(f"Documentation guardrail passed ({len(REQUIRED)} files).")
+    print(f"Documentation guardrail passed ({len(REQUIRED_FILES)} files).")
     return 0
 
 

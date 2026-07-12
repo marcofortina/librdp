@@ -53,12 +53,13 @@ Add new targets through the `add_librdp_fuzzer()` list in `CMakeLists.txt`.
 
 Fuzz coverage includes:
 
+- shared stream, charset, and bulk-compression helpers;
 - transport framing;
 - X.224, MCS, GCC, TPKT, fast-path, slow-path, capabilities, licensing, and security parsers;
-- CredSSP ASN.1 and authentication message handling;
+- `credssp` ASN.1, credential transport, and authentication message handling;
 - dynamic virtual channels and device channels;
 - clipboard, audio, video, camera, smartcard, USB, printer, filesystem, and WebAuthn packets;
-- bitmap, NSCodec, ClearCodec, planar, RemoteFX, AVC, graphics pipeline, surface commands, GDI orders, and pointer decoding.
+- bitmap, NSCodec, ClearCodec, planar, RemoteFX, AVC, graphics pipeline, surface commands, GDI orders, pointer decoding, and `mouse_cursor` packets.
 
 ## Bug classes
 
