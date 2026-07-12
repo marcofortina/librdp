@@ -47,6 +47,8 @@ const char* librdp_status_string(librdp_status status)
             return "tls_hostname_mismatch";
         case LIBRDP_STATUS_TLS_HANDSHAKE_FAILED:
             return "tls_handshake_failed";
+        case LIBRDP_STATUS_SECURITY_DOWNGRADE:
+            return "security_downgrade";
         default:
             return "unknown";
     }

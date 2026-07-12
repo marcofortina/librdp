@@ -1367,6 +1367,14 @@ static int test_tpkt_x224(void)
         0x02, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00, 0x00
     };
+    const uint8_t cc_no_negotiation[] = {
+        0x06, 0xd0, 0x12, 0x34, 0x56, 0x78, 0x00
+    };
+    const uint8_t cc_tls_selected[] = {
+        0x0e, 0xd0, 0x12, 0x34, 0x56, 0x78, 0x00,
+        0x02, 0x00, 0x08, 0x00,
+        0x01, 0x00, 0x00, 0x00
+    };
     const uint8_t bad_tpkt[] = {0x03, 0x00, 0x00, 0x03};
 
     rdp_buffer_init(&x224);
@@ -1395,6 +1403,30 @@ static int test_tpkt_x224(void)
     PCHECK(confirm.negotiation.present);
     PCHECK(!confirm.negotiation.failure);
     PCHECK(confirm.negotiation.selected_protocol == 0);
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO,
+                                         confirm.negotiation.present,
+                                         confirm.negotiation.selected_protocol) == false);
+    PCHECK(rdp_x224_parse_connection_confirm(cc_no_negotiation,
+                                             sizeof(cc_no_negotiation),
+                                             &confirm) == LIBRDP_STATUS_OK);
+    PCHECK(!confirm.negotiation.present);
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO,
+                                         confirm.negotiation.present,
+                                         RDP_X224_PROTOCOL_STANDARD) == false);
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_STANDARD,
+                                         confirm.negotiation.present,
+                                         RDP_X224_PROTOCOL_STANDARD) == true);
+    PCHECK(rdp_x224_parse_connection_confirm(cc_tls_selected,
+                                             sizeof(cc_tls_selected),
+                                             &confirm) == LIBRDP_STATUS_OK);
+    PCHECK(confirm.negotiation.present);
+    PCHECK(confirm.negotiation.selected_protocol == RDP_X224_PROTOCOL_TLS);
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_NLA,
+                                         confirm.negotiation.present,
+                                         confirm.negotiation.selected_protocol) == false);
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_TLS,
+                                         confirm.negotiation.present,
+                                         confirm.negotiation.selected_protocol) == true);
     PCHECK(rdp_x224_parse_connection_confirm(cc_payload, 4, &confirm) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     PCHECK(rdp_x224_wrap_data(&x224_data, cc_payload, sizeof(cc_payload)) == LIBRDP_STATUS_OK);
@@ -5812,6 +5844,16 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_TLS));
     PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_NLA));
     PCHECK(rdp_security_protocol_supported(RDP_X224_PROTOCOL_STANDARD));
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO, true, RDP_X224_PROTOCOL_TLS));
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO, true, RDP_X224_PROTOCOL_NLA));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO, true, RDP_X224_PROTOCOL_STANDARD));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_AUTO, false, RDP_X224_PROTOCOL_STANDARD));
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_STANDARD, false, RDP_X224_PROTOCOL_STANDARD));
+    PCHECK(rdp_security_protocol_allowed(LIBRDP_SECURITY_STANDARD, true, RDP_X224_PROTOCOL_STANDARD));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_STANDARD, true, RDP_X224_PROTOCOL_TLS));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_TLS, true, RDP_X224_PROTOCOL_NLA));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_NLA, true, RDP_X224_PROTOCOL_TLS));
+    PCHECK(!rdp_security_protocol_allowed(LIBRDP_SECURITY_TLS, true, 0x80000000u));
 
     memset(&info, 0, sizeof(info));
     info.domain = "D";

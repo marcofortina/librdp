@@ -29648,17 +29648,30 @@ librdp_status librdp_session_connect(librdp_session* session)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
         goto fail;
     }
-    if (confirm.negotiation.present && !rdp_security_protocol_supported(confirm.negotiation.selected_protocol))
+    selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : RDP_X224_PROTOCOL_STANDARD;
+    if (confirm.negotiation.present && !rdp_security_protocol_supported(selected_protocol))
     {
         rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.rejected", "selected_protocol=%u",
-                        confirm.negotiation.selected_protocol);
+                        selected_protocol);
         status = LIBRDP_STATUS_UNSUPPORTED;
+        goto fail;
+    }
+    if (!rdp_security_protocol_allowed(librdp_settings_security_mode(session->settings),
+                                       confirm.negotiation.present,
+                                       selected_protocol))
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "x224.negotiation.downgrade",
+                        "mode=%u negotiation_present=%u selected_protocol=%u",
+                        (unsigned)librdp_settings_security_mode(session->settings),
+                        confirm.negotiation.present ? 1u : 0u,
+                        selected_protocol);
+        status = LIBRDP_STATUS_SECURITY_DOWNGRADE;
         goto fail;
     }
 
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.done", "selected_protocol=%u",
                     confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0);
-    selected_protocol = confirm.negotiation.present ? confirm.negotiation.selected_protocol : 0;
     if (selected_protocol == RDP_X224_PROTOCOL_TLS || selected_protocol == RDP_X224_PROTOCOL_NLA)
     {
         librdp_tls_policy tls_policy;

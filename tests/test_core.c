@@ -1168,6 +1168,8 @@ static int test_settings_surface_input_session(void)
                  "tls_hostname_mismatch") == 0);
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_HANDSHAKE_FAILED),
                  "tls_handshake_failed") == 0);
+    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_SECURITY_DOWNGRADE),
+                 "security_downgrade") == 0);
     CHECK(strcmp(librdp_status_string((librdp_status)-1000), "unknown") == 0);
 
     settings = librdp_settings_new();
@@ -1674,6 +1676,7 @@ static int test_settings_surface_input_session(void)
     }
     CHECK(librdp_session_dismiss_touch(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_dismiss_touch(session, 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
     CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);

@@ -93,6 +93,7 @@ typedef struct rdp_client_info_summary
 
 uint32_t rdp_security_protocol_mask(librdp_security_mode mode);
 bool rdp_security_protocol_supported(uint32_t selected_protocol);
+bool rdp_security_protocol_allowed(librdp_security_mode mode, bool negotiation_present, uint32_t selected_protocol);
 librdp_status rdp_security_write_header(rdp_buffer* buffer, uint16_t flags);
 librdp_status rdp_security_write_exchange_pdu(rdp_buffer* buffer,
                                               const uint8_t* encrypted_client_random,

@@ -77,6 +77,28 @@ bool rdp_security_protocol_supported(uint32_t selected_protocol)
            selected_protocol == RDP_X224_PROTOCOL_NLA;
 }
 
+bool rdp_security_protocol_allowed(librdp_security_mode mode, bool negotiation_present, uint32_t selected_protocol)
+{
+    if (!rdp_security_protocol_supported(selected_protocol))
+        return false;
+    if (!negotiation_present)
+        return mode == LIBRDP_SECURITY_STANDARD;
+
+    switch (mode)
+    {
+        case LIBRDP_SECURITY_STANDARD:
+            return selected_protocol == RDP_X224_PROTOCOL_STANDARD;
+        case LIBRDP_SECURITY_TLS:
+            return selected_protocol == RDP_X224_PROTOCOL_TLS;
+        case LIBRDP_SECURITY_NLA:
+            return selected_protocol == RDP_X224_PROTOCOL_NLA;
+        case LIBRDP_SECURITY_AUTO:
+            return selected_protocol == RDP_X224_PROTOCOL_TLS || selected_protocol == RDP_X224_PROTOCOL_NLA;
+        default:
+            return false;
+    }
+}
+
 static librdp_status rdp_utf16le_text_len(const char* text, uint16_t* out)
 {
     rdp_buffer converted;
