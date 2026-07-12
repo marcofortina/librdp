@@ -102,6 +102,49 @@ static uint64_t test_read_u64_le(const uint8_t* data)
     return (uint64_t)test_read_u32_le(data) | ((uint64_t)test_read_u32_le(data + 4u) << 32u);
 }
 
+/*
+ * Fixture: creates encrypted fast-path output packets with legacy or salted
+ * signatures. It catches integrity regressions where altered ciphertext,
+ * signatures, or sequence counters are accepted by the unwrap path.
+ */
+static int test_build_encrypted_fastpath(rdp_buffer* out,
+                                         rdp_standard_security_context* sender,
+                                         uint8_t security_flags,
+                                         const uint8_t* plaintext,
+                                         size_t plaintext_len)
+{
+    rdp_buffer encrypted;
+    uint8_t signature[8];
+    librdp_status status = LIBRDP_STATUS_OK;
+    int ok = 0;
+
+    if (!out || !sender || (!plaintext && plaintext_len > 0) ||
+        (security_flags & RDP_FASTPATH_OUTPUT_ENCRYPTED) == 0)
+        return 0;
+
+    rdp_buffer_init(&encrypted);
+    if ((security_flags & RDP_FASTPATH_OUTPUT_SECURE_CHECKSUM) != 0)
+        status = rdp_security_salted_mac_signature(sender, plaintext, plaintext_len, sender->decrypt_count, signature);
+    else
+        status = rdp_security_mac_signature(sender, plaintext, plaintext_len, signature);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&encrypted, plaintext, plaintext_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_decrypt_payload(sender, encrypted.data, encrypted.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_fastpath_write_header(out,
+                                           RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+                                           security_flags,
+                                           encrypted.length + sizeof(signature));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(out, signature, sizeof(signature));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(out, encrypted.data, encrypted.length);
+    ok = status == LIBRDP_STATUS_OK;
+    rdp_buffer_free(&encrypted);
+    return ok;
+}
+
 static int test_append_rfx_block(rdp_buffer* out, uint16_t block_type, const rdp_buffer* payload)
 {
     uint32_t length = 0;
@@ -3425,6 +3468,7 @@ static int test_path_security_license_channels(void)
     uint8_t malformed_slowpath[sizeof(bitmap_data_pdu)];
     rdp_fastpath_header fast;
     rdp_fastpath_update_list fast_updates;
+    int fastpath_used_decoded = 0;
     rdp_bulk_decompressor bulk_decompressor;
     rdp_slowpath_share_control_header slow_header;
     rdp_slowpath_demand_active demand;
@@ -3718,6 +3762,7 @@ static int test_path_security_license_channels(void)
     const uint8_t set_error_info_payload[] = {0x34, 0x12, 0, 0};
     const uint8_t save_session_info_payload[] = {1, 0, 0, 0, 0xaa, 0x55};
     const uint8_t orders_update_payload[] = {0, 0, 0, 0};
+    const uint8_t fastpath_sync_payload[] = {RDP_FASTPATH_UPDATE_SYNCHRONIZE, 0, 0};
     const uint8_t standard_plain1[] = {
         0x00, 0x01, 0x02, 0x03, 0x10, 0x20, 0x30, 0x40,
         0x55, 0xaa, 0xff, 0x7e, 0x80, 0x90, 0xfe, 0xdc
@@ -5978,6 +6023,245 @@ static int test_path_security_license_channels(void)
     PCHECK((security_flags & RDP_SEC_ENCRYPT) != 0);
     PCHECK(unwrapped_pdu.length == sizeof(orders_update_payload) &&
            memcmp(unwrapped_pdu.data, orders_update_payload, sizeof(orders_update_payload)) == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    protected_pdu.length = 0;
+    unwrapped_pdu.length = 0;
+    PCHECK(rdp_security_mac_signature(&secure_a,
+                                      orders_update_payload,
+                                      sizeof(orders_update_payload),
+                                      signature) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_header(&protected_pdu, RDP_SEC_ENCRYPT) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, signature, sizeof(signature)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_decrypt_payload(&secure_a,
+                                        protected_pdu.data + 12,
+                                        sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    protected_pdu.data[4] ^= 0x80u;
+    PCHECK(rdp_security_unwrap_pdu(&secure_b,
+                                   protected_pdu.data,
+                                   protected_pdu.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(unwrapped_pdu.length == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    protected_pdu.length = 0;
+    PCHECK(rdp_security_mac_signature(&secure_a,
+                                      orders_update_payload,
+                                      sizeof(orders_update_payload),
+                                      signature) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_header(&protected_pdu, RDP_SEC_ENCRYPT) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, signature, sizeof(signature)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_decrypt_payload(&secure_a,
+                                        protected_pdu.data + 12,
+                                        sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    protected_pdu.data[protected_pdu.length - 1u] ^= 0x40u;
+    PCHECK(rdp_security_unwrap_pdu(&secure_b,
+                                   protected_pdu.data,
+                                   protected_pdu.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(unwrapped_pdu.length == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    protected_pdu.length = 0;
+    PCHECK(rdp_security_salted_mac_signature(&secure_a,
+                                             orders_update_payload,
+                                             sizeof(orders_update_payload),
+                                             secure_a.decrypt_count,
+                                             signature) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_header(&protected_pdu, RDP_SEC_ENCRYPT | RDP_SEC_SECURE_CHECKSUM) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, signature, sizeof(signature)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_decrypt_payload(&secure_a,
+                                        protected_pdu.data + 12,
+                                        sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_unwrap_pdu(&secure_b,
+                                   protected_pdu.data,
+                                   protected_pdu.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_OK);
+    PCHECK((security_flags & RDP_SEC_SECURE_CHECKSUM) != 0);
+    PCHECK(unwrapped_pdu.length == sizeof(orders_update_payload) &&
+           memcmp(unwrapped_pdu.data, orders_update_payload, sizeof(orders_update_payload)) == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    protected_pdu.length = 0;
+    unwrapped_pdu.length = 0;
+    PCHECK(rdp_security_salted_mac_signature(&secure_a,
+                                             orders_update_payload,
+                                             sizeof(orders_update_payload),
+                                             secure_a.decrypt_count,
+                                             signature) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_write_header(&protected_pdu, RDP_SEC_ENCRYPT | RDP_SEC_SECURE_CHECKSUM) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, signature, sizeof(signature)) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_buffer_append(&protected_pdu, orders_update_payload, sizeof(orders_update_payload)) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_decrypt_payload(&secure_a,
+                                        protected_pdu.data + 12,
+                                        sizeof(orders_update_payload)) == LIBRDP_STATUS_OK);
+    secure_b.decrypt_count = 1;
+    PCHECK(rdp_security_unwrap_pdu(&secure_b,
+                                   protected_pdu.data,
+                                   protected_pdu.length,
+                                   &unwrapped_pdu,
+                                   &security_flags) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(unwrapped_pdu.length == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    encrypted_fastpath.length = 0;
+    decoded_fastpath.length = 0;
+    fastpath_used_decoded = 0;
+    PCHECK(test_build_encrypted_fastpath(&encrypted_fastpath,
+                                         &secure_a,
+                                         RDP_FASTPATH_OUTPUT_ENCRYPTED,
+                                         fastpath_sync_payload,
+                                         sizeof(fastpath_sync_payload)));
+    PCHECK(rdp_fastpath_unwrap_security(&secure_b,
+                                        1,
+                                        encrypted_fastpath.data,
+                                        encrypted_fastpath.length,
+                                        &decoded_fastpath,
+                                        &fastpath_used_decoded) == LIBRDP_STATUS_OK);
+    PCHECK(fastpath_used_decoded == 1);
+    PCHECK(rdp_fastpath_parse_updates(decoded_fastpath.data, decoded_fastpath.length, &fast_updates) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(fast_updates.count == 1 &&
+           fast_updates.updates[0].update_code == RDP_FASTPATH_UPDATE_SYNCHRONIZE);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    encrypted_fastpath.length = 0;
+    decoded_fastpath.length = 0;
+    fastpath_used_decoded = 1;
+    PCHECK(test_build_encrypted_fastpath(&encrypted_fastpath,
+                                         &secure_a,
+                                         RDP_FASTPATH_OUTPUT_ENCRYPTED,
+                                         fastpath_sync_payload,
+                                         sizeof(fastpath_sync_payload)));
+    encrypted_fastpath.data[3] ^= 0x20u;
+    PCHECK(rdp_fastpath_unwrap_security(&secure_b,
+                                        1,
+                                        encrypted_fastpath.data,
+                                        encrypted_fastpath.length,
+                                        &decoded_fastpath,
+                                        &fastpath_used_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(fastpath_used_decoded == 0 && decoded_fastpath.length == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    encrypted_fastpath.length = 0;
+    decoded_fastpath.length = 0;
+    fastpath_used_decoded = 1;
+    PCHECK(test_build_encrypted_fastpath(&encrypted_fastpath,
+                                         &secure_a,
+                                         RDP_FASTPATH_OUTPUT_ENCRYPTED,
+                                         fastpath_sync_payload,
+                                         sizeof(fastpath_sync_payload)));
+    encrypted_fastpath.data[encrypted_fastpath.length - 1u] ^= 0x08u;
+    PCHECK(rdp_fastpath_unwrap_security(&secure_b,
+                                        1,
+                                        encrypted_fastpath.data,
+                                        encrypted_fastpath.length,
+                                        &decoded_fastpath,
+                                        &fastpath_used_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(fastpath_used_decoded == 0 && decoded_fastpath.length == 0);
+
+    rdp_security_standard_clear(&secure_a);
+    rdp_security_standard_clear(&secure_b);
+    PCHECK(rdp_security_standard_client_init(&secure_a,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_security_standard_client_init(&secure_b,
+                                             RDP_SECURITY_METHOD_128BIT,
+                                             client_random,
+                                             server_random) == LIBRDP_STATUS_OK);
+    encrypted_fastpath.length = 0;
+    decoded_fastpath.length = 0;
+    fastpath_used_decoded = 1;
+    PCHECK(test_build_encrypted_fastpath(&encrypted_fastpath,
+                                         &secure_a,
+                                         RDP_FASTPATH_OUTPUT_ENCRYPTED | RDP_FASTPATH_OUTPUT_SECURE_CHECKSUM,
+                                         fastpath_sync_payload,
+                                         sizeof(fastpath_sync_payload)));
+    secure_b.decrypt_count = 1;
+    PCHECK(rdp_fastpath_unwrap_security(&secure_b,
+                                        1,
+                                        encrypted_fastpath.data,
+                                        encrypted_fastpath.length,
+                                        &decoded_fastpath,
+                                        &fastpath_used_decoded) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(fastpath_used_decoded == 0 && decoded_fastpath.length == 0);
+
     PCHECK(rdp_security_write_header(&plain_security, RDP_SEC_LICENSE_PKT) == LIBRDP_STATUS_OK);
     PCHECK(rdp_buffer_append(&plain_security, orders_update_payload, sizeof(orders_update_payload)) ==
            LIBRDP_STATUS_OK);

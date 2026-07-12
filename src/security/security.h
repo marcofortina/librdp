@@ -125,6 +125,11 @@ librdp_status rdp_security_mac_signature(const rdp_standard_security_context* co
                                          const void* data,
                                          size_t length,
                                          uint8_t signature[8]);
+librdp_status rdp_security_salted_mac_signature(const rdp_standard_security_context* context,
+                                                const void* data,
+                                                size_t length,
+                                                uint32_t use_count,
+                                                uint8_t signature[8]);
 librdp_status rdp_security_encrypt_payload(rdp_standard_security_context* context, void* data, size_t length);
 librdp_status rdp_security_decrypt_payload(rdp_standard_security_context* context, void* data, size_t length);
 librdp_status rdp_security_write_encrypted_pdu(rdp_buffer* buffer,

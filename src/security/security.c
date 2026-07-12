@@ -628,6 +628,64 @@ librdp_status rdp_security_mac_signature(const rdp_standard_security_context* co
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_security_write_u32_le(uint8_t output[4], uint32_t value)
+{
+    output[0] = (uint8_t)(value & 0xffu);
+    output[1] = (uint8_t)((value >> 8u) & 0xffu);
+    output[2] = (uint8_t)((value >> 16u) & 0xffu);
+    output[3] = (uint8_t)((value >> 24u) & 0xffu);
+}
+
+librdp_status rdp_security_salted_mac_signature(const rdp_standard_security_context* context,
+                                                const void* data,
+                                                size_t length,
+                                                uint32_t use_count,
+                                                uint8_t signature[8])
+{
+    EVP_MD_CTX* digest = NULL;
+    uint8_t len_le[4];
+    uint8_t count_le[4];
+    uint8_t sha1[20];
+    uint8_t md5[16];
+    unsigned int got = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!context || (!data && length > 0) || !signature || length > UINT32_MAX ||
+        (context->key_len != 8u && context->key_len != 16u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_security_write_u32_le(len_le, (uint32_t)length);
+    rdp_security_write_u32_le(count_le, use_count);
+
+    digest = EVP_MD_CTX_new();
+    if (!digest)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (EVP_DigestInit_ex(digest, EVP_sha1(), NULL) != 1 ||
+        EVP_DigestUpdate(digest, context->sign_key, context->key_len) != 1 ||
+        EVP_DigestUpdate(digest, rdp_pad1, sizeof(rdp_pad1)) != 1 ||
+        EVP_DigestUpdate(digest, len_le, sizeof(len_le)) != 1 ||
+        (length > 0 && EVP_DigestUpdate(digest, data, length) != 1) ||
+        EVP_DigestUpdate(digest, count_le, sizeof(count_le)) != 1 ||
+        EVP_DigestFinal_ex(digest, sha1, &got) != 1 ||
+        got != sizeof(sha1))
+        goto out;
+    if (EVP_DigestInit_ex(digest, EVP_md5(), NULL) != 1 ||
+        EVP_DigestUpdate(digest, context->sign_key, context->key_len) != 1 ||
+        EVP_DigestUpdate(digest, rdp_pad2, sizeof(rdp_pad2)) != 1 ||
+        EVP_DigestUpdate(digest, sha1, sizeof(sha1)) != 1 ||
+        EVP_DigestFinal_ex(digest, md5, &got) != 1 ||
+        got != sizeof(md5))
+        goto out;
+    memcpy(signature, md5, 8);
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MD_CTX_free(digest);
+    OPENSSL_cleanse(sha1, sizeof(sha1));
+    OPENSSL_cleanse(md5, sizeof(md5));
+    return status;
+}
+
 librdp_status rdp_security_encrypt_payload(rdp_standard_security_context* context, void* data, size_t length)
 {
     if (!context || (!data && length > 0) || (context->key_len != 8u && context->key_len != 16u))
@@ -693,7 +751,10 @@ librdp_status rdp_security_write_encrypted_pdu(rdp_buffer* buffer,
     if (!buffer || !context || (!payload && payload_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_security_mac_signature(context, payload, payload_len, signature);
+    if ((flags & RDP_SEC_SECURE_CHECKSUM) != 0)
+        status = rdp_security_salted_mac_signature(context, payload, payload_len, context->encrypt_count, signature);
+    else
+        status = rdp_security_mac_signature(context, payload, payload_len, signature);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_security_write_header(buffer, (uint16_t)(flags | RDP_SEC_ENCRYPT));
     if (status == LIBRDP_STATUS_OK)
@@ -706,6 +767,15 @@ librdp_status rdp_security_write_encrypted_pdu(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Purpose: unwrap Standard Security slow-path PDUs and return only verified
+ * plaintext to the caller.
+ * Invariants: the signature covers plaintext, secure checksum uses the
+ * pre-decrypt sequence number, and existing caller-owned payload bytes remain
+ * untouched when a new encrypted body fails verification.
+ * Failure policy: cleanse the candidate plaintext, roll payload length back to
+ * the original value, and return a protocol error on any MAC mismatch.
+ */
 librdp_status rdp_security_unwrap_pdu(rdp_standard_security_context* context,
                                       const void* data,
                                       size_t length,
@@ -718,6 +788,7 @@ librdp_status rdp_security_unwrap_pdu(rdp_standard_security_context* context,
     const uint8_t* signature = NULL;
     const uint8_t* body = NULL;
     size_t body_len = 0;
+    size_t output_offset = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !payload)
@@ -743,6 +814,7 @@ librdp_status rdp_security_unwrap_pdu(rdp_standard_security_context* context,
     body_len = rdp_stream_remaining(&stream);
     if (rdp_stream_read_bytes(&stream, &body, body_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    output_offset = payload->length;
     status = rdp_buffer_append(payload, body, body_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -750,21 +822,39 @@ librdp_status rdp_security_unwrap_pdu(rdp_standard_security_context* context,
     if ((parsed_flags & RDP_SEC_ENCRYPT) != 0)
     {
         uint8_t expected[8];
+        uint8_t* decrypted = payload->data + output_offset;
+        uint32_t decrypt_use_count = 0;
 
-        status = rdp_security_decrypt_payload(context, payload->data, payload->length);
+        status = rdp_security_decrypt_payload(context, decrypted, body_len);
         if (status != LIBRDP_STATUS_OK)
-            return status;
-        if ((parsed_flags & RDP_SEC_SECURE_CHECKSUM) == 0)
         {
-            status = rdp_security_mac_signature(context, payload->data, payload->length, expected);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
-            if (memcmp(signature, expected, sizeof(expected)) != 0)
-                rdp_trace_event(RDP_TRACE_PROTOCOL,
-                                "rdp.security.signature.mismatch",
-                                "flags=%u payload_len=%u",
-                                parsed_flags,
-                                (unsigned)payload->length);
+            OPENSSL_cleanse(decrypted, body_len);
+            payload->length = output_offset;
+            return status;
+        }
+        if ((parsed_flags & RDP_SEC_SECURE_CHECKSUM) == 0)
+            status = rdp_security_mac_signature(context, decrypted, body_len, expected);
+        else
+        {
+            decrypt_use_count = context->decrypt_count == 0 ? 0 : context->decrypt_count - 1u;
+            status = rdp_security_salted_mac_signature(context, decrypted, body_len, decrypt_use_count, expected);
+        }
+        if (status != LIBRDP_STATUS_OK)
+        {
+            OPENSSL_cleanse(decrypted, body_len);
+            payload->length = output_offset;
+            return status;
+        }
+        if (CRYPTO_memcmp(signature, expected, sizeof(expected)) != 0)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "rdp.security.signature.mismatch",
+                            "flags=%u payload_len=%u",
+                            parsed_flags,
+                            (unsigned)body_len);
+            OPENSSL_cleanse(decrypted, body_len);
+            payload->length = output_offset;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
     }
 

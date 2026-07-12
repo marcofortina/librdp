@@ -25792,91 +25792,19 @@ static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, r
     return status;
 }
 
-static librdp_status rdp_session_write_fastpath_header(rdp_buffer* buffer,
-                                                       uint8_t first,
-                                                       uint16_t length,
-                                                       size_t header_len)
-{
-    librdp_status status = LIBRDP_STATUS_OK;
-
-    if (!buffer || (header_len != 2u && header_len != 3u) || length < header_len)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-
-    status = rdp_buffer_append_u8(buffer, (uint8_t)(first & 0x3fu));
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (header_len == 2u)
-    {
-        if (length > 0x7fu)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        return rdp_buffer_append_u8(buffer, (uint8_t)length);
-    }
-
-    status = rdp_buffer_append_u8(buffer, (uint8_t)(0x80u | ((length >> 8) & 0x7fu)));
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append_u8(buffer, (uint8_t)(length & 0xffu));
-}
-
 static librdp_status rdp_session_unwrap_fastpath_packet(librdp_session* session,
                                                         const rdp_buffer* packet,
                                                         rdp_buffer* decoded,
                                                         int* used_decoded)
 {
-    rdp_fastpath_header header;
-    const uint8_t* signature = NULL;
-    uint8_t* encrypted = NULL;
-    uint16_t decoded_len = 0;
-    size_t encrypted_len = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!session || !packet || !decoded || !used_decoded)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-
-    *used_decoded = 0;
-    status = rdp_fastpath_parse_header(packet->data, packet->length, &header);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if ((header.security_flags & RDP_FASTPATH_OUTPUT_ENCRYPTED) == 0)
-    {
-        if (header.security_flags != 0)
-            return LIBRDP_STATUS_UNSUPPORTED;
-        return LIBRDP_STATUS_OK;
-    }
-    if (!session->standard_security_active || header.length < header.header_length + 8u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    decoded_len = (uint16_t)(header.length - 8u);
-    signature = packet->data + header.header_length;
-    encrypted = packet->data + header.header_length + 8u;
-    encrypted_len = header.length - header.header_length - 8u;
-
-    status = rdp_session_write_fastpath_header(decoded, packet->data[0], decoded_len, header.header_length);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append(decoded, encrypted, encrypted_len);
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_security_decrypt_payload(&session->standard_security,
-                                              decoded->data + header.header_length,
-                                              encrypted_len);
-    if (status == LIBRDP_STATUS_OK &&
-        (header.security_flags & RDP_FASTPATH_OUTPUT_SECURE_CHECKSUM) == 0)
-    {
-        uint8_t expected[8];
-        status = rdp_security_mac_signature(&session->standard_security,
-                                            decoded->data + header.header_length,
-                                            encrypted_len,
-                                            expected);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-        if (memcmp(signature, expected, sizeof(expected)) != 0)
-            rdp_trace_event(RDP_TRACE_PROTOCOL,
-                            "rdp.fastpath.signature.mismatch",
-                            "payload_len=%u",
-                            (unsigned)encrypted_len);
-    }
-    if (status == LIBRDP_STATUS_OK)
-        *used_decoded = 1;
-    return status;
+    return rdp_fastpath_unwrap_security(&session->standard_security,
+                                        session->standard_security_active,
+                                        packet->data,
+                                        packet->length,
+                                        decoded,
+                                        used_decoded);
 }
 
 static librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms)

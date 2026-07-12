@@ -25,6 +25,7 @@
 #include <librdp/error.h>
 
 #include "common/buffer.h"
+#include "security/security.h"
 
 #define RDP_FASTPATH_OUTPUT_ACTION_FASTPATH 0x00u
 #define RDP_FASTPATH_OUTPUT_ACTION_X224 0x03u
@@ -93,5 +94,11 @@ librdp_status rdp_fastpath_write_update(rdp_buffer* buffer,
 librdp_status rdp_fastpath_write_updates(rdp_buffer* buffer,
                                          const rdp_fastpath_update* updates,
                                          uint16_t count);
+librdp_status rdp_fastpath_unwrap_security(rdp_standard_security_context* security,
+                                           int security_active,
+                                           const void* data,
+                                           size_t length,
+                                           rdp_buffer* decoded,
+                                           int* used_decoded);
 
 #endif

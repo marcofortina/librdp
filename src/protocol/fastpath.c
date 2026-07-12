@@ -18,6 +18,9 @@
 #include "protocol/fastpath.h"
 
 #include "common/stream.h"
+#include "common/trace.h"
+
+#include <openssl/crypto.h>
 
 #include <string.h>
 
@@ -170,6 +173,105 @@ librdp_status rdp_fastpath_write_updates(rdp_buffer* buffer,
         status = rdp_buffer_append(buffer, payload.data, payload.length);
     rdp_buffer_free(&payload);
     return status;
+}
+
+/*
+ * Purpose: unwrap server-to-client encrypted fast-path output while preserving
+ * the parser-facing packet format expected by the update dispatcher.
+ * Invariants: signature verification covers plaintext after decryption, secure
+ * checksum uses the pre-decrypt sequence number, and decoded bytes are visible
+ * to callers only after a constant-time signature match.
+ * Failure policy: cleanse and roll back decoded output, leave used_decoded at
+ * zero, and return a protocol error for any integrity mismatch.
+ */
+librdp_status rdp_fastpath_unwrap_security(rdp_standard_security_context* security,
+                                           int security_active,
+                                           const void* data,
+                                           size_t length,
+                                           rdp_buffer* decoded,
+                                           int* used_decoded)
+{
+    rdp_fastpath_header header;
+    const uint8_t* packet = (const uint8_t*)data;
+    const uint8_t* signature = NULL;
+    const uint8_t* encrypted = NULL;
+    uint8_t* plaintext = NULL;
+    uint8_t expected[8];
+    size_t encrypted_len = 0;
+    size_t decoded_offset = 0;
+    size_t previous_len = 0;
+    uint32_t decrypt_use_count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !decoded || !used_decoded)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    *used_decoded = 0;
+    status = rdp_fastpath_parse_header(data, length, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((header.security_flags & RDP_FASTPATH_OUTPUT_ENCRYPTED) == 0)
+    {
+        if (header.security_flags != 0)
+            return LIBRDP_STATUS_UNSUPPORTED;
+        return LIBRDP_STATUS_OK;
+    }
+    if (!security_active || !security || header.length < header.header_length + 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    signature = packet + header.header_length;
+    encrypted = packet + header.header_length + 8u;
+    encrypted_len = header.length - header.header_length - 8u;
+    previous_len = decoded->length;
+
+    status = rdp_fastpath_write_header(decoded,
+                                       RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
+                                       0,
+                                       encrypted_len);
+    decoded_offset = decoded->length;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(decoded, encrypted, encrypted_len);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        decoded->length = previous_len;
+        return status;
+    }
+
+    plaintext = decoded->data + decoded_offset;
+    status = rdp_security_decrypt_payload(security, plaintext, encrypted_len);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        OPENSSL_cleanse(plaintext, encrypted_len);
+        decoded->length = previous_len;
+        return status;
+    }
+
+    if ((header.security_flags & RDP_FASTPATH_OUTPUT_SECURE_CHECKSUM) == 0)
+        status = rdp_security_mac_signature(security, plaintext, encrypted_len, expected);
+    else
+    {
+        decrypt_use_count = security->decrypt_count == 0 ? 0 : security->decrypt_count - 1u;
+        status = rdp_security_salted_mac_signature(security, plaintext, encrypted_len, decrypt_use_count, expected);
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        OPENSSL_cleanse(plaintext, encrypted_len);
+        decoded->length = previous_len;
+        return status;
+    }
+    if (CRYPTO_memcmp(signature, expected, sizeof(expected)) != 0)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "rdp.fastpath.signature.mismatch",
+                        "payload_len=%u",
+                        (unsigned)encrypted_len);
+        OPENSSL_cleanse(plaintext, encrypted_len);
+        decoded->length = previous_len;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+
+    *used_decoded = 1;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_fastpath_parse_updates_payload(const void* data,
