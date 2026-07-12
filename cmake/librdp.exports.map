@@ -57,6 +57,7 @@ LIBRDP_0.1 {
         librdp_session_set_clipboard_callback;
         librdp_session_set_audio_callback;
         librdp_session_set_video_callback;
+        librdp_session_set_graphics_update_callback;
         librdp_trace_policy_init;
         librdp_session_set_trace_policy;
         librdp_session_connect;
