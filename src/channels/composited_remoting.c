@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: composited remoting tree parsing and rendering support.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/composited_remoting.h"
 
@@ -763,6 +775,11 @@ static void rdp_composited_resolved_view_consider_invalidation(
     *generation = invalidation->generation;
 }
 
+/*
+ * Resolve a composited-remoting view from server object references. The lookup
+ * keeps tree ownership stable while validating that referenced visuals and
+ * surfaces are still present.
+ */
 librdp_status rdp_composited_render_tree_resolve_view(
     const rdp_composited_render_tree* tree,
     uint32_t target_resource,
@@ -951,6 +968,11 @@ static void rdp_composited_render_copy_owned(rdp_composited_render_resource* tar
     target->maximized_clip_margins_valid = source->maximized_clip_margins_valid;
 }
 
+/*
+ * Apply one composited-remoting message to the render tree. Parsing, object
+ * lifetime, damage propagation, and root selection stay ordered so partial
+ * messages cannot leave dangling tree references.
+ */
 librdp_status rdp_composited_render_tree_apply_message(
     rdp_composited_render_tree* tree,
     const rdp_composited_channel_message* message)

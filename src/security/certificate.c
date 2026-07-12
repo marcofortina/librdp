@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: server certificate parsing and client random encryption support.
+ * Invariants: cryptographic state changes occur only after complete input
+ * validation and successful provider calls.
+ * Ownership: certificate bytes are treated as untrusted wire input until
+ * OpenSSL parsing succeeds.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: remote certificate, token, and security-buffer bytes are
+ * untrusted and secrets must not be logged.
+ */
+
 
 #include "security/security.h"
 
@@ -232,6 +244,11 @@ librdp_status rdp_security_generate_client_random(uint8_t random[RDP_SECURITY_CL
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Encrypt the client random with the negotiated server certificate.
+ * Certificate parsing and provider encryption remain in this boundary so
+ * secret random bytes are never exposed after failure.
+ */
 librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
                                                  const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
                                                  rdp_buffer* encrypted)

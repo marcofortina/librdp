@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: portable socket, polling, and address-resolution abstraction for
+ * supported Unix-like platforms.
+ * Invariants: file descriptors, TLS state, and buffered bytes are updated only
+ * after successful system calls.
+ * Ownership: file descriptors are owned by transport objects and closed on
+ * every error path.
+ * Threading: not internally synchronized; callers must serialize access
+ * through the owning session or transport.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "platform/socket.h"
 

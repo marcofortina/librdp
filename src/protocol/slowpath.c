@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: slow-path share-control and data PDU support.
+ * Invariants: wire lengths, tags, and stream offsets stay consistent across
+ * every parse and write path.
+ * Ownership: serialized buffers are caller-owned and parsed views never
+ * outlive the input stream.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: all protocol bytes are untrusted network input until parsed
+ * successfully.
+ */
+
 
 #include "protocol/slowpath.h"
 
@@ -564,6 +576,11 @@ librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Serialize the Confirm Active slow-path PDU. Capability sets, share
+ * identifiers, and source descriptors are length-counted before the packet is
+ * sent.
+ */
 librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint32_t share_id,
                                                 uint16_t channel_id,

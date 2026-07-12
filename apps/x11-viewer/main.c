@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: X11 viewer entry point, option parsing, event loop, framebuffer
+ * presentation, and public client API exercise path.
+ * Invariants: viewer state, X11 resources, and session callbacks are kept
+ * consistent with focus and resize events.
+ * Ownership: the viewer state owns X11 handles and session callbacks, while
+ * the core owns protocol/session lifetime.
+ * Threading: called from the viewer event thread unless a backend explicitly
+ * documents its own callback thread.
+ * Trust boundary: command-line options, local devices, X11 events, and server
+ * callbacks are separate trust domains.
+ */
+
 
 #include <librdp/librdp.h>
 
@@ -1857,6 +1870,11 @@ static void x11_handle_channel_close(x11_app* app, const librdp_channel_close_ev
                     event->name ? event->name : "");
 }
 
+/*
+ * Handle one X11 event at the viewer boundary. The handler translates local
+ * focus, pointer, keyboard, expose, and resize state into session calls while
+ * keeping grabs and remote key release ordering consistent.
+ */
 static void app_event(librdp_session* session, const librdp_event* event, void* user_data)
 {
     x11_app* app = (x11_app*)user_data;
@@ -2107,6 +2125,11 @@ static void run_session_pump(x11_app* app)
     }
 }
 
+/*
+ * Present the current session surface into the X11 window. Clipping and stride
+ * handling stay here so expose and resize repaint paths cannot read outside
+ * the framebuffer snapshot delivered by the core.
+ */
 static void draw_surface(x11_app* app)
 {
     const librdp_surface* surface = NULL;
@@ -2344,6 +2367,11 @@ static void handle_motion(x11_app* app, XMotionEvent* motion)
     (void)librdp_session_send_mouse(app->session, &event);
 }
 
+/*
+ * Convert parsed viewer options into public client settings. This boundary
+ * owns local validation of credentials, device backends, desktop size, and
+ * feature flags before a session can observe them.
+ */
 static int configure_settings(librdp_settings* settings, x11_app* app, int argc, char** argv)
 {
     int i = 1;
@@ -2529,6 +2557,12 @@ static int configure_settings(librdp_settings* settings, x11_app* app, int argc,
            librdp_settings_target(settings) != NULL;
 }
 
+/*
+ * Own the viewer process lifetime from argument parsing through session
+ * shutdown. X11 resources, optional host backends, and the session are
+ * released in reverse setup order so failed partial startup remains
+ * deterministic.
+ */
 int main(int argc, char** argv)
 {
     librdp_settings* settings = NULL;

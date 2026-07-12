@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: transport abstraction combining TCP, TLS, buffering, wait, and
+ * trace-visible I/O semantics.
+ * Invariants: file descriptors, TLS state, and buffered bytes are updated only
+ * after successful system calls.
+ * Ownership: transport reads and writes preserve record ordering and never
+ * expose stale plaintext after failure.
+ * Threading: not internally synchronized; callers must serialize access
+ * through the owning session or transport.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "transport/transport.h"
 

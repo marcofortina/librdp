@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: viewer-side host device backend wiring for optional redirected
+ * devices.
+ * Invariants: viewer state, X11 resources, and session callbacks are kept
+ * consistent with focus and resize events.
+ * Ownership: backend handles are owned by viewer settings and released during
+ * viewer shutdown.
+ * Threading: called from the viewer event thread unless a backend explicitly
+ * documents its own callback thread.
+ * Trust boundary: command-line options, local devices, X11 events, and server
+ * callbacks are separate trust domains.
+ */
+
 
 #include "device_backends.h"
 

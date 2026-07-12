@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: V4L2 camera backend used by the viewer to feed redirected camera
+ * samples.
+ * Invariants: viewer state, X11 resources, and session callbacks are kept
+ * consistent with focus and resize events.
+ * Ownership: captured buffers are copied or released before the next device
+ * dequeue boundary.
+ * Threading: called from the viewer event thread unless a backend explicitly
+ * documents its own callback thread.
+ * Trust boundary: command-line options, local devices, X11 events, and server
+ * callbacks are separate trust domains.
+ */
+
 
 #include "camera_v4l2.h"
 
@@ -470,6 +483,11 @@ int x11_camera_capture_start(x11_camera_capture* capture,
 #endif
 }
 
+/*
+ * Read one V4L2 camera sample for the redirected camera backend. Device
+ * buffers are copied into caller-owned storage before they are requeued so the
+ * protocol layer never retains driver-owned memory.
+ */
 int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, size_t* data_len)
 {
 #ifdef __linux__

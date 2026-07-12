@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: AVC420/AVC444 graphics codec reconstruction support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/avc.h"
 
@@ -309,6 +321,11 @@ static librdp_status rdp_avc_yuv420_prepare(rdp_avc_yuv420* yuv, uint32_t width,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Reconstruct AVC444v2 chroma planes from luma-aligned decoder output. Plane
+ * dimensions and edge padding are handled here so callers receive a complete
+ * BGRA-ready image.
+ */
 librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* view)
 {
     size_t half_source_width = 0;
@@ -829,6 +846,11 @@ static librdp_status rdp_avc_validate_metablock_regions(const rdp_graphics_avc42
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Reconstruct AVC444 chroma planes from the split auxiliary stream. The merge
+ * path validates plane sizes and falls back predictably when chroma payloads
+ * are absent or clipped.
+ */
 librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view)
 {
     uint32_t width = 0;
@@ -936,6 +958,11 @@ static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* m
     return rdp_graphics_parse_rect16(meta->rects + ((size_t)index * 8u), 8u, rect);
 }
 
+/*
+ * Apply decoded AVC luma data into the destination image while preserving
+ * chroma state. Stride and rectangle checks keep partial tiles from
+ * overwriting neighboring pixels.
+ */
 static librdp_status rdp_avc_apply_luma(rdp_avc_decoder* decoder,
                                         const rdp_avc_yuv420* yuv,
                                         const rdp_graphics_rect16* rect)
@@ -1448,6 +1475,11 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
 #endif
 }
 
+/*
+ * Decode an AVC444 tile using primary and auxiliary bitstreams. The routine
+ * coordinates OpenH264 output, chroma reconstruction, and fallback handling
+ * before exposing pixels to the graphics pipeline.
+ */
 librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
                                  uint16_t codec_id,
                                  const rdp_graphics_avc444_stream* stream,

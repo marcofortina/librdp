@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: CredSSP and NTLM message construction, wrapping, and TSRequest
+ * exchange.
+ * Invariants: cryptographic state changes occur only after complete input
+ * validation and successful provider calls.
+ * Ownership: credential-derived material remains transient and every
+ * ASN.1/security buffer length is validated.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: remote certificate, token, and security-buffer bytes are
+ * untrusted and secrets must not be logged.
+ */
+
 
 #include "nla/credssp.h"
 
@@ -969,6 +982,11 @@ librdp_status rdp_credssp_write_spnego_ntlm_authenticate(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Encode a CredSSP TSRequest with optional token, auth-info, and public-key
+ * fields. ASN.1 lengths are derived from validated buffers and credential-
+ * bearing data must remain outside trace output.
+ */
 librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
                                            uint32_t version,
                                            const uint8_t* nego_token,

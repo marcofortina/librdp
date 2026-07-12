@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: printer redirection capability, cache, and job helpers.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/printer_redirection.h"
 
@@ -314,6 +326,11 @@ librdp_status rdp_printer_redirection_parse_announce_data(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse a printer cache event from the server. The parser validates event
+ * type, queue identifiers, and embedded string lengths before printer state or
+ * spooler backends observe the request.
+ */
 librdp_status rdp_printer_redirection_parse_cache_event(
     const void* data,
     size_t length,

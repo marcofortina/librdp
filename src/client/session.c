@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: client session orchestration across transport, security,
+ * capabilities, graphics, input, and channels.
+ * Invariants: session state transitions happen in protocol order and callbacks
+ * never receive invalid surfaces or channels.
+ * Ownership: session-owned caches, channels, surfaces, and credentials change
+ * only through the session thread.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include <librdp/session.h>
 #include <librdp/video.h>
@@ -1274,6 +1287,11 @@ static int rdp_session_pointer_xor_pixel_nonzero(const rdp_pointer_update* updat
     return 0;
 }
 
+/*
+ * Format pointer-shape metadata for trace without dumping sensitive or
+ * unbounded pixel data. The routine keeps visibility, cache, hotspot, and mask
+ * information correlated for cursor interop debugging.
+ */
 static void rdp_session_pointer_trace_shape(const rdp_pointer_update* update,
                                             const rdp_buffer* decoded,
                                             size_t decoded_stride)
@@ -1844,6 +1862,11 @@ static librdp_status rdp_session_pnp_multisz1(rdp_buffer* out, const char* text)
     return status;
 }
 
+/*
+ * Announce configured PNP devices to the server. The function snapshots
+ * session-owned backend descriptors into protocol packets so later host-device
+ * changes cannot alter an in-flight announcement.
+ */
 static librdp_status rdp_session_pnp_send_devices(librdp_session* session)
 {
     rdp_pnp_redirection_device_description devices[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
@@ -3043,6 +3066,11 @@ static librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* o
     return rdp_charset_utf8_to_utf16le_buffer(text, append_null != 0, out);
 }
 
+/*
+ * Send the RAIL startup exchange required before remote-application orders are
+ * meaningful. Startup state is updated only after the packet is queued so
+ * retries and failures remain observable.
+ */
 static librdp_status rdp_session_send_remote_programs_startup(librdp_session* session)
 {
     rdp_buffer packet;
@@ -3769,6 +3797,11 @@ static librdp_status rdp_session_write_file_ea_information(rdp_buffer* buffer, i
     return rdp_session_write_file_u32_information(buffer, ea_size);
 }
 
+/*
+ * Serialize extended-attribute directory information for filesystem
+ * redirection. Each variable-length name/value pair is size-checked before the
+ * next-entry offset is committed.
+ */
 static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buffer, int fd)
 {
 #if defined(RDP_HAVE_ATTR) && defined(__linux__)
@@ -3931,6 +3964,11 @@ static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
     }
 }
 
+/*
+ * Serialize one redirected directory enumeration record. The writer maps host
+ * stat data into the requested information class while keeping next-entry
+ * offsets and UTF-16 names consistent.
+ */
 static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
                                                              uint32_t information_class,
                                                              const struct stat* st,
@@ -4835,6 +4873,11 @@ static librdp_status rdp_session_send_filesystem_create_response(
     return status;
 }
 
+/*
+ * Handle a redirected filesystem create/open request. Path normalization,
+ * disposition flags, host open state, and protocol status mapping are kept
+ * together to avoid leaking stale file handles.
+ */
 static librdp_status rdp_session_handle_filesystem_create(librdp_session* session,
                                                           const uint8_t* data,
                                                           size_t data_len)
@@ -5051,6 +5094,11 @@ static librdp_status rdp_session_handle_filesystem_simple(librdp_session* sessio
     return status;
 }
 
+/*
+ * Handle redirected filesystem metadata updates. The server-provided
+ * information class controls parsing, but host mutations are attempted only
+ * after the full payload is validated.
+ */
 static librdp_status rdp_session_handle_filesystem_set_information(librdp_session* session,
                                                                    const uint8_t* data,
                                                                    size_t data_len)
@@ -5144,6 +5192,11 @@ static librdp_status rdp_session_handle_filesystem_set_information(librdp_sessio
     return status;
 }
 
+/*
+ * Handle a redirected filesystem read request. File offsets and lengths are
+ * validated before host I/O and the reply owns any data copied from the
+ * backend buffer.
+ */
 static librdp_status rdp_session_handle_filesystem_read(librdp_session* session,
                                                         const uint8_t* data,
                                                         size_t data_len)
@@ -5225,6 +5278,11 @@ static librdp_status rdp_session_handle_filesystem_read(librdp_session* session,
     return status;
 }
 
+/*
+ * Handle a redirected filesystem write request. The incoming payload is
+ * treated as transient wire data and copied or consumed before the IRP
+ * completion is emitted.
+ */
 static librdp_status rdp_session_handle_filesystem_write(librdp_session* session,
                                                          const uint8_t* data,
                                                          size_t data_len)
@@ -5445,6 +5503,11 @@ static librdp_status rdp_session_handle_filesystem_query_information(librdp_sess
     return status;
 }
 
+/*
+ * Handle redirected directory enumeration. Enumeration cookies, search
+ * patterns, and host directory handles stay correlated so repeated requests
+ * advance exactly one server-visible cursor.
+ */
 static librdp_status rdp_session_handle_filesystem_query_directory(librdp_session* session,
                                                                    const uint8_t* data,
                                                                    size_t data_len)
@@ -5964,6 +6027,11 @@ static librdp_status rdp_session_handle_filesystem_notify_change(librdp_session*
     return status;
 }
 
+/*
+ * Handle filesystem device-control IRPs that do not map to simple read/write
+ * operations. The dispatcher validates IOCTL payload sizes before forwarding
+ * to host metadata helpers.
+ */
 static librdp_status rdp_session_handle_filesystem_device_control(librdp_session* session,
                                                                   const uint8_t* data,
                                                                   size_t data_len)
@@ -6180,6 +6248,11 @@ static uint32_t rdp_session_apply_filesystem_security(
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
+/*
+ * Handle filesystem security query and set requests. Host ACL translation and
+ * protocol status mapping are centralized here to keep privilege-sensitive
+ * failures explicit.
+ */
 static librdp_status rdp_session_handle_filesystem_security(librdp_session* session,
                                                             const uint8_t* data,
                                                             size_t data_len,
@@ -6946,6 +7019,11 @@ static librdp_status rdp_session_send_printer_response(librdp_session* session,
     return rdp_session_send_device_redirection_packet(session, response, event);
 }
 
+/*
+ * Handle printer create/open requests from the device redirection channel. The
+ * routine binds server file IDs to spool jobs only after printer identity and
+ * backend availability are validated.
+ */
 static librdp_status rdp_session_handle_printer_create(librdp_session* session,
                                                        const rdp_device_redirection_io_request* request)
 {
@@ -7327,6 +7405,11 @@ static uint32_t rdp_session_apply_printer_set_information(rdp_session_redirected
     }
 }
 
+/*
+ * Handle printer IRPs whose response depends primarily on byte counts. Status,
+ * completion length, and optional spooler writes are kept synchronized with
+ * the server file ID.
+ */
 static librdp_status rdp_session_handle_printer_length_irp(librdp_session* session,
                                                            const uint8_t* data,
                                                            size_t data_len,
@@ -8606,6 +8689,11 @@ static librdp_status rdp_session_smartcard_send_buffer_result(librdp_session* se
     return status;
 }
 
+/*
+ * Handle the PC/SC list-reader-groups request for smartcard redirection.
+ * Backend strings are converted into protocol multistrings without retaining
+ * provider-owned memory.
+ */
 static librdp_status rdp_session_smartcard_handle_list_reader_groups(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -8709,6 +8797,11 @@ static librdp_status rdp_session_smartcard_handle_list_reader_groups(
     return status;
 }
 
+/*
+ * Handle the PC/SC list-readers request for smartcard redirection. Reader-
+ * group filters are parsed from the wire and backend reader names are copied
+ * into the response payload.
+ */
 static librdp_status rdp_session_smartcard_handle_list_readers(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -8836,6 +8929,11 @@ static librdp_status rdp_session_smartcard_handle_list_readers(
     return status;
 }
 
+/*
+ * Handle a PC/SC status-change request. Reader state arrays are bounded,
+ * correlated with backend readers, and completed with protocol status even
+ * when the provider reports a timeout.
+ */
 static librdp_status rdp_session_smartcard_handle_get_status_change(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -9000,6 +9098,11 @@ static librdp_status rdp_session_smartcard_handle_handle_only(
     return status;
 }
 
+/*
+ * Handle a PC/SC connect request. Reader names, share mode, and protocol masks
+ * are validated before backend handles become visible to later smartcard
+ * calls.
+ */
 static librdp_status rdp_session_smartcard_handle_connect(librdp_session* session,
                                                           const rdp_device_redirection_io_request* request,
                                                           const rdp_smartcard_redirection_request_message* message)
@@ -9676,6 +9779,11 @@ static librdp_status rdp_session_smartcard_send_reader_states(
     return status;
 }
 
+/*
+ * Handle PC/SC locate-cards requests across multiple reader states. Card names
+ * and reader arrays are copied out of the wire payload before backend matching
+ * and response construction.
+ */
 static librdp_status rdp_session_smartcard_handle_locate_cards(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -10050,6 +10158,10 @@ static librdp_status rdp_session_smartcard_handle_locate_cards_by_atr(
         "client.rdpdr.smartcard.locate_cards_by_atr.response");
 }
 
+/*
+ * Handle smartcard cache IOCTLs. Cache keys, lookup buffers, and update
+ * payloads are bounded before session-owned cache state is read or modified.
+ */
 static librdp_status rdp_session_smartcard_handle_cache(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -10220,6 +10332,11 @@ static librdp_status rdp_session_smartcard_handle_cache(
     return status;
 }
 
+/*
+ * Return the reader name associated with a smartcard context or card handle.
+ * The response copies backend strings into protocol storage and maps missing
+ * handles to explicit PC/SC status.
+ */
 static librdp_status rdp_session_smartcard_handle_reader_name(
     librdp_session* session,
     const rdp_device_redirection_io_request* request,
@@ -10868,6 +10985,11 @@ static uint32_t rdp_session_port_purge(rdp_session_redirected_file* port,
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
+/*
+ * Handle serial-port control requests for redirected ports. Termios-style
+ * configuration, modem status, timeout state, and unsupported controls are
+ * normalized into protocol completions.
+ */
 static librdp_status rdp_session_port_control_serial(rdp_session_redirected_file* port,
                                                      const rdp_filesystem_redirection_control_request* request,
                                                      rdp_buffer* output,
@@ -11541,6 +11663,11 @@ static librdp_status rdp_session_drive_name_to_utf16le(const char* name,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Send the aggregate device redirection announcement. Each configured drive,
+ * printer, port, smartcard, and optional backend is serialized from session-
+ * owned settings into stable device IDs.
+ */
 static librdp_status rdp_session_send_device_redirection_device_list(librdp_session* session)
 {
     rdp_device_redirection_device_announce
@@ -11760,6 +11887,11 @@ static librdp_status rdp_session_handle_printer_component_message(librdp_session
     return status;
 }
 
+/*
+ * Dispatch one device redirection message after static-channel framing.
+ * Capability exchange, device announcements, and IRP routing stay centralized
+ * so device IDs cannot target the wrong backend.
+ */
 static librdp_status rdp_session_handle_device_redirection_message(librdp_session* session,
                                                                    const uint8_t* data,
                                                                    size_t data_len)
@@ -12754,6 +12886,11 @@ static librdp_status rdp_session_send_audio_input_formats(librdp_session* sessio
     return status;
 }
 
+/*
+ * Handle audio-input control messages. Version, format negotiation, open/close
+ * state, and captured sample flow are validated before callbacks or backend
+ * capture state are touched.
+ */
 static librdp_status rdp_session_handle_audio_input_message(librdp_session* session,
                                                             uint32_t channel_id,
                                                             const uint8_t* data,
@@ -12865,6 +13002,11 @@ static librdp_status rdp_session_handle_audio_input_message(librdp_session* sess
     return status;
 }
 
+/*
+ * Handle server audio-output format negotiation. Advertised formats are
+ * filtered against local capabilities and the selected format is copied into
+ * session state before playback starts.
+ */
 static librdp_status rdp_session_handle_audio_output_formats(librdp_session* session,
                                                              const uint8_t* data,
                                                              size_t data_len)
@@ -13408,6 +13550,11 @@ static librdp_status rdp_session_handle_audio_output_message(librdp_session* ses
     return status;
 }
 
+/*
+ * Handle audio-output UDP datagrams associated with the current playback
+ * stream. Sequence and payload checks prevent stale datagrams from being mixed
+ * into the active audio buffer.
+ */
 static librdp_status rdp_session_handle_audio_output_udp_datagram(librdp_session* session)
 {
     uint8_t packet[65536];
@@ -13968,6 +14115,11 @@ static uint64_t rdp_session_trace_surface_hash(const rdp_session_graphics_surfac
                                                uint32_t width,
                                                uint32_t height);
 
+/*
+ * Flush a graphics surface into the primary framebuffer with scaling. Source
+ * and destination rectangles are clipped together so partial monitor layouts
+ * cannot read outside cached surfaces.
+ */
 static librdp_status rdp_session_graphics_surface_flush_scaled(librdp_session* session,
                                                                rdp_session_graphics_surface* surface,
                                                                uint16_t left,
@@ -14101,6 +14253,11 @@ static librdp_status rdp_session_graphics_surface_flush_scaled(librdp_session* s
     return status;
 }
 
+/*
+ * Flush a graphics surface into the primary framebuffer without scaling. Dirty
+ * tracking is updated only after clipped blits have reached the session
+ * surface.
+ */
 static librdp_status rdp_session_graphics_surface_flush(librdp_session* session,
                                                         rdp_session_graphics_surface* surface,
                                                         uint16_t left,
@@ -14485,6 +14642,11 @@ static librdp_status rdp_session_graphics_surface_alpha_run(rdp_session_graphics
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Apply alpha composition for a graphics surface update. The routine keeps
+ * source pixels, destination clips, and blend mode validation together before
+ * mutating the visible framebuffer.
+ */
 static librdp_status rdp_session_graphics_surface_apply_alpha(librdp_session* session,
                                                               rdp_session_graphics_surface* surface,
                                                               const rdp_graphics_wire_to_surface_1* wire)
@@ -14810,6 +14972,11 @@ static librdp_status rdp_session_graphics_progressive_delta_quant(const rdp_grap
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Write one progressive-codec tile into a region buffer. Tile coordinates,
+ * quantization state, and destination stride are validated before the partial
+ * region becomes renderable.
+ */
 static librdp_status rdp_session_graphics_progressive_write_region_tile(
     librdp_session* session,
     rdp_session_graphics_surface* surface,
@@ -15139,6 +15306,11 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Render a progressive-codec upgrade pass. The function merges cached tile
+ * state with new coefficient data while preserving the previous visible
+ * surface until the upgrade is complete.
+ */
 static librdp_status rdp_session_graphics_progressive_render_upgrade(
     librdp_session* session,
     uint32_t channel_id,
@@ -15314,6 +15486,10 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Flush a completed progressive region to the target surface. Region damage is
+ * emitted only after every clipped tile in the region has been applied.
+ */
 static librdp_status rdp_session_graphics_progressive_flush_region(librdp_session* session,
                                                                    uint32_t channel_id,
                                                                    uint32_t codec_context_id,
@@ -15403,6 +15579,11 @@ static librdp_status rdp_session_graphics_progressive_flush_region(librdp_sessio
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Render all tiles for a progressive region. Codec state, tile cache lookup,
+ * and destination clipping stay ordered so incomplete regions do not leak into
+ * the framebuffer.
+ */
 static librdp_status rdp_session_graphics_progressive_render_region(librdp_session* session,
                                                                     uint32_t channel_id,
                                                                     uint32_t codec_context_id,
@@ -15987,6 +16168,11 @@ static int rdp_session_gdi_brush_compressed(uint32_t format, uint32_t length)
            (format == RDP_GDI_BMF_32BPP && length == 32u);
 }
 
+/*
+ * Store a decoded GDI brush in the session cache. Cache index validation and
+ * brush ownership transfer happen together so later orders never reference
+ * transient order memory.
+ */
 static librdp_status rdp_session_gdi_store_cache_brush(librdp_session* session,
                                                        const rdp_gdi_cache_brush_order* order)
 {
@@ -16552,6 +16738,11 @@ static rdp_session_graphics_cache_entry* rdp_session_graphics_cache_find(librdp_
     return &session->graphics_cache[cache_slot];
 }
 
+/*
+ * Store graphics-pipeline cache entries supplied by the server. Keys, payload
+ * lengths, and replacement ownership are validated before the session cache is
+ * updated.
+ */
 static librdp_status rdp_session_graphics_cache_store(librdp_session* session,
                                                       const rdp_graphics_surface_to_cache* surface_to_cache)
 {
@@ -17995,6 +18186,11 @@ static librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session
     return status;
 }
 
+/*
+ * Handle mouse-cursor channel messages. Shape, cached-pointer, and visibility
+ * updates are applied in protocol order and emitted to the viewer only after
+ * cache state is valid.
+ */
 static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* session,
                                                              uint32_t channel_id,
                                                              const uint8_t* data,
@@ -19182,6 +19378,11 @@ static uint32_t rdp_session_auth_redirection_response_status(
     return RDP_SESSION_HRESULT_FAIL;
 }
 
+/*
+ * Handle authentication-redirection channel messages. Request IDs, credential
+ * blobs, and completion status remain correlated while sensitive fields are
+ * kept out of trace output.
+ */
 static librdp_status rdp_session_handle_auth_redirection_message(librdp_session* session,
                                                                  uint32_t channel_id,
                                                                  uint8_t channel_id_bytes,
@@ -19516,6 +19717,11 @@ static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first
     return status;
 }
 
+/*
+ * Build USB device string descriptors for announcement packets. Host
+ * descriptor data is copied and length-bounded before it becomes part of the
+ * session-owned USB device table.
+ */
 static librdp_status rdp_session_usb_build_device_strings(const char* selector,
                                                           uint32_t index,
                                                           rdp_buffer* instance,
@@ -19618,6 +19824,11 @@ static librdp_status rdp_session_send_usb_redirection_packet(librdp_session* ses
                                                  event);
 }
 
+/*
+ * Announce configured USB devices to the server. Device identities,
+ * interfaces, and endpoint metadata are snapshotted so backend hotplug changes
+ * cannot corrupt in-flight packets.
+ */
 static librdp_status rdp_session_usb_send_device_announcements(librdp_session* session)
 {
     uint32_t count = 0;
@@ -21034,6 +21245,11 @@ static uint32_t rdp_session_usb_wait_transfer(librdp_session* session,
     return rdp_session_usb_transfer_status_to_usbd(state->transfer_status);
 }
 
+/*
+ * Complete an isochronous USB transfer response. Per-packet statuses, payload
+ * offsets, and backend transfer ownership are normalized before the URBDRC
+ * completion is sent.
+ */
 static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
                                                       rdp_session_usb_device* device,
                                                       const rdp_usb_redirection_transfer* transfer,
@@ -22353,6 +22569,11 @@ static void rdp_session_emit_composited_invalidations(librdp_session* session,
     }
 }
 
+/*
+ * Handle composited-remoting channel messages at the session boundary. Tree
+ * mutations and rendered surface damage are applied only after the channel
+ * decoder accepts the complete message.
+ */
 static librdp_status rdp_session_handle_composited_message(librdp_session* session,
                                                            uint32_t channel_id,
                                                            const uint8_t* data,
@@ -22801,6 +23022,11 @@ static librdp_status rdp_session_send_video_optimized_presentation_response(libr
     return status;
 }
 
+/*
+ * Handle video-optimized remoting control traffic. Presentation identifiers,
+ * format negotiation, and stream state are validated before media payload
+ * callbacks are enabled.
+ */
 static librdp_status rdp_session_handle_video_optimized_control_message(librdp_session* session,
                                                                         uint32_t channel_id,
                                                                         const uint8_t* data,
@@ -24111,6 +24337,10 @@ static librdp_status rdp_session_send_video_capture_sample(librdp_session* sessi
     return rdp_session_send_video_capture_sample_error(session, stream_index, error_code);
 }
 
+/*
+ * Handle redirected camera control messages. Open, sample request, close, and
+ * error paths keep backend state and protocol request IDs synchronized.
+ */
 static librdp_status rdp_session_handle_video_capture_control_message(librdp_session* session,
                                                                       uint32_t channel_id,
                                                                       const uint8_t* data,
@@ -26541,6 +26771,11 @@ static void rdp_session_gdi_brush_bgr(const librdp_session* session,
         *r = (uint8_t)((color >> 16u) & 0xffu);
 }
 
+/*
+ * Copy a cached GDI bitmap into the target surface. Cache lookup, source
+ * clipping, raster operation, and destination bounds are validated before
+ * pixels are written.
+ */
 static librdp_status rdp_session_gdi_copy_cached_bitmap(librdp_session* session,
                                                         const rdp_gdi_render_op* op,
                                                         const rdp_session_gdi_bitmap_cache_entry* entry,
@@ -26670,6 +26905,11 @@ static librdp_status rdp_session_gdi_copy_cached_bitmap(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Render a GDI PatBlt order into the session surface. Brush resolution, raster
+ * operation selection, and clipping are kept in one path to avoid inconsistent
+ * cache use.
+ */
 static librdp_status rdp_session_gdi_patblt(librdp_session* session,
                                             const rdp_gdi_render_op* op,
                                             const rdp_session_gdi_region* region)
@@ -26909,6 +27149,11 @@ static void rdp_session_gdi_glyph_post_advance(const rdp_session_gdi_glyph_cache
         *x += amount;
 }
 
+/*
+ * Render one cached glyph from a GDI text order. Glyph cache lookup and
+ * foreground/background composition are bounded by the current clipping
+ * region.
+ */
 static librdp_status rdp_session_gdi_draw_cached_glyph(librdp_session* session,
                                                        const rdp_gdi_render_op* op,
                                                        const rdp_session_gdi_glyph_cache_entry* glyph,
@@ -27243,6 +27488,10 @@ static uint32_t rdp_session_gdi_ninegrid_axis(uint32_t pos,
     return src_start + src_leading + (uint32_t)(((uint64_t)(pos - dst_leading) * src_center) / dst_center);
 }
 
+/*
+ * Render a nine-grid order by splitting stretchable and fixed regions. Source
+ * bitmap bounds and destination slices are checked before each blit.
+ */
 static librdp_status rdp_session_gdi_draw_ninegrid(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_session_gdi_ninegrid_cache_entry* grid = NULL;
@@ -27587,6 +27836,11 @@ static void rdp_session_gdi_plot_rop2_pixel(librdp_session* session,
     pixel[3] = 0xffu;
 }
 
+/*
+ * Render a GDI line order with clipping and raster-operation handling.
+ * Endpoint normalization stays local so degenerate or out-of-bounds lines
+ * remain safe.
+ */
 static librdp_status rdp_session_gdi_draw_line(librdp_session* session, const rdp_gdi_render_op* op)
 {
     uint32_t surface_width = 0;
@@ -27773,6 +28027,10 @@ static int rdp_session_gdi_polygon_inside(const rdp_gdi_render_point* points,
     return alternate;
 }
 
+/*
+ * Render a GDI polygon fill order. Point arrays, fill mode, brush selection,
+ * and clip state are validated before scan conversion touches the surface.
+ */
 static librdp_status rdp_session_gdi_fill_polygon(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_gdi_render_point points[RDP_GDI_RENDER_MAX_POINTS + 1u];
@@ -27947,6 +28205,11 @@ static librdp_status rdp_session_gdi_fill_ellipse(librdp_session* session, const
 
 static librdp_status rdp_session_apply_gdi_render_op(librdp_session* session, const rdp_gdi_render_op* op);
 
+/*
+ * Apply the core GDI raster operation between source, pattern, and destination
+ * pixels. Keeping the operation table centralized avoids divergent rendering
+ * behavior across order types.
+ */
 static librdp_status rdp_session_apply_gdi_render_op_core(librdp_session* session, const rdp_gdi_render_op* op)
 {
     rdp_session_gdi_region region;
@@ -28199,6 +28462,11 @@ static librdp_status rdp_session_gdi_decode_rfx_cache_bitmap(const rdp_gdi_cache
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Store a decoded GDI bitmap into the session bitmap cache. Cell selection,
+ * dimensions, and pixel ownership are finalized before later drawing orders
+ * can reference the cache entry.
+ */
 static librdp_status rdp_session_gdi_store_cache_bitmap(librdp_session* session,
                                                         const rdp_gdi_cache_bitmap_order* order)
 {
@@ -28412,6 +28680,11 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Apply alternate secondary GDI orders such as cache and glyph updates. The
+ * dispatcher validates order type and payload length before mutating any GDI
+ * cache.
+ */
 static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                                                         const rdp_gdi_altsec_order_header* header)
 {
@@ -28621,6 +28894,11 @@ static librdp_status rdp_session_decompress_bulk_payload(librdp_session* session
     return rdp_bulk_decompress(&session->bulk_decompressor, flags, data, data_len, decoded);
 }
 
+/*
+ * Process the plaintext fast-path payload after security and fragmentation
+ * handling. Update parsing, batching, and event emission remain ordered with
+ * the packet stream.
+ */
 static librdp_status rdp_session_fastpath_payload(librdp_session* session,
                                                   const rdp_fastpath_update* update,
                                                   const uint8_t** data,
@@ -29103,6 +29381,11 @@ void librdp_session_set_event_callback(librdp_session* session, librdp_event_cal
     session->callback_data = user_data;
 }
 
+/*
+ * Drive the full client connection sequence from transport setup through
+ * activation. Each phase commits session state only after the previous
+ * handshake stage, security mode, and capability exchange succeed.
+ */
 librdp_status librdp_session_connect(librdp_session* session)
 {
     rdp_buffer x224;
@@ -30162,6 +30445,11 @@ fail:
     return rdp_session_fail(session, status);
 }
 
+/*
+ * Run one iteration of the active session loop. Transport readiness, PDU
+ * decoding, channel dispatch, framebuffer events, and disconnect conditions
+ * are processed without re-entering callbacks concurrently.
+ */
 librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
 {
     short revents = 0;
@@ -31084,6 +31372,11 @@ done:
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Tear down an active or partially connected session. Transport, channels,
+ * backends, caches, surfaces, and sensitive buffers are released in an order
+ * that prevents callbacks from observing freed state.
+ */
 librdp_status librdp_session_disconnect(librdp_session* session)
 {
     librdp_event event;
@@ -31897,6 +32190,11 @@ static librdp_status rdp_session_validate_pen_frames(const librdp_pen_frame* fra
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize one keyboard input event for the connected session. Scancode,
+ * Unicode fallback, and release state are validated before the event is
+ * written to the selected input path.
+ */
 librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
 {
     uint16_t flags = 0;
@@ -31985,6 +32283,11 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize one pointer input event for the connected session. Coordinates,
+ * wheel data, and button flags are normalized before the event enters the core
+ * input stream.
+ */
 librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* mouse)
 {
     uint16_t flags = 0;

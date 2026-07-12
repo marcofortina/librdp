@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: GDI order parser and serializer support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/gdi_orders.h"
 
@@ -66,6 +78,11 @@ static int rdp_gdi_altsec_order_type_valid(uint8_t order_type)
     return order_type <= RDP_GDI_ALTSEC_FRAME_MARKER;
 }
 
+/*
+ * Compute the payload length for an alternate secondary GDI order. Length
+ * derivation stays separate from parsing so truncated cache orders are
+ * rejected before field decoding.
+ */
 static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
                                                    const uint8_t* payload,
                                                    size_t available,
@@ -742,6 +759,11 @@ librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
     return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
+/*
+ * Parse a GDI cache-bitmap order with variable headers and compressed
+ * payloads. Cache identifiers, dimensions, and bitmap data lengths are
+ * validated before cache mutation.
+ */
 librdp_status rdp_gdi_parse_cache_bitmap_order(const rdp_gdi_secondary_order_header* header,
                                                rdp_gdi_cache_bitmap_order* order)
 {
@@ -1642,6 +1664,10 @@ librdp_status rdp_gdi_write_stream_bitmap_next_order(
     return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
+/*
+ * Parse a list of GDI orders from a slow-path update. Order count, control
+ * flags, and per-order payload boundaries are checked before render dispatch.
+ */
 librdp_status rdp_gdi_parse_order_list(const void* data,
                                        size_t length,
                                        uint16_t number_orders,

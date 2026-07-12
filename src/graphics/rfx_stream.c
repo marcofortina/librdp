@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: RemoteFX stream container parser support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/rfx_stream.h"
 
@@ -474,6 +486,11 @@ static librdp_status rdp_rfx_stream_read_channel_prefix(uint16_t block_type, rdp
     return channel_id == RDP_RFX_DATA_CHANNEL ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+/*
+ * Decode a RemoteFX stream container into validated codec blocks. Block
+ * lengths and tile references are checked before the codec consumes any
+ * component payload.
+ */
 librdp_status rdp_rfx_stream_decode(const void* data,
                                     size_t length,
                                     rdp_rfx_stream_tile_callback callback,

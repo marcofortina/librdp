@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: dynamic virtual-channel control and data framing support.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/dynamic_channel.h"
 

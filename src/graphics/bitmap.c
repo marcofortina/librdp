@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: bitmap update and RLE decoding support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/bitmap.h"
 
@@ -485,6 +497,11 @@ static librdp_status rdp_bitmap_rle_write_foreground(rdp_bitmap_rle_reader* read
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a bitmap RLE run-length descriptor from the compressed stream.
+ * Opcode-specific lengths are bounded before the caller consumes pixels or
+ * advances the destination cursor.
+ */
 static librdp_status rdp_bitmap_rle_run_length(const rdp_bitmap_rle_reader* reader,
                                                uint8_t code,
                                                uint32_t* run_length,
@@ -599,6 +616,11 @@ static librdp_status rdp_bitmap_rle_write_fgbg(rdp_bitmap_rle_reader* reader,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a bitmap RLE stream into BGRA output. The decoder keeps input
+ * opcodes, destination coordinates, and previous-line references synchronized
+ * to reject malformed runs safely.
+ */
 static librdp_status rdp_bitmap_rle_decode_stream(const uint8_t* data,
                                                   size_t length,
                                                   uint16_t width,
@@ -925,6 +947,11 @@ static int rdp_bitmap_stride_aligned(size_t stride, size_t alignment, size_t* al
     return 1;
 }
 
+/*
+ * Decode one bitmap rectangle with optional palette expansion into BGRA
+ * output. Palette indexes, stride, and rectangle dimensions are validated
+ * before the surface copy.
+ */
 librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* rect,
                                                          const rdp_palette_update* palette,
                                                          rdp_buffer* output,

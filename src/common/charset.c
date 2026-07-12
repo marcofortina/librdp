@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: UTF-8 and UTF-16LE conversion helpers used at protocol boundaries.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: converted strings are caller-owned and malformed input fails
+ * before partial public output is committed.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "common/charset.h"
 

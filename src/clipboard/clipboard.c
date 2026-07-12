@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: clipboard virtual-channel message helpers.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: format lists and file payload slices are copied when they must
+ * outlive the incoming PDU.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "clipboard/clipboard.h"
 

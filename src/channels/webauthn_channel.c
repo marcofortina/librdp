@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: WebAuthn redirection RPC and CBOR packet helpers.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/webauthn_channel.h"
 
@@ -95,6 +107,11 @@ static int rdp_webauthn_cbor_is_break(const uint8_t* data, size_t length)
     return data && length > 0 && data[0] == 0xffu;
 }
 
+/*
+ * Skip one CBOR value while validating nested length fields and recursion
+ * depth. This protects the WebAuthn RPC parser from treating attacker-
+ * controlled item sizes as trusted stream offsets.
+ */
 static librdp_status rdp_webauthn_cbor_skip(const uint8_t* data,
                                             size_t length,
                                             size_t* consumed,
@@ -473,6 +490,11 @@ librdp_status rdp_webauthn_validate_cbor(const void* data, size_t length)
 #endif
 }
 
+/*
+ * Parse a WebAuthn RPC request into owned request fields. The parser accepts
+ * only bounded CBOR/string slices and separates malformed wire data from
+ * provider-level authenticator failures.
+ */
 librdp_status rdp_webauthn_parse_request(const void* data,
                                          size_t length,
                                          rdp_webauthn_request* request)

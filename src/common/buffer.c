@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: growable byte buffer utilities shared by protocol encoders and
+ * channel writers.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: buffer capacity, length, and ownership stay synchronized before
+ * data is exposed to callers.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "common/buffer.h"
 

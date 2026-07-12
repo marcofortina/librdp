@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: graphics pipeline channel segmentation, capabilities, and surface
+ * commands.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/graphics_pipeline.h"
 
@@ -421,6 +434,11 @@ static librdp_status rdp_graphics_copy_unencoded(rdp_graphics_decompressor* deco
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode one graphics-pipeline compressed segment into a caller buffer.
+ * Compression headers, expanded size, and history state are validated before
+ * any decoded bytes are made visible.
+ */
 static librdp_status rdp_graphics_decode_compressed_segment(rdp_graphics_decompressor* decompressor,
                                                            const uint8_t* data,
                                                            size_t length,
@@ -1568,6 +1586,11 @@ static librdp_status rdp_graphics_append_bulk_data(rdp_graphics_decompressor* de
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Reassemble graphics-pipeline segmented payloads into command data. Segment
+ * ordering and total length are checked so later surface decoders never
+ * consume incomplete command streams.
+ */
 librdp_status rdp_graphics_decode_segmented_data(rdp_graphics_decompressor* decompressor,
                                                  const void* data,
                                                  size_t length,

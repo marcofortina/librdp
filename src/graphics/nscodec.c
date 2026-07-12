@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: NSCodec planar bitmap decoding support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/nscodec.h"
 
@@ -161,6 +173,11 @@ static librdp_status rdp_nscodec_plane_size(size_t width, size_t height, size_t*
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse an NSCodec stream into planar decode parameters and payload slices.
+ * Chroma, alpha, and color-loss flags are validated before the bitmap decoder
+ * sees them.
+ */
 librdp_status rdp_nscodec_parse_stream(const void* data,
                                        size_t length,
                                        uint32_t width,

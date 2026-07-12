@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: core input event encoding helpers.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: input events are serialized from caller data without retaining
+ * caller-owned pointers.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "input/input.h"
 

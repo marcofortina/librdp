@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: modern input channel event parsing support.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/core_input.h"
 
@@ -180,6 +192,11 @@ librdp_status rdp_core_input_negotiate(const rdp_core_input_init_response* respo
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse modern input events from an input-channel payload. Event counts,
+ * contact records, and optional pen fields are bounded before being exposed to
+ * the session input dispatcher.
+ */
 librdp_status rdp_core_input_parse_events(const void* data,
                                           size_t length,
                                           rdp_core_input_event* events,

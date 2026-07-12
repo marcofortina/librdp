@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: filesystem redirection helpers for host file and metadata
+ * operations.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/filesystem_redirection.h"
 
@@ -967,6 +980,11 @@ static librdp_status rdp_filesystem_append_volume_object_id(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Serialize redirected filesystem volume information for the requested
+ * information class. Host filesystem facts are normalized into protocol fields
+ * without retaining pointers into transient stat buffers.
+ */
 librdp_status rdp_filesystem_redirection_write_volume_information(rdp_buffer* buffer,
                                                                   uint32_t information_class,
                                                                   const char* volume_label,
@@ -1316,6 +1334,11 @@ static uint32_t rdp_filesystem_security_mask_to_mode_bits(uint32_t mask)
     return bits;
 }
 
+/*
+ * Parse a POSIX-style DACL from redirected filesystem metadata. Entry counts
+ * and SID/permission fields are validated before the descriptor can affect
+ * host ACL translation.
+ */
 static librdp_status rdp_filesystem_security_parse_dacl(
     const uint8_t* data,
     size_t length,
@@ -1411,6 +1434,11 @@ static librdp_status rdp_filesystem_security_parse_dacl(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize host POSIX ownership, mode, ACL, and extended security data into a
+ * redirected filesystem descriptor. The writer keeps metadata lengths explicit
+ * so the server can reject unsupported classes cleanly.
+ */
 librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buffer* buffer,
                                                                          uint32_t security_information,
                                                                          uint32_t owner_id,
@@ -1515,6 +1543,11 @@ librdp_status rdp_filesystem_redirection_write_posix_security_descriptor(rdp_buf
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse a redirected POSIX security descriptor into bounded local metadata.
+ * Ownership, mode, ACL, and attribute sections are accepted only when the
+ * advertised lengths fit the input buffer.
+ */
 librdp_status rdp_filesystem_redirection_parse_posix_security_descriptor(
     const void* data,
     size_t length,

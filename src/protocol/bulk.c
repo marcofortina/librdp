@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: bulk compression and decompression support.
+ * Invariants: wire lengths, tags, and stream offsets stay consistent across
+ * every parse and write path.
+ * Ownership: serialized buffers are caller-owned and parsed views never
+ * outlive the input stream.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: all protocol bytes are untrusted network input until parsed
+ * successfully.
+ */
+
 
 #include "protocol/bulk.h"
 
@@ -656,6 +668,11 @@ static librdp_status rdp_bulk_rdp6_read_match_length(rdp_bulk_rdp6_state* state,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode bulk-compressed data using the negotiated RDP6 history state. History
+ * updates are committed only after the advertised output size has been
+ * produced successfully.
+ */
 static librdp_status rdp_bulk_rdp6_decode(rdp_bulk_rdp6_state* state,
                                           uint8_t flags,
                                           const uint8_t* data,

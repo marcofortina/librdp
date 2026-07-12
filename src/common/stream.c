@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: bounds-checked little-endian stream reader and writer primitives.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: stream offsets never advance past validated input or output
+ * capacity.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "common/stream.h"
 

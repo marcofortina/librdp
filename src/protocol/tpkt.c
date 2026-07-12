@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: TPKT framing support.
+ * Invariants: wire lengths, tags, and stream offsets stay consistent across
+ * every parse and write path.
+ * Ownership: serialized buffers are caller-owned and parsed views never
+ * outlive the input stream.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: all protocol bytes are untrusted network input until parsed
+ * successfully.
+ */
+
 
 #include "protocol/tpkt.h"
 

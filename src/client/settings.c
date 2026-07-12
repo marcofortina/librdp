@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: client settings storage and validation for public API configuration.
+ * Invariants: session state transitions happen in protocol order and callbacks
+ * never receive invalid surfaces or channels.
+ * Ownership: settings own copied strings and backend descriptors until the
+ * settings object is destroyed.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include <librdp/settings.h>
 

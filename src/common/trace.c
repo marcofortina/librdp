@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: runtime trace filtering, formatting, monotonic sequencing, and
+ * bounded protocol hexdumps.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: trace configuration is process-global after lazy initialization
+ * and never records credentials.
+ * Threading: uses internal atomics for sequencing but callers should not
+ * mutate environment configuration concurrently.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "common/trace.h"
 

@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: GDI order rendering support against local surfaces.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/gdi_render.h"
 
@@ -771,6 +783,10 @@ static librdp_status rdp_gdi_render_decode_multi_scrblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode and render a multi-PatBlt GDI order. Rectangle arrays are bounded and
+ * clipped before each patterned fill reaches the destination surface.
+ */
 static librdp_status rdp_gdi_render_decode_multi_patblt(rdp_stream* stream,
                                                         uint32_t flags,
                                                         int delta,
@@ -1083,6 +1099,10 @@ static librdp_status rdp_gdi_render_decode_polygon_sc(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode and render a polygon order with compressed bounds. Point deltas,
+ * brush state, and clipping are validated before scan conversion.
+ */
 static librdp_status rdp_gdi_render_decode_polygon_cb(rdp_stream* stream,
                                                       uint32_t flags,
                                                       int delta,
@@ -1483,6 +1503,10 @@ static librdp_status rdp_gdi_render_decode_inline_glyph(rdp_gdi_render_op* op)
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode and render a glyph-index order. Text fragments, cache references, and
+ * opaque/background rectangles are bounded before glyph drawing begins.
+ */
 static librdp_status rdp_gdi_render_decode_glyph_index(rdp_stream* stream,
                                                        uint32_t flags,
                                                        int delta,
@@ -1587,6 +1611,10 @@ static librdp_status rdp_gdi_render_decode_glyph_index(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode the shared fast-glyph order format. Embedded glyph data and cached
+ * glyph references are separated so cache ownership remains explicit.
+ */
 static librdp_status rdp_gdi_render_decode_fast_glyph_common(rdp_stream* stream,
                                                             uint32_t flags,
                                                             int delta,
@@ -1709,6 +1737,11 @@ void rdp_gdi_render_state_init(rdp_gdi_render_state* state)
     state->multi_scr_rop = 0xccu;
 }
 
+/*
+ * Decode a primary GDI render order and dispatch it to the surface renderer.
+ * Bounds, field presence bits, and shared order state are validated before
+ * rendering.
+ */
 librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
                                                   const void* data,
                                                   size_t length,

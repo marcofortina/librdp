@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Require explanatory comments before large security/protocol hotspots."""
+"""Require explanatory comments for module boundaries and risky C functions."""
 
 from __future__ import annotations
 
@@ -12,27 +12,64 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKED_DIRS = ("src",)
+CHECKED_ROOTS = (
+    Path("src"),
+    Path("apps/x11-viewer"),
+)
 CHECKED_SUFFIXES = {".c"}
-MIN_HOTSPOT_LINES = 180
+MIN_LARGE_FUNCTION_LINES = 160
+MIN_RISK_FUNCTION_LINES = 80
+MODULE_REQUIRED_FIELDS = (
+    "Module:",
+    "Invariants:",
+    "Ownership:",
+    "Threading:",
+    "Trust boundary:",
+)
 CRITICAL_NAME_PARTS = (
+    "avc",
     "auth",
+    "backend",
+    "bitmap",
+    "capabil",
+    "certificate",
     "channel",
+    "clear",
     "clipboard",
+    "codec",
+    "connect",
     "credssp",
     "decode",
     "device",
     "dispatch",
+    "encode",
+    "fastpath",
+    "gcc",
+    "gdi",
     "graphics",
     "handle",
     "input",
+    "license",
+    "mcs",
+    "nla",
     "parse",
+    "pointer",
     "process",
+    "read",
+    "receive",
+    "render",
+    "rfx",
     "security",
     "send",
+    "slowpath",
+    "surface",
+    "tls",
+    "transport",
     "usb",
     "video",
     "webauthn",
+    "write",
+    "x224",
 )
 CONTROL_KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof"}
 
@@ -235,31 +272,49 @@ def checked_files() -> list[Path]:
         if not path.is_file():
             continue
         rel = path.relative_to(ROOT)
-        if rel.parts and rel.parts[0] in CHECKED_DIRS and rel.suffix in CHECKED_SUFFIXES:
+        if rel.suffix not in CHECKED_SUFFIXES:
+            continue
+        if any(rel == root or rel.is_relative_to(root) for root in CHECKED_ROOTS):
             files.append(path)
     return files
 
 
-def is_hotspot(definition: FunctionDefinition) -> bool:
-    if definition.body_lines < MIN_HOTSPOT_LINES:
+def has_module_comment(path: Path) -> bool:
+    head = "\n".join(path.read_text(encoding="utf-8").splitlines()[:40])
+    return all(field in head for field in MODULE_REQUIRED_FIELDS)
+
+
+def is_documentation_target(definition: FunctionDefinition) -> bool:
+    if definition.body_lines >= MIN_LARGE_FUNCTION_LINES:
+        return True
+    if definition.body_lines < MIN_RISK_FUNCTION_LINES:
         return False
     lower = definition.name.lower()
     return any(part in lower for part in CRITICAL_NAME_PARTS)
 
 
 def main() -> int:
-    hotspots: list[FunctionDefinition] = []
+    module_findings: list[Path] = []
+    targets: list[FunctionDefinition] = []
     for path in checked_files():
-        hotspots.extend(definition for definition in collect_definitions(path) if is_hotspot(definition))
-    findings = [definition for definition in hotspots if not definition.has_comment]
+        if not has_module_comment(path):
+            module_findings.append(path)
+        targets.extend(definition for definition in collect_definitions(path) if is_documentation_target(definition))
+    findings = [definition for definition in targets if not definition.has_comment]
 
-    if findings:
-        print("error: source hotspot comment guardrail failed:", file=sys.stderr)
+    if module_findings or findings:
+        print("error: source comment guardrail failed:", file=sys.stderr)
+        if module_findings:
+            print("missing module comments:", file=sys.stderr)
+            for path in module_findings:
+                print(f"  {path.relative_to(ROOT)}", file=sys.stderr)
+        if findings:
+            print("missing function comments:", file=sys.stderr)
         for finding in findings:
             rel = finding.path.relative_to(ROOT)
             print(f"  {rel}:{finding.line}: {finding.name} ({finding.body_lines} lines)", file=sys.stderr)
         return 1
-    print(f"Source hotspot comment guardrail passed ({len(hotspots)} hotspots).")
+    print(f"Source comment guardrail passed ({len(checked_files())} files, {len(targets)} functions).")
     return 0
 
 

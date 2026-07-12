@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: PipeWire audio backend used by the viewer for redirected playback
+ * and capture smoke paths.
+ * Invariants: viewer state, X11 resources, and session callbacks are kept
+ * consistent with focus and resize events.
+ * Ownership: PipeWire objects remain backend-owned and are never exposed
+ * through the public protocol API.
+ * Threading: called from the viewer event thread unless a backend explicitly
+ * documents its own callback thread.
+ * Trust boundary: command-line options, local devices, X11 events, and server
+ * callbacks are separate trust domains.
+ */
+
 
 #include "audio_pipewire.h"
 

@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: GCC conference data parsing and serialization support.
+ * Invariants: wire lengths, tags, and stream offsets stay consistent across
+ * every parse and write path.
+ * Ownership: serialized buffers are caller-owned and parsed views never
+ * outlive the input stream.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: all protocol bytes are untrusted network input until parsed
+ * successfully.
+ */
+
 
 #include "protocol/gcc.h"
 
@@ -203,6 +215,11 @@ static librdp_status rdp_gcc_write_utf16le_fixed(rdp_buffer* buffer, const char*
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize the GCC client core data block from client settings. Version,
+ * desktop geometry, keyboard layout, and security hints are copied into a
+ * bounded conference payload.
+ */
 static librdp_status rdp_gcc_write_client_core(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     rdp_buffer payload;
@@ -528,6 +545,11 @@ librdp_status rdp_gcc_read_user_data_block(rdp_stream* stream, rdp_gcc_user_data
     return rdp_stream_read_bytes(stream, &block->payload, block->payload_len);
 }
 
+/*
+ * Parse GCC server data blocks from the connection response. Unknown blocks
+ * are skipped by advertised length while known blocks validate their internal
+ * fields before use.
+ */
 librdp_status rdp_gcc_parse_server_data_blocks(const void* data, size_t length, rdp_gcc_server_data* server_data)
 {
     rdp_stream stream;
@@ -613,6 +635,11 @@ librdp_status rdp_gcc_parse_server_data_blocks(const void* data, size_t length, 
     return server_data->has_core && server_data->has_security ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+/*
+ * Parse GCC client data blocks for tests and future server-side reuse. Block
+ * lengths and type identifiers are validated before exposing parsed capability
+ * data.
+ */
 librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, rdp_gcc_client_data_summary* summary)
 {
     rdp_stream stream;

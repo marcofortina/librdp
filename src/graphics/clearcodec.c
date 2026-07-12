@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: ClearCodec tile and glyph decoding support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/clearcodec.h"
 
@@ -428,6 +440,10 @@ static librdp_status rdp_clearcodec_read_band(rdp_stream* stream, rdp_clearcodec
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a ClearCodec vertical-band command into the tile buffer. Band
+ * coordinates and run lengths are clipped before writing repeated pixels.
+ */
 static librdp_status rdp_clearcodec_decode_band_vbar(rdp_clearcodec_context* context,
                                                      rdp_stream* stream,
                                                      const rdp_clearcodec_band* band,
@@ -621,6 +637,10 @@ static librdp_status rdp_clearcodec_write_rlex_pixel(uint8_t* pixels,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a ClearCodec RLEX subcodec payload. The decoder validates literal and
+ * repeat spans against tile capacity before updating the output cursor.
+ */
 static librdp_status rdp_clearcodec_decode_rlex_subcodec(const rdp_clearcodec_subcodec* subcodec,
                                                          uint16_t width,
                                                          uint16_t height,
@@ -931,6 +951,11 @@ librdp_status rdp_clearcodec_parse_subcodec(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a full ClearCodec bitmap from tile commands and optional caches.
+ * Cache references, tile dimensions, and output strides are checked before the
+ * caller receives pixels.
+ */
 librdp_status rdp_clearcodec_decode_bitmap(rdp_clearcodec_context* context,
                                            const void* data,
                                            size_t length,

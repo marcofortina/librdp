@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: standard security, key derivation, encryption, signing, and key
+ * update logic.
+ * Invariants: cryptographic state changes occur only after complete input
+ * validation and successful provider calls.
+ * Ownership: secret material stays in security-owned buffers and is never
+ * emitted through trace messages.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: remote certificate, token, and security-buffer bytes are
+ * untrusted and secrets must not be logged.
+ */
+
 
 #include "security/security.h"
 

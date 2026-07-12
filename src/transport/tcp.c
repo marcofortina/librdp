@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: TCP connect, read, write, wait, and timeout implementation.
+ * Invariants: file descriptors, TLS state, and buffered bytes are updated only
+ * after successful system calls.
+ * Ownership: socket ownership transfers to the transport only after successful
+ * setup.
+ * Threading: not internally synchronized; callers must serialize access
+ * through the owning session or transport.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "transport/tcp.h"
 

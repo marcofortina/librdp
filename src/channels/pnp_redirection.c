@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: plug-and-play redirection device description and request helpers.
+ * Invariants: channel payload lengths and negotiated capabilities are checked
+ * before state changes or callbacks.
+ * Ownership: parsed channel objects are caller-owned unless the session stores
+ * an explicit copy.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths remain local policy inputs.
+ */
+
 
 #include "channels/pnp_redirection.h"
 
@@ -101,6 +113,11 @@ static librdp_status rdp_pnp_redirection_append_u24_le(rdp_buffer* buffer, uint3
     return rdp_buffer_append(buffer, bytes, sizeof(bytes));
 }
 
+/*
+ * Serialize one redirected PNP device description. Host-provided names and
+ * identifiers are length-bounded and copied into the packet so backend memory
+ * is not referenced after the write.
+ */
 static librdp_status rdp_pnp_redirection_write_device_description(
     rdp_buffer* buffer,
     const rdp_pnp_redirection_device_description* description)

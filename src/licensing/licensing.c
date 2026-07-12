@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: licensing PDU parser and writer support.
+ * Invariants: publicly observable state is updated only after local validation
+ * succeeds.
+ * Ownership: licensing state transitions follow the negotiated security mode
+ * and reject truncated PDUs.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: external input is treated as untrusted until validated by
+ * this module or its caller.
+ */
+
 
 #include "licensing/licensing.h"
 

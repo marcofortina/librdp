@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: RemoteFX and progressive codec transform support.
+ * Invariants: rectangles, strides, cache keys, and pixel formats are validated
+ * before any surface mutation.
+ * Ownership: decoded pixels and cache entries are owned by the caller or
+ * session surface selected by the API.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #include "graphics/rfx_codec.h"
 
@@ -679,6 +691,11 @@ static void rdp_rfx_extrapolate_idwt_x(const int32_t* low,
     }
 }
 
+/*
+ * Extrapolate the Y component during inverse wavelet reconstruction. Edge
+ * samples are handled explicitly so progressive and non-progressive tiles
+ * share stable boundary behavior.
+ */
 static void rdp_rfx_extrapolate_idwt_y(const int32_t* low,
                                        size_t low_step,
                                        const int32_t* high,
@@ -1108,6 +1125,10 @@ static void rdp_rfx_refresh_progressive_signs(rdp_rfx_progressive_component_stat
     }
 }
 
+/*
+ * Decode progressive component state for one RemoteFX tile. Quantization and
+ * coefficient history are validated before they replace cached component data.
+ */
 static librdp_status rdp_rfx_decode_progressive_component_state(
     const void* data,
     size_t length,
@@ -1419,6 +1440,11 @@ static librdp_status rdp_rfx_upgrade_block(rdp_rfx_upgrade_reader* reader,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Apply a RemoteFX progressive upgrade to cached component state. The merge
+ * keeps previous coefficients available until the incoming upgrade has passed
+ * all bounds checks.
+ */
 static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
                                                      size_t srl_len,
                                                      const void* raw_data,
@@ -1520,6 +1546,11 @@ failed:
     return status;
 }
 
+/*
+ * Decode a RemoteFX progressive upgrade tile. Tile headers, component
+ * payloads, and cache references are validated before producing upgraded
+ * pixels.
+ */
 librdp_status rdp_rfx_decode_progressive_upgrade_tile(const void* y_srl_data,
                                                       size_t y_srl_len,
                                                       const void* y_raw_data,
@@ -1681,6 +1712,11 @@ static librdp_status rdp_rfx_get_gr_code(rdp_rfx_bit_reader* reader, int* krp, i
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode RLGR coefficient data for RemoteFX. Run, Golomb, and sign handling
+ * are centralized so malformed coefficient streams cannot overrun the tile
+ * buffer.
+ */
 static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
                                               const void* data,
                                               size_t length,

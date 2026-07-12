@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: pointer shape decoding and cache support.
+ * Invariants: wire lengths, tags, and stream offsets stay consistent across
+ * every parse and write path.
+ * Ownership: serialized buffers are caller-owned and parsed views never
+ * outlive the input stream.
+ * Threading: not thread-safe by itself; callers serialize access through the
+ * owning session, stream, or backend object.
+ * Trust boundary: all protocol bytes are untrusted network input until parsed
+ * successfully.
+ */
+
 
 #include "protocol/pointer.h"
 
@@ -232,6 +244,11 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
     }
 }
 
+/*
+ * Decode a pointer shape into BGRA pixels using the supplied color and mask
+ * planes. All stride and mask offsets are checked before composing pixels so
+ * malformed cursors cannot corrupt caller output.
+ */
 librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_buffer* output, size_t* stride)
 {
     uint16_t y = 0;
