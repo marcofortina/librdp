@@ -55,6 +55,13 @@ DECL_RE = re.compile(
 OPAQUE_OR_ALIAS_RE = re.compile(r"(?m)^typedef\s+(?:struct\s+)?[A-Za-z_][A-Za-z0-9_\s\*]*\s+(librdp_[A-Za-z0-9_]+)\s*;")
 CALLBACK_RE = re.compile(r"(?m)^typedef\s+[A-Za-z_][A-Za-z0-9_\s\*]*\(\s*\*(librdp_[A-Za-z0-9_]+)\s*\)\s*\([^;]*\)\s*;")
 MACRO_RE = re.compile(r"(?m)^#define\s+(LIBRDP_[A-Za-z0-9_]+)\b(?P<rest>.*)$")
+PARAM_TAG_RE = re.compile(r"@param(?:\[(in|out|in,out)\])?\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+
+DOC_EXCEPTIONS: dict[str, set[str]] = {
+    "librdp_credentials_init": {"sensitive_warning"},
+    "librdp_settings_feature_enabled": {"feature_backend"},
+    "librdp_status_string": {"status_return_codes"},
+}
 
 
 def project_version() -> str:
@@ -209,6 +216,19 @@ def comment_param_block(comment: str, name: str) -> str:
     return comment[match.start() : end]
 
 
+def comment_return_block(comment: str) -> str:
+    match = re.search(r"@return\b", comment)
+    if match is None:
+        return ""
+    next_tag = re.search(r"\n\s*\*\s*@", comment[match.end() :])
+    end = match.end() + next_tag.start() if next_tag is not None else len(comment)
+    return comment[match.start() : end]
+
+
+def has_exception(decl: FunctionDecl, rule: str) -> bool:
+    return rule in DOC_EXCEPTIONS.get(decl.name, set())
+
+
 def pointer_like(type_text: str) -> bool:
     return "*" in type_text or type_text in {"librdp_event_callback"}
 
@@ -217,6 +237,9 @@ def validate(decl: FunctionDecl, version: str) -> list[str]:
     errors: list[str] = []
     location = f"{decl.path.relative_to(ROOT)}:{decl.line}: {decl.name}"
     comment = decl.comment
+    param_names = [name for _, name in decl.params]
+    param_name_set = set(param_names)
+    documented_names: dict[str, int] = {}
 
     if not comment:
         return [f"{location}: missing immediate Doxygen block"]
@@ -226,6 +249,18 @@ def validate(decl: FunctionDecl, version: str) -> list[str]:
         errors.append(f"{location}: missing @since {version}")
     if "Thread-safety:" not in comment:
         errors.append(f"{location}: missing thread-safety note")
+
+    for match in PARAM_TAG_RE.finditer(comment):
+        direction = match.group(1)
+        name = match.group(2)
+        if direction is None:
+            errors.append(f"{location}: @param for {name} lacks direction")
+        if name not in param_name_set:
+            errors.append(f"{location}: @param documents unknown parameter {name}")
+        documented_names[name] = documented_names.get(name, 0) + 1
+    for name, count in documented_names.items():
+        if count > 1:
+            errors.append(f"{location}: parameter {name} is documented more than once")
 
     for param_type, name in decl.params:
         block = comment_param_block(comment, name)
@@ -240,8 +275,29 @@ def validate(decl: FunctionDecl, version: str) -> list[str]:
         errors.append(f"{location}: void function must not document @return")
     if not returns_void and "@return" not in comment:
         errors.append(f"{location}: non-void function missing @return")
+    if decl.return_type.strip() == "librdp_status" and not has_exception(decl, "status_return_codes"):
+        return_block = comment_return_block(comment)
+        if "LIBRDP_STATUS_" not in return_block and "Status returned by" not in return_block:
+            errors.append(f"{location}: librdp_status return lacks concrete status codes")
     if "*" in decl.return_type and not re.search(r"\b(owned|owner|caller|internal|static storage)\b", comment):
         errors.append(f"{location}: pointer return lacks ownership/lifetime wording")
+    if "callback" in decl.name or any(name in {"callback", "user_data"} for name in param_names):
+        lowered = comment.lower()
+        has_context = any(
+            word in lowered
+            for word in ("receives", "invoked", "called", "runs", "emitted", "delivery", "delivered")
+        )
+        if "callback" not in lowered or "user_data" not in comment or not has_context:
+            errors.append(f"{location}: callback API lacks callback/user_data context")
+    if (re.search(r"(password|credentials|certificate|token|secret)", decl.name, re.I) and
+            "@warning" not in comment and not has_exception(decl, "sensitive_warning")):
+        errors.append(f"{location}: sensitive API lacks @warning")
+    if "feature" in decl.name and "backend" not in comment.lower() and not has_exception(decl, "feature_backend"):
+        errors.append(f"{location}: feature API lacks backend availability wording")
+    if "trace" in decl.name:
+        lowered = comment.lower()
+        if "trace" not in lowered or not any(word in lowered for word in ("sink", "stderr", "callback", "file")):
+            errors.append(f"{location}: trace API lacks sink/context wording")
     return errors
 
 
@@ -276,8 +332,169 @@ def validate_macro(decl: MacroDecl) -> list[str]:
     return [f"{location}: public macro lacks Doxygen comment"]
 
 
+def fixture_decl(name: str, return_type: str, params: list[tuple[str, str]], comment: str) -> FunctionDecl:
+    return FunctionDecl(
+        path=INCLUDE / "fixture.h",
+        line=1,
+        return_type=return_type,
+        name=name,
+        params=params,
+        comment=comment,
+    )
+
+
+def fixture_positive_comment(version: str) -> str:
+    return f"""/**\n\
+ * @brief Copy data from a source buffer.\n\
+ * The caller owns source for the duration of the call only; output receives an\n\
+ * owned copy on success. Callback context is delivered through user_data and\n\
+ * trace records may use the configured callback sink.\n\
+ * @param[in] source Borrowed input buffer; must not be NULL.\n\
+ * @param[out] output Destination pointer; must not be NULL.\n\
+ * @param[in,out] user_data Optional callback context; may be NULL.\n\
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL input.\n\
+ * @note Thread-safety: call from the session owner thread. Feature use depends\n\
+ * on backend readiness and negotiated support.\n\
+ * @warning Credentials and tokens are redacted before trace emission.\n\
+ * @since {version}\n\
+ */"""
+
+
+def assert_fixture_error(errors: list[str], expected: str) -> None:
+    if not any(expected in error for error in errors):
+        raise AssertionError(f"fixture did not produce {expected!r}: {errors}")
+
+
+def run_self_tests(version: str) -> None:
+    good = fixture_decl(
+        "librdp_fixture_feature_callback_trace_credentials",
+        "librdp_status",
+        [("const uint8_t*", "source"), ("char**", "output"), ("void*", "user_data")],
+        fixture_positive_comment(version),
+    )
+    good_errors = validate(good, version)
+    if good_errors:
+        raise AssertionError(f"positive public API doc fixture failed: {good_errors}")
+
+    negative_cases = [
+        (
+            "nullability",
+            fixture_decl(
+                "librdp_fixture_null",
+                "librdp_status",
+                [("const void*", "buffer")],
+                f"/** @brief Bad. @param[in] buffer Borrowed. @return LIBRDP_STATUS_OK. "
+                f"@note Thread-safety: serialized. @since {version} */",
+            ),
+            "NULL behavior",
+        ),
+        (
+            "ownership",
+            fixture_decl(
+                "librdp_fixture_ptr",
+                "char*",
+                [],
+                f"/** @brief Bad. @return Text. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "ownership/lifetime",
+        ),
+        (
+            "callback",
+            fixture_decl(
+                "librdp_fixture_callback",
+                "void",
+                [("librdp_event_callback", "callback"), ("void*", "user_data")],
+                f"/** @brief Bad. @param[in] callback Function; may be NULL. "
+                f"@param[in,out] user_data Context; may be NULL. "
+                f"@note Thread-safety: serialized. @since {version} */",
+            ),
+            "callback/user_data context",
+        ),
+        (
+            "status",
+            fixture_decl(
+                "librdp_fixture_status",
+                "librdp_status",
+                [],
+                f"/** @brief Bad. @return Status. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "concrete status codes",
+        ),
+        (
+            "security",
+            fixture_decl(
+                "librdp_fixture_password",
+                "void",
+                [],
+                f"/** @brief Bad. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "sensitive API lacks @warning",
+        ),
+        (
+            "feature",
+            fixture_decl(
+                "librdp_fixture_feature",
+                "int",
+                [],
+                f"/** @brief Bad. @return One. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "backend availability",
+        ),
+        (
+            "trace",
+            fixture_decl(
+                "librdp_fixture_trace",
+                "void",
+                [],
+                f"/** @brief Bad. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "sink/context",
+        ),
+        (
+            "since",
+            fixture_decl(
+                "librdp_fixture_since",
+                "int",
+                [],
+                "/** @brief Bad. @return One. @note Thread-safety: serialized. */",
+            ),
+            f"@since {version}",
+        ),
+        (
+            "signature",
+            fixture_decl(
+                "librdp_fixture_signature",
+                "void",
+                [("int", "value")],
+                f"/** @brief Bad. @param[in] other Value. @note Thread-safety: serialized. @since {version} */",
+            ),
+            "unknown parameter",
+        ),
+    ]
+    for _, declaration, expected in negative_cases:
+        assert_fixture_error(validate(declaration, version), expected)
+
+    enum_errors = validate_type(
+        TypeDecl(
+            path=INCLUDE / "fixture.h",
+            line=1,
+            kind="enum",
+            name="librdp_fixture_enum",
+            body="LIBRDP_FIXTURE_VALUE = 1",
+            comment=f"/** @brief Bad. @since {version} */",
+        ),
+        version,
+    )
+    assert_fixture_error(enum_errors, "enum value lacks inline Doxygen comment")
+
+
 def main() -> int:
     version = project_version()
+    try:
+        run_self_tests(version)
+    except AssertionError as exc:
+        print(f"error: public API documentation guardrail self-test failed: {exc}", file=sys.stderr)
+        return 1
     declarations: list[FunctionDecl] = []
     types: list[TypeDecl] = []
     macros: list[MacroDecl] = []

@@ -897,7 +897,8 @@ LIBRDP_API librdp_status librdp_settings_add_printer(librdp_settings* settings,
  * features are advertised or used later by a session. feature may be a bitmask
  * containing one or more known librdp_feature values. Unknown bits are
  * rejected so parser-only or unavailable protocols cannot be made visible as
- * enabled by mistake.
+ * enabled by mistake. Enabling a feature requests it; backend availability is
+ * reported separately by librdp_settings_get_feature_status().
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
  * @param[in] feature Feature bitmask to change; must contain only known
@@ -916,6 +917,11 @@ LIBRDP_API librdp_status librdp_settings_enable_feature(librdp_settings* setting
 
 /**
  * @brief Test whether an optional client feature flag is enabled.
+ *
+ * This is a raw settings bitmask query. It does not report build support,
+ * backend readiness, server negotiation, or runtime active state; use
+ * librdp_settings_get_feature_status() or librdp_session_get_feature_status()
+ * for those readiness checks.
  *
  * @param[in] settings Settings object to query, or NULL.
  * @param[in] feature Feature bitmask to test; zero or any unknown bit is

@@ -1139,9 +1139,10 @@ LIBRDP_API void librdp_session_clear_last_error(librdp_session* session);
  *
  * The function starts from the session's cloned settings and augments the
  * status with negotiated and active information observed during the current
- * session. Parser-only helpers and channels that are not wired to runtime
- * state are reported as not active rather than being promoted by the enabled
- * feature bit alone.
+ * session, including backend readiness inherited from the cloned settings.
+ * Parser-only helpers and channels that are not wired to runtime state are
+ * reported as not active rather than being promoted by the enabled feature bit
+ * alone.
  *
  * @param[in] session Session to query; must not be NULL.
  * @param[in] feature Single known librdp_feature value to query; bitmasks with
