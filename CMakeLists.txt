@@ -9,6 +9,13 @@ include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
 set(LIBRDP_ABI_VERSION 0 CACHE STRING "Shared-library ABI version")
+set(LIBRDP_LIBRARY_TYPE "AUTO" CACHE STRING "Library type to build (AUTO, STATIC, SHARED, BOTH)")
+set_property(CACHE LIBRDP_LIBRARY_TYPE PROPERTY STRINGS AUTO STATIC SHARED BOTH)
+string(TOUPPER "${LIBRDP_LIBRARY_TYPE}" LIBRDP_LIBRARY_TYPE)
+set(LIBRDP_LIBRARY_TYPE "${LIBRDP_LIBRARY_TYPE}" CACHE STRING "Library type to build (AUTO, STATIC, SHARED, BOTH)" FORCE)
+if(NOT LIBRDP_LIBRARY_TYPE MATCHES "^(AUTO|STATIC|SHARED|BOTH)$")
+    message(FATAL_ERROR "LIBRDP_LIBRARY_TYPE must be AUTO, STATIC, SHARED, or BOTH")
+endif()
 
 option(LIBRDP_BUILD_TESTS "Build unit tests" ON)
 option(LIBRDP_BUILD_FUZZ "Build fuzz targets" OFF)
@@ -225,7 +232,74 @@ set(LIBRDP_SOURCES
 )
 
 add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
-add_library(librdp $<TARGET_OBJECTS:librdp_objects>)
+if(LIBRDP_LIBRARY_TYPE STREQUAL "AUTO")
+    if(BUILD_SHARED_LIBS)
+        set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+    else()
+        set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+    endif()
+elseif(LIBRDP_LIBRARY_TYPE STREQUAL "SHARED")
+    set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+elseif(LIBRDP_LIBRARY_TYPE STREQUAL "STATIC")
+    set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+elseif(BUILD_SHARED_LIBS)
+    set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+    set(LIBRDP_SECONDARY_LIBRARY_TARGET librdp_static)
+    set(LIBRDP_SECONDARY_LIBRARY_KIND STATIC)
+else()
+    set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+    set(LIBRDP_SECONDARY_LIBRARY_TARGET librdp_shared)
+    set(LIBRDP_SECONDARY_LIBRARY_KIND SHARED)
+endif()
+
+add_library(librdp ${LIBRDP_PRIMARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects>)
+set(LIBRDP_LIBRARY_TARGETS librdp)
+set(LIBRDP_SHARED_LIBRARY_TARGETS "")
+if(LIBRDP_PRIMARY_LIBRARY_KIND STREQUAL "SHARED")
+    list(APPEND LIBRDP_SHARED_LIBRARY_TARGETS librdp)
+endif()
+if(DEFINED LIBRDP_SECONDARY_LIBRARY_TARGET)
+    add_library(${LIBRDP_SECONDARY_LIBRARY_TARGET} ${LIBRDP_SECONDARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects>)
+    set_target_properties(${LIBRDP_SECONDARY_LIBRARY_TARGET} PROPERTIES OUTPUT_NAME librdp)
+    list(APPEND LIBRDP_LIBRARY_TARGETS ${LIBRDP_SECONDARY_LIBRARY_TARGET})
+    if(LIBRDP_SECONDARY_LIBRARY_KIND STREQUAL "SHARED")
+        list(APPEND LIBRDP_SHARED_LIBRARY_TARGETS ${LIBRDP_SECONDARY_LIBRARY_TARGET})
+    endif()
+endif()
+
+function(librdp_configure_library_target target kind)
+    target_include_directories(${target}
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    )
+    set_target_properties(${target} PROPERTIES
+        C_VISIBILITY_PRESET hidden
+    )
+    if(kind STREQUAL "SHARED")
+        set_target_properties(${target} PROPERTIES
+            VERSION ${PROJECT_VERSION}
+            SOVERSION ${LIBRDP_ABI_VERSION}
+        )
+        if(APPLE)
+            set(LIBRDP_EXPORT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports)
+            target_link_options(${target} PRIVATE "LINKER:-exported_symbols_list,${LIBRDP_EXPORT_FILE}")
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_FILE})
+        elseif(UNIX)
+            set(LIBRDP_EXPORT_MAP ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports.map)
+            target_link_options(${target} PRIVATE "LINKER:--version-script=${LIBRDP_EXPORT_MAP}")
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_MAP})
+        endif()
+    endif()
+    target_compile_definitions(${target} PUBLIC _POSIX_C_SOURCE=200809L)
+    target_link_libraries(${target} PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+endfunction()
+
+function(librdp_link_library_targets)
+    foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
+        target_link_libraries(${target} PRIVATE ${ARGN})
+    endforeach()
+endfunction()
 
 target_include_directories(librdp_objects
     PRIVATE
@@ -233,89 +307,72 @@ target_include_directories(librdp_objects
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_include_directories(librdp
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-
 set_target_properties(librdp_objects PROPERTIES
     C_VISIBILITY_PRESET hidden
     POSITION_INDEPENDENT_CODE ON
 )
-set_target_properties(librdp PROPERTIES
-    C_VISIBILITY_PRESET hidden
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${LIBRDP_ABI_VERSION}
-)
 target_compile_definitions(librdp_objects PRIVATE _POSIX_C_SOURCE=200809L)
-target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
-target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
-if(BUILD_SHARED_LIBS)
-    if(APPLE)
-        set(LIBRDP_EXPORT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports)
-        target_link_options(librdp PRIVATE "LINKER:-exported_symbols_list,${LIBRDP_EXPORT_FILE}")
-        set_property(TARGET librdp APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_FILE})
-    elseif(UNIX)
-        set(LIBRDP_EXPORT_MAP ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports.map)
-        target_link_options(librdp PRIVATE "LINKER:--version-script=${LIBRDP_EXPORT_MAP}")
-        set_property(TARGET librdp APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_MAP})
+foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
+    if(target IN_LIST LIBRDP_SHARED_LIBRARY_TARGETS)
+        librdp_configure_library_target(${target} SHARED)
+    else()
+        librdp_configure_library_target(${target} STATIC)
     endif()
-endif()
+endforeach()
 if(LIBRDP_FFMPEG_AVC_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FFMPEG_AVC=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_FFMPEG_AVC)
 endif()
 if(LIBRDP_OPENH264_AVC_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_OPENH264_AVC=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_OPENH264_AVC)
 endif()
 if(LIBRDP_PCSC_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_PCSC=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_PCSC)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_PCSC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_PCSC)
 endif()
 if(LIBRDP_LIBUSB_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_LIBUSB=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    librdp_link_library_targets(PkgConfig::LIBRDP_LIBUSB)
 endif()
 if(LIBRDP_FIDO2_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FIDO2=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FIDO2)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FIDO2)
+    librdp_link_library_targets(PkgConfig::LIBRDP_FIDO2)
 endif()
 if(LIBRDP_CBOR_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CBOR=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CBOR)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CBOR)
+    librdp_link_library_targets(PkgConfig::LIBRDP_CBOR)
 endif()
 if(LIBRDP_CUPS_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CUPS=1)
     if(TARGET PkgConfig::LIBRDP_CUPS)
         target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CUPS)
-        target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CUPS)
+        librdp_link_library_targets(PkgConfig::LIBRDP_CUPS)
     else()
         target_include_directories(librdp_objects PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
-        target_link_libraries(librdp PRIVATE ${LIBRDP_CUPS_LIBRARY})
+        librdp_link_library_targets(${LIBRDP_CUPS_LIBRARY})
     endif()
 endif()
 if(LIBRDP_ACL_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ACL=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ACL)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ACL)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ACL)
 endif()
 if(LIBRDP_ATTR_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ATTR=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ATTR)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ATTR)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ATTR)
 endif()
 if(LIBRDP_ARCHIVE_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ARCHIVE=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ARCHIVE)
-    target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ARCHIVE)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ARCHIVE)
 endif()
 
 set(LIBRDP_PC_REQUIRES_PRIVATE openssl)
@@ -373,7 +430,7 @@ configure_file(
     @ONLY
 )
 
-install(TARGETS librdp
+install(TARGETS ${LIBRDP_LIBRARY_TARGETS}
     EXPORT librdpTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -503,6 +560,17 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DLIBRDP_ABI_VERSION=${LIBRDP_ABI_VERSION}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
+    add_test(NAME library_type_selection
+        COMMAND ${CMAKE_COMMAND}
+            "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
+            "-DLIBRDP_STATIC_LIBRARY_SUFFIX=${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/library_type_selection.cmake)
     add_test(NAME installed_public_api_consumer
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -661,6 +729,8 @@ if(LIBRDP_BUILD_X11_VIEWER)
 endif()
 
 message(STATUS "librdp feature summary begin")
+string(REPLACE ";" "+" LIBRDP_LIBRARY_TARGETS_SUMMARY "${LIBRDP_LIBRARY_TARGETS}")
+librdp_summary_line(library "${LIBRDP_LIBRARY_TYPE}" not-applicable "${LIBRDP_LIBRARY_TARGETS_SUMMARY}" yes "primary-${LIBRDP_PRIMARY_LIBRARY_KIND}")
 librdp_summary_build_target(tests LIBRDP_BUILD_TESTS test_core)
 librdp_summary_build_target(examples LIBRDP_BUILD_EXAMPLES examples)
 librdp_summary_build_target(fuzz LIBRDP_BUILD_FUZZ fuzz-targets)

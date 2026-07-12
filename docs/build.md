@@ -38,6 +38,7 @@ The build does not require optional libraries unless the feature or viewer path 
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 - `LIBRDP_ABI_VERSION=<n>`: shared-library ABI version used as `SOVERSION`.
+- `LIBRDP_LIBRARY_TYPE=AUTO|STATIC|SHARED|BOTH`: choose the library artifacts to build. `AUTO` preserves the standard CMake `BUILD_SHARED_LIBS` behavior.
 
 Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the dependency when available, `ON` requires it during configuration, and `OFF` skips discovery and leaves the backend disabled.
 

@@ -20,7 +20,8 @@ file(REMOVE_RECURSE "${shared_binary_dir}")
 set(configure_args
     -S "${LIBRDP_SOURCE_DIR}"
     -B "${shared_binary_dir}"
-    -DBUILD_SHARED_LIBS=ON
+    -DBUILD_SHARED_LIBS=OFF
+    -DLIBRDP_LIBRARY_TYPE=BOTH
     -DLIBRDP_BUILD_TESTS=OFF
     -DLIBRDP_BUILD_FUZZ=OFF
     -DLIBRDP_BUILD_X11_VIEWER=OFF
@@ -57,7 +58,7 @@ if(NOT configure_result EQUAL 0)
     message(FATAL_ERROR "shared symbol visibility configure failed with ${configure_result}")
 endif()
 
-set(build_args --build "${shared_binary_dir}" --target librdp)
+set(build_args --build "${shared_binary_dir}" --target librdp_shared)
 if(DEFINED LIBRDP_BUILD_CONFIG AND NOT "${LIBRDP_BUILD_CONFIG}" STREQUAL "")
     list(APPEND build_args --config "${LIBRDP_BUILD_CONFIG}")
 endif()
