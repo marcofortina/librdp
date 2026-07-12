@@ -12,6 +12,7 @@ LIBRDP_0.1 {
         librdp_client_session;
         librdp_client_connect;
         librdp_client_dispatch;
+        librdp_client_cancel;
         librdp_client_disconnect;
         librdp_client_state;
         librdp_client_lifecycle;
@@ -49,6 +50,7 @@ LIBRDP_0.1 {
         librdp_session_set_trace_policy;
         librdp_session_connect;
         librdp_session_run_once;
+        librdp_session_cancel;
         librdp_session_get_pollfds;
         librdp_session_notify_poll;
         librdp_session_dispatch_pending;

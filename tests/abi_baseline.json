@@ -4,6 +4,7 @@
   "version": 1,
   "symbols": [
     "librdp_client_config_init",
+    "librdp_client_cancel",
     "librdp_client_connect",
     "librdp_client_disconnect",
     "librdp_client_dispatch",
@@ -26,6 +27,7 @@
     "librdp_session_audio_input_open_reply",
     "librdp_session_audio_input_send_data",
     "librdp_session_audio_input_send_format_change",
+    "librdp_session_cancel",
     "librdp_session_channel_close",
     "librdp_session_channel_send",
     "librdp_session_clear_last_error",

@@ -173,6 +173,25 @@ LIBRDP_API librdp_status librdp_client_connect(librdp_client* client);
 LIBRDP_API librdp_status librdp_client_dispatch(librdp_client* client, int timeout_ms);
 
 /**
+ * @brief Request cancellation of the client's active session loop.
+ *
+ * This is a compatibility wrapper around librdp_session_cancel(). It can be
+ * called from a different thread than the one blocked in
+ * librdp_client_dispatch() as long as the client remains alive until dispatch
+ * returns.
+ *
+ * @param[in,out] client Client to cancel; must not be NULL.
+ *
+ * @return Status returned by librdp_session_cancel(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: this is the thread-safe cancellation exception; all
+ * other client APIs still require external serialization.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_cancel(librdp_client* client);
+
+/**
  * @brief Disconnect the client using the owned session.
  *
  * This is a compatibility wrapper around librdp_session_disconnect().

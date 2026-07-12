@@ -35,6 +35,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +101,13 @@ typedef struct credentials_provider_capture
     uint32_t calls;
     uint32_t fail;
 } credentials_provider_capture;
+
+typedef struct cancel_thread_capture
+{
+    librdp_session* session;
+    unsigned delay_ms;
+    librdp_status status;
+} cancel_thread_capture;
 
 int test_protocol(void);
 /*
@@ -184,6 +192,23 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
         default:
             break;
     }
+}
+
+/*
+ * The cancel regression needs one real blocked dispatch thread without using
+ * external endpoints. The helper waits briefly, requests public cancellation,
+ * and leaves all session teardown to the owner thread.
+ */
+static void* cancel_thread_main(void* user_data)
+{
+    cancel_thread_capture* capture = (cancel_thread_capture*)user_data;
+    struct timespec ts;
+
+    ts.tv_sec = 0;
+    ts.tv_nsec = (long)capture->delay_ms * 1000000L;
+    (void)nanosleep(&ts, NULL);
+    capture->status = librdp_session_cancel(capture->session);
+    return NULL;
 }
 
 static void on_trace(librdp_session* session, const librdp_trace_record* record, void* user_data)
@@ -1482,7 +1507,8 @@ static int test_settings_surface_input_session(void)
         {LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH, "tls_hostname_mismatch"},
         {LIBRDP_STATUS_TLS_HANDSHAKE_FAILED, "tls_handshake_failed"},
         {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"},
-        {LIBRDP_STATUS_LIMIT_EXCEEDED, "limit_exceeded"}
+        {LIBRDP_STATUS_LIMIT_EXCEEDED, "limit_exceeded"},
+        {LIBRDP_STATUS_CANCELLED, "cancelled"}
     };
     librdp_credentials credentials;
     librdp_error_info error_info;
@@ -1498,6 +1524,8 @@ static int test_settings_surface_input_session(void)
     trace_capture trace;
     secure_string_capture secure_capture;
     credentials_provider_capture credentials_capture;
+    cancel_thread_capture cancel_capture;
+    pthread_t cancel_thread;
     char trace_file_path[] = "/tmp/librdp-trace-XXXXXX";
     event_counter counter;
     uint16_t test_port = 0;
@@ -1505,13 +1533,14 @@ static int test_settings_surface_input_session(void)
     int child_status = 0;
     int trace_fd = -1;
     int next_timeout = 0;
-    struct pollfd session_pfds[2];
+    struct pollfd session_pfds[3];
     size_t session_pfd_count = 0;
 
     memset(&counter, 0, sizeof(counter));
     memset(&trace, 0, sizeof(trace));
     memset(&secure_capture, 0, sizeof(secure_capture));
     memset(&credentials_capture, 0, sizeof(credentials_capture));
+    memset(&cancel_capture, 0, sizeof(cancel_capture));
 
     for (size_t i = 0; i < sizeof(status_cases) / sizeof(status_cases[0]); i++)
     {
@@ -1551,6 +1580,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_client_state(client) == LIBRDP_SESSION_IDLE);
     CHECK(librdp_client_lifecycle(client) == LIBRDP_LIFECYCLE_NEW);
     CHECK(librdp_client_dispatch(client, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_cancel(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_connect(client) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
     CHECK(librdp_error_copy_info(librdp_session_last_error(librdp_client_session(client)), &error_info) ==
@@ -2327,13 +2357,15 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_surface_width(session_surface) == 64);
     CHECK(librdp_session_get_pollfds(NULL, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_get_pollfds(session, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_OK);
-    CHECK(session_pfd_count == 1);
+    CHECK(session_pfd_count == 2);
     CHECK(librdp_session_get_pollfds(session, session_pfds, 0, &session_pfd_count) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_get_pollfds(session, session_pfds, 2, &session_pfd_count) == LIBRDP_STATUS_OK);
-    CHECK(session_pfd_count == 1);
+    CHECK(session_pfd_count == 2);
     CHECK(session_pfds[0].fd >= 0);
+    CHECK(session_pfds[1].fd >= 0);
     CHECK((session_pfds[0].events & POLLIN) != 0);
+    CHECK((session_pfds[1].events & POLLIN) != 0);
     CHECK(librdp_session_get_next_timeout(session, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_get_next_timeout(session, &next_timeout) == LIBRDP_STATUS_OK);
     CHECK(next_timeout == -1);
@@ -2480,8 +2512,18 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
     CHECK(counter.states == 2);
-    CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
+    cancel_capture.session = session;
+    cancel_capture.delay_ms = 50;
+    cancel_capture.status = LIBRDP_STATUS_AGAIN;
+    CHECK(pthread_create(&cancel_thread, NULL, cancel_thread_main, &cancel_capture) == 0);
+    CHECK(librdp_session_run_once(session, 5000) == LIBRDP_STATUS_CANCELLED);
+    CHECK(pthread_join(cancel_thread, NULL) == 0);
+    CHECK(cancel_capture.status == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CANCELLED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_CANCELLED);
     librdp_session_free(session);
     if (server_pid > 0)
     {

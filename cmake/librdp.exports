@@ -10,6 +10,7 @@ _librdp_client_settings
 _librdp_client_session
 _librdp_client_connect
 _librdp_client_dispatch
+_librdp_client_cancel
 _librdp_client_disconnect
 _librdp_client_state
 _librdp_client_lifecycle
@@ -45,6 +46,7 @@ _librdp_trace_policy_init
 _librdp_session_set_trace_policy
 _librdp_session_connect
 _librdp_session_run_once
+_librdp_session_cancel
 _librdp_session_get_pollfds
 _librdp_session_notify_poll
 _librdp_session_dispatch_pending

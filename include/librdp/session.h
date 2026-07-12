@@ -56,7 +56,8 @@ typedef enum librdp_session_state
     LIBRDP_SESSION_ACTIVE = 3,     /**< Session is activated and processing updates/input. */
     LIBRDP_SESSION_CLOSING = 4,    /**< Session is closing transport and channel state. */
     LIBRDP_SESSION_CLOSED = 5,     /**< Session closed cleanly or was explicitly disconnected. */
-    LIBRDP_SESSION_FAILED = 6      /**< Session reached a terminal failure state. */
+    LIBRDP_SESSION_FAILED = 6,     /**< Session reached a terminal failure state. */
+    LIBRDP_SESSION_CANCELLED = 7   /**< Session was cancelled by the application and cleaned up. */
 } librdp_session_state;
 
 /**
@@ -440,6 +441,29 @@ LIBRDP_API librdp_status librdp_session_connect(librdp_session* session);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
+
+/**
+ * @brief Request cancellation of the active session loop.
+ *
+ * This function is the thread-safe exception to the serialized session-driving
+ * rule. It records a cancellation request and wakes any thread blocked inside
+ * librdp_session_run_once() or an application poll loop that uses
+ * librdp_session_get_pollfds(). The driving thread observes the request,
+ * closes negotiated transport/channel state, emits the normal disconnect
+ * event, and leaves the session in LIBRDP_SESSION_CANCELLED.
+ *
+ * @param[in,out] session Session to cancel; must not be NULL. The caller must
+ * keep the session alive until the driving thread returns from dispatch.
+ *
+ * @return LIBRDP_STATUS_OK when cancellation was requested;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL session; LIBRDP_STATUS_IO_ERROR when
+ * the wakeup descriptor cannot be signalled.
+ *
+ * @note Thread-safety: may be called from a different thread than the session
+ * owner. It does not make other session APIs thread-safe.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_cancel(librdp_session* session);
 
 /**
  * @brief Return the POSIX poll descriptors needed by the session loop.

@@ -129,6 +129,11 @@ librdp_status librdp_client_dispatch(librdp_client* client, int timeout_ms)
     return client ? librdp_session_run_once(client->session, timeout_ms) : LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
+librdp_status librdp_client_cancel(librdp_client* client)
+{
+    return client ? librdp_session_cancel(client->session) : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 librdp_status librdp_client_disconnect(librdp_client* client)
 {
     return client ? librdp_session_disconnect(client->session) : LIBRDP_STATUS_INVALID_ARGUMENT;

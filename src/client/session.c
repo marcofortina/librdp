@@ -90,6 +90,7 @@
 #include <poll.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -829,8 +830,11 @@ struct librdp_session
     librdp_session_lifecycle lifecycle;
     librdp_error last_error;
     short pending_tcp_revents;
+    short pending_wakeup_revents;
     short pending_udp_revents;
     uint8_t pending_poll;
+    int wakeup_pipe[2];
+    atomic_uint cancel_requested;
     uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
@@ -866,6 +870,91 @@ static librdp_status rdp_session_limit_rejected(librdp_session* session)
     if (session)
         rdp_session_metric_add(&session->metrics.limits_rejected, 1);
     return LIBRDP_STATUS_LIMIT_EXCEEDED;
+}
+
+static int rdp_session_set_fd_nonblocking_close_on_exec(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    int fd_flags = 0;
+
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0)
+        return -1;
+    fd_flags = fcntl(fd, F_GETFD, 0);
+    if (fd_flags < 0 || fcntl(fd, F_SETFD, fd_flags | FD_CLOEXEC) != 0)
+        return -1;
+    return 0;
+}
+
+static void rdp_session_wakeup_close(librdp_session* session)
+{
+    if (!session)
+        return;
+    if (session->wakeup_pipe[0] >= 0)
+        close(session->wakeup_pipe[0]);
+    if (session->wakeup_pipe[1] >= 0)
+        close(session->wakeup_pipe[1]);
+    session->wakeup_pipe[0] = -1;
+    session->wakeup_pipe[1] = -1;
+}
+
+static librdp_status rdp_session_wakeup_init(librdp_session* session)
+{
+    int fds[2] = {-1, -1};
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (pipe(fds) != 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    if (rdp_session_set_fd_nonblocking_close_on_exec(fds[0]) != 0 ||
+        rdp_session_set_fd_nonblocking_close_on_exec(fds[1]) != 0)
+    {
+        close(fds[0]);
+        close(fds[1]);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    session->wakeup_pipe[0] = fds[0];
+    session->wakeup_pipe[1] = fds[1];
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_session_wakeup_drain(librdp_session* session)
+{
+    uint8_t buffer[64];
+
+    if (!session || session->wakeup_pipe[0] < 0)
+        return;
+    for (;;)
+    {
+        ssize_t rc = read(session->wakeup_pipe[0], buffer, sizeof(buffer));
+
+        if (rc > 0)
+            continue;
+        if (rc < 0 && errno == EINTR)
+            continue;
+        if (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+        return;
+    }
+}
+
+static librdp_status rdp_session_wakeup_signal(librdp_session* session)
+{
+    const uint8_t byte = 1;
+
+    if (!session || session->wakeup_pipe[1] < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (;;)
+    {
+        ssize_t rc = write(session->wakeup_pipe[1], &byte, sizeof(byte));
+
+        if (rc == (ssize_t)sizeof(byte))
+            return LIBRDP_STATUS_OK;
+        if (rc < 0 && errno == EINTR)
+            continue;
+        if (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_IO_ERROR;
+    }
 }
 
 static char* rdp_session_trace_strdup(const char* text)
@@ -1010,6 +1099,8 @@ static librdp_error_component rdp_session_error_component_for_status(librdp_stat
         case LIBRDP_STATUS_CLOSED:
         case LIBRDP_STATUS_AGAIN:
             return LIBRDP_ERROR_COMPONENT_TRANSPORT;
+        case LIBRDP_STATUS_CANCELLED:
+            return LIBRDP_ERROR_COMPONENT_CLIENT;
         case LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED:
         case LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH:
         case LIBRDP_STATUS_TLS_HANDSHAKE_FAILED:
@@ -1057,6 +1148,8 @@ static void rdp_session_set_last_error_if_empty(librdp_session* session,
                                message);
 }
 
+static librdp_status rdp_session_disconnect_inner(librdp_session* session);
+
 static librdp_status rdp_session_fail(librdp_session* session, librdp_status status)
 {
     librdp_event event;
@@ -1068,6 +1161,24 @@ static librdp_status rdp_session_fail(librdp_session* session, librdp_status sta
     event.data.error.status = status;
     rdp_session_emit(session, &event);
     return status;
+}
+
+static librdp_status rdp_session_finish_cancel(librdp_session* session)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    atomic_store_explicit(&session->cancel_requested, 0u, memory_order_release);
+    rdp_session_wakeup_drain(session);
+    rdp_session_set_last_error(session,
+                               LIBRDP_STATUS_CANCELLED,
+                               0,
+                               LIBRDP_ERROR_COMPONENT_CLIENT,
+                               "client.cancel",
+                               "session cancelled by application");
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.cancel.done", "state=%d", (int)session->state);
+    (void)rdp_session_disconnect_inner(session);
+    rdp_session_set_state(session, LIBRDP_SESSION_CANCELLED);
+    return LIBRDP_STATUS_CANCELLED;
 }
 
 static void rdp_session_composited_reset(librdp_session* session)
@@ -30190,6 +30301,9 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session = (librdp_session*)calloc(1, sizeof(*session));
     if (!session)
         return NULL;
+    session->wakeup_pipe[0] = -1;
+    session->wakeup_pipe[1] = -1;
+    atomic_init(&session->cancel_requested, 0u);
 
     session->settings = librdp_settings_clone(settings);
     if (!session->settings)
@@ -30205,9 +30319,16 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         return NULL;
     }
     session->limits = *limits;
+    if (rdp_session_wakeup_init(session) != LIBRDP_STATUS_OK)
+    {
+        librdp_settings_free(session->settings);
+        free(session);
+        return NULL;
+    }
     if (librdp_settings_width(session->settings) > session->limits.surface_max_dimension ||
         librdp_settings_height(session->settings) > session->limits.surface_max_dimension)
     {
+        rdp_session_wakeup_close(session);
         librdp_settings_free(session->settings);
         free(session);
         return NULL;
@@ -30218,6 +30339,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
                                           LIBRDP_PIXEL_FORMAT_BGRA32);
     if (!session->surface)
     {
+        rdp_session_wakeup_close(session);
         librdp_settings_free(session->settings);
         free(session);
         return NULL;
@@ -30260,6 +30382,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         rdp_graphics_decompressor_free(&session->bulk_rdp8_decompressor);
         rdp_graphics_decompressor_free(&session->graphics_decompressor);
         rdp_transport_close(&session->transport);
+        rdp_session_wakeup_close(session);
         librdp_surface_free(session->surface);
         librdp_settings_free(session->settings);
         free(session);
@@ -30320,6 +30443,7 @@ void librdp_session_free(librdp_session* session)
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
     rdp_transport_close(&session->transport);
+    rdp_session_wakeup_close(session);
     rdp_session_trace_policy_clear(session);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
@@ -30481,7 +30605,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_IDLE && session->state != LIBRDP_SESSION_CLOSED &&
-        session->state != LIBRDP_SESSION_FAILED)
+        session->state != LIBRDP_SESSION_FAILED && session->state != LIBRDP_SESSION_CANCELLED)
     {
         rdp_session_set_last_error(session,
                                    LIBRDP_STATUS_STATE,
@@ -30503,6 +30627,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     }
 
     rdp_error_clear(&session->last_error);
+    atomic_store_explicit(&session->cancel_requested, 0u, memory_order_release);
+    rdp_session_wakeup_drain(session);
     rdp_session_trace_scope_begin(session, &trace_scope);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.start", "target=%s port=%u width=%u height=%u",
                     librdp_settings_target(session->settings),
@@ -31653,14 +31779,14 @@ static librdp_status rdp_session_require_pollable(const librdp_session* session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
         return LIBRDP_STATUS_STATE;
-    if (session->transport.fd < 0)
+    if (session->transport.fd < 0 || session->wakeup_pipe[0] < 0)
         return LIBRDP_STATUS_STATE;
     return LIBRDP_STATUS_OK;
 }
 
 static size_t rdp_session_pollfd_count(const librdp_session* session)
 {
-    return session && session->audio_output_udp_fd >= 0 ? 2u : 1u;
+    return session && session->audio_output_udp_fd >= 0 ? 3u : 2u;
 }
 
 static void rdp_session_fill_pollfds(const librdp_session* session, struct pollfd* fds)
@@ -31668,10 +31794,12 @@ static void rdp_session_fill_pollfds(const librdp_session* session, struct pollf
     memset(fds, 0, sizeof(*fds) * rdp_session_pollfd_count(session));
     fds[0].fd = session->transport.fd;
     fds[0].events = POLLIN;
+    fds[1].fd = session->wakeup_pipe[0];
+    fds[1].events = POLLIN;
     if (session->audio_output_udp_fd >= 0)
     {
-        fds[1].fd = session->audio_output_udp_fd;
-        fds[1].events = POLLIN;
+        fds[2].fd = session->audio_output_udp_fd;
+        fds[2].events = POLLIN;
     }
 }
 
@@ -31691,6 +31819,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+        return rdp_session_finish_cancel(session);
 
     rdp_buffer_init(&packet);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
@@ -31706,18 +31836,32 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
 
     if (session->pending_poll)
     {
+        short wakeup_revents = session->pending_wakeup_revents;
         short udp_revents = session->pending_udp_revents;
 
         revents = session->pending_tcp_revents;
         session->pending_tcp_revents = 0;
+        session->pending_wakeup_revents = 0;
         session->pending_udp_revents = 0;
         session->pending_poll = 0;
         rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "transport.wait.done",
-                              "source=notify tcp_revents=%d udp_revents=%d",
+                              "source=notify tcp_revents=%d wakeup_revents=%d udp_revents=%d",
                               (int)revents,
+                              (int)wakeup_revents,
                               (int)udp_revents);
+        if ((wakeup_revents & POLLIN) != 0)
+        {
+            rdp_session_wakeup_drain(session);
+            if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+            {
+                rdp_buffer_free(&packet);
+                return rdp_session_finish_cancel(session);
+            }
+        }
+        if ((wakeup_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            status = LIBRDP_STATUS_IO_ERROR;
         if ((udp_revents & POLLIN) != 0)
             status = rdp_session_handle_audio_output_udp_datagram(session);
         if ((udp_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
@@ -31731,20 +31875,24 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         if (status == LIBRDP_STATUS_OK && (revents & POLLIN) == 0)
             goto done;
     }
-    else if (session->audio_output_udp_fd >= 0)
+    else
     {
-        struct pollfd pfds[2];
+        struct pollfd pfds[3];
+        size_t pfd_count = rdp_session_pollfd_count(session);
         int rc = 0;
+        short wakeup_revents = 0;
+        short udp_revents = 0;
 
         rdp_session_fill_pollfds(session, pfds);
         rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "transport.wait.start",
-                              "timeout_ms=%d fds=2",
-                              timeout_ms);
+                              "timeout_ms=%d fds=%u",
+                              timeout_ms,
+                              (unsigned)pfd_count);
         do
         {
-            rc = poll(pfds, 2, timeout_ms);
+            rc = poll(pfds, (nfds_t)pfd_count, timeout_ms);
         } while (rc < 0 && errno == EINTR);
         if (rc == 0)
             status = LIBRDP_STATUS_TIMEOUT;
@@ -31754,29 +31902,40 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         {
             status = LIBRDP_STATUS_OK;
             revents = pfds[0].revents;
+            wakeup_revents = pfds[1].revents;
+            if (pfd_count > 2u)
+                udp_revents = pfds[2].revents;
             rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                                   RDP_TRACE_LEVEL_DEBUG,
                                   "transport.wait.done",
-                                  "tcp_revents=%d udp_revents=%d",
+                                  "tcp_revents=%d wakeup_revents=%d udp_revents=%d",
                                   (int)pfds[0].revents,
-                                  (int)pfds[1].revents);
-            if ((pfds[1].revents & POLLIN) != 0)
+                                  (int)wakeup_revents,
+                                  (int)udp_revents);
+            if ((wakeup_revents & POLLIN) != 0)
+            {
+                rdp_session_wakeup_drain(session);
+                if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+                {
+                    rdp_buffer_free(&packet);
+                    return rdp_session_finish_cancel(session);
+                }
+            }
+            if ((wakeup_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+                status = LIBRDP_STATUS_IO_ERROR;
+            if (status == LIBRDP_STATUS_OK && (udp_revents & POLLIN) != 0)
                 status = rdp_session_handle_audio_output_udp_datagram(session);
-            if ((pfds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            if ((udp_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
             {
                 rdp_trace_event(RDP_TRACE_TRANSPORT,
                                 "transport.udp.closed",
                                 "component=rdpsnd revents=%d",
-                                (int)pfds[1].revents);
+                                (int)udp_revents);
                 rdp_session_audio_output_udp_close(session);
             }
-            if (status == LIBRDP_STATUS_OK && (pfds[0].revents & POLLIN) == 0)
+            if (status == LIBRDP_STATUS_OK && (revents & POLLIN) == 0)
                 goto done;
         }
-    }
-    else
-    {
-        status = rdp_transport_wait(&session->transport, timeout_ms, POLLIN, &revents);
     }
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
@@ -32648,6 +32807,19 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
     return status;
 }
 
+librdp_status librdp_session_cancel(librdp_session* session)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    atomic_store_explicit(&session->cancel_requested, 1u, memory_order_release);
+    status = rdp_session_wakeup_signal(session);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT, "client.cancel.requested", "state=%d", (int)session->state);
+    return status;
+}
+
 librdp_status librdp_session_get_pollfds(librdp_session* session,
                                          struct pollfd* fds,
                                          size_t capacity,
@@ -32691,6 +32863,11 @@ librdp_status librdp_session_notify_poll(librdp_session* session, const struct p
             session->pending_tcp_revents = (short)(session->pending_tcp_revents | fds[i].revents);
             matched = 1;
         }
+        else if (fds[i].fd == session->wakeup_pipe[0])
+        {
+            session->pending_wakeup_revents = (short)(session->pending_wakeup_revents | fds[i].revents);
+            matched = 1;
+        }
         else if (session->audio_output_udp_fd >= 0 && fds[i].fd == session->audio_output_udp_fd)
         {
             session->pending_udp_revents = (short)(session->pending_udp_revents | fds[i].revents);
@@ -32701,7 +32878,8 @@ librdp_status librdp_session_notify_poll(librdp_session* session, const struct p
             return LIBRDP_STATUS_INVALID_ARGUMENT;
         }
     }
-    if (matched && (session->pending_tcp_revents != 0 || session->pending_udp_revents != 0))
+    if (matched && (session->pending_tcp_revents != 0 || session->pending_wakeup_revents != 0 ||
+                    session->pending_udp_revents != 0))
         session->pending_poll = 1;
     return LIBRDP_STATUS_OK;
 }
@@ -32712,7 +32890,8 @@ librdp_status librdp_session_dispatch_pending(librdp_session* session)
 
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (!session->pending_poll)
+    if (!session->pending_poll &&
+        atomic_load_explicit(&session->cancel_requested, memory_order_acquire) == 0u)
         return LIBRDP_STATUS_OK;
     return librdp_session_run_once(session, 0);
 }
@@ -32726,7 +32905,10 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
     status = rdp_session_require_pollable(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    *timeout_ms = session->pending_poll ? 0 : -1;
+    *timeout_ms = (session->pending_poll ||
+                   atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+                      ? 0
+                      : -1;
     return LIBRDP_STATUS_OK;
 }
 
@@ -32741,9 +32923,12 @@ static librdp_status rdp_session_disconnect_inner(librdp_session* session)
 
     if (!session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (session->state == LIBRDP_SESSION_CLOSED || session->state == LIBRDP_SESSION_IDLE)
+    if (session->state == LIBRDP_SESSION_CLOSED || session->state == LIBRDP_SESSION_IDLE ||
+        session->state == LIBRDP_SESSION_CANCELLED)
         return LIBRDP_STATUS_OK;
 
+    atomic_store_explicit(&session->cancel_requested, 0u, memory_order_release);
+    rdp_session_wakeup_drain(session);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.disconnect.start", "state=%d", (int)session->state);
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_DISCONNECTING);
     rdp_session_set_state(session, LIBRDP_SESSION_CLOSING);

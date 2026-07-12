@@ -54,7 +54,10 @@ static const rdp_status_info RDP_STATUS_INFO[] = {
      "Security negotiation would downgrade below policy."},
     {LIBRDP_STATUS_LIMIT_EXCEEDED,
      "limit_exceeded",
-     "Configured size, count, or pending-operation limit was exceeded."}
+     "Configured size, count, or pending-operation limit was exceeded."},
+    {LIBRDP_STATUS_CANCELLED,
+     "cancelled",
+     "Operation was cancelled by the application."}
 };
 
 static const rdp_status_info* rdp_status_info_find(librdp_status status)
