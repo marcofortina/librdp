@@ -330,6 +330,7 @@ def validate_pages_workflow(errors: list[str]) -> None:
         "actions/upload-pages-artifact@v3",
         "python3 scripts/check-docs.py",
         "python3 scripts/check-public-api-docs.py",
+        "python3 scripts/check-examples.py",
         "python3 scripts/check-doxygen.py",
         "mkdocs build --strict --site-dir _site",
         "build/doxygen/html",
