@@ -84,7 +84,15 @@ typedef struct rdp_gcc_client_config
     uint8_t enable_remote_programs;
     uint8_t enable_multitransport;
     uint32_t multitransport_flags;
+    const struct rdp_gcc_channel_definition* extra_channels;
+    uint16_t extra_channel_count;
 } rdp_gcc_client_config;
+
+typedef struct rdp_gcc_channel_definition
+{
+    char name[8];
+    uint32_t flags;
+} rdp_gcc_channel_definition;
 
 typedef struct rdp_gcc_client_data_summary
 {

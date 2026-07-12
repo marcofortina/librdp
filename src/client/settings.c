@@ -15,6 +15,7 @@
  */
 
 
+#include <librdp/channel.h>
 #include <librdp/settings.h>
 
 #include "client/settings_internal.h"
@@ -23,6 +24,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define RDP_SETTINGS_KNOWN_FEATURES \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT | \
@@ -60,6 +62,12 @@ typedef struct rdp_settings_pnp_device
     char* description;
     uint32_t device_caps;
 } rdp_settings_pnp_device;
+
+typedef struct rdp_settings_static_channel
+{
+    char name[LIBRDP_STATIC_CHANNEL_NAME_MAX + 1u];
+    uint32_t flags;
+} rdp_settings_static_channel;
 
 struct librdp_settings
 {
@@ -104,6 +112,8 @@ struct librdp_settings
     char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
     uint32_t pnp_device_count;
     rdp_settings_pnp_device pnp_devices[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
+    uint32_t static_channel_count;
+    rdp_settings_static_channel static_channels[LIBRDP_SETTINGS_MAX_STATIC_CHANNELS];
 };
 
 #define RDP_SETTINGS_TEXT_MAX 4096u
@@ -393,6 +403,57 @@ static int rdp_settings_valid_drive_name(const char* name)
             return 0;
     }
     return 1;
+}
+
+static int rdp_settings_static_channel_reserved(const char* name)
+{
+    static const char* reserved[] = {
+        "drdynvc", "cliprdr", "rdpsnd", "rdpdr", "PNPDR", "rail"
+    };
+    size_t i = 0;
+
+    if (!name)
+        return 1;
+    for (i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++)
+    {
+        if (strcasecmp(name, reserved[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int rdp_settings_valid_static_channel_name(const char* name)
+{
+    size_t i = 0;
+    size_t length = 0;
+
+    if (!name || name[0] == '\0' || rdp_settings_static_channel_reserved(name))
+        return 0;
+    length = strlen(name);
+    if (length > LIBRDP_STATIC_CHANNEL_NAME_MAX)
+        return 0;
+    for (i = 0; i < length; i++)
+    {
+        unsigned char c = (unsigned char)name[i];
+
+        if (c <= 0x20u || c >= 0x7fu)
+            return 0;
+    }
+    return 1;
+}
+
+static int rdp_settings_static_channel_exists(const librdp_settings* settings, const char* name)
+{
+    uint32_t i = 0;
+
+    if (!settings || !name)
+        return 0;
+    for (i = 0; i < settings->static_channel_count; i++)
+    {
+        if (strcasecmp(settings->static_channels[i].name, name) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 static int rdp_settings_drive_policy_valid(const librdp_drive_policy* policy)
@@ -782,6 +843,16 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     for (uint32_t i = 0; i < settings->rail_app_count; i++)
     {
         if (librdp_settings_add_rail_app(copy, settings->rail_apps[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
+    for (uint32_t i = 0; i < settings->static_channel_count; i++)
+    {
+        if (librdp_settings_add_static_channel(copy,
+                                               settings->static_channels[i].name,
+                                               settings->static_channels[i].flags) != LIBRDP_STATUS_OK)
         {
             librdp_settings_free(copy);
             return NULL;
@@ -1346,6 +1417,79 @@ librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char
                                  app);
 }
 
+librdp_status librdp_static_channel_info_init(librdp_static_channel_info* info)
+{
+    if (!info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(info, 0, sizeof(*info));
+    info->version = LIBRDP_STATIC_CHANNEL_INFO_VERSION;
+    info->size = (uint32_t)sizeof(*info);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_add_static_channel(librdp_settings* settings,
+                                                 const char* name,
+                                                 uint32_t flags)
+{
+    rdp_settings_static_channel* channel = NULL;
+
+    if (!settings || !rdp_settings_valid_static_channel_name(name) ||
+        settings->static_channel_count >= LIBRDP_SETTINGS_MAX_STATIC_CHANNELS ||
+        rdp_settings_static_channel_exists(settings, name))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    channel = &settings->static_channels[settings->static_channel_count++];
+    memset(channel, 0, sizeof(*channel));
+    memcpy(channel->name, name, strlen(name) + 1u);
+    channel->flags = flags != 0 ? flags : LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS;
+    return LIBRDP_STATUS_OK;
+}
+
+uint32_t librdp_settings_static_channel_count(const librdp_settings* settings)
+{
+    return settings ? settings->static_channel_count : 0;
+}
+
+static librdp_status rdp_settings_static_channel_copy_info(const rdp_settings_static_channel* channel,
+                                                           uint16_t channel_id,
+                                                           int active,
+                                                           librdp_static_channel_info* info)
+{
+    size_t name_len = 0;
+
+    if (!channel || !info || info->version != LIBRDP_STATIC_CHANNEL_INFO_VERSION ||
+        info->size < offsetof(librdp_static_channel_info, name))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    name_len = strlen(channel->name);
+    if (info->size >= offsetof(librdp_static_channel_info, channel_id) + sizeof(info->channel_id))
+        info->channel_id = channel_id;
+    if (info->size >= offsetof(librdp_static_channel_info, flags) + sizeof(info->flags))
+        info->flags = channel->flags;
+    if (info->size >= offsetof(librdp_static_channel_info, active) + sizeof(info->active))
+        info->active = active ? 1 : 0;
+    if (info->size >= offsetof(librdp_static_channel_info, name_len) + sizeof(info->name_len))
+        info->name_len = name_len;
+    if (info->size >= offsetof(librdp_static_channel_info, name) + 1u)
+    {
+        size_t available = info->size - offsetof(librdp_static_channel_info, name);
+        size_t copy_len = name_len;
+
+        if (copy_len >= available)
+            copy_len = available - 1u;
+        memcpy(info->name, channel->name, copy_len);
+        info->name[copy_len] = '\0';
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_static_channel_info(const librdp_settings* settings,
+                                                  uint32_t index,
+                                                  librdp_static_channel_info* info)
+{
+    if (!settings || index >= settings->static_channel_count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_static_channel_copy_info(&settings->static_channels[index], 0, 0, info);
+}
+
 librdp_status librdp_settings_set_echo_payload(librdp_settings* settings, const char* payload)
 {
     if (!settings)
@@ -1542,6 +1686,20 @@ const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t i
 const char* librdp_settings_echo_payload(const librdp_settings* settings)
 {
     return settings ? settings->echo_payload : NULL;
+}
+
+const char* rdp_settings_static_channel_name_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->static_channel_count)
+        return NULL;
+    return settings->static_channels[index].name;
+}
+
+uint32_t rdp_settings_static_channel_flags_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->static_channel_count)
+        return 0;
+    return settings->static_channels[index].flags;
 }
 
 const char* librdp_settings_target(const librdp_settings* settings)

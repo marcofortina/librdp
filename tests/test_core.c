@@ -737,7 +737,7 @@ static int append_gcc_block(rdp_buffer* buffer, uint16_t type, const rdp_buffer*
  * blocks and certificate bytes. It validates handshake parsers, length fields,
  * and encrypted-path setup without using a real server.
  */
-static int build_server_connect_response(rdp_buffer* out, int encrypted)
+static int build_server_connect_response(rdp_buffer* out, int encrypted, int extra_static_channel)
 {
     static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
     static const uint8_t key[] = {'M', 'c', 'D', 'n'};
@@ -799,10 +799,16 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted)
             ok = append_gcc_block(&blocks, 0x0c02u, &security);
     }
     if (ok)
+    {
         ok = rdp_buffer_append_u16_le(&network, 1003) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&network, 1) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&network, 1004) == LIBRDP_STATUS_OK &&
-             append_gcc_block(&blocks, 0x0c03u, &network);
+             rdp_buffer_append_u16_le(&network, extra_static_channel ? 3u : 1u) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&network, 1004) == LIBRDP_STATUS_OK;
+        if (ok && extra_static_channel)
+            ok = rdp_buffer_append_u16_le(&network, 1005) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append_u16_le(&network, 1006) == LIBRDP_STATUS_OK;
+        if (ok)
+            ok = append_gcc_block(&blocks, 0x0c03u, &network);
+    }
 
     if (ok)
         ok = rdp_buffer_append_u8(&gcc, 0) == LIBRDP_STATUS_OK &&
@@ -1179,23 +1185,26 @@ static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
     return ok;
 }
 
-static int build_static_channel_packet(rdp_buffer* out, const rdp_buffer* payload, uint16_t channel_id)
+static int build_static_channel_fragment_packet(rdp_buffer* out,
+                                                const void* data,
+                                                size_t data_len,
+                                                uint32_t total_len,
+                                                uint32_t flags,
+                                                uint16_t channel_id)
 {
     rdp_buffer channel;
     rdp_buffer mcs;
     size_t total = 0;
     int ok = 0;
 
-    if (!out || !payload)
+    if (!out || (!data && data_len > 0))
         return 0;
     rdp_buffer_init(&channel);
     rdp_buffer_init(&mcs);
 
-    ok = rdp_virtual_channel_write_packet(&channel,
-                                          payload->data,
-                                          payload->length,
-                                          RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST |
-                                              RDP_VIRTUAL_CHANNEL_FLAG_SHOW_PROTOCOL) == LIBRDP_STATUS_OK;
+    ok = rdp_buffer_append_u32_le(&channel, total_len) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&channel, flags) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&channel, data, data_len) == LIBRDP_STATUS_OK;
     if (ok)
         ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
@@ -1216,6 +1225,45 @@ static int build_static_channel_packet(rdp_buffer* out, const rdp_buffer* payloa
     rdp_buffer_free(&mcs);
     rdp_buffer_free(&channel);
     return ok;
+}
+
+static int build_static_channel_packet(rdp_buffer* out, const rdp_buffer* payload, uint16_t channel_id)
+{
+    if (!payload)
+        return 0;
+    return build_static_channel_fragment_packet(out,
+                                                payload->data,
+                                                payload->length,
+                                                (uint32_t)payload->length,
+                                                RDP_VIRTUAL_CHANNEL_FLAG_FIRST | RDP_VIRTUAL_CHANNEL_FLAG_LAST |
+                                                    RDP_VIRTUAL_CHANNEL_FLAG_SHOW_PROTOCOL,
+                                                channel_id);
+}
+
+static int build_application_static_channel_first_packet(rdp_buffer* out)
+{
+    static const uint8_t data[] = {'s', 't', 'a', 't'};
+
+    return build_static_channel_fragment_packet(out,
+                                                data,
+                                                sizeof(data),
+                                                8u,
+                                                RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+                                                    RDP_VIRTUAL_CHANNEL_FLAG_SHOW_PROTOCOL,
+                                                1006);
+}
+
+static int build_application_static_channel_last_packet(rdp_buffer* out)
+{
+    static const uint8_t data[] = {'c', 'h', 'a', 'n'};
+
+    return build_static_channel_fragment_packet(out,
+                                                data,
+                                                sizeof(data),
+                                                8u,
+                                                RDP_VIRTUAL_CHANNEL_FLAG_LAST |
+                                                    RDP_VIRTUAL_CHANNEL_FLAG_SHOW_PROTOCOL,
+                                                1006);
 }
 
 static int build_dynamic_channel_create_packet(rdp_buffer* out)
@@ -1295,7 +1343,11 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
  * bytes to the client session. It isolates connection state-machine coverage
  * from external network and credential dependencies.
  */
-static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
+static int start_handshake_server_ex(uint16_t* port,
+                                     pid_t* child_pid,
+                                     int encrypted,
+                                     uint32_t error_info,
+                                     int extra_static_channel)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1341,6 +1393,8 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         rdp_buffer dvc_data_first;
         rdp_buffer dvc_data;
         rdp_buffer dvc_close;
+        rdp_buffer static_first;
+        rdp_buffer static_last;
         rdp_buffer error_update;
         const uint8_t response[] = {
             0x03, 0x00, 0x00, 0x13,
@@ -1363,6 +1417,16 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
             0x02, 0xf0, 0x80,
             0x3e, 0x00, 0x00, 0x03, 0x03, 0xeb, 0x03, 0xeb
         };
+        const uint8_t join_clipboard_confirm[] = {
+            0x03, 0x00, 0x00, 0x0f,
+            0x02, 0xf0, 0x80,
+            0x3e, 0x00, 0x00, 0x03, 0x03, 0xed, 0x03, 0xed
+        };
+        const uint8_t join_static_confirm[] = {
+            0x03, 0x00, 0x00, 0x0f,
+            0x02, 0xf0, 0x80,
+            0x3e, 0x00, 0x00, 0x03, 0x03, 0xee, 0x03, 0xee
+        };
         struct timespec ts;
         int client = accept(fd, NULL, NULL);
         rdp_buffer_init(&mcs_response);
@@ -1373,10 +1437,12 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
         rdp_buffer_init(&dvc_data_first);
         rdp_buffer_init(&dvc_data);
         rdp_buffer_init(&dvc_close);
+        rdp_buffer_init(&static_first);
+        rdp_buffer_init(&static_last);
         rdp_buffer_init(&error_update);
         if (client >= 0)
         {
-            if (!build_server_connect_response(&mcs_response, encrypted))
+            if (!build_server_connect_response(&mcs_response, encrypted, extra_static_channel))
                 _exit(1);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, response, sizeof(response));
@@ -1389,6 +1455,13 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
             (void)write_exact_fd(client, join_user_confirm, sizeof(join_user_confirm));
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, join_global_confirm, sizeof(join_global_confirm));
+            if (extra_static_channel)
+            {
+                (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+                (void)write_exact_fd(client, join_clipboard_confirm, sizeof(join_clipboard_confirm));
+                (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
+                (void)write_exact_fd(client, join_static_confirm, sizeof(join_static_confirm));
+            }
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             if (encrypted)
             {
@@ -1415,6 +1488,11 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
                          !write_exact_fd(client, bitmap_update.data, bitmap_update.length) ||
                          !build_gdi_orders_update_packet(&gdi_orders_update) ||
                          !write_exact_fd(client, gdi_orders_update.data, gdi_orders_update.length) ||
+                         (extra_static_channel &&
+                          (!build_application_static_channel_first_packet(&static_first) ||
+                           !write_exact_fd(client, static_first.data, static_first.length) ||
+                           !build_application_static_channel_last_packet(&static_last) ||
+                           !write_exact_fd(client, static_last.data, static_last.length))) ||
                          !build_dynamic_channel_create_packet(&dvc_create) ||
                          !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
                          !build_dynamic_channel_data_first_packet(&dvc_data_first) ||
@@ -1431,6 +1509,8 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
             close(client);
         }
         rdp_buffer_free(&error_update);
+        rdp_buffer_free(&static_last);
+        rdp_buffer_free(&static_first);
         rdp_buffer_free(&dvc_close);
         rdp_buffer_free(&dvc_data);
         rdp_buffer_free(&dvc_data_first);
@@ -1445,6 +1525,111 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
 
     close(fd);
     return 1;
+}
+
+static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
+{
+    return start_handshake_server_ex(port, child_pid, encrypted, error_info, 0);
+}
+
+static int test_static_channels(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_settings* copy = NULL;
+    librdp_session* session = NULL;
+    librdp_static_channel_info info;
+    librdp_static_channel_info infos[2];
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t count = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    CHECK(librdp_static_channel_info_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_static_channel_info_init(&info) == LIBRDP_STATUS_OK);
+    CHECK(info.version == LIBRDP_STATIC_CHANNEL_INFO_VERSION);
+    CHECK(info.size == sizeof(info));
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_add_static_channel(NULL,
+                                             "STAT",
+                                             LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_static_channel(settings, NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_static_channel(settings, "", 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_static_channel(settings, "12345678", 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_static_channel(settings, "drdynvc", 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_static_channel(settings, "STAT", 0) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_static_channel(settings, "stat", 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_static_channel_count(NULL) == 0);
+    CHECK(librdp_settings_static_channel_count(settings) == 1);
+    CHECK(librdp_settings_static_channel_info(NULL, 0, &info) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_static_channel_info(settings, 1, &info) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_static_channel_info(settings, 0, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_static_channel_info_init(&info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_static_channel_info(settings, 0, &info) == LIBRDP_STATUS_OK);
+    CHECK(info.channel_id == 0);
+    CHECK(info.flags == LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS);
+    CHECK(info.active == 0);
+    CHECK(info.name_len == 4 && strcmp(info.name, "STAT") == 0);
+
+    copy = librdp_settings_clone(settings);
+    CHECK(copy != NULL);
+    CHECK(librdp_settings_static_channel_count(copy) == 1);
+    librdp_settings_free(copy);
+    copy = NULL;
+
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_ex(&test_port, &server_pid, 0, 0, 1));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+    CHECK(librdp_session_static_channel_list(NULL, NULL, 0, &count) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_static_channel_list(session, NULL, 1, &count) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_static_channel_list(session, NULL, 0, &count) == LIBRDP_STATUS_OK);
+    CHECK(count == 0);
+    CHECK(librdp_session_static_channel_send(session, "STAT", "pong", 4) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(counter.channel_open == 1);
+    CHECK(counter.last_channel_id == 1006);
+    CHECK(librdp_session_static_channel_list(session, NULL, 0, &count) == LIBRDP_STATUS_OK);
+    CHECK(count == 1);
+    CHECK(librdp_static_channel_info_init(&infos[0]) == LIBRDP_STATUS_OK);
+    CHECK(librdp_static_channel_info_init(&infos[1]) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_static_channel_list(session, infos, 2, &count) == LIBRDP_STATUS_OK);
+    CHECK(count == 1);
+    CHECK(infos[0].channel_id == 1006);
+    CHECK(infos[0].active == 1);
+    CHECK(infos[0].flags == LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS);
+    CHECK(infos[0].name_len == 4 && strcmp(infos[0].name, "STAT") == 0);
+    CHECK(librdp_session_static_channel_send(session, NULL, "pong", 4) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_static_channel_send(session, "STAT", NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_static_channel_send(session, "NOPE", "pong", 4) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    CHECK(librdp_session_static_channel_send(session, "STAT", "pong", 4) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.channel_data == 0);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.channel_data == 1);
+    CHECK(counter.last_channel_id == 1006);
+    CHECK(counter.last_channel_data_len == 8);
+    CHECK(memcmp(counter.last_channel_data, "statchan", 8) == 0);
+    librdp_session_free(session);
+    session = NULL;
+    if (server_pid > 0)
+    {
+        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+        CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    }
+    librdp_settings_free(settings);
+    return 0;
 }
 
 static void trace_default_event(void)
@@ -3023,6 +3208,8 @@ int test_client_core(void)
     if (test_smartcard_backend_mock() != 0)
         return 1;
     if (test_usb_backend_boundary() != 0)
+        return 1;
+    if (test_static_channels() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

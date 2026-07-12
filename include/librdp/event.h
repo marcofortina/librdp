@@ -48,9 +48,9 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_CLIPBOARD_FORMATS = 8,            /**< data.clipboard_formats reports remote clipboard formats. */
     LIBRDP_EVENT_CLIPBOARD_DATA = 9,               /**< data.clipboard_data reports remote clipboard payload bytes. */
     LIBRDP_EVENT_CLIPBOARD_REQUEST = 10,           /**< data.clipboard_request asks for local clipboard data. */
-    LIBRDP_EVENT_CHANNEL_OPEN = 11,                /**< data.channel_open reports an application dynamic channel. */
-    LIBRDP_EVENT_CHANNEL_DATA = 12,                /**< data.channel_data reports dynamic channel payload bytes. */
-    LIBRDP_EVENT_CHANNEL_CLOSE = 13,               /**< data.channel_close reports a dynamic channel close. */
+    LIBRDP_EVENT_CHANNEL_OPEN = 11,                /**< data.channel_open reports an application channel. */
+    LIBRDP_EVENT_CHANNEL_DATA = 12,                /**< data.channel_data reports application channel payload bytes. */
+    LIBRDP_EVENT_CHANNEL_CLOSE = 13,               /**< data.channel_close reports an application channel close. */
     LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS = 14,        /**< data.audio_output_formats reports playback formats. */
     LIBRDP_EVENT_AUDIO_OUTPUT_DATA = 15,           /**< data.audio_output_data reports playback sample bytes. */
     LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE = 16,          /**< Audio output stream has closed; no payload is active. */

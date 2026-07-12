@@ -344,6 +344,7 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t channel_count = 0;
+    uint16_t i = 0;
 
     if (!config)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -360,6 +361,12 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
         channel_count++;
     if (config->enable_remote_programs)
         channel_count++;
+    if (config->extra_channel_count > 0 && !config->extra_channels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((uint32_t)config->extra_channel_count > RDP_GCC_MAX_SERVER_CHANNELS ||
+        channel_count > RDP_GCC_MAX_SERVER_CHANNELS - (uint32_t)config->extra_channel_count)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    channel_count += config->extra_channel_count;
 
     rdp_buffer_init(&payload);
     status = rdp_buffer_append_u32_le(&payload, channel_count);
@@ -410,6 +417,12 @@ static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_
         status = rdp_buffer_append(&payload, name, sizeof(name));
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u32_le(&payload, 0xc0800000u);
+    }
+    for (i = 0; status == LIBRDP_STATUS_OK && i < config->extra_channel_count; i++)
+    {
+        status = rdp_buffer_append(&payload, config->extra_channels[i].name, sizeof(config->extra_channels[i].name));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(&payload, config->extra_channels[i].flags);
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_CS_NETWORK, &payload);

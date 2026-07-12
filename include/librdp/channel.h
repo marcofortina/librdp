@@ -32,6 +32,15 @@ extern "C" {
 typedef struct librdp_session librdp_session;
 
 /**
+ * @brief Opaque settings object used to register static channels before connect.
+ *
+ * Settings are owned by the caller and cloned by librdp_session_new().
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_settings librdp_settings;
+
+/**
  * @brief Runtime identifier for an open dynamic virtual channel.
  *
  * Channel identifiers are assigned by the protocol layer and are valid only
@@ -44,6 +53,9 @@ typedef uint32_t librdp_channel_id;
 #define LIBRDP_CHANNEL_INFO_VERSION 1u /**< Current librdp_channel_info version. */
 #define LIBRDP_CHANNEL_SEND_OPTIONS_VERSION 1u /**< Current librdp_channel_send_options version. */
 #define LIBRDP_CHANNEL_NAME_MAX 63u /**< Maximum bytes copied into public channel info names. */
+#define LIBRDP_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_static_channel_info version. */
+#define LIBRDP_STATIC_CHANNEL_NAME_MAX 7u /**< Maximum application static-channel name bytes. */
+#define LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS 0xc0800000u /**< Default static-channel wire flags. */
 
 /**
  * @brief Opaque dynamic virtual channel handle token.
@@ -115,6 +127,28 @@ typedef struct librdp_channel_send_options
 } librdp_channel_send_options;
 
 /**
+ * @brief Versioned descriptor for an application static virtual channel.
+ *
+ * Applications initialize this struct with librdp_static_channel_info_init().
+ * Settings queries report registered channels before connection with active set
+ * to zero and channel_id set to zero. Session queries report negotiated
+ * channels after MCS join with active non-zero and channel_id set to the server
+ * assigned channel id. name is always NUL-terminated.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_static_channel_info
+{
+    uint32_t version;             /**< Struct version, LIBRDP_STATIC_CHANNEL_INFO_VERSION. */
+    uint32_t size;                /**< Size of this struct in bytes. */
+    librdp_channel_id channel_id; /**< Server-assigned static channel id, or zero before negotiation. */
+    uint32_t flags;               /**< Static-channel flags advertised during GCC negotiation. */
+    int active;                   /**< Non-zero when this channel is joined in a live session. */
+    size_t name_len;              /**< Bytes copied into name, excluding the NUL terminator. */
+    char name[LIBRDP_STATIC_CHANNEL_NAME_MAX + 1u]; /**< NUL-terminated channel name copy. */
+} librdp_static_channel_info;
+
+/**
  * @brief Initialize a dynamic channel info descriptor.
  *
  * @param[out] info Descriptor to initialize; must not be NULL.
@@ -142,6 +176,79 @@ LIBRDP_API librdp_status librdp_channel_info_init(librdp_channel_info* info);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_channel_send_options_init(librdp_channel_send_options* options);
+
+/**
+ * @brief Initialize a static channel info descriptor.
+ *
+ * @param[out] info Descriptor to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * info is NULL.
+ *
+ * @note Thread-safety: this function does not access shared state.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_static_channel_info_init(librdp_static_channel_info* info);
+
+/**
+ * @brief Register an application static virtual channel in settings.
+ *
+ * The name must be 1 to LIBRDP_STATIC_CHANNEL_NAME_MAX printable ASCII bytes,
+ * must be unique in the settings object, and must not collide with built-in
+ * channels managed by the core. Passing flags as zero installs
+ * LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS. The settings object stores a copy of
+ * the name and flags; the input string is not retained.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] name NUL-terminated channel name; must not be NULL or empty.
+ * @param[in] flags Static-channel flags, or zero for the default flags.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL,
+ * invalid, duplicate, reserved, or over-limit arguments.
+ *
+ * @note Thread-safety: settings objects are not internally synchronized;
+ * register channels before constructing sessions, or serialize externally with
+ * all settings readers and writers. Existing sessions own a clone of earlier
+ * settings and do not observe later changes.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_add_static_channel(librdp_settings* settings,
+                                                           const char* name,
+                                                           uint32_t flags);
+
+/**
+ * @brief Return the number of configured application static channels.
+ *
+ * @param[in] settings Settings object to inspect; may be NULL.
+ *
+ * @return Configured channel count, or zero when settings is NULL.
+ *
+ * @note Thread-safety: concurrent reads are safe only while the settings object
+ * is not being mutated or freed by another thread.
+ * @since 0.1.0
+ */
+LIBRDP_API uint32_t librdp_settings_static_channel_count(const librdp_settings* settings);
+
+/**
+ * @brief Copy one configured application static channel descriptor.
+ *
+ * info must have been initialized with librdp_static_channel_info_init().
+ *
+ * @param[in] settings Settings object to inspect; must not be NULL.
+ * @param[in] index Zero-based channel index, less than
+ * librdp_settings_static_channel_count().
+ * @param[in,out] info Initialized descriptor to fill; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL,
+ * invalid descriptor metadata, or out-of-range index.
+ *
+ * @note Thread-safety: concurrent reads are safe only while the settings object
+ * is not being mutated or freed by another thread.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_static_channel_info(const librdp_settings* settings,
+                                                            uint32_t index,
+                                                            librdp_static_channel_info* info);
 
 /**
  * @brief List active dynamic virtual channels.
@@ -256,6 +363,58 @@ LIBRDP_API librdp_status librdp_session_channel_send_ex(librdp_session* session,
  */
 LIBRDP_API librdp_status librdp_session_channel_close_handle(librdp_session* session,
                                                             librdp_channel_handle handle);
+
+/**
+ * @brief List application static channels joined by a session.
+ *
+ * If infos is NULL and capacity is zero, the function reports the total active
+ * static channel count through count. When infos is non-NULL, each entry must
+ * have been initialized with librdp_static_channel_info_init(); at most
+ * capacity entries are written. count receives the total active static channel
+ * count even when capacity is smaller.
+ *
+ * @param[in,out] session Session to inspect; must not be NULL.
+ * @param[out] infos Optional array of initialized descriptors; may be NULL
+ * only when capacity is zero.
+ * @param[in] capacity Number of entries available in infos.
+ * @param[out] count Total active static channel count; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid descriptor arguments; LIBRDP_STATUS_STATE when called from a
+ * non-owner thread.
+ *
+ * @note Thread-safety: call from the session owner thread.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_static_channel_list(librdp_session* session,
+                                                           librdp_static_channel_info* infos,
+                                                           size_t capacity,
+                                                           size_t* count);
+
+/**
+ * @brief Send one complete payload on an application static channel.
+ *
+ * The named channel must have been registered in settings, negotiated by the
+ * server, and joined by the current session. The payload buffer is read during
+ * the call only and is not retained.
+ *
+ * @param[in,out] session Connected session; must not be NULL.
+ * @param[in] name NUL-terminated static channel name; must not be NULL.
+ * @param[in] data Payload bytes. NULL is allowed only when data_len is zero.
+ * @param[in] data_len Payload length in bytes.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
+ * active; LIBRDP_STATUS_LIMIT_EXCEEDED when the payload exceeds configured
+ * static-channel limits; transport errors propagated from the send path.
+ *
+ * @note Thread-safety: call from the session owner thread.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_static_channel_send(librdp_session* session,
+                                                           const char* name,
+                                                           const void* data,
+                                                           size_t data_len);
 
 /**
  * @brief Send data on an application-owned dynamic virtual channel.

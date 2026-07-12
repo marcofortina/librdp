@@ -30,6 +30,7 @@ extern "C" {
 #define LIBRDP_SETTINGS_MAX_SERIAL_PORTS 8u   /**< Maximum configured redirected serial ports. */
 #define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u /**< Maximum configured redirected parallel ports. */
 #define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u   /**< Maximum configured redirected PNP devices. */
+#define LIBRDP_SETTINGS_MAX_STATIC_CHANNELS 16u /**< Maximum configured application static channels. */
 
 #define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u     /**< PNP device supports lock requests. */
 #define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u    /**< PNP device supports eject requests. */

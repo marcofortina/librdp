@@ -90,11 +90,14 @@ LIBRDP_0.1 {
         librdp_status_string;
         librdp_channel_info_init;
         librdp_channel_send_options_init;
+        librdp_static_channel_info_init;
         librdp_session_channel_list;
         librdp_session_channel_handle_for_id;
         librdp_session_channel_get_info;
         librdp_session_channel_send_ex;
         librdp_session_channel_close_handle;
+        librdp_session_static_channel_list;
+        librdp_session_static_channel_send;
         librdp_session_channel_send;
         librdp_session_channel_close;
         librdp_credentials_init;
@@ -137,6 +140,9 @@ LIBRDP_0.1 {
         librdp_settings_add_pnp_device;
         librdp_settings_set_webauthn_provider;
         librdp_settings_add_rail_app;
+        librdp_settings_add_static_channel;
+        librdp_settings_static_channel_count;
+        librdp_settings_static_channel_info;
         librdp_settings_set_echo_payload;
         librdp_settings_drive_count;
         librdp_settings_drive_name;
