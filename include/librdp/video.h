@@ -16,6 +16,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_video Video API
+ * @brief Video capture media and sample response functions.
+ * @{
+ */
+
+/**
  * @brief Opaque client session handle used by video capture APIs.
  *
  * The handle is owned by the caller after librdp_session_new() and remains
@@ -116,6 +122,8 @@ librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
 librdp_status librdp_session_video_capture_send_error(librdp_session* session,
                                                       uint8_t stream_index,
                                                       uint32_t error_code);
+
+/** @} */
 
 #ifdef __cplusplus
 }

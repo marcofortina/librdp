@@ -6,6 +6,12 @@
 #ifndef LIBRDP_H
 #define LIBRDP_H
 
+/**
+ * @defgroup librdp_umbrella Umbrella Header
+ * @brief Convenience include for all public librdp API families.
+ * @{
+ */
+
 #include <librdp/audio.h>
 #include <librdp/channel.h>
 #include <librdp/clipboard.h>
@@ -16,5 +22,7 @@
 #include <librdp/settings.h>
 #include <librdp/surface.h>
 #include <librdp/video.h>
+
+/** @} */
 
 #endif

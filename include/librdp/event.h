@@ -21,6 +21,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_event Event API
+ * @brief Event discriminators and callback payload structures.
+ * @{
+ */
+
+/**
  * @brief Event discriminator used by librdp_event.
  *
  * The event type selects the active member in librdp_event::data. Event
@@ -357,6 +363,8 @@ typedef struct librdp_event
         librdp_video_capture_close_event video_capture_close; /**< Payload for camera close requests. */
     } data; /**< Event payload union selected by type. */
 } librdp_event;
+
+/** @} */
 
 #ifdef __cplusplus
 }

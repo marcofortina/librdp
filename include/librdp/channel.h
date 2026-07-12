@@ -16,6 +16,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_channel Dynamic Channel API
+ * @brief Application-owned dynamic virtual channel send and close functions.
+ * @{
+ */
+
+/**
  * @brief Opaque client session handle used by channel APIs.
  *
  * The handle is owned by the caller after librdp_session_new() and remains
@@ -82,6 +88,8 @@ librdp_status librdp_session_channel_send(librdp_session* session,
  * @since 0.1.0
  */
 librdp_status librdp_session_channel_close(librdp_session* session, librdp_channel_id channel_id);
+
+/** @} */
 
 #ifdef __cplusplus
 }

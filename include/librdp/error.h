@@ -11,6 +11,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_error Error API
+ * @brief Stable status codes and diagnostic status strings.
+ * @{
+ */
+
+/**
  * @brief Stable status codes returned by public APIs.
  *
  * Negative values represent failures. Applications should compare against the
@@ -49,6 +55,8 @@ typedef enum librdp_status
  * @since 0.1.0
  */
 const char* librdp_status_string(librdp_status status);
+
+/** @} */
 
 #ifdef __cplusplus
 }

@@ -18,6 +18,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_session Session API
+ * @brief Client session lifecycle, loop, display, input, and surface access functions.
+ * @{
+ */
+
+/**
  * @brief Opaque client session handle.
  *
  * The handle owns connection state, negotiated protocol state, graphics
@@ -422,6 +428,8 @@ librdp_session_state librdp_session_get_state(const librdp_session* session);
  * @since 0.1.0
  */
 const librdp_surface* librdp_session_get_surface(const librdp_session* session);
+
+/** @} */
 
 #ifdef __cplusplus
 }

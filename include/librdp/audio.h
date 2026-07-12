@@ -16,6 +16,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_audio Audio API
+ * @brief Audio format and audio input response functions.
+ * @{
+ */
+
+/**
  * @brief Opaque client session handle used by audio APIs.
  *
  * The handle is owned by the caller after librdp_session_new() and remains
@@ -114,6 +120,8 @@ librdp_status librdp_session_audio_input_send_data(librdp_session* session, cons
  * @since 0.1.0
  */
 librdp_status librdp_session_audio_input_send_format_change(librdp_session* session, uint32_t new_format);
+
+/** @} */
 
 #ifdef __cplusplus
 }

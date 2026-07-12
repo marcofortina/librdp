@@ -16,6 +16,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_clipboard Clipboard API
+ * @brief Clipboard format, data, file-list, and file-content functions.
+ * @{
+ */
+
+/**
  * @brief Opaque client session handle used by clipboard APIs.
  *
  * The handle is owned by the caller after librdp_session_new() and remains
@@ -209,6 +215,8 @@ librdp_status librdp_session_clipboard_request_file_range(librdp_session* sessio
                                                           int32_t file_index,
                                                           uint64_t position,
                                                           uint32_t requested);
+
+/** @} */
 
 #ifdef __cplusplus
 }

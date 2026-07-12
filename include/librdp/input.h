@@ -13,6 +13,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_input Input API
+ * @brief Keyboard, pointer, touch, and pen event structures and flags.
+ * @{
+ */
+
+/**
  * @brief Pressed or released state for keyboard input events.
  *
  * Values are copied into input PDUs and are not retained by the library after
@@ -193,6 +199,8 @@ typedef struct librdp_pen_frame
     uint64_t frame_offset;                /**< Frame timestamp offset in protocol units. */
     const librdp_pen_contact* contacts;   /**< Borrowed pen contact array. */
 } librdp_pen_frame;
+
+/** @} */
 
 #ifdef __cplusplus
 }

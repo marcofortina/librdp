@@ -16,6 +16,12 @@ extern "C" {
 #endif
 
 /**
+ * @defgroup librdp_surface Surface API
+ * @brief BGRA framebuffer surface allocation, mutation, and access functions.
+ * @{
+ */
+
+/**
  * @brief Opaque BGRA framebuffer surface.
  *
  * The handle owns its pixel buffer and metadata. It is allocated with
@@ -205,6 +211,8 @@ const uint8_t* librdp_surface_pixels(const librdp_surface* surface);
  * @since 0.1.0
  */
 uint8_t* librdp_surface_pixels_mut(librdp_surface* surface);
+
+/** @} */
 
 #ifdef __cplusplus
 }

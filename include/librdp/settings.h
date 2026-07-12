@@ -14,6 +14,12 @@
 extern "C" {
 #endif
 
+/**
+ * @defgroup librdp_settings Settings API
+ * @brief Client connection, credential, feature, and device configuration functions.
+ * @{
+ */
+
 #define LIBRDP_SETTINGS_MAX_DRIVES 8u         /**< Maximum configured redirected drives. */
 #define LIBRDP_SETTINGS_MAX_PRINTERS 8u       /**< Maximum configured redirected printers. */
 #define LIBRDP_SETTINGS_MAX_CAMERAS 8u        /**< Maximum configured redirected cameras. */
@@ -1126,6 +1132,8 @@ uint32_t librdp_settings_height(const librdp_settings* settings);
  * @since 0.1.0
  */
 librdp_security_mode librdp_settings_security_mode(const librdp_settings* settings);
+
+/** @} */
 
 #ifdef __cplusplus
 }
