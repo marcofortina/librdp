@@ -88,7 +88,8 @@ typedef struct librdp_clipboard_file
  * @note Thread-safety: sessions are not internally synchronized; call from one
  * serialized session-driving context.
  * @warning Clipboard data can contain sensitive content. The library stores a
- * copy until it is replaced, cleared, or the session is freed.
+ * copy until it is replaced, cleared, or the session is freed. Trace output
+ * redacts payload bodies unless unsafe tracing is explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_clipboard_set_data(librdp_session* session,
@@ -119,7 +120,9 @@ LIBRDP_API librdp_status librdp_session_clipboard_set_data(librdp_session* sessi
  * @note Thread-safety: sessions are not internally synchronized; call from one
  * serialized session-driving context.
  * @warning Advertised files may be read by the remote side after this call.
- * The application is responsible for user consent and access policy.
+ * The application is responsible for user consent and access policy. Trace
+ * output redacts file metadata and payload bodies unless unsafe tracing is
+ * explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_clipboard_set_files(librdp_session* session,
@@ -207,7 +210,8 @@ LIBRDP_API librdp_status librdp_session_clipboard_request_file_size(librdp_sessi
  * @note Thread-safety: sessions are not internally synchronized; call from one
  * serialized session-driving context.
  * @warning Requested remote file contents may be sensitive; applications must
- * store or expose returned data according to their own policy.
+ * store or expose returned data according to their own policy. Trace output
+ * redacts payload bodies unless unsafe tracing is explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_clipboard_request_file_range(librdp_session* session,

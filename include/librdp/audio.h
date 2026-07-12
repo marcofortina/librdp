@@ -18,6 +18,10 @@ extern "C" {
 /**
  * @defgroup librdp_audio Audio API
  * @brief Audio format and audio input response functions.
+ *
+ * These APIs operate on negotiated audio channels. Device capture/playback
+ * backends are selected by the application or viewer; protocol helpers return
+ * LIBRDP_STATUS_STATE when the remote channel is not ready.
  * @{
  */
 
@@ -63,6 +67,8 @@ typedef struct librdp_audio_format
  *
  * Call this after receiving LIBRDP_EVENT_AUDIO_INPUT_OPEN. A successful OK
  * reply marks audio input as open; a failure result rejects the server request.
+ * The function sends only the protocol response; local microphone setup is the
+ * responsibility of the application backend that received the event.
  *
  * @param[in,out] session Connected session; must not be NULL.
  * @param[in] result Server-visible HRESULT-style result, typically
@@ -72,9 +78,11 @@ typedef struct librdp_audio_format
  * session is NULL; LIBRDP_STATUS_STATE when the session or audio input channel
  * is not ready; allocation or transport errors propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from the
- * same thread that processes the audio input event unless the application
- * serializes access.
+ * @note Thread-safety: call from the serialized session-driving thread that
+ * delivered the audio input event.
+ * @warning Audio capture may expose user speech or room audio to the remote
+ * session. Trace output redacts payload bodies unless unsafe tracing is
+ * explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_audio_input_open_reply(librdp_session* session, uint32_t result);
@@ -83,7 +91,9 @@ LIBRDP_API librdp_status librdp_session_audio_input_open_reply(librdp_session* s
  * @brief Send captured audio input data to the server.
  *
  * The audio input channel must be ready and successfully opened. The data
- * buffer is read during the call only and is not retained.
+ * buffer is read during the call only and is not retained. The caller is
+ * responsible for providing bytes encoded in the currently selected negotiated
+ * audio input format.
  *
  * @param[in,out] session Connected session; must not be NULL.
  * @param[in] data Audio payload bytes. NULL is allowed only when data_len is 0.
@@ -94,10 +104,11 @@ LIBRDP_API librdp_status librdp_session_audio_input_open_reply(librdp_session* s
  * audio input channel is not ready or not open; allocation or transport errors
  * propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from one
- * serialized session-driving context.
+ * @note Thread-safety: call from the serialized session-driving thread.
  * @warning Audio samples can contain user speech or other sensitive data; the
  * application is responsible for capture consent and local data handling.
+ * Trace output redacts payload bodies unless unsafe tracing is explicitly
+ * enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_audio_input_send_data(librdp_session* session, const void* data, size_t data_len);
@@ -106,7 +117,8 @@ LIBRDP_API librdp_status librdp_session_audio_input_send_data(librdp_session* se
  * @brief Notify the server that the audio input format changed.
  *
  * The audio input channel must be ready. The new format index is interpreted in
- * the negotiated audio input format list.
+ * the negotiated audio input format list delivered by the server; this API
+ * does not validate the index against an application-side backend format list.
  *
  * @param[in,out] session Connected session; must not be NULL.
  * @param[in] new_format Negotiated audio input format index to select.
@@ -115,8 +127,7 @@ LIBRDP_API librdp_status librdp_session_audio_input_send_data(librdp_session* se
  * session is NULL; LIBRDP_STATUS_STATE when the session or audio input channel
  * is not ready; allocation or transport errors propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from one
- * serialized session-driving context.
+ * @note Thread-safety: call from the serialized session-driving thread.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_audio_input_send_format_change(librdp_session* session, uint32_t new_format);

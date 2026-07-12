@@ -18,6 +18,11 @@ extern "C" {
 /**
  * @defgroup librdp_video Video API
  * @brief Video capture media and sample response functions.
+ *
+ * These APIs answer server camera-capture requests. Camera enumeration,
+ * capture, encoding, and device permissions belong to the application backend;
+ * protocol helpers return LIBRDP_STATUS_STATE when the capture channel or
+ * stream request is not ready.
  * @{
  */
 
@@ -76,7 +81,8 @@ typedef struct librdp_video_capture_media
  *
  * This replies to a pending LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST for the
  * selected stream. The data buffer is read during the call only and is not
- * retained.
+ * retained. The bytes must match the media format requested by the server for
+ * that stream.
  *
  * @param[in,out] session Connected session; must not be NULL.
  * @param[in] stream_index Stream index from the current video capture request.
@@ -89,10 +95,12 @@ typedef struct librdp_video_capture_media
  * channel, stream, or pending request state does not allow a sample reply;
  * allocation or transport errors propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from the
- * same serialized context that processes video capture events.
+ * @note Thread-safety: call from the serialized session-driving thread that
+ * processes video capture events.
  * @warning Camera frames can contain sensitive user data; the application is
  * responsible for capture consent, device access policy, and local buffering.
+ * Trace output redacts payload bodies unless unsafe tracing is explicitly
+ * enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_video_capture_send_sample(librdp_session* session,
@@ -115,8 +123,8 @@ LIBRDP_API librdp_status librdp_session_video_capture_send_sample(librdp_session
  * stream, or pending request state does not allow an error reply; allocation
  * or transport errors propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from the
- * same serialized context that processes video capture events.
+ * @note Thread-safety: call from the serialized session-driving thread that
+ * processes video capture events.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_video_capture_send_error(librdp_session* session,

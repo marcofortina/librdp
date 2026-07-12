@@ -544,9 +544,10 @@ LIBRDP_API void librdp_session_set_pointer_callback(librdp_session* session,
  * @brief Install or clear the virtual-channel domain callback.
  *
  * Passing NULL disables channel-domain delivery. The callback receives
- * versioned envelopes for dynamic channel open, data, and close events.
- * Channel names and payload bytes are borrowed and valid only until the
- * callback returns.
+ * versioned envelopes for application virtual-channel open, data, and close
+ * events. Channel names and payload bytes are borrowed and valid only until
+ * the callback returns. Static channels currently emit open and data events;
+ * dynamic channels can also emit close events.
  *
  * @param[in,out] session Session to configure; NULL is ignored.
  * @param[in] callback Callback to install, or NULL to clear it.
@@ -694,6 +695,9 @@ LIBRDP_API librdp_status librdp_session_set_trace_policy(librdp_session* session
  * LIBRDP_STATUS_CLOSED from transport, security, or protocol setup failures.
  *
  * @note Thread-safety: call from one serialized session-driving context.
+ * When TLS or NLA is selected, certificate and credential callbacks run on
+ * this same thread during the call. Connection progress is observable through
+ * librdp_session_get_lifecycle().
  * @warning Credentials configured in settings are sent according to the
  * selected security mode; applications should avoid tracing or storing them.
  * @since 0.1.0

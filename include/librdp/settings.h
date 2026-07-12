@@ -1698,6 +1698,8 @@ LIBRDP_API const char* librdp_settings_target(const librdp_settings* settings);
  *
  * @note Thread-safety: the returned pointer remains valid until the settings
  * object is mutated or freed.
+ * @warning User names can be identifying information. Avoid logging them in
+ * contexts where connection metadata is sensitive.
  * @since 0.1.0
  */
 LIBRDP_API const char* librdp_settings_username(const librdp_settings* settings);

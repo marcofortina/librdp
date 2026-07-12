@@ -149,7 +149,7 @@ typedef struct librdp_touch_contact
 } librdp_touch_contact;
 
 /**
- * @brief Multi-touch frame supplied to librdp_session_send_touch_frame().
+ * @brief Multi-touch frame supplied to librdp_session_send_touch().
  *
  * contacts is borrowed for the duration of the send call and may be NULL only
  * when contact_count is 0.
@@ -186,7 +186,7 @@ typedef struct librdp_pen_contact
 } librdp_pen_contact;
 
 /**
- * @brief Pen input frame supplied to librdp_session_send_pen_frame().
+ * @brief Pen input frame supplied to librdp_session_send_pen().
  *
  * contacts is borrowed for the duration of the send call and may be NULL only
  * when contact_count is 0.

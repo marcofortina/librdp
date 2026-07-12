@@ -16,8 +16,8 @@ extern "C" {
 #endif
 
 /**
- * @defgroup librdp_channel Dynamic Channel API
- * @brief Application-owned dynamic virtual channel send and close functions.
+ * @defgroup librdp_channel Virtual Channel API
+ * @brief Application-owned static and dynamic virtual channel functions.
  * @{
  */
 
@@ -41,10 +41,12 @@ typedef struct librdp_session librdp_session;
 typedef struct librdp_settings librdp_settings;
 
 /**
- * @brief Runtime identifier for an open dynamic virtual channel.
+ * @brief Runtime identifier for an open application virtual channel.
  *
  * Channel identifiers are assigned by the protocol layer and are valid only
  * for the lifetime of the open-channel event and the corresponding session.
+ * Dynamic-channel handle APIs accept identifiers for dynamic channels only;
+ * static-channel APIs identify channels by their registered name.
  *
  * @since 0.1.0
  */
@@ -91,7 +93,9 @@ typedef enum librdp_channel_priority
  * passing it to query functions. name contains a NUL-terminated copy truncated
  * to LIBRDP_CHANNEL_NAME_MAX bytes; name_len reports the copied byte count,
  * not the original server-advertised length. application_owned is non-zero
- * only for channels that may be sent or closed through public channel APIs.
+ * only for dynamic channels that may be sent or closed through public
+ * dynamic-channel APIs. Static channels are reported through
+ * librdp_static_channel_info.
  *
  * @since 0.1.0
  */
@@ -195,7 +199,8 @@ LIBRDP_API librdp_status librdp_static_channel_info_init(librdp_static_channel_i
  *
  * The name must be 1 to LIBRDP_STATIC_CHANNEL_NAME_MAX printable ASCII bytes,
  * must be unique in the settings object, and must not collide with built-in
- * channels managed by the core. Passing flags as zero installs
+ * channels managed by the core. Names are compared case-insensitively for
+ * duplicate and reserved-name checks. Passing flags as zero installs
  * LIBRDP_STATIC_CHANNEL_DEFAULT_FLAGS. The settings object stores a copy of
  * the name and flags; the input string is not retained.
  *
@@ -254,7 +259,7 @@ LIBRDP_API librdp_status librdp_settings_static_channel_info(const librdp_settin
  * @brief List active dynamic virtual channels.
  *
  * If infos is NULL and capacity is zero, the function only reports the number
- * of active channels through count. When infos is non-NULL, each entry must
+ * of active dynamic channels through count. When infos is non-NULL, each entry must
  * have been initialized with librdp_channel_info_init(); at most capacity
  * entries are written. count receives the total active channel count even when
  * capacity is smaller.
@@ -263,7 +268,7 @@ LIBRDP_API librdp_status librdp_settings_static_channel_info(const librdp_settin
  * @param[out] infos Optional array of initialized descriptors; may be NULL
  * only when capacity is zero.
  * @param[in] capacity Number of entries available in infos.
- * @param[out] count Total active channel count; must not be NULL.
+ * @param[out] count Total active dynamic-channel count; must not be NULL.
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
  * or invalid descriptor arguments; LIBRDP_STATUS_STATE when called from a
@@ -281,7 +286,8 @@ LIBRDP_API librdp_status librdp_session_channel_list(librdp_session* session,
  * @brief Resolve an active channel identifier to an opaque handle.
  *
  * @param[in,out] session Session to inspect; must not be NULL.
- * @param[in] channel_id Dynamic channel identifier; must be non-zero.
+ * @param[in] channel_id Dynamic channel identifier from a channel event; must
+ * be non-zero.
  * @param[out] handle Receives the active handle; must not be NULL.
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
@@ -337,6 +343,8 @@ LIBRDP_API librdp_status librdp_session_channel_get_info(librdp_session* session
  * allocation errors propagated from the send path.
  *
  * @note Thread-safety: call from the session owner thread.
+ * @warning Channel payloads may contain application data. Trace output redacts
+ * payload bodies unless unsafe tracing is explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_channel_send_ex(librdp_session* session,
@@ -381,7 +389,7 @@ LIBRDP_API librdp_status librdp_session_channel_close_handle(librdp_session* ses
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
  * or invalid descriptor arguments; LIBRDP_STATUS_STATE when called from a
- * non-owner thread.
+ * non-owner thread or before the session has negotiated static channels.
  *
  * @note Thread-safety: call from the session owner thread.
  * @since 0.1.0
@@ -406,9 +414,12 @@ LIBRDP_API librdp_status librdp_session_static_channel_list(librdp_session* sess
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
  * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
  * active; LIBRDP_STATUS_LIMIT_EXCEEDED when the payload exceeds configured
- * static-channel limits; transport errors propagated from the send path.
+ * static-channel limits; transport, protocol, or allocation errors propagated
+ * from the send path.
  *
  * @note Thread-safety: call from the session owner thread.
+ * @warning Channel payloads may contain application data. Trace output redacts
+ * payload bodies unless unsafe tracing is explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_static_channel_send(librdp_session* session,
@@ -431,11 +442,13 @@ LIBRDP_API librdp_status librdp_session_static_channel_send(librdp_session* sess
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
  * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
- * ready; LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or
- * allocation errors propagated from the send path.
+ * ready, or when the call is made from a non-owner thread;
+ * LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or allocation
+ * errors propagated from the send path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from the
- * same thread that drives the session unless the application serializes access.
+ * @note Thread-safety: call from the session owner thread.
+ * @warning Channel payloads may contain application data. Trace output redacts
+ * payload bodies unless unsafe tracing is explicitly enabled.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_channel_send(librdp_session* session,
@@ -455,11 +468,11 @@ LIBRDP_API librdp_status librdp_session_channel_send(librdp_session* session,
  *
  * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
  * or invalid arguments; LIBRDP_STATUS_STATE when the session or channel is not
- * ready; LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or
- * allocation errors propagated from the close path.
+ * ready, or when the call is made from a non-owner thread;
+ * LIBRDP_STATUS_UNSUPPORTED for internal channels; transport or allocation
+ * errors propagated from the close path.
  *
- * @note Thread-safety: sessions are not internally synchronized; call from the
- * same thread that drives the session unless the application serializes access.
+ * @note Thread-safety: call from the session owner thread.
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_channel_close(librdp_session* session, librdp_channel_id channel_id);

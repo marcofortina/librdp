@@ -48,7 +48,7 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_CLIPBOARD_FORMATS = 8,            /**< data.clipboard_formats reports remote clipboard formats. */
     LIBRDP_EVENT_CLIPBOARD_DATA = 9,               /**< data.clipboard_data reports remote clipboard payload bytes. */
     LIBRDP_EVENT_CLIPBOARD_REQUEST = 10,           /**< data.clipboard_request asks for local clipboard data. */
-    LIBRDP_EVENT_CHANNEL_OPEN = 11,                /**< data.channel_open reports an application channel. */
+    LIBRDP_EVENT_CHANNEL_OPEN = 11,                /**< data.channel_open reports an application channel open. */
     LIBRDP_EVENT_CHANNEL_DATA = 12,                /**< data.channel_data reports application channel payload bytes. */
     LIBRDP_EVENT_CHANNEL_CLOSE = 13,               /**< data.channel_close reports an application channel close. */
     LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS = 14,        /**< data.audio_output_formats reports playback formats. */
@@ -182,9 +182,11 @@ typedef struct librdp_clipboard_file_contents_event
 } librdp_clipboard_file_contents_event;
 
 /**
- * @brief Dynamic virtual-channel open event payload.
+ * @brief Application virtual-channel open event payload.
  *
- * name is borrowed and valid only for the callback duration.
+ * name is borrowed and valid only for the callback duration. The event can
+ * describe an application-owned dynamic channel or a configured static channel
+ * joined by the session.
  *
  * @since 0.1.0
  */
@@ -196,9 +198,11 @@ typedef struct librdp_channel_open_event
 } librdp_channel_open_event;
 
 /**
- * @brief Dynamic virtual-channel data event payload.
+ * @brief Application virtual-channel data event payload.
  *
- * name and data are borrowed and valid only for the callback duration.
+ * name and data are borrowed and valid only for the callback duration. The
+ * payload may come from either an application dynamic channel or a configured
+ * static channel.
  *
  * @since 0.1.0
  */
@@ -212,9 +216,11 @@ typedef struct librdp_channel_data_event
 } librdp_channel_data_event;
 
 /**
- * @brief Dynamic virtual-channel close event payload.
+ * @brief Application dynamic-channel close event payload.
  *
- * name is borrowed and valid only for the callback duration.
+ * name is borrowed and valid only for the callback duration. Static channels do
+ * not currently emit a separate public close event during normal disconnect;
+ * their lifetime is bounded by the session.
  *
  * @since 0.1.0
  */
