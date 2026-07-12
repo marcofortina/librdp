@@ -51,6 +51,7 @@ LIBRDP_0.1 {
         librdp_credentials_init;
         librdp_credentials_clear;
         librdp_credentials_set;
+        librdp_drive_policy_init;
         librdp_settings_new;
         librdp_settings_clone;
         librdp_settings_free;
@@ -67,6 +68,8 @@ LIBRDP_0.1 {
         librdp_settings_set_tls_policy;
         librdp_settings_get_tls_policy;
         librdp_settings_add_drive;
+        librdp_settings_set_drive_policy;
+        librdp_settings_get_drive_policy;
         librdp_settings_add_serial_port;
         librdp_settings_add_parallel_port;
         librdp_settings_add_printer;

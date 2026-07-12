@@ -66,6 +66,7 @@ typedef enum librdp_security_mode
 #define LIBRDP_TLS_CERTIFICATE_INFO_VERSION 1u /**< Current librdp_tls_certificate_info version. */
 #define LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH 64u /**< SHA-256 fingerprint length in lowercase hex. */
 #define LIBRDP_CREDENTIALS_VERSION 1u          /**< Current librdp_credentials version. */
+#define LIBRDP_DRIVE_POLICY_VERSION 1u         /**< Current librdp_drive_policy version. */
 
 /**
  * @brief TLS certificate trust policy used by TLS and NLA security modes.
@@ -212,6 +213,28 @@ typedef struct librdp_credentials
  */
 typedef librdp_status (*librdp_credentials_provider)(librdp_credentials* credentials,
                                                     void* user_data);
+
+/**
+ * @brief Versioned policy for redirected filesystem drives.
+ *
+ * Policies are copied into settings and then cloned into sessions. The default
+ * initialized policy is conservative: read-only, device files denied, symlink
+ * escapes denied, dotfiles denied, a finite per-drive handle limit, and no
+ * explicit byte-size limit unless max_file_size is set by the application.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_drive_policy
+{
+    uint32_t version;          /**< Struct version, LIBRDP_DRIVE_POLICY_VERSION. */
+    uint32_t size;             /**< Size of this struct in bytes. */
+    int read_only;             /**< Non-zero denies remote create, write, delete, rename, link, and truncate. */
+    int deny_device_files;     /**< Non-zero denies non-regular, non-directory host objects. */
+    int deny_symlink_escape;   /**< Non-zero resolves paths with O_NOFOLLOW component checks. */
+    int deny_dotfiles;         /**< Non-zero denies path segments beginning with '.'. */
+    uint64_t max_file_size;    /**< Maximum file size accepted for writes/truncation, or zero for no explicit cap. */
+    uint32_t max_open_handles; /**< Maximum concurrently open drive handles, or zero to use the default. */
+} librdp_drive_policy;
 
 /**
  * @brief Optional feature bit advertised or enabled for a client session.
@@ -625,6 +648,64 @@ LIBRDP_API librdp_status librdp_settings_get_tls_policy(const librdp_settings* s
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* name, const char* path);
+
+/**
+ * @brief Initialize a redirected-drive policy with secure defaults.
+ *
+ * The initialized policy is read-only, denies device files, denies symlink
+ * escapes, denies dotfiles, uses the default handle limit, and does not impose
+ * an explicit file-size cap.
+ *
+ * @param[out] policy Policy object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * policy is NULL.
+ *
+ * @note Thread-safety: this function only writes caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_drive_policy_init(librdp_drive_policy* policy);
+
+/**
+ * @brief Set the policy for an existing redirected drive.
+ *
+ * The policy descriptor is validated and copied into settings. The index must
+ * identify a drive previously added with librdp_settings_add_drive().
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] index Zero-based drive index.
+ * @param[in] policy Policy to copy; must not be NULL and must have a valid
+ * version and size.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * settings, NULL policy, invalid metadata, invalid index, or unsupported
+ * values.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @warning Disabling read_only allows the remote server to modify files inside
+ * the redirected root subject to the remaining policy checks.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_drive_policy(librdp_settings* settings,
+                                                          uint32_t index,
+                                                          const librdp_drive_policy* policy);
+
+/**
+ * @brief Copy the policy configured for an existing redirected drive.
+ *
+ * @param[in] settings Settings object to read; must not be NULL.
+ * @param[in] index Zero-based drive index.
+ * @param[out] policy Policy object to receive the copy; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid index.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_drive_policy(const librdp_settings* settings,
+                                                          uint32_t index,
+                                                          librdp_drive_policy* policy);
 
 /**
  * @brief Add a redirected serial port.

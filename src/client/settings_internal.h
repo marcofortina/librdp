@@ -28,6 +28,7 @@ typedef void (*rdp_settings_secure_string_observer)(const void* data, size_t len
 void rdp_settings_secure_string_observer_for_tests(rdp_settings_secure_string_observer observer,
                                                    void* user_data);
 uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, uint32_t index);
+const librdp_drive_policy* rdp_settings_drive_policy_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_smartcard_device_id_internal(const librdp_settings* settings, uint32_t index);
 uint32_t rdp_settings_serial_port_device_id_internal(const librdp_settings* settings, uint32_t index);

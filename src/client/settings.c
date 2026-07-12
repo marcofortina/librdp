@@ -37,6 +37,7 @@ typedef struct rdp_settings_drive
 {
     char name[8];
     char* path;
+    librdp_drive_policy policy;
 } rdp_settings_drive;
 
 typedef struct rdp_settings_port
@@ -104,6 +105,8 @@ struct librdp_settings
 };
 
 #define RDP_SETTINGS_TEXT_MAX 4096u
+#define RDP_SETTINGS_DRIVE_DEFAULT_MAX_OPEN_HANDLES 64u
+#define RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES 1024u
 
 static rdp_settings_secure_string_observer g_secure_string_observer;
 static void* g_secure_string_observer_user_data;
@@ -303,6 +306,21 @@ librdp_status librdp_credentials_set(librdp_credentials* credentials,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_drive_policy_init(librdp_drive_policy* policy)
+{
+    if (!policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(policy, 0, sizeof(*policy));
+    policy->version = LIBRDP_DRIVE_POLICY_VERSION;
+    policy->size = (uint32_t)sizeof(*policy);
+    policy->read_only = 1;
+    policy->deny_device_files = 1;
+    policy->deny_symlink_escape = 1;
+    policy->deny_dotfiles = 1;
+    policy->max_open_handles = RDP_SETTINGS_DRIVE_DEFAULT_MAX_OPEN_HANDLES;
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_settings_valid_drive_name(const char* name)
 {
     size_t i = 0;
@@ -321,6 +339,15 @@ static int rdp_settings_valid_drive_name(const char* name)
         if (name[i] == ':' && i + 1u != length)
             return 0;
     }
+    return 1;
+}
+
+static int rdp_settings_drive_policy_valid(const librdp_drive_policy* policy)
+{
+    if (!policy || policy->version != LIBRDP_DRIVE_POLICY_VERSION || policy->size < sizeof(*policy))
+        return 0;
+    if (policy->max_open_handles > RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES)
+        return 0;
     return 1;
 }
 
@@ -556,7 +583,8 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     for (uint32_t i = 0; i < settings->drive_count; i++)
     {
         if (librdp_settings_add_drive(copy, settings->drives[i].name, settings->drives[i].path) !=
-            LIBRDP_STATUS_OK)
+            LIBRDP_STATUS_OK ||
+            librdp_settings_set_drive_policy(copy, i, &settings->drives[i].policy) != LIBRDP_STATUS_OK)
         {
             librdp_settings_free(copy);
             return NULL;
@@ -878,7 +906,30 @@ librdp_status librdp_settings_add_drive(librdp_settings* settings, const char* n
     memset(drive, 0, sizeof(*drive));
     memcpy(drive->name, name, strlen(name) + 1u);
     drive->path = path_copy;
+    (void)librdp_drive_policy_init(&drive->policy);
     settings->drive_count++;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_set_drive_policy(librdp_settings* settings,
+                                               uint32_t index,
+                                               const librdp_drive_policy* policy)
+{
+    if (!settings || index >= settings->drive_count || !rdp_settings_drive_policy_valid(policy))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    settings->drives[index].policy = *policy;
+    if (settings->drives[index].policy.max_open_handles == 0)
+        settings->drives[index].policy.max_open_handles = RDP_SETTINGS_DRIVE_DEFAULT_MAX_OPEN_HANDLES;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_get_drive_policy(const librdp_settings* settings,
+                                               uint32_t index,
+                                               librdp_drive_policy* policy)
+{
+    if (!settings || index >= settings->drive_count || !policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *policy = settings->drives[index].policy;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1373,6 +1424,13 @@ uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, 
     if (!settings || index >= settings->drive_count)
         return 0;
     return 0x00010000u + index;
+}
+
+const librdp_drive_policy* rdp_settings_drive_policy_internal(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->drive_count)
+        return NULL;
+    return &settings->drives[index].policy;
 }
 
 uint32_t rdp_settings_printer_device_id_internal(const librdp_settings* settings, uint32_t index)

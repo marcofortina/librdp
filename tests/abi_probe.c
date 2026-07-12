@@ -49,6 +49,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_tls_policy", librdp_tls_policy, ",");
     ABI_TYPE_ENTRY("librdp_credentials", librdp_credentials, ",");
     ABI_TYPE_ENTRY("librdp_credentials_provider", librdp_credentials_provider, ",");
+    ABI_TYPE_ENTRY("librdp_drive_policy", librdp_drive_policy, ",");
     ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
     ABI_TYPE_ENTRY("librdp_feature_unavailable_reason", librdp_feature_unavailable_reason, ",");
     ABI_TYPE_ENTRY("librdp_feature_status", librdp_feature_status, ",");
