@@ -61,11 +61,48 @@ typedef enum librdp_status
 } librdp_status;
 
 /**
- * @brief Return the stable text token for a status code.
+ * @brief Return the stable symbolic name for a status code.
  *
  * The returned pointer refers to static storage owned by the library and
  * remains valid for the lifetime of the process. Unknown status values return
- * the token "unknown".
+ * the token "unknown". The name is stable and intended for logs, metrics,
+ * structured error objects, and machine-readable diagnostics.
+ *
+ * @param[in] status Status code to describe.
+ *
+ * @return Non-NULL NUL-terminated status name owned by the library.
+ *
+ * @note Thread-safety: this function uses immutable static strings and can be
+ * called concurrently.
+ * @since 0.1.0
+ */
+LIBRDP_API const char* librdp_status_name(librdp_status status);
+
+/**
+ * @brief Return a human-readable description for a status code.
+ *
+ * The returned pointer refers to static storage owned by the library and
+ * remains valid for the lifetime of the process. Descriptions are intended for
+ * diagnostics and UI text; applications should compare status values directly
+ * and use librdp_status_name() for stable machine-readable tokens. Unknown
+ * status values return a generic description.
+ *
+ * @param[in] status Status code to describe.
+ *
+ * @return Non-NULL NUL-terminated status description owned by the library.
+ *
+ * @note Thread-safety: this function uses immutable static strings and can be
+ * called concurrently.
+ * @since 0.1.0
+ */
+LIBRDP_API const char* librdp_status_description(librdp_status status);
+
+/**
+ * @brief Return the legacy stable text token for a status code.
+ *
+ * This function is a compatibility alias for librdp_status_name(). The returned
+ * pointer refers to static storage owned by the library and remains valid for
+ * the lifetime of the process.
  *
  * @param[in] status Status code to describe.
  *

@@ -45,6 +45,8 @@ LIBRDP_0.1 {
         librdp_session_get_state;
         librdp_session_get_feature_status;
         librdp_session_get_surface;
+        librdp_status_name;
+        librdp_status_description;
         librdp_status_string;
         librdp_session_channel_send;
         librdp_session_channel_close;

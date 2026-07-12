@@ -112,6 +112,8 @@
     "librdp_settings_video_output_path",
     "librdp_settings_webauthn_provider",
     "librdp_settings_width",
+    "librdp_status_description",
+    "librdp_status_name",
     "librdp_status_string",
     "librdp_trace_policy_init",
     "librdp_tls_policy_init",

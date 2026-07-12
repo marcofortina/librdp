@@ -1460,6 +1460,26 @@ static int test_settings_surface_input_session(void)
     librdp_feature_status feature_status;
     librdp_tls_policy tls_policy;
     librdp_tls_policy tls_policy_out;
+    const struct
+    {
+        librdp_status status;
+        const char* name;
+    } status_cases[] = {
+        {LIBRDP_STATUS_OK, "ok"},
+        {LIBRDP_STATUS_INVALID_ARGUMENT, "invalid_argument"},
+        {LIBRDP_STATUS_NO_MEMORY, "no_memory"},
+        {LIBRDP_STATUS_IO_ERROR, "io_error"},
+        {LIBRDP_STATUS_PROTOCOL_ERROR, "protocol_error"},
+        {LIBRDP_STATUS_UNSUPPORTED, "unsupported"},
+        {LIBRDP_STATUS_TIMEOUT, "timeout"},
+        {LIBRDP_STATUS_CLOSED, "closed"},
+        {LIBRDP_STATUS_AGAIN, "again"},
+        {LIBRDP_STATUS_STATE, "state"},
+        {LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED, "tls_certificate_rejected"},
+        {LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH, "tls_hostname_mismatch"},
+        {LIBRDP_STATUS_TLS_HANDSHAKE_FAILED, "tls_handshake_failed"},
+        {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"}
+    };
     librdp_credentials credentials;
     librdp_drive_policy drive_policy;
     librdp_drive_policy drive_policy_out;
@@ -1481,16 +1501,16 @@ static int test_settings_surface_input_session(void)
     memset(&secure_capture, 0, sizeof(secure_capture));
     memset(&credentials_capture, 0, sizeof(credentials_capture));
 
-    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
-    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED),
-                 "tls_certificate_rejected") == 0);
-    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH),
-                 "tls_hostname_mismatch") == 0);
-    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_HANDSHAKE_FAILED),
-                 "tls_handshake_failed") == 0);
-    CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_SECURITY_DOWNGRADE),
-                 "security_downgrade") == 0);
+    for (size_t i = 0; i < sizeof(status_cases) / sizeof(status_cases[0]); i++)
+    {
+        CHECK(strcmp(librdp_status_name(status_cases[i].status), status_cases[i].name) == 0);
+        CHECK(strcmp(librdp_status_string(status_cases[i].status), status_cases[i].name) == 0);
+        CHECK(librdp_status_description(status_cases[i].status) != NULL);
+        CHECK(librdp_status_description(status_cases[i].status)[0] != '\0');
+    }
+    CHECK(strcmp(librdp_status_name((librdp_status)-1000), "unknown") == 0);
     CHECK(strcmp(librdp_status_string((librdp_status)-1000), "unknown") == 0);
+    CHECK(strcmp(librdp_status_description((librdp_status)-1000), "Unknown status code.") == 0);
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
