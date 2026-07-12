@@ -16,6 +16,7 @@ REQUIRED = (
     "README.md",
     "docs/build.md",
     "docs/api.md",
+    "docs/abi-versioning.md",
     "docs/architecture.md",
     "docs/portability.md",
     "docs/protocol-support.md",

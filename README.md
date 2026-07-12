@@ -15,6 +15,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 
 - [Build](docs/build.md)
 - [API](docs/api.md)
+- [ABI and versioning](docs/abi-versioning.md)
 - [Architecture](docs/architecture.md)
 - [Portability](docs/portability.md)
 - [Protocol support](docs/protocol-support.md)
