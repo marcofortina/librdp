@@ -812,12 +812,124 @@ struct librdp_session
     uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
+    uint8_t trace_policy_configured;
+    librdp_trace_policy trace_policy;
+    char* trace_file_path;
+    char* trace_session_id;
+    char* trace_connection_id;
+    char* trace_id;
+    FILE* trace_file;
+    uint64_t trace_sequence;
+    uint64_t trace_first_ns;
 };
 
 static void rdp_session_emit(librdp_session* session, const librdp_event* event)
 {
     if (session && session->callback && event)
         session->callback(session, event, session->callback_data);
+}
+
+static char* rdp_session_trace_strdup(const char* text)
+{
+    size_t len = 0;
+    char* out = NULL;
+
+    if (!text)
+        return NULL;
+    len = strlen(text);
+    out = (char*)malloc(len + 1u);
+    if (!out)
+        return NULL;
+    memcpy(out, text, len + 1u);
+    return out;
+}
+
+static void rdp_session_trace_policy_clear(librdp_session* session)
+{
+    if (!session)
+        return;
+    if (session->trace_file)
+        fclose(session->trace_file);
+    session->trace_file = NULL;
+    free(session->trace_file_path);
+    free(session->trace_session_id);
+    free(session->trace_connection_id);
+    free(session->trace_id);
+    session->trace_file_path = NULL;
+    session->trace_session_id = NULL;
+    session->trace_connection_id = NULL;
+    session->trace_id = NULL;
+    memset(&session->trace_policy, 0, sizeof(session->trace_policy));
+    session->trace_policy_configured = 0;
+    session->trace_sequence = 0;
+    session->trace_first_ns = 0;
+}
+
+static rdp_trace_level rdp_session_trace_level_internal(librdp_trace_level level)
+{
+    switch (level)
+    {
+        case LIBRDP_TRACE_LEVEL_ERROR:
+            return RDP_TRACE_LEVEL_ERROR;
+        case LIBRDP_TRACE_LEVEL_WARN:
+            return RDP_TRACE_LEVEL_WARN;
+        case LIBRDP_TRACE_LEVEL_INFO:
+            return RDP_TRACE_LEVEL_INFO;
+        case LIBRDP_TRACE_LEVEL_DEBUG:
+            return RDP_TRACE_LEVEL_DEBUG;
+        case LIBRDP_TRACE_LEVEL_TRACE:
+            return RDP_TRACE_LEVEL_TRACE;
+        default:
+            return RDP_TRACE_LEVEL_INFO;
+    }
+}
+
+static int rdp_session_trace_policy_valid(const librdp_trace_policy* policy)
+{
+    const uint32_t known_categories = LIBRDP_TRACE_CATEGORY_ALL;
+
+    if (!policy || policy->version != LIBRDP_TRACE_POLICY_VERSION ||
+        policy->size < sizeof(librdp_trace_policy) ||
+        (policy->categories & ~known_categories) != 0 ||
+        policy->level > LIBRDP_TRACE_LEVEL_TRACE)
+        return 0;
+    if (policy->sink == LIBRDP_TRACE_SINK_DISABLED)
+        return 1;
+    if (policy->categories == 0)
+        return 0;
+    if (policy->sink == LIBRDP_TRACE_SINK_CALLBACK)
+        return policy->callback != NULL;
+    if (policy->sink == LIBRDP_TRACE_SINK_FILE)
+        return policy->file_path && policy->file_path[0] != '\0';
+    return policy->sink == LIBRDP_TRACE_SINK_STDERR;
+}
+
+static void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_scope* scope)
+{
+    if (!session || !scope || !session->trace_policy_configured)
+        return;
+    memset(scope, 0, sizeof(*scope));
+    scope->session = session;
+    scope->categories = session->trace_policy.categories;
+    scope->level = rdp_session_trace_level_internal(session->trace_policy.level);
+    scope->hex_limit = session->trace_policy.hex_bytes;
+    scope->unsafe_hexdump = session->trace_policy.unsafe_payloads != 0;
+    scope->sink = session->trace_policy.sink;
+    scope->file = session->trace_file;
+    scope->callback = session->trace_policy.callback;
+    scope->callback_user_data = session->trace_policy.callback_user_data;
+    scope->session_id = session->trace_session_id;
+    scope->connection_id = session->trace_connection_id;
+    scope->trace_id = session->trace_id;
+    scope->sequence = &session->trace_sequence;
+    scope->first_ns = &session->trace_first_ns;
+    rdp_trace_push_session(scope);
+}
+
+static void rdp_session_trace_scope_end(const librdp_session* session)
+{
+    if (session && session->trace_policy_configured)
+        rdp_trace_pop_session();
 }
 
 static void rdp_session_set_state(librdp_session* session, librdp_session_state state)
@@ -29366,6 +29478,7 @@ void librdp_session_free(librdp_session* session)
     rdp_graphics_decompressor_free(&session->graphics_decompressor);
     rdp_security_standard_clear(&session->standard_security);
     rdp_transport_close(&session->transport);
+    rdp_session_trace_policy_clear(session);
     librdp_surface_free(session->surface);
     librdp_settings_free(session->settings);
     free(session);
@@ -29377,6 +29490,99 @@ void librdp_session_set_event_callback(librdp_session* session, librdp_event_cal
         return;
     session->callback = callback;
     session->callback_data = user_data;
+}
+
+librdp_status librdp_trace_policy_init(librdp_trace_policy* policy)
+{
+    if (!policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(policy, 0, sizeof(*policy));
+    policy->version = LIBRDP_TRACE_POLICY_VERSION;
+    policy->size = (uint32_t)sizeof(*policy);
+    policy->categories = LIBRDP_TRACE_CATEGORY_ALL;
+    policy->level = LIBRDP_TRACE_LEVEL_INFO;
+    policy->sink = LIBRDP_TRACE_SINK_STDERR;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_set_trace_policy(librdp_session* session, const librdp_trace_policy* policy)
+{
+    librdp_trace_policy copy;
+    char* file_path = NULL;
+    char* session_id = NULL;
+    char* connection_id = NULL;
+    char* trace_id = NULL;
+    FILE* file = NULL;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!policy)
+    {
+        rdp_session_trace_policy_clear(session);
+        return LIBRDP_STATUS_OK;
+    }
+    if (!rdp_session_trace_policy_valid(policy))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(&copy, 0, sizeof(copy));
+    copy = *policy;
+    if (policy->file_path)
+    {
+        file_path = rdp_session_trace_strdup(policy->file_path);
+        if (!file_path)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    if (policy->session_id)
+    {
+        session_id = rdp_session_trace_strdup(policy->session_id);
+        if (!session_id)
+            goto no_memory;
+    }
+    if (policy->connection_id)
+    {
+        connection_id = rdp_session_trace_strdup(policy->connection_id);
+        if (!connection_id)
+            goto no_memory;
+    }
+    if (policy->trace_id)
+    {
+        trace_id = rdp_session_trace_strdup(policy->trace_id);
+        if (!trace_id)
+            goto no_memory;
+    }
+    if (policy->sink == LIBRDP_TRACE_SINK_FILE)
+    {
+        file = fopen(file_path, "a");
+        if (!file)
+        {
+            free(file_path);
+            free(session_id);
+            free(connection_id);
+            free(trace_id);
+            return LIBRDP_STATUS_IO_ERROR;
+        }
+    }
+
+    rdp_session_trace_policy_clear(session);
+    copy.file_path = file_path;
+    copy.session_id = session_id;
+    copy.connection_id = connection_id;
+    copy.trace_id = trace_id;
+    session->trace_policy = copy;
+    session->trace_file_path = file_path;
+    session->trace_session_id = session_id;
+    session->trace_connection_id = connection_id;
+    session->trace_id = trace_id;
+    session->trace_file = file;
+    session->trace_policy_configured = 1;
+    return LIBRDP_STATUS_OK;
+
+no_memory:
+    free(file_path);
+    free(session_id);
+    free(connection_id);
+    free(trace_id);
+    return LIBRDP_STATUS_NO_MEMORY;
 }
 
 /*
@@ -29410,6 +29616,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     uint32_t server_encryption_method = 0;
     uint32_t server_encryption_level = 0;
     int standard_security_ready = 0;
+    rdp_trace_session_scope trace_scope;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -29420,6 +29627,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (!librdp_settings_target(session->settings))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
+    rdp_session_trace_scope_begin(session, &trace_scope);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.start", "target=%s port=%u width=%u height=%u",
                     librdp_settings_target(session->settings),
                     (unsigned)librdp_settings_port(session->settings),
@@ -30386,6 +30594,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    rdp_session_trace_scope_end(session);
     return LIBRDP_STATUS_OK;
 
 fail:
@@ -30479,6 +30688,7 @@ fail:
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    rdp_session_trace_scope_end(session);
     return rdp_session_fail(session, status);
 }
 
@@ -30487,7 +30697,7 @@ fail:
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
  * are processed without re-entering callbacks concurrently.
  */
-librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
+static librdp_status rdp_session_run_once_inner(librdp_session* session, int timeout_ms)
 {
     short revents = 0;
     rdp_buffer packet;
@@ -31409,12 +31619,25 @@ done:
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_run_once_inner(session, timeout_ms);
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_run_once_inner(session, timeout_ms);
+    rdp_session_trace_scope_end(session);
+    return status;
+}
+
 /*
  * Tear down an active or partially connected session. Transport, channels,
  * backends, caches, surfaces, and sensitive buffers are released in an order
  * that prevents callbacks from observing freed state.
  */
-librdp_status librdp_session_disconnect(librdp_session* session)
+static librdp_status rdp_session_disconnect_inner(librdp_session* session)
 {
     librdp_event event;
 
@@ -31559,6 +31782,19 @@ librdp_status librdp_session_disconnect(librdp_session* session)
     rdp_session_emit(session, &event);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.disconnect.done", "status=ok");
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_disconnect(librdp_session* session)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_disconnect_inner(session);
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_disconnect_inner(session);
+    rdp_session_trace_scope_end(session);
+    return status;
 }
 
 librdp_status librdp_session_resize(librdp_session* session, uint32_t width, uint32_t height)
@@ -32234,7 +32470,7 @@ static librdp_status rdp_session_validate_pen_frames(const librdp_pen_frame* fra
  * Unicode fallback, and release state are validated before the event is
  * written to the selected input path.
  */
-librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
+static librdp_status rdp_session_send_key_inner(librdp_session* session, const librdp_key_event* key)
 {
     uint16_t flags = 0;
     rdp_buffer input;
@@ -32322,12 +32558,25 @@ librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_session_send_key(librdp_session* session, const librdp_key_event* key)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_send_key_inner(session, key);
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_send_key_inner(session, key);
+    rdp_session_trace_scope_end(session);
+    return status;
+}
+
 /*
  * Serialize one pointer input event for the connected session. Coordinates,
  * wheel data, and button flags are normalized before the event enters the core
  * input stream.
  */
-librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* mouse)
+static librdp_status rdp_session_send_mouse_inner(librdp_session* session, const librdp_mouse_event* mouse)
 {
     uint16_t flags = 0;
     rdp_buffer input;
@@ -32408,6 +32657,19 @@ librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mo
                     flags);
     rdp_buffer_free(&input);
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_send_mouse(librdp_session* session, const librdp_mouse_event* mouse)
+{
+    rdp_trace_session_scope trace_scope;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return rdp_session_send_mouse_inner(session, mouse);
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    status = rdp_session_send_mouse_inner(session, mouse);
+    rdp_session_trace_scope_end(session);
+    return status;
 }
 
 librdp_status librdp_session_send_touch(librdp_session* session,

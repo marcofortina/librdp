@@ -35,6 +35,11 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_settings_ptr", librdp_settings*, ",");
     ABI_TYPE_ENTRY("librdp_surface_ptr", librdp_surface*, ",");
     ABI_TYPE_ENTRY("librdp_event_callback", librdp_event_callback, ",");
+    ABI_TYPE_ENTRY("librdp_trace_level", librdp_trace_level, ",");
+    ABI_TYPE_ENTRY("librdp_trace_sink", librdp_trace_sink, ",");
+    ABI_TYPE_ENTRY("librdp_trace_callback", librdp_trace_callback, ",");
+    ABI_TYPE_ENTRY("librdp_trace_record", librdp_trace_record, ",");
+    ABI_TYPE_ENTRY("librdp_trace_policy", librdp_trace_policy, ",");
     ABI_TYPE_ENTRY("librdp_status", librdp_status, ",");
     ABI_TYPE_ENTRY("librdp_security_mode", librdp_security_mode, ",");
     ABI_TYPE_ENTRY("librdp_tls_policy_mode", librdp_tls_policy_mode, ",");

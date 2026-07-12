@@ -28,6 +28,7 @@
 #include "security/security.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +72,16 @@ typedef struct event_counter
     int video_capture_close;
     int disconnected;
 } event_counter;
+
+typedef struct trace_capture
+{
+    uint64_t count;
+    uint64_t last_sequence;
+    int saw_connect_start;
+    int saw_protocol;
+    int saw_ids;
+    int saw_line;
+} trace_capture;
 
 int test_protocol(void);
 /*
@@ -155,6 +166,27 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
         default:
             break;
     }
+}
+
+static void on_trace(librdp_session* session, const librdp_trace_record* record, void* user_data)
+{
+    trace_capture* capture = (trace_capture*)user_data;
+
+    if (!session || !record || !capture)
+        return;
+    capture->count++;
+    if (record->sequence > capture->last_sequence)
+        capture->last_sequence = record->sequence;
+    if (record->event && strcmp(record->event, "client.connect.start") == 0)
+        capture->saw_connect_start = 1;
+    if (record->category && strcmp(record->category, "protocol") == 0)
+        capture->saw_protocol = 1;
+    if (record->session_id && strcmp(record->session_id, "session-1") == 0 &&
+        record->connection_id && strcmp(record->connection_id, "connection-1") == 0 &&
+        record->trace_id && strcmp(record->trace_id, "trace-1") == 0)
+        capture->saw_ids = 1;
+    if (record->line && strstr(record->line, "trace_id=trace-1") != NULL)
+        capture->saw_line = 1;
 }
 
 static librdp_tls_certificate_decision core_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
@@ -1221,12 +1253,17 @@ static int test_settings_surface_input_session(void)
     librdp_feature_status feature_status;
     librdp_tls_policy tls_policy;
     librdp_tls_policy tls_policy_out;
+    librdp_trace_policy trace_policy;
+    trace_capture trace;
+    char trace_file_path[] = "/tmp/librdp-trace-XXXXXX";
     event_counter counter;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
+    int trace_fd = -1;
 
     memset(&counter, 0, sizeof(counter));
+    memset(&trace, 0, sizeof(trace));
 
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED),
@@ -1265,6 +1302,12 @@ static int test_settings_surface_input_session(void)
     tls_policy.pinned_sha256 = NULL;
     tls_policy.certificate_callback = NULL;
     CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_trace_policy_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    CHECK(trace_policy.version == LIBRDP_TRACE_POLICY_VERSION);
+    CHECK(trace_policy.categories == LIBRDP_TRACE_CATEGORY_ALL);
+    CHECK(trace_policy.level == LIBRDP_TRACE_LEVEL_INFO);
+    CHECK(trace_policy.sink == LIBRDP_TRACE_SINK_STDERR);
     tls_policy.certificate_callback = core_tls_certificate_callback;
     tls_policy.certificate_callback_user_data = &counter;
     CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_OK);
@@ -1588,6 +1631,22 @@ static int test_settings_surface_input_session(void)
     display_monitors[1].device_scale_factor = 100;
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    CHECK(librdp_session_set_trace_policy(NULL, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = NULL;
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    trace_policy.callback = on_trace;
+    trace_policy.callback_user_data = &trace;
+    trace_policy.categories = 0x80000000u;
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.hex_bytes = 32;
+    trace_policy.session_id = "session-1";
+    trace_policy.connection_id = "connection-1";
+    trace_policy.trace_id = "trace-1";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_set_trace_policy(session, NULL) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_feature_status(NULL,
                                             LIBRDP_FEATURE_TELEMETRY,
                                             &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -1750,7 +1809,24 @@ static int test_settings_surface_input_session(void)
     session = librdp_session_new(settings);
     CHECK(session != NULL);
     librdp_session_set_event_callback(session, on_event, &counter);
+    memset(&trace, 0, sizeof(trace));
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_trace;
+    trace_policy.callback_user_data = &trace;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.hex_bytes = 32;
+    trace_policy.session_id = "session-1";
+    trace_policy.connection_id = "connection-1";
+    trace_policy.trace_id = "trace-1";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(trace.count > 0);
+    CHECK(trace.last_sequence == trace.count);
+    CHECK(trace.saw_connect_start);
+    CHECK(trace.saw_protocol);
+    CHECK(trace.saw_ids);
+    CHECK(trace.saw_line);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
     CHECK(counter.states == 2);
     CHECK(counter.surfaces == 1);
@@ -1784,6 +1860,7 @@ static int test_settings_surface_input_session(void)
     key.state = LIBRDP_KEY_PRESSED;
     CHECK(librdp_session_send_key(session, &key) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_send_mouse(session, &mouse) == LIBRDP_STATUS_OK);
+    CHECK(trace.last_sequence == trace.count);
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
@@ -1793,9 +1870,33 @@ static int test_settings_surface_input_session(void)
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
     CHECK(librdp_surface_height(session_surface) == 48);
+    trace_fd = mkstemp(trace_file_path);
+    CHECK(trace_fd >= 0);
+    CHECK(close(trace_fd) == 0);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.sink = LIBRDP_TRACE_SINK_FILE;
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_CLIENT;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_DEBUG;
+    trace_policy.file_path = trace_file_path;
+    trace_policy.trace_id = "file-trace";
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
     CHECK(counter.disconnected == 1);
+    {
+        char file_trace[1024];
+        int fd = open(trace_file_path, O_RDONLY);
+        ssize_t got = 0;
+
+        CHECK(fd >= 0);
+        got = read(fd, file_trace, sizeof(file_trace) - 1u);
+        CHECK(got > 0);
+        file_trace[(size_t)got] = '\0';
+        CHECK(close(fd) == 0);
+        CHECK(strstr(file_trace, "client.disconnect.start") != NULL);
+        CHECK(strstr(file_trace, "trace_id=file-trace") != NULL);
+    }
     librdp_session_free(session);
+    CHECK(unlink(trace_file_path) == 0);
     if (server_pid > 0)
     {
         CHECK(waitpid(server_pid, &child_status, 0) == server_pid);

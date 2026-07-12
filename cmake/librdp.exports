@@ -25,6 +25,8 @@ _librdp_surface_pixels_mut
 _librdp_session_new
 _librdp_session_free
 _librdp_session_set_event_callback
+_librdp_trace_policy_init
+_librdp_session_set_trace_policy
 _librdp_session_connect
 _librdp_session_run_once
 _librdp_session_disconnect

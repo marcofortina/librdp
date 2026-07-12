@@ -6,6 +6,7 @@
 #ifndef LIBRDP_SESSION_H
 #define LIBRDP_SESSION_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <librdp/error.h>
@@ -80,6 +81,127 @@ typedef struct librdp_display_monitor
     uint32_t device_scale_factor;  /**< Device scale factor percentage. */
 } librdp_display_monitor;
 
+#define LIBRDP_TRACE_POLICY_VERSION 1u /**< Current librdp_trace_policy version. */
+#define LIBRDP_TRACE_RECORD_VERSION 1u /**< Current librdp_trace_record version. */
+
+#define LIBRDP_TRACE_CATEGORY_CLIENT 0x00000001u    /**< Enable client lifecycle, surface, input, and channel trace. */
+#define LIBRDP_TRACE_CATEGORY_TRANSPORT 0x00000002u /**< Enable TCP, TLS, wait, read, and write trace. */
+#define LIBRDP_TRACE_CATEGORY_PROTOCOL 0x00000004u  /**< Enable handshake, parser, PDU, and bounded hexdump trace. */
+#define LIBRDP_TRACE_CATEGORY_ALL                                                                                     \
+    (LIBRDP_TRACE_CATEGORY_CLIENT | LIBRDP_TRACE_CATEGORY_TRANSPORT | LIBRDP_TRACE_CATEGORY_PROTOCOL) /**< Enable all trace categories. */
+
+/**
+ * @brief Public trace severity threshold.
+ *
+ * A session trace policy emits events with a level numerically less than or
+ * equal to the configured threshold. TRACE includes bounded hexdumps subject
+ * to the policy redaction and hex-byte limit.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_trace_level
+{
+    LIBRDP_TRACE_LEVEL_ERROR = 0, /**< Error events only. */
+    LIBRDP_TRACE_LEVEL_WARN = 1,  /**< Warning and error events. */
+    LIBRDP_TRACE_LEVEL_INFO = 2,  /**< Informational, warning, and error events. */
+    LIBRDP_TRACE_LEVEL_DEBUG = 3, /**< Debug, informational, warning, and error events. */
+    LIBRDP_TRACE_LEVEL_TRACE = 4  /**< Full trace events and bounded hexdumps. */
+} librdp_trace_level;
+
+/**
+ * @brief Destination for trace records emitted while a session API is running.
+ *
+ * The sink is evaluated synchronously on the thread that drives the session.
+ * File sinks are opened by the library from a path in librdp_trace_policy; no
+ * platform file handle is exposed in the ABI.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_trace_sink
+{
+    LIBRDP_TRACE_SINK_DISABLED = 0, /**< Disable session-scoped trace. */
+    LIBRDP_TRACE_SINK_STDERR = 1,   /**< Write formatted trace lines to stderr. */
+    LIBRDP_TRACE_SINK_CALLBACK = 2, /**< Deliver trace records to a callback only. */
+    LIBRDP_TRACE_SINK_FILE = 3      /**< Append formatted trace lines to a configured file path. */
+} librdp_trace_sink;
+
+/**
+ * @brief Trace record delivered to a session trace callback.
+ *
+ * All pointer fields are borrowed and valid only until the callback returns.
+ * line contains the exact formatted line that would be written to a text sink.
+ * message contains the escaped key=value message for normal events, or NULL
+ * for hexdump records where details are in line.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_trace_record
+{
+    uint32_t version;           /**< Struct version, LIBRDP_TRACE_RECORD_VERSION. */
+    uint32_t size;              /**< Size of this struct in bytes. */
+    uint64_t sequence;          /**< Session-scoped monotonically increasing sequence number. */
+    uint64_t timestamp_ns;      /**< Monotonic timestamp in nanoseconds. */
+    uint64_t elapsed_us;        /**< Microseconds elapsed since this session trace scope first emitted a record. */
+    const char* session_id;     /**< Optional borrowed session identifier from the policy, or NULL. */
+    const char* connection_id;  /**< Optional borrowed connection identifier from the policy, or NULL. */
+    const char* trace_id;       /**< Optional borrowed distributed trace identifier from the policy, or NULL. */
+    const char* category;       /**< Borrowed category token, such as "client", "transport", or "protocol". */
+    const char* event;          /**< Borrowed stable event name. */
+    const char* level;          /**< Borrowed level token. */
+    const char* message;        /**< Borrowed escaped key=value message for normal events, or NULL for hexdumps. */
+    const char* line;           /**< Borrowed complete formatted trace line. */
+} librdp_trace_record;
+
+/**
+ * @brief Session trace callback.
+ *
+ * The callback runs synchronously on the thread that emits the trace record.
+ * record and all borrowed pointers inside it are valid only until the callback
+ * returns. user_data is the pointer configured in librdp_trace_policy.
+ *
+ * @param[in] session Session that emitted the trace; never NULL during a
+ * session-scoped callback.
+ * @param[in] record Trace record; never NULL during callback.
+ * @param[in,out] user_data Opaque application pointer; may be NULL.
+ *
+ * @note Thread-safety: callbacks are not invoked concurrently by one session
+ * unless the application concurrently drives that session, which is unsupported.
+ * @warning Trace records may describe sensitive operations. Payload bodies are
+ * redacted by default; unsafe payload tracing must be explicitly enabled.
+ * @since 0.1.0
+ */
+typedef void (*librdp_trace_callback)(librdp_session* session,
+                                      const librdp_trace_record* record,
+                                      void* user_data);
+
+/**
+ * @brief Versioned session trace policy.
+ *
+ * Initialize with librdp_trace_policy_init() before changing fields. category
+ * flags select which trace categories are active. file_path, session_id,
+ * connection_id, and trace_id are copied by librdp_session_set_trace_policy().
+ * callback and callback_user_data are stored as-is and must remain valid while
+ * the policy is installed.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_trace_policy
+{
+    uint32_t version;       /**< Struct version, LIBRDP_TRACE_POLICY_VERSION. */
+    uint32_t size;          /**< Size of this struct in bytes. */
+    uint32_t categories;    /**< Bitmask of LIBRDP_TRACE_CATEGORY_* values. */
+    librdp_trace_level level; /**< Maximum emitted severity level. */
+    uint32_t hex_bytes;     /**< Maximum bytes dumped by hexdump records; zero disables dump bytes. */
+    int unsafe_payloads;    /**< Non-zero to allow sensitive payload bodies in hexdumps. */
+    librdp_trace_sink sink; /**< Trace sink destination. */
+    const char* file_path;  /**< File path for FILE sink; copied on set and otherwise ignored. */
+    librdp_trace_callback callback; /**< Callback for CALLBACK sink; borrowed, not copied. */
+    void* callback_user_data;       /**< Opaque pointer passed to callback; may be NULL. */
+    const char* session_id;         /**< Optional application session identifier; copied on set. */
+    const char* connection_id;      /**< Optional application connection identifier; copied on set. */
+    const char* trace_id;           /**< Optional distributed trace identifier; copied on set. */
+} librdp_trace_policy;
+
 /**
  * @brief Session event callback.
  *
@@ -91,6 +213,24 @@ typedef struct librdp_display_monitor
  * @since 0.1.0
  */
 typedef void (*librdp_event_callback)(librdp_session* session, const librdp_event* event, void* user_data);
+
+/**
+ * @brief Initialize a trace policy to safe stderr defaults.
+ *
+ * The initialized policy enables all categories at INFO level, sets the sink to
+ * STDERR, disables unsafe payload dumping, and sets hex_bytes to zero. String
+ * pointers and callback fields are NULL.
+ *
+ * @param[out] policy Policy object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * policy is NULL.
+ *
+ * @note Thread-safety: this function writes only the caller-owned policy
+ * object and can be used without a session.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_trace_policy_init(librdp_trace_policy* policy);
 
 /**
  * @brief Create a client session from immutable settings.
@@ -151,6 +291,34 @@ LIBRDP_API void librdp_session_free(librdp_session* session);
  * @since 0.1.0
  */
 LIBRDP_API void librdp_session_set_event_callback(librdp_session* session, librdp_event_callback callback, void* user_data);
+
+/**
+ * @brief Install, replace, or clear a session-scoped trace policy.
+ *
+ * A non-NULL policy overrides environment-driven internal trace while session
+ * APIs are running for this session. Passing NULL clears the session policy and
+ * restores the environment-controlled backend. The policy descriptor must have
+ * version LIBRDP_TRACE_POLICY_VERSION and a size large enough for the current
+ * struct. String fields are copied; callback pointers and callback_user_data
+ * are borrowed.
+ *
+ * @param[in,out] session Session to configure; must not be NULL.
+ * @param[in] policy Trace policy to install, or NULL to clear the session policy.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * session, invalid policy version, invalid category bits, invalid sink, missing
+ * callback for CALLBACK sink, or missing file_path for FILE sink;
+ * LIBRDP_STATUS_NO_MEMORY on allocation failure; LIBRDP_STATUS_IO_ERROR when a
+ * FILE sink path cannot be opened for append.
+ *
+ * @note Thread-safety: configure trace before driving the session, or serialize
+ * externally with all session API calls.
+ * @warning Enabling unsafe_payloads can expose credentials, input, clipboard,
+ * APDU, file, audio, video, and USB payload data in trace output.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_set_trace_policy(librdp_session* session,
+                                                         const librdp_trace_policy* policy);
 
 /**
  * @brief Establish the initial RDP connection and send client setup PDUs.

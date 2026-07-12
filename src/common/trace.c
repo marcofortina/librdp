@@ -43,6 +43,7 @@ typedef struct rdp_trace_config
 
 static rdp_trace_config g_trace;
 static atomic_ullong g_trace_seq;
+static _Thread_local rdp_trace_session_scope* g_trace_scope;
 
 static uint64_t rdp_trace_now_ns(void)
 {
@@ -121,10 +122,27 @@ void rdp_trace_reset_for_tests(void)
 {
     memset(&g_trace, 0, sizeof(g_trace));
     atomic_store(&g_trace_seq, 0);
+    g_trace_scope = NULL;
+}
+
+void rdp_trace_push_session(rdp_trace_session_scope* scope)
+{
+    g_trace_scope = scope;
+}
+
+void rdp_trace_pop_session(void)
+{
+    g_trace_scope = NULL;
 }
 
 bool rdp_trace_enabled(rdp_trace_category category)
 {
+    if (g_trace_scope)
+    {
+        if (g_trace_scope->sink == LIBRDP_TRACE_SINK_DISABLED)
+            return false;
+        return (g_trace_scope->categories & (uint32_t)category) != 0;
+    }
     if (!g_trace.initialized)
         rdp_trace_refresh_from_env();
 
@@ -145,6 +163,8 @@ bool rdp_trace_enabled_level(rdp_trace_category category, rdp_trace_level level)
 {
     if (!rdp_trace_enabled(category))
         return false;
+    if (g_trace_scope)
+        return level <= g_trace_scope->level;
     return level <= g_trace.level;
 }
 
@@ -211,13 +231,69 @@ static const char* rdp_trace_sensitivity_name(rdp_trace_sensitivity sensitivity)
 
 static unsigned long long rdp_trace_next_seq(uint64_t* now, uint64_t* elapsed_us)
 {
-    const unsigned long long seq = atomic_fetch_add(&g_trace_seq, 1) + 1;
+    unsigned long long seq = 0;
 
     *now = rdp_trace_now_ns();
+    if (g_trace_scope && g_trace_scope->sequence && g_trace_scope->first_ns)
+    {
+        (*g_trace_scope->sequence)++;
+        seq = (unsigned long long)*g_trace_scope->sequence;
+        if (*g_trace_scope->first_ns == 0)
+            *g_trace_scope->first_ns = *now;
+        *elapsed_us = (*now >= *g_trace_scope->first_ns) ? ((*now - *g_trace_scope->first_ns) / 1000u) : 0;
+        return seq;
+    }
+
+    seq = atomic_fetch_add(&g_trace_seq, 1) + 1;
     if (g_trace.first_ns == 0)
         g_trace.first_ns = *now;
     *elapsed_us = (*now >= g_trace.first_ns) ? ((*now - g_trace.first_ns) / 1000u) : 0;
     return seq;
+}
+
+static void rdp_trace_emit_line(unsigned long long seq,
+                                uint64_t now,
+                                uint64_t elapsed_us,
+                                const char* category,
+                                const char* event,
+                                const char* level,
+                                const char* message,
+                                const char* line)
+{
+    if (g_trace_scope)
+    {
+        if (g_trace_scope->sink == LIBRDP_TRACE_SINK_CALLBACK && g_trace_scope->callback)
+        {
+            librdp_trace_record record;
+
+            memset(&record, 0, sizeof(record));
+            record.version = LIBRDP_TRACE_RECORD_VERSION;
+            record.size = (uint32_t)sizeof(record);
+            record.sequence = (uint64_t)seq;
+            record.timestamp_ns = now;
+            record.elapsed_us = elapsed_us;
+            record.session_id = g_trace_scope->session_id;
+            record.connection_id = g_trace_scope->connection_id;
+            record.trace_id = g_trace_scope->trace_id;
+            record.category = category;
+            record.event = event;
+            record.level = level;
+            record.message = message;
+            record.line = line;
+            g_trace_scope->callback(g_trace_scope->session, &record, g_trace_scope->callback_user_data);
+            return;
+        }
+        if (g_trace_scope->sink == LIBRDP_TRACE_SINK_FILE && g_trace_scope->file)
+        {
+            fputs(line, g_trace_scope->file);
+            fflush(g_trace_scope->file);
+            return;
+        }
+        if (g_trace_scope->sink != LIBRDP_TRACE_SINK_STDERR)
+            return;
+    }
+
+    fputs(line, stderr);
 }
 
 static void rdp_trace_escape_message(const char* in, char* out, size_t out_len)
@@ -266,6 +342,9 @@ static void rdp_trace_event_v(rdp_trace_category category,
     unsigned long long seq = 0;
     char message[1024];
     char escaped[2048];
+    char line[4096];
+    const char* category_name = NULL;
+    const char* level_name = NULL;
 
     if (!event || !rdp_trace_enabled_level(category, level))
         return;
@@ -276,15 +355,22 @@ static void rdp_trace_event_v(rdp_trace_category category,
 
     rdp_trace_escape_message(message, escaped, sizeof(escaped));
     seq = rdp_trace_next_seq(&now, &elapsed_us);
-    fprintf(stderr,
-            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=%s event=%s level=%s message=\"%s\"\n",
-            seq,
-            (unsigned long long)now,
-            (unsigned long long)elapsed_us,
-            rdp_trace_category_name(category),
-            event,
-            rdp_trace_level_name(level),
-            escaped);
+    category_name = rdp_trace_category_name(category);
+    level_name = rdp_trace_level_name(level);
+    (void)snprintf(line,
+                   sizeof(line),
+                   "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=%s event=%s level=%s session_id=%s connection_id=%s trace_id=%s message=\"%s\"\n",
+                   seq,
+                   (unsigned long long)now,
+                   (unsigned long long)elapsed_us,
+                   category_name,
+                   event,
+                   level_name,
+                   (g_trace_scope && g_trace_scope->session_id) ? g_trace_scope->session_id : "",
+                   (g_trace_scope && g_trace_scope->connection_id) ? g_trace_scope->connection_id : "",
+                   (g_trace_scope && g_trace_scope->trace_id) ? g_trace_scope->trace_id : "",
+                   escaped);
+    rdp_trace_emit_line(seq, now, elapsed_us, category_name, event, level_name, escaped, line);
 }
 
 void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...)
@@ -305,6 +391,16 @@ void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, c
     va_end(ap);
 }
 
+/*
+ * Purpose: emit bounded protocol hexdumps through the active global or
+ * session-scoped trace backend.
+ * Invariants: every caller supplies a sensitivity class, sensitive payload
+ * bodies are capped to header bytes unless unsafe tracing is explicitly
+ * enabled, and LIBRDP_TRACE_HEX_BYTES or the session policy always bounds
+ * output size.
+ * Failure policy: invalid arguments or disabled trace silently suppress output
+ * because tracing must not alter protocol control flow.
+ */
 void rdp_trace_hexdump(const char* event,
                        rdp_trace_sensitivity sensitivity,
                        const void* payload,
@@ -328,8 +424,10 @@ void rdp_trace_hexdump(const char* event,
         !rdp_trace_enabled_level(RDP_TRACE_PROTOCOL, RDP_TRACE_LEVEL_TRACE))
         return;
 
-    unsafe = g_trace.initialized ? g_trace.unsafe_hexdump : rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE"));
-    limit = g_trace.initialized ? g_trace.hex_limit : rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
+    unsafe = g_trace_scope ? g_trace_scope->unsafe_hexdump :
+        (g_trace.initialized ? g_trace.unsafe_hexdump : rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE")));
+    limit = g_trace_scope ? g_trace_scope->hex_limit :
+        (g_trace.initialized ? g_trace.hex_limit : rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES")));
     if (!unsafe && sensitivity != RDP_TRACE_SENSITIVITY_HEADER && limit > RDP_TRACE_REDACTED_HEADER_BYTES)
         limit = RDP_TRACE_REDACTED_HEADER_BYTES;
     dumped = payload_len < limit ? payload_len : limit;
@@ -351,17 +449,27 @@ void rdp_trace_hexdump(const char* event,
     ascii[apos] = '\0';
 
     seq = rdp_trace_next_seq(&now, &elapsed_us);
-    fprintf(stderr,
-            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s level=trace payload_len=%llu dumped=%llu hex=%s ascii=\"%s\" sensitivity=%s redacted=%u unsafe=%u\n",
-            seq,
-            (unsigned long long)now,
-            (unsigned long long)elapsed_us,
-            event,
-            (unsigned long long)payload_len,
-            (unsigned long long)dumped,
-            hex,
-            ascii,
-            rdp_trace_sensitivity_name(sensitivity),
-            redacted ? 1u : 0u,
-            unsafe ? 1u : 0u);
+    {
+        char line[4096];
+        const char* level_name = rdp_trace_level_name(RDP_TRACE_LEVEL_TRACE);
+
+        (void)snprintf(line,
+                       sizeof(line),
+                       "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s level=trace session_id=%s connection_id=%s trace_id=%s payload_len=%llu dumped=%llu hex=%s ascii=\"%s\" sensitivity=%s redacted=%u unsafe=%u\n",
+                       seq,
+                       (unsigned long long)now,
+                       (unsigned long long)elapsed_us,
+                       event,
+                       (g_trace_scope && g_trace_scope->session_id) ? g_trace_scope->session_id : "",
+                       (g_trace_scope && g_trace_scope->connection_id) ? g_trace_scope->connection_id : "",
+                       (g_trace_scope && g_trace_scope->trace_id) ? g_trace_scope->trace_id : "",
+                       (unsigned long long)payload_len,
+                       (unsigned long long)dumped,
+                       hex,
+                       ascii,
+                       rdp_trace_sensitivity_name(sensitivity),
+                       redacted ? 1u : 0u,
+                       unsafe ? 1u : 0u);
+        rdp_trace_emit_line(seq, now, elapsed_us, "protocol", event, level_name, NULL, line);
+    }
 }
