@@ -1,0 +1,289 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  gcc-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential cmake ninja-build pkg-config python3 doxygen graphviz
+          libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
+          libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
+          libacl1-dev libattr1-dev libarchive-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-gcc-debug
+          key: build-gcc-debug-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-gcc-debug -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=gcc
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build-gcc-debug -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-gcc-debug --output-on-failure
+
+  clang-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz
+          libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
+          libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
+          libacl1-dev libattr1-dev libarchive-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-clang-debug
+          key: build-clang-debug-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-clang-debug -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build-clang-debug -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-clang-debug --output-on-failure
+
+  core-all-off:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential cmake ninja-build pkg-config python3 doxygen graphviz
+          libssl-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-core-all-off
+          key: build-core-all-off-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-core-all-off -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=OFF
+          -DLIBRDP_WITH_OPENH264_AVC=OFF
+          -DLIBRDP_WITH_PCSC=OFF
+          -DLIBRDP_WITH_LIBUSB=OFF
+          -DLIBRDP_WITH_FIDO2=OFF
+          -DLIBRDP_WITH_CBOR=OFF
+          -DLIBRDP_WITH_CUPS=OFF
+          -DLIBRDP_WITH_ACL=OFF
+          -DLIBRDP_WITH_ATTR=OFF
+          -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+
+      - name: Build
+        run: cmake --build build-core-all-off -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-core-all-off --output-on-failure
+
+  shared-export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential cmake ninja-build pkg-config python3 libssl-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-shared-export
+          key: build-shared-export-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-shared-export -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_SHARED_LIBS=ON
+          -DLIBRDP_LIBRARY_TYPE=BOTH
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=OFF
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=OFF
+          -DLIBRDP_WITH_OPENH264_AVC=OFF
+          -DLIBRDP_WITH_PCSC=OFF
+          -DLIBRDP_WITH_LIBUSB=OFF
+          -DLIBRDP_WITH_FIDO2=OFF
+          -DLIBRDP_WITH_CBOR=OFF
+          -DLIBRDP_WITH_CUPS=OFF
+          -DLIBRDP_WITH_ACL=OFF
+          -DLIBRDP_WITH_ATTR=OFF
+          -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+
+      - name: Build shared library and ABI probe
+        run: cmake --build build-shared-export --target librdp_shared test_abi_probe -j$(nproc)
+
+      - name: Check exported symbols and ABI baseline
+        run: ctest --test-dir build-shared-export -R '^(shared_symbol_visibility|abi_baseline)$' --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential clang cmake ninja-build pkg-config python3 libssl-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-sanitizers
+          key: build-sanitizers-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-sanitizers -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=OFF
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_ENABLE_SANITIZERS=ON
+          '-DLIBRDP_SANITIZERS=address;undefined'
+          -DLIBRDP_WITH_FFMPEG_AVC=OFF
+          -DLIBRDP_WITH_OPENH264_AVC=OFF
+          -DLIBRDP_WITH_PCSC=OFF
+          -DLIBRDP_WITH_LIBUSB=OFF
+          -DLIBRDP_WITH_FIDO2=OFF
+          -DLIBRDP_WITH_CBOR=OFF
+          -DLIBRDP_WITH_CUPS=OFF
+          -DLIBRDP_WITH_ACL=OFF
+          -DLIBRDP_WITH_ATTR=OFF
+          -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+
+      - name: Build
+        run: cmake --build build-sanitizers -j$(nproc)
+
+      - name: Run sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-sanitizers -R '^(common|core|protocol|transport)$' --output-on-failure
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential clang cmake ninja-build pkg-config python3 libssl-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build-fuzz-smoke
+          key: build-fuzz-smoke-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-fuzz-smoke -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DLIBRDP_BUILD_TESTS=OFF
+          -DLIBRDP_BUILD_FUZZ=ON
+          -DLIBRDP_BUILD_EXAMPLES=OFF
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=OFF
+          -DLIBRDP_WITH_OPENH264_AVC=OFF
+          -DLIBRDP_WITH_PCSC=OFF
+          -DLIBRDP_WITH_LIBUSB=OFF
+          -DLIBRDP_WITH_FIDO2=OFF
+          -DLIBRDP_WITH_CBOR=OFF
+          -DLIBRDP_WITH_CUPS=OFF
+          -DLIBRDP_WITH_ACL=OFF
+          -DLIBRDP_WITH_ATTR=OFF
+          -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+
+      - name: Build fuzz targets
+        run: cmake --build build-fuzz-smoke -j$(nproc)
+
+      - name: Run seed corpus smoke
+        run: ctest --test-dir build-fuzz-smoke -R 'seed_smoke$' --output-on-failure
