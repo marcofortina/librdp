@@ -98,29 +98,61 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     };
     rdp_graphics_avc420_quant_quality valid_avc_quant = {0x45, 5, 1, 0, 100};
     rdp_graphics_avc420_metablock valid_avc_meta = {
-        1,
-        avc_rect,
-        sizeof(avc_rect),
-        avc_quant_bytes,
-        sizeof(avc_quant_bytes)
+        .rect_count = 1,
+        .rects = avc_rect,
+        .rects_len = sizeof(avc_rect),
+        .quant_quality = avc_quant_bytes,
+        .quant_quality_len = sizeof(avc_quant_bytes)
     };
     rdp_graphics_avc420_stream valid_avc420_1 = {
-        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
-        avc_bits1,
-        sizeof(avc_bits1)
+        .meta = {
+            .rect_count = 1,
+            .rects = avc_rect,
+            .rects_len = sizeof(avc_rect),
+            .quant_quality = avc_quant_bytes,
+            .quant_quality_len = sizeof(avc_quant_bytes)
+        },
+        .bitstream = avc_bits1,
+        .bitstream_len = sizeof(avc_bits1)
     };
     rdp_graphics_avc420_stream valid_avc420_2 = {
-        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
-        avc_bits2,
-        sizeof(avc_bits2)
+        .meta = {
+            .rect_count = 1,
+            .rects = avc_rect,
+            .rects_len = sizeof(avc_rect),
+            .quant_quality = avc_quant_bytes,
+            .quant_quality_len = sizeof(avc_quant_bytes)
+        },
+        .bitstream = avc_bits2,
+        .bitstream_len = sizeof(avc_bits2)
     };
     rdp_graphics_avc444_stream valid_avc444 = {
-        0,
-        RDP_GRAPHICS_AVC444_LC_BOTH,
-        1,
-        1,
-        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)},
-        {1, avc_rect, sizeof(avc_rect), avc_quant_bytes, sizeof(avc_quant_bytes)}
+        .stream1_size = 0,
+        .lc = RDP_GRAPHICS_AVC444_LC_BOTH,
+        .has_stream1 = 1,
+        .has_stream2 = 1,
+        .stream1 = {
+            .meta = {
+                .rect_count = 1,
+                .rects = avc_rect,
+                .rects_len = sizeof(avc_rect),
+                .quant_quality = avc_quant_bytes,
+                .quant_quality_len = sizeof(avc_quant_bytes)
+            },
+            .bitstream = avc_bits1,
+            .bitstream_len = sizeof(avc_bits1)
+        },
+        .stream2 = {
+            .meta = {
+                .rect_count = 1,
+                .rects = avc_rect,
+                .rects_len = sizeof(avc_rect),
+                .quant_quality = avc_quant_bytes,
+                .quant_quality_len = sizeof(avc_quant_bytes)
+            },
+            .bitstream = avc_bits2,
+            .bitstream_len = sizeof(avc_bits2)
+        }
     };
     rdp_graphics_progressive_tile_simple valid_simple_tile;
     rdp_graphics_progressive_tile_first valid_first_tile;

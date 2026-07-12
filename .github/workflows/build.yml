@@ -183,7 +183,7 @@ jobs:
           -DLIBRDP_WITH_JPEG=OFF
 
       - name: Build shared library and ABI probe
-        run: cmake --build build-shared-export --target librdp_shared test_abi_probe -j$(nproc)
+        run: cmake --build build-shared-export --target librdp test_abi_probe -j$(nproc)
 
       - name: Check exported symbols and ABI baseline
         run: ctest --test-dir build-shared-export -R '^(shared_symbol_visibility|abi_baseline)$' --output-on-failure
