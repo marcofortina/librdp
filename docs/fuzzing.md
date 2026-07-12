@@ -35,6 +35,20 @@ printf '\x03\x00' | build-fuzz/fuzz_tpkt
 
 This mode is useful for reproducing minimized inputs without a libFuzzer runtime.
 
+## Naming and structure
+
+Fuzz targets use the `fuzz_<area>` executable name and the `fuzz/<area>_fuzzer.c` source filename. Each target should exercise one parser, decoder, or dispatcher family. Avoid combining unrelated protocols in the same target unless the production code always dispatches them together.
+
+Every target must:
+
+- expose `LLVMFuzzerTestOneInput`;
+- avoid network access and host device access;
+- initialize only deterministic local state;
+- free or reset all per-input allocations;
+- document the target and bug classes in the file header and entrypoint comment.
+
+Add new targets through the `add_librdp_fuzzer()` list in `CMakeLists.txt`.
+
 ## Target classes
 
 Fuzz coverage includes:
@@ -64,3 +78,42 @@ Each target should focus on one or more of:
 Corpora should contain minimized binary samples and should not contain credentials, private keys, personal files, or target-specific secrets.
 
 Crash artifacts should be minimized before being added to any long-term corpus. A minimized crash should include the target name, sanitizer output, and expected fix area in the associated issue or commit.
+
+Recommended local layout:
+
+```text
+corpus/<target>/
+artifacts/<target>/
+```
+
+These directories are local working data and should stay outside tracked source files unless a minimized vector is intentionally added as a unit-test fixture.
+
+## Reproducing a crash
+
+For libFuzzer builds:
+
+```sh
+build-fuzz-clang/fuzz_x224 artifacts/x224/crash-input
+```
+
+For standalone builds:
+
+```sh
+build-fuzz/fuzz_x224 < artifacts/x224/crash-input
+```
+
+After fixing a crash, add a focused unit test when the failure can be represented as a stable protocol or codec vector. Keep the fuzz target broad and deterministic; use unit tests to lock down the exact regression.
+
+## Adding a target
+
+When adding a new fuzz target:
+
+1. Identify the packet-facing entrypoint used by production code.
+2. Construct a minimal deterministic state object if the parser requires one.
+3. Feed the input through the same parse, decode, or dispatch boundary used by the session or channel.
+4. Ignore ordinary parse failures.
+5. Treat sanitizer findings, assertions, leaks, and hangs as bugs.
+6. Add the target to CMake.
+7. Run `scripts/check-test-fuzz-comments.py`.
+
+Do not use fuzz targets to test successful interoperability scenarios. They are for robustness against malformed, truncated, oversized, and inconsistent inputs.
