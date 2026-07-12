@@ -18,6 +18,8 @@ REQUIRED_MARKDOWN = (
     "docs/contributing.md",
     "docs/coding-standards.md",
     "docs/api.md",
+    "docs/api-reference.md",
+    "docs/programmers-reference.md",
     "docs/examples.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
