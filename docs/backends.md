@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 The core library keeps host-specific work behind public settings and viewer or application backends. Optional system libraries enable richer behavior but are not required for the core build.
 
+This page is the backend map. The operational contract for each backend is in [Backend guide](backend-guide.md).
+
 ## Backend matrix
 
 | Feature | Library or provider | Used by |

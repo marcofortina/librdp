@@ -32,6 +32,7 @@ REQUIRED_MARKDOWN = (
     "docs/testing.md",
     "docs/fuzzing.md",
     "docs/backends.md",
+    "docs/backend-guide.md",
     "docs/packaging.md",
     "docs/diagnostics.md",
     "docs/viewer-x11.md",

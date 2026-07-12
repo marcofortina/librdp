@@ -31,6 +31,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Testing](docs/testing.md)
 - [Fuzzing](docs/fuzzing.md)
 - [Backends](docs/backends.md)
+- [Backend guide](docs/backend-guide.md)
 - [Packaging](docs/packaging.md)
 - [Diagnostics](docs/diagnostics.md)
 - [X11 viewer](docs/viewer-x11.md)

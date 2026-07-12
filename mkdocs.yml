@@ -88,6 +88,7 @@ nav:
       - Architecture: architecture.md
       - Protocol support: protocol-support.md
       - Backends: backends.md
+      - Backend guide: backend-guide.md
   - Operations:
       - Security: security.md
       - Tracing: tracing.md
