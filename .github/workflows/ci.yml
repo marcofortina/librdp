@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential pkg-config libssl-dev doxygen
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential pkg-config libssl-dev libavcodec-dev libavutil-dev libswscale-dev doxygen
 
       - name: Configure
         run: cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_EXAMPLES=ON
