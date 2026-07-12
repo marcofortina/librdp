@@ -48,8 +48,13 @@ LIBRDP_0.1 {
         librdp_session_dismiss_touch;
         librdp_session_get_state;
         librdp_session_get_lifecycle;
+        librdp_session_last_error;
+        librdp_session_clear_last_error;
         librdp_session_get_feature_status;
         librdp_session_get_surface;
+        librdp_error_info_init;
+        librdp_error_copy_info;
+        librdp_error_component_name;
         librdp_status_name;
         librdp_status_description;
         librdp_status_string;

@@ -716,6 +716,38 @@ LIBRDP_API librdp_session_state librdp_session_get_state(const librdp_session* s
 LIBRDP_API librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session);
 
 /**
+ * @brief Return the opaque last-error object owned by a session.
+ *
+ * The returned object is owned by the session and must not be freed by the
+ * caller. Copy details with librdp_error_copy_info(). Passing NULL returns
+ * NULL. The object remains valid until librdp_session_free().
+ *
+ * @param[in] session Session to query, or NULL.
+ *
+ * @return Session-owned error object, or NULL when session is NULL.
+ *
+ * @note Thread-safety: copy from the serialized session-driving context, or
+ * protect the session externally while reading.
+ * @warning Error messages are redacted, but applications should still avoid
+ * forwarding diagnostics to untrusted destinations without review.
+ * @since 0.1.0
+ */
+LIBRDP_API const librdp_error* librdp_session_last_error(const librdp_session* session);
+
+/**
+ * @brief Clear the recorded last error for a session.
+ *
+ * Passing NULL is allowed and has no effect. After clearing, the session's
+ * last-error object reports LIBRDP_STATUS_OK and no component or message.
+ *
+ * @param[in,out] session Session whose last error should be cleared, or NULL.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_clear_last_error(librdp_session* session);
+
+/**
  * @brief Query runtime readiness for one optional feature.
  *
  * The function starts from the session's cloned settings and augments the

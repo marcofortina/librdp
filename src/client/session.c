@@ -43,6 +43,7 @@
 #include "channels/video_redirection.h"
 #include "channels/virtual_channel.h"
 #include "channels/webauthn_channel.h"
+#include "client/error_internal.h"
 #include "client/settings_internal.h"
 #include "client/usb_backend.h"
 #include "clipboard/clipboard.h"
@@ -824,6 +825,7 @@ struct librdp_session
     uint32_t share_id;
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
+    librdp_error last_error;
     short pending_tcp_revents;
     short pending_udp_revents;
     uint8_t pending_poll;
@@ -980,10 +982,66 @@ static void rdp_session_set_lifecycle(librdp_session* session, librdp_session_li
                           (unsigned)lifecycle);
 }
 
+static librdp_error_component rdp_session_error_component_for_status(librdp_status status)
+{
+    switch (status)
+    {
+        case LIBRDP_STATUS_IO_ERROR:
+        case LIBRDP_STATUS_TIMEOUT:
+        case LIBRDP_STATUS_CLOSED:
+        case LIBRDP_STATUS_AGAIN:
+            return LIBRDP_ERROR_COMPONENT_TRANSPORT;
+        case LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED:
+        case LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH:
+        case LIBRDP_STATUS_TLS_HANDSHAKE_FAILED:
+            return LIBRDP_ERROR_COMPONENT_TLS;
+        case LIBRDP_STATUS_PROTOCOL_ERROR:
+        case LIBRDP_STATUS_UNSUPPORTED:
+        case LIBRDP_STATUS_SECURITY_DOWNGRADE:
+            return LIBRDP_ERROR_COMPONENT_PROTOCOL;
+        default:
+            return LIBRDP_ERROR_COMPONENT_CLIENT;
+    }
+}
+
+static void rdp_session_set_last_error(librdp_session* session,
+                                       librdp_status status,
+                                       int os_errno,
+                                       librdp_error_component component,
+                                       const char* phase,
+                                       const char* message)
+{
+    if (!session || status == LIBRDP_STATUS_OK)
+        return;
+    rdp_error_set(&session->last_error,
+                  status,
+                  os_errno,
+                  component,
+                  phase,
+                  message,
+                  session->trace_id);
+}
+
+static void rdp_session_set_last_error_if_empty(librdp_session* session,
+                                                librdp_status status,
+                                                const char* phase,
+                                                const char* message)
+{
+    if (!session || rdp_error_has_error(&session->last_error))
+        return;
+    rdp_session_set_last_error(session,
+                               status,
+                               0,
+                               rdp_session_error_component_for_status(status),
+                               phase,
+                               message);
+}
+
 static librdp_status rdp_session_fail(librdp_session* session, librdp_status status)
 {
     librdp_event event;
 
+    rdp_session_set_last_error_if_empty(session, status, "client.dispatch", "session operation failed");
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_FAILED);
     rdp_session_set_state(session, LIBRDP_SESSION_FAILED);
     event.type = LIBRDP_EVENT_ERROR;
@@ -30336,10 +30394,27 @@ librdp_status librdp_session_connect(librdp_session* session)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (session->state != LIBRDP_SESSION_IDLE && session->state != LIBRDP_SESSION_CLOSED &&
         session->state != LIBRDP_SESSION_FAILED)
+    {
+        rdp_session_set_last_error(session,
+                                   LIBRDP_STATUS_STATE,
+                                   0,
+                                   LIBRDP_ERROR_COMPONENT_CLIENT,
+                                   "client.connect.validate",
+                                   "session state does not allow connect");
         return LIBRDP_STATUS_STATE;
+    }
     if (!librdp_settings_target(session->settings))
+    {
+        rdp_session_set_last_error(session,
+                                   LIBRDP_STATUS_INVALID_ARGUMENT,
+                                   0,
+                                   LIBRDP_ERROR_COMPONENT_CLIENT,
+                                   "client.connect.validate",
+                                   "target is missing");
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
 
+    rdp_error_clear(&session->last_error);
     rdp_session_trace_scope_begin(session, &trace_scope);
     rdp_trace_event(RDP_TRACE_CLIENT, "client.connect.start", "target=%s port=%u width=%u height=%u",
                     librdp_settings_target(session->settings),
@@ -30371,11 +30446,25 @@ librdp_status librdp_session_connect(librdp_session* session)
     {
         status = credentials_provider(&provider_credentials, credentials_provider_user_data);
         if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_session_set_last_error(session,
+                                       status,
+                                       0,
+                                       LIBRDP_ERROR_COMPONENT_CLIENT,
+                                       "client.credentials",
+                                       "credentials provider failed");
             goto fail;
+        }
         if (provider_credentials.version != LIBRDP_CREDENTIALS_VERSION ||
             provider_credentials.size < sizeof(provider_credentials))
         {
             status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            rdp_session_set_last_error(session,
+                                       status,
+                                       0,
+                                       LIBRDP_ERROR_COMPONENT_CLIENT,
+                                       "client.credentials",
+                                       "credentials provider returned invalid object");
             goto fail;
         }
         credential_username = provider_credentials.username;
@@ -30526,7 +30615,15 @@ librdp_status librdp_session_connect(librdp_session* session)
                                    librdp_settings_port(session->settings),
                                    5000);
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_set_last_error(session,
+                                   status,
+                                   errno,
+                                   LIBRDP_ERROR_COMPONENT_TRANSPORT,
+                                   "transport.tcp.connect",
+                                   "tcp connect failed");
         goto fail;
+    }
 
     rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_NEGOTIATING);
     protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
@@ -30607,7 +30704,15 @@ librdp_status librdp_session_connect(librdp_session* session)
         rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_TLS_HANDSHAKE);
         status = rdp_transport_start_tls_with_config(&session->transport, &tls_config);
         if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_session_set_last_error(session,
+                                       status,
+                                       errno,
+                                       LIBRDP_ERROR_COMPONENT_TLS,
+                                       "transport.tls.handshake",
+                                       "tls handshake failed");
             goto fail;
+        }
         rdp_session_set_lifecycle(session,
                                   selected_protocol == RDP_X224_PROTOCOL_NLA ?
                                       LIBRDP_LIFECYCLE_AUTHENTICATING :
@@ -30871,6 +30976,12 @@ librdp_status librdp_session_connect(librdp_session* session)
         OPENSSL_cleanse(client_nonce, sizeof(client_nonce));
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_session_set_last_error(session,
+                                       status,
+                                       0,
+                                       LIBRDP_ERROR_COMPONENT_CREDSSP,
+                                       "credssp.nla",
+                                       "nla authentication failed");
             rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
             goto fail;
         }
@@ -33747,6 +33858,17 @@ librdp_session_state librdp_session_get_state(const librdp_session* session)
 librdp_session_lifecycle librdp_session_get_lifecycle(const librdp_session* session)
 {
     return session ? session->lifecycle : LIBRDP_LIFECYCLE_FAILED;
+}
+
+const librdp_error* librdp_session_last_error(const librdp_session* session)
+{
+    return session ? &session->last_error : NULL;
+}
+
+void librdp_session_clear_last_error(librdp_session* session)
+{
+    if (session)
+        rdp_error_clear(&session->last_error);
 }
 
 static int rdp_session_video_runtime_active(const librdp_session* session)

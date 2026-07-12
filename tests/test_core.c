@@ -1482,6 +1482,8 @@ static int test_settings_surface_input_session(void)
         {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"}
     };
     librdp_credentials credentials;
+    librdp_error_info error_info;
+    const librdp_error* session_error = NULL;
     librdp_drive_policy drive_policy;
     librdp_drive_policy drive_policy_out;
     librdp_usb_policy usb_policy;
@@ -1515,6 +1517,15 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_status_name((librdp_status)-1000), "unknown") == 0);
     CHECK(strcmp(librdp_status_string((librdp_status)-1000), "unknown") == 0);
     CHECK(strcmp(librdp_status_description((librdp_status)-1000), "Unknown status code.") == 0);
+    CHECK(librdp_error_info_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.version == LIBRDP_ERROR_INFO_VERSION);
+    CHECK(error_info.status == LIBRDP_STATUS_OK);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_NONE);
+    CHECK(librdp_error_copy_info(NULL, &error_info) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_CLIENT), "client") == 0);
+    CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_TRANSPORT), "transport") == 0);
+    CHECK(strcmp(librdp_error_component_name((librdp_error_component)1000), "unknown") == 0);
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
@@ -1567,6 +1578,28 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_port(settings) == 3389);
     CHECK(librdp_settings_width(settings) == 1024);
     CHECK(librdp_settings_height(settings) == 768);
+    {
+        librdp_session* no_target_session = librdp_session_new(settings);
+
+        CHECK(no_target_session != NULL);
+        CHECK(librdp_session_connect(no_target_session) == LIBRDP_STATUS_INVALID_ARGUMENT);
+        CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_error_copy_info(librdp_session_last_error(no_target_session), &error_info) ==
+              LIBRDP_STATUS_OK);
+        CHECK(error_info.status == LIBRDP_STATUS_INVALID_ARGUMENT);
+        CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
+        CHECK(error_info.os_errno == 0);
+        CHECK(error_info.phase != NULL && strcmp(error_info.phase, "client.connect.validate") == 0);
+        CHECK(error_info.message != NULL && strstr(error_info.message, "target") != NULL);
+        librdp_session_clear_last_error(no_target_session);
+        CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_error_copy_info(librdp_session_last_error(no_target_session), &error_info) ==
+              LIBRDP_STATUS_OK);
+        CHECK(error_info.status == LIBRDP_STATUS_OK);
+        CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_NONE);
+        librdp_session_free(no_target_session);
+        librdp_session_clear_last_error(NULL);
+    }
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
     rdp_settings_secure_string_observer_for_tests(on_secure_string_cleanse, &secure_capture);
@@ -1979,6 +2012,14 @@ static int test_settings_surface_input_session(void)
     display_monitors[1].device_scale_factor = 100;
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    session_error = librdp_session_last_error(session);
+    CHECK(session_error != NULL);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(session_error, &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_OK);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_NONE);
+    CHECK(error_info.phase == NULL);
+    CHECK(librdp_session_last_error(NULL) == NULL);
     CHECK(librdp_session_get_lifecycle(NULL) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_NEW);
     CHECK(librdp_session_set_trace_policy(NULL, &trace_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -2299,6 +2340,13 @@ static int test_settings_surface_input_session(void)
     session = librdp_session_new(settings);
     CHECK(session != NULL);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
+    CHECK(error_info.phase != NULL && strcmp(error_info.phase, "client.credentials") == 0);
+    CHECK(error_info.message != NULL && strstr(error_info.message, "provider") != NULL);
+    CHECK(error_info.message == NULL || strstr(error_info.message, "Welcome1") == NULL);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(credentials_capture.calls == 2);
     librdp_session_free(session);

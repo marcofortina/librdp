@@ -41,6 +41,9 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_trace_record", librdp_trace_record, ",");
     ABI_TYPE_ENTRY("librdp_trace_policy", librdp_trace_policy, ",");
     ABI_TYPE_ENTRY("librdp_status", librdp_status, ",");
+    ABI_TYPE_ENTRY("librdp_error_ptr", librdp_error*, ",");
+    ABI_TYPE_ENTRY("librdp_error_component", librdp_error_component, ",");
+    ABI_TYPE_ENTRY("librdp_error_info", librdp_error_info, ",");
     ABI_TYPE_ENTRY("librdp_security_mode", librdp_security_mode, ",");
     ABI_TYPE_ENTRY("librdp_tls_policy_mode", librdp_tls_policy_mode, ",");
     ABI_TYPE_ENTRY("librdp_tls_certificate_decision", librdp_tls_certificate_decision, ",");
