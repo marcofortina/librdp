@@ -840,6 +840,18 @@ struct librdp_session
     void* callback_data;
     librdp_event_envelope_callback envelope_callback;
     void* envelope_callback_data;
+    librdp_domain_event_callback graphics_callback;
+    void* graphics_callback_data;
+    librdp_domain_event_callback pointer_callback;
+    void* pointer_callback_data;
+    librdp_domain_event_callback channel_callback;
+    void* channel_callback_data;
+    librdp_domain_event_callback clipboard_callback;
+    void* clipboard_callback_data;
+    librdp_domain_event_callback audio_callback;
+    void* audio_callback_data;
+    librdp_domain_event_callback video_callback;
+    void* video_callback_data;
     uint8_t trace_policy_configured;
     librdp_trace_policy trace_policy;
     char* trace_file_path;
@@ -953,11 +965,75 @@ static void rdp_session_event_payload(const librdp_event* event, const void** pa
     }
 }
 
+static int rdp_session_has_domain_callback(const librdp_session* session)
+{
+    return session && (session->graphics_callback || session->pointer_callback || session->channel_callback ||
+                       session->clipboard_callback || session->audio_callback || session->video_callback);
+}
+
+/*
+ * Domain callbacks are a routing layer over the versioned event envelope. The
+ * payload contract stays centralized in rdp_session_event_payload(), so domain
+ * registration cannot drift from the aggregate callback ABI.
+ */
+static void rdp_session_emit_domain(librdp_session* session, const librdp_event_envelope* envelope)
+{
+    librdp_domain_event_callback callback = NULL;
+    void* user_data = NULL;
+
+    if (!session || !envelope)
+        return;
+
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_SURFACE_INVALIDATED:
+            callback = session->graphics_callback;
+            user_data = session->graphics_callback_data;
+            break;
+        case LIBRDP_EVENT_POINTER:
+            callback = session->pointer_callback;
+            user_data = session->pointer_callback_data;
+            break;
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+        case LIBRDP_EVENT_CHANNEL_DATA:
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            callback = session->channel_callback;
+            user_data = session->channel_callback_data;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
+        case LIBRDP_EVENT_CLIPBOARD_DATA:
+        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
+        case LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS:
+            callback = session->clipboard_callback;
+            user_data = session->clipboard_callback_data;
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+        case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
+        case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+            callback = session->audio_callback;
+            user_data = session->audio_callback_data;
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            callback = session->video_callback;
+            user_data = session->video_callback_data;
+            break;
+        default:
+            break;
+    }
+
+    if (callback)
+        callback(session, envelope, user_data);
+}
+
 static void rdp_session_emit(librdp_session* session, const librdp_event* event)
 {
     if (!session || !event)
         return;
-    if (session->envelope_callback)
+    if (session->envelope_callback || rdp_session_has_domain_callback(session))
     {
         librdp_event_envelope envelope;
 
@@ -965,7 +1041,9 @@ static void rdp_session_emit(librdp_session* session, const librdp_event* event)
         envelope.type = event->type;
         envelope.legacy_event = event;
         rdp_session_event_payload(event, &envelope.payload, &envelope.payload_size);
-        session->envelope_callback(session, &envelope, session->envelope_callback_data);
+        if (session->envelope_callback)
+            session->envelope_callback(session, &envelope, session->envelope_callback_data);
+        rdp_session_emit_domain(session, &envelope);
     }
     if (session->callback)
         session->callback(session, event, session->callback_data);
@@ -30592,6 +30670,66 @@ void librdp_session_set_event_envelope_callback(librdp_session* session,
         return;
     session->envelope_callback = callback;
     session->envelope_callback_data = user_data;
+}
+
+void librdp_session_set_graphics_callback(librdp_session* session,
+                                          librdp_domain_event_callback callback,
+                                          void* user_data)
+{
+    if (!session)
+        return;
+    session->graphics_callback = callback;
+    session->graphics_callback_data = user_data;
+}
+
+void librdp_session_set_pointer_callback(librdp_session* session,
+                                         librdp_domain_event_callback callback,
+                                         void* user_data)
+{
+    if (!session)
+        return;
+    session->pointer_callback = callback;
+    session->pointer_callback_data = user_data;
+}
+
+void librdp_session_set_channel_callback(librdp_session* session,
+                                         librdp_domain_event_callback callback,
+                                         void* user_data)
+{
+    if (!session)
+        return;
+    session->channel_callback = callback;
+    session->channel_callback_data = user_data;
+}
+
+void librdp_session_set_clipboard_callback(librdp_session* session,
+                                           librdp_domain_event_callback callback,
+                                           void* user_data)
+{
+    if (!session)
+        return;
+    session->clipboard_callback = callback;
+    session->clipboard_callback_data = user_data;
+}
+
+void librdp_session_set_audio_callback(librdp_session* session,
+                                       librdp_domain_event_callback callback,
+                                       void* user_data)
+{
+    if (!session)
+        return;
+    session->audio_callback = callback;
+    session->audio_callback_data = user_data;
+}
+
+void librdp_session_set_video_callback(librdp_session* session,
+                                       librdp_domain_event_callback callback,
+                                       void* user_data)
+{
+    if (!session)
+        return;
+    session->video_callback = callback;
+    session->video_callback_data = user_data;
 }
 
 librdp_status librdp_trace_policy_init(librdp_trace_policy* policy)

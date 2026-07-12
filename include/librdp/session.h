@@ -298,6 +298,29 @@ typedef void (*librdp_event_envelope_callback)(librdp_session* session,
                                                void* user_data);
 
 /**
+ * @brief Callback receiving a versioned event envelope for one event domain.
+ *
+ * Domain callbacks run synchronously after the global envelope callback and
+ * before the legacy aggregate callback for the same event. envelope and all
+ * payload pointers are borrowed and valid only until the callback returns.
+ * user_data is the pointer supplied to the domain-specific setter.
+ *
+ * @param[in,out] session Session that emitted the domain event; never NULL.
+ * @param[in] envelope Borrowed versioned event envelope; never NULL.
+ * @param[in,out] user_data Caller-supplied callback context; may be NULL.
+ *
+ * @note Thread-safety: callbacks execute on the serialized session-driving
+ * thread. Do not call non-reentrant session APIs from callbacks unless the API
+ * explicitly permits it.
+ * @warning Clipboard, channel, audio, and video domains may carry sensitive
+ * payloads. Applications should avoid logging raw payload data.
+ * @since 0.1.0
+ */
+typedef void (*librdp_domain_event_callback)(librdp_session* session,
+                                             const librdp_event_envelope* envelope,
+                                             void* user_data);
+
+/**
  * @brief Initialize a trace policy to safe stderr defaults.
  *
  * The initialized policy enables all categories at INFO level, sets the sink to
@@ -409,6 +432,134 @@ LIBRDP_API void librdp_session_set_event_callback(librdp_session* session, librd
 LIBRDP_API void librdp_session_set_event_envelope_callback(librdp_session* session,
                                                            librdp_event_envelope_callback callback,
                                                            void* user_data);
+
+/**
+ * @brief Install or clear the graphics domain callback.
+ *
+ * Passing NULL disables graphics-domain delivery. The callback receives
+ * versioned envelopes for normalized graphics events currently represented by
+ * LIBRDP_EVENT_SURFACE_INVALIDATED. The payload is borrowed and valid only
+ * until the callback returns.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_graphics_callback(librdp_session* session,
+                                                     librdp_domain_event_callback callback,
+                                                     void* user_data);
+
+/**
+ * @brief Install or clear the pointer domain callback.
+ *
+ * Passing NULL disables pointer-domain delivery. The callback receives
+ * versioned envelopes for LIBRDP_EVENT_POINTER updates, including visibility,
+ * position, and shape changes. Shape pixel buffers are borrowed and valid only
+ * until the callback returns.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_pointer_callback(librdp_session* session,
+                                                    librdp_domain_event_callback callback,
+                                                    void* user_data);
+
+/**
+ * @brief Install or clear the virtual-channel domain callback.
+ *
+ * Passing NULL disables channel-domain delivery. The callback receives
+ * versioned envelopes for dynamic channel open, data, and close events.
+ * Channel names and payload bytes are borrowed and valid only until the
+ * callback returns.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @warning Channel payloads may contain application data; copy only what is
+ * required and avoid logging raw bytes.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_channel_callback(librdp_session* session,
+                                                    librdp_domain_event_callback callback,
+                                                    void* user_data);
+
+/**
+ * @brief Install or clear the clipboard domain callback.
+ *
+ * Passing NULL disables clipboard-domain delivery. The callback receives
+ * versioned envelopes for remote format lists, data responses, data requests,
+ * and file-content responses. Clipboard buffers are borrowed and valid only
+ * until the callback returns.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @warning Clipboard payloads can contain sensitive user data. Applications
+ * should avoid tracing or persisting them unless explicitly intended.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_clipboard_callback(librdp_session* session,
+                                                      librdp_domain_event_callback callback,
+                                                      void* user_data);
+
+/**
+ * @brief Install or clear the audio domain callback.
+ *
+ * Passing NULL disables audio-domain delivery. The callback receives
+ * versioned envelopes for audio output format/data/close events and audio
+ * input format/open events. Audio sample buffers are borrowed and valid only
+ * until the callback returns.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @warning Audio payloads may contain private media data and should not be
+ * logged raw.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_audio_callback(librdp_session* session,
+                                                  librdp_domain_event_callback callback,
+                                                  void* user_data);
+
+/**
+ * @brief Install or clear the video domain callback.
+ *
+ * Passing NULL disables video-domain delivery. The callback receives
+ * versioned envelopes for camera open, sample request, and close events. Media
+ * descriptors are value payloads; any future buffer payloads remain borrowed
+ * for the callback duration unless documented otherwise.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @warning Video events can describe capture devices or private media flows;
+ * avoid logging raw or identifying data unless explicitly intended.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_video_callback(librdp_session* session,
+                                                  librdp_domain_event_callback callback,
+                                                  void* user_data);
 
 /**
  * @brief Install, replace, or clear a session-scoped trace policy.

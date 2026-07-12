@@ -88,6 +88,17 @@ typedef struct event_envelope_capture
     int invalid;
 } event_envelope_capture;
 
+typedef struct domain_event_capture
+{
+    int graphics;
+    int pointer;
+    int channel;
+    int clipboard;
+    int audio;
+    int video;
+    int invalid;
+} domain_event_capture;
+
 typedef struct trace_capture
 {
     uint64_t count;
@@ -229,6 +240,57 @@ static void on_event_envelope(librdp_session* session, const librdp_event_envelo
             capture->disconnected += envelope->payload == NULL && envelope->payload_size == 0;
             break;
         default:
+            break;
+    }
+}
+
+static void on_domain_event(librdp_session* session, const librdp_event_envelope* envelope, void* user_data)
+{
+    domain_event_capture* capture = (domain_event_capture*)user_data;
+    (void)session;
+
+    if (!capture || !envelope || envelope->version != LIBRDP_EVENT_ENVELOPE_VERSION ||
+        envelope->size < sizeof(*envelope) || !envelope->legacy_event ||
+        envelope->legacy_event->type != envelope->type)
+    {
+        if (capture)
+            capture->invalid++;
+        return;
+    }
+
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_SURFACE_INVALIDATED:
+            capture->graphics += envelope->payload && envelope->payload_size == sizeof(librdp_rect);
+            break;
+        case LIBRDP_EVENT_POINTER:
+            capture->pointer += envelope->payload && envelope->payload_size == sizeof(librdp_pointer_event);
+            break;
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+        case LIBRDP_EVENT_CHANNEL_DATA:
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            capture->channel++;
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
+        case LIBRDP_EVENT_CLIPBOARD_DATA:
+        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
+        case LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS:
+            capture->clipboard++;
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+        case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
+        case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+            capture->audio++;
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            capture->video++;
+            break;
+        default:
+            capture->invalid++;
             break;
     }
 }
@@ -1565,6 +1627,7 @@ static int test_settings_surface_input_session(void)
     librdp_trace_policy trace_policy;
     trace_capture trace;
     event_envelope_capture envelope_capture;
+    domain_event_capture domain_capture;
     secure_string_capture secure_capture;
     credentials_provider_capture credentials_capture;
     cancel_thread_capture cancel_capture;
@@ -1581,6 +1644,7 @@ static int test_settings_surface_input_session(void)
 
     memset(&counter, 0, sizeof(counter));
     memset(&envelope_capture, 0, sizeof(envelope_capture));
+    memset(&domain_capture, 0, sizeof(domain_capture));
     memset(&trace, 0, sizeof(trace));
     memset(&secure_capture, 0, sizeof(secure_capture));
     memset(&credentials_capture, 0, sizeof(credentials_capture));
@@ -2397,8 +2461,20 @@ static int test_settings_surface_input_session(void)
     librdp_session_free(session);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
+    librdp_session_set_graphics_callback(NULL, on_domain_event, &domain_capture);
+    librdp_session_set_pointer_callback(NULL, on_domain_event, &domain_capture);
+    librdp_session_set_channel_callback(NULL, on_domain_event, &domain_capture);
+    librdp_session_set_clipboard_callback(NULL, on_domain_event, &domain_capture);
+    librdp_session_set_audio_callback(NULL, on_domain_event, &domain_capture);
+    librdp_session_set_video_callback(NULL, on_domain_event, &domain_capture);
     librdp_session_set_event_callback(session, on_event, &counter);
     librdp_session_set_event_envelope_callback(session, on_event_envelope, &envelope_capture);
+    librdp_session_set_graphics_callback(session, on_domain_event, &domain_capture);
+    librdp_session_set_pointer_callback(session, on_domain_event, &domain_capture);
+    librdp_session_set_channel_callback(session, on_domain_event, &domain_capture);
+    librdp_session_set_clipboard_callback(session, on_domain_event, &domain_capture);
+    librdp_session_set_audio_callback(session, on_domain_event, &domain_capture);
+    librdp_session_set_video_callback(session, on_domain_event, &domain_capture);
     memset(&trace, 0, sizeof(trace));
     CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
@@ -2427,6 +2503,13 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.surfaces == 1);
     CHECK(envelope_capture.surface == 1);
     CHECK(counter.pointer >= 1);
+    CHECK(domain_capture.invalid == 0);
+    CHECK(domain_capture.graphics == counter.surfaces);
+    CHECK(domain_capture.pointer == counter.pointer);
+    CHECK(domain_capture.channel == 0);
+    CHECK(domain_capture.clipboard == 0);
+    CHECK(domain_capture.audio == 0);
+    CHECK(domain_capture.video == 0);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
@@ -2466,12 +2549,14 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.surfaces == 2);
+    CHECK(domain_capture.graphics == counter.surfaces);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     out = librdp_surface_pixels(session_surface);
     CHECK(out[0] == 9 && out[1] == 10 && out[2] == 11 && out[3] == 12);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.surfaces == 4);
+    CHECK(domain_capture.graphics == counter.surfaces);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     out = librdp_surface_pixels(session_surface);
