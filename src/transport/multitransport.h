@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: multitransport negotiation contract.
+ * Invariants: socket/TLS handles and buffered bytes change ownership only on
+ * successful setup or teardown calls.
+ * Ownership: secondary transports are attached only after primary session
+ * authorization.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: external inputs are untrusted until validated by the
+ * declaring module or caller.
+ */
+
 
 #ifndef RDP_TRANSPORT_MULTITRANSPORT_H
 #define RDP_TRANSPORT_MULTITRANSPORT_H

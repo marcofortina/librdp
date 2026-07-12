@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: RemoteFX and progressive codec declaration contract.
+ * Invariants: rectangles, strides, codec payload lengths, and cache
+ * identifiers must be validated before pixel mutation.
+ * Ownership: decoded pixel buffers, cache entries, and surfaces are owned by
+ * the caller selected by each API.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: codec payloads, rectangles, and cache references are
+ * untrusted server data.
+ */
+
 
 #ifndef RDP_GRAPHICS_RFX_CODEC_H
 #define RDP_GRAPHICS_RFX_CODEC_H

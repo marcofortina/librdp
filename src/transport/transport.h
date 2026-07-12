@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: transport abstraction combining TCP, TLS, buffering, wait, and
+ * trace-visible I/O.
+ * Invariants: socket/TLS handles and buffered bytes change ownership only on
+ * successful setup or teardown calls.
+ * Ownership: transport objects own sockets, TLS state, read buffers, and close
+ * semantics.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: external inputs are untrusted until validated by the
+ * declaring module or caller.
+ */
+
 
 #ifndef RDP_TRANSPORT_TRANSPORT_H
 #define RDP_TRANSPORT_TRANSPORT_H

@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: V4L2 viewer camera backend interface for redirected camera streams.
+ * Invariants: viewer backends validate host resources before attaching them to
+ * public settings or callbacks.
+ * Ownership: camera backends own device file descriptors and driver buffers
+ * until samples are copied out.
+ * Threading: viewer backend calls are serialized by the viewer unless the
+ * backend documents an OS callback thread.
+ * Trust boundary: command-line options, host devices, X11 events, and server
+ * callbacks are separate trust domains.
+ */
+
 
 #ifndef LIBRDP_X11_CAMERA_V4L2_H
 #define LIBRDP_X11_CAMERA_V4L2_H

@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: private settings structure shared by settings and session
+ * construction.
+ * Invariants: declarations preserve explicit bounds, ownership, and error
+ * propagation across module boundaries.
+ * Ownership: settings entries own copied strings and backend descriptors until
+ * cloned or freed.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: external inputs are untrusted until validated by the
+ * declaring module or caller.
+ */
+
 
 #ifndef RDP_CLIENT_SETTINGS_INTERNAL_H
 #define RDP_CLIENT_SETTINGS_INTERNAL_H

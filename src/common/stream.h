@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: bounds-checked stream reader and writer contract for protocol code.
+ * Invariants: declarations preserve explicit bounds, ownership, and error
+ * propagation across module boundaries.
+ * Ownership: stream cursors never advance beyond validated input or output
+ * capacity.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: external inputs are untrusted until validated by the
+ * declaring module or caller.
+ */
+
 
 #ifndef RDP_COMMON_STREAM_H
 #define RDP_COMMON_STREAM_H

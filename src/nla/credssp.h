@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: CredSSP and NTLM exchange contract for network-level authentication.
+ * Invariants: secret material and authentication tokens stay bounded and are
+ * never trace-visible.
+ * Ownership: credential inputs are borrowed during calls and derived secrets
+ * remain context-owned.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: remote certificates, tokens, and ASN.1/security-buffer data
+ * are untrusted; credentials are sensitive local input.
+ */
+
 
 #ifndef RDP_NLA_CREDSSP_H
 #define RDP_NLA_CREDSSP_H

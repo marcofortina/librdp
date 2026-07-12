@@ -2,6 +2,18 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: UTF-8 and UTF-16LE conversion contract used at protocol boundaries.
+ * Invariants: declarations preserve explicit bounds, ownership, and error
+ * propagation across module boundaries.
+ * Ownership: converted buffers are caller-owned and input slices remain
+ * borrowed.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: external inputs are untrusted until validated by the
+ * declaring module or caller.
+ */
+
 
 #ifndef RDP_COMMON_CHARSET_H
 #define RDP_COMMON_CHARSET_H

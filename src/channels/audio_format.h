@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: audio format parser and serializer declarations shared by audio
+ * channels.
+ * Invariants: channel payload lengths, message identifiers, and negotiated
+ * capabilities must be validated before state changes.
+ * Ownership: parsed packet structs remain caller-owned unless a session
+ * explicitly stores a copy.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: virtual-channel payloads are untrusted server data and host
+ * backend paths are local policy inputs.
+ */
+
 
 #ifndef RDP_CHANNELS_AUDIO_FORMAT_H
 #define RDP_CHANNELS_AUDIO_FORMAT_H

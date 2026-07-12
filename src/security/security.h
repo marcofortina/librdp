@@ -2,6 +2,19 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: standard security key, signing, encryption, and legacy crypto
+ * contract.
+ * Invariants: secret material and authentication tokens stay bounded and are
+ * never trace-visible.
+ * Ownership: security contexts own keys and exported secret material until
+ * reset or free.
+ * Threading: internal APIs are not thread-safe unless explicitly stated;
+ * callers serialize through the owning session or object.
+ * Trust boundary: remote certificates, tokens, and ASN.1/security-buffer data
+ * are untrusted; credentials are sensitive local input.
+ */
+
 
 #ifndef RDP_SECURITY_SECURITY_H
 #define RDP_SECURITY_SECURITY_H
