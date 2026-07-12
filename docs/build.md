@@ -36,6 +36,7 @@ The build does not require optional libraries unless the feature or viewer path 
 - `LIBRDP_BUILD_TESTS=ON|OFF`: build unit tests and documentation guardrails.
 - `LIBRDP_BUILD_FUZZ=ON|OFF`: build fuzz targets.
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
+- `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 
 ## Library and tests
 

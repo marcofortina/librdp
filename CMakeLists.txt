@@ -8,6 +8,7 @@ project(librdp VERSION 0.1.0 LANGUAGES C)
 option(LIBRDP_BUILD_TESTS "Build unit tests" ON)
 option(LIBRDP_BUILD_FUZZ "Build fuzz targets" OFF)
 option(LIBRDP_BUILD_X11_VIEWER "Build X11 viewer" OFF)
+option(LIBRDP_BUILD_EXAMPLES "Build example programs" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -176,6 +177,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
+if(LIBRDP_BUILD_EXAMPLES)
+    function(add_librdp_example name source)
+        add_executable(${name} ${source})
+        target_link_libraries(${name} PRIVATE librdp)
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+        endif()
+    endfunction()
+
+    add_librdp_example(librdp-example-minimal-session examples/minimal_session.c)
+    add_librdp_example(librdp-example-surface-blit examples/surface_blit.c)
+    add_librdp_example(librdp-example-input-events examples/input_events.c)
+endif()
+
 if(DOXYGEN_FOUND)
     add_custom_target(docs-api
         COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile
@@ -210,6 +225,8 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-internal-header-comments.py)
         add_test(NAME test_fuzz_comments
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-test-fuzz-comments.py)
+        add_test(NAME examples_docs
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-examples.py)
         add_test(NAME docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-docs.py)
         if(DOXYGEN_FOUND)

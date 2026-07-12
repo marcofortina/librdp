@@ -7,6 +7,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 These examples show public API usage patterns. They omit application-specific UI, storage, and error presentation code.
 
+The repository also ships standalone examples that are compiled by CMake when `LIBRDP_BUILD_EXAMPLES=ON`:
+
+| Target | Source | Purpose |
+| --- | --- | --- |
+| `librdp-example-minimal-session` | `examples/minimal_session.c` | Creates settings and a session without opening a network connection. |
+| `librdp-example-surface-blit` | `examples/surface_blit.c` | Allocates a public surface and writes a BGRA rectangle. |
+| `librdp-example-input-events` | `examples/input_events.c` | Builds keyboard and mouse events and demonstrates state-aware send failures before connection. |
+
 ## Minimal session
 
 ```c
