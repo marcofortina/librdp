@@ -9,7 +9,7 @@ librdp is a C client library for building RDP viewers and integration tools on U
 
 The project targets Linux, macOS, and FreeBSD. Platform-specific behavior is kept behind viewer or backend boundaries.
 
-Protocol coverage, backend availability, validation status, and operational details are tracked in the documentation below.
+Protocol coverage, backend availability, and operational details are tracked in the documentation below.
 
 ## Documentation
 

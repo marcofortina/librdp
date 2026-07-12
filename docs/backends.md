@@ -48,4 +48,4 @@ New backends should:
 - fail closed when a local device cannot be opened safely;
 - document ownership and threading;
 - provide unit or fuzz coverage for packet-facing logic;
-- provide a viewer or controlled test path for practical validation.
+- provide a viewer or controlled test path for exercising the backend.

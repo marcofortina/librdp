@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # X11 Viewer
 
-`librdp-x11-viewer` is a minimal X11 frontend used to exercise the public client APIs. It is a validation and debugging tool, not a full desktop product.
+`librdp-x11-viewer` is a minimal X11 frontend used to exercise the public client APIs. It is a debugging and integration tool, not a full desktop product.
 
 ## Build
 
@@ -98,4 +98,4 @@ Full debug trace with bounded hexdumps:
 LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 build/librdp-x11-viewer --target host --security nla
 ```
 
-Do not place passwords in shell history on shared systems. Prefer controlled test credentials for viewer validation.
+Do not place passwords in shell history on shared systems. Prefer controlled test credentials for viewer runs.

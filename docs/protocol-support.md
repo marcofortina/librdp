@@ -5,62 +5,62 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Protocol Support
 
-This document tracks source-tree coverage. "Source complete" means the repository contains the protocol-side implementation, public or internal integration path, and test or fuzz coverage for the current library scope. It does not replace target-specific interoperability validation.
+This document maps RDP protocol areas to the implementation and integration scope exposed by the library and viewer.
 
 ## Core graphics and transport
 
-| Protocol | Area | Source status |
-| --- | --- | --- |
-| MS-RDPBCGR | Core connection, security negotiation, MCS/GCC, slow path, fast path, activation, input, bitmap updates, orders, and session control | Source complete, target validation required |
-| MS-RDPEGFX | Graphics pipeline, surface commands, progressive paths, AVC paths, ClearCodec integration, and capability negotiation | Source complete, target validation required |
-| MS-RDPRFX | RemoteFX codec and progressive stream handling | Source complete, target validation required |
-| MS-RDPNSC | NSCodec bitmap decoding | Source complete, target validation required |
-| MS-RDPEGDI | GDI order parsing and rendering into the surface pipeline | Source complete, target validation required |
-| MS-RDPEDISP | Display control and resize layout messaging | Source complete, target validation required |
-| MS-RDPEDYC | Dynamic virtual channel transport and channel lifecycle | Source complete, target validation required |
-| MS-RDPEMT | Multitransport negotiation and packet handling | Source complete, target validation required |
-| MS-RDPEUDP | UDP transport packet handling | Source complete, target validation required |
-| MS-RDPEUDP2 | UDP transport v2 packet handling | Source complete, target validation required |
+| Protocol | Area |
+| --- | --- |
+| MS-RDPBCGR | Core connection, security negotiation, MCS/GCC, slow path, fast path, activation, input, bitmap updates, orders, and session control |
+| MS-RDPEGFX | Graphics pipeline, surface commands, progressive paths, AVC paths, ClearCodec integration, and capability negotiation |
+| MS-RDPRFX | RemoteFX codec and progressive stream handling |
+| MS-RDPNSC | NSCodec bitmap decoding |
+| MS-RDPEGDI | GDI order parsing and rendering into the surface pipeline |
+| MS-RDPEDISP | Display control and resize layout messaging |
+| MS-RDPEDYC | Dynamic virtual channel transport and channel lifecycle |
+| MS-RDPEMT | Multitransport negotiation and packet handling |
+| MS-RDPEUDP | UDP transport packet handling |
+| MS-RDPEUDP2 | UDP transport v2 packet handling |
 
 ## Input, clipboard, audio, and video
 
-| Protocol | Area | Source status |
-| --- | --- | --- |
-| MS-RDPECLIP | Clipboard formats, data requests, file contents, and local clipboard publication | Source complete, target validation required |
-| MS-RDPEI | Multi-touch and pen input channel messages | Source complete, target validation required |
-| MS-RDPECI | Core input channel behavior | Source complete, target validation required |
-| MS-RDPEA | Audio output channel behavior | Source complete, target validation required |
-| MS-RDPEAI | Audio input channel behavior | Source complete, target validation required |
-| MS-RDPEV | Video redirection channel behavior | Source complete, target validation required |
-| MS-RDPEVOR | Video optimized remoting behavior | Source complete, target validation required |
+| Protocol | Area |
+| --- | --- |
+| MS-RDPECLIP | Clipboard formats, data requests, file contents, and local clipboard publication |
+| MS-RDPEI | Multi-touch and pen input channel messages |
+| MS-RDPECI | Core input channel behavior |
+| MS-RDPEA | Audio output channel behavior |
+| MS-RDPEAI | Audio input channel behavior |
+| MS-RDPEV | Video redirection channel behavior |
+| MS-RDPEVOR | Video optimized remoting behavior |
 
 ## Device, application, and composition channels
 
-| Protocol | Area | Source status |
-| --- | --- | --- |
-| MS-RDPDR | Device redirection core, device announce, IRP routing, and class dispatch | Source complete, target validation required |
-| MS-RDPEFS | Filesystem redirection, metadata, attributes, locking, and file operation classes | Source complete, target validation required |
-| MS-RDPESP | Serial and parallel port redirection | Source complete, target validation required |
-| MS-RDPEPC | Printer redirection and print job output routing | Source complete, target validation required |
-| MS-RDPEUSB | USB redirection packet and backend integration path | Source complete, target validation required |
-| MS-RDPEPNP | Plug-and-play device redirection | Source complete, target validation required |
-| MS-RDPERP | Remote Programs and RAIL message handling | Source complete, target validation required |
-| MS-RDPEXPS | XPS print path support | Source complete, target validation required |
-| MS-RDPELE | Licensing exchange behavior | Source complete, target validation required |
-| MS-RDPEMC | Multiparty channel behavior | Source complete, target validation required |
-| MS-RDPET | Telemetry channel behavior | Source complete, target validation required |
-| MS-RDPEAR | Authentication redirection behavior | Source complete, target validation required |
-| MS-RDPESC | Smartcard redirection with PC/SC backend integration path | Source complete, target validation required |
-| MS-RDPCR2 | Composited remoting and render tree behavior | Source complete, target validation required |
-| MS-RDPEDC | Desktop composition channel behavior | Source complete, target validation required |
-| MS-RDPEPS | Protocol selection and session selection behavior | Source complete, target validation required |
-| MS-RDPECAM | Camera and video capture channel behavior | Source complete, target validation required |
-| MS-RDPEECO | Echo diagnostics channel behavior | Source complete, target validation required |
-| MS-RDPEWA | WebAuthn redirection behavior | Source complete, target validation required |
+| Protocol | Area |
+| --- | --- |
+| MS-RDPDR | Device redirection core, device announce, IRP routing, and class dispatch |
+| MS-RDPEFS | Filesystem redirection, metadata, attributes, locking, and file operation classes |
+| MS-RDPESP | Serial and parallel port redirection |
+| MS-RDPEPC | Printer redirection and print job output routing |
+| MS-RDPEUSB | USB redirection packet and backend integration path |
+| MS-RDPEPNP | Plug-and-play device redirection |
+| MS-RDPERP | Remote Programs and RAIL message handling |
+| MS-RDPEXPS | XPS print path support |
+| MS-RDPELE | Licensing exchange behavior |
+| MS-RDPEMC | Multiparty channel behavior |
+| MS-RDPET | Telemetry channel behavior |
+| MS-RDPEAR | Authentication redirection behavior |
+| MS-RDPESC | Smartcard redirection with PC/SC backend integration path |
+| MS-RDPCR2 | Composited remoting and render tree behavior |
+| MS-RDPEDC | Desktop composition channel behavior |
+| MS-RDPEPS | Protocol selection and session selection behavior |
+| MS-RDPECAM | Camera and video capture channel behavior |
+| MS-RDPEECO | Echo diagnostics channel behavior |
+| MS-RDPEWA | WebAuthn redirection behavior |
 
-## Validation rule
+## Coverage rule
 
-A protocol row can remain source complete only when:
+A protocol row belongs in this document when:
 
 - the implementation path is present in the source tree;
 - boundary checks reject malformed input;

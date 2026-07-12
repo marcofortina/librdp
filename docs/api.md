@@ -25,7 +25,7 @@ The typical lifecycle is:
 3. Create a session with `librdp_session_new()`.
 4. Register an event callback with `librdp_session_set_event_callback()`.
 5. Connect with `librdp_session_connect()`.
-6. Drive network and protocol progress with `librdp_session_run_once()`.
+6. Drive network and protocol processing with `librdp_session_run_once()`.
 7. Read the surface with `librdp_session_get_surface()` when surface invalidation events arrive.
 8. Send keyboard, mouse, touch, pen, clipboard, audio, video, and channel operations through the session APIs.
 9. Disconnect with `librdp_session_disconnect()`.

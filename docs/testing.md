@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Testing
 
-The test suite combines unit tests, fuzz targets, Doxygen checks, and documentation guardrails. Real target validation is separate from this page and is normally driven through the viewer and trace output.
+The test suite combines unit tests, fuzz targets, Doxygen checks, and documentation guardrails.
 
 ## Unit tests
 
@@ -58,6 +58,6 @@ cmake --build build-asan -j$(nproc)
 ctest --test-dir build-asan --output-on-failure
 ```
 
-## Viewer validation
+## Viewer exercising
 
 The X11 viewer is the practical test frontend for public client APIs, input, graphics, resize, pointer updates, clipboard, audio, video, and device options. Viewer usage is documented in [X11 viewer](viewer-x11.md).
