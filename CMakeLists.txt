@@ -201,6 +201,8 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-internal-header-comments.py)
         add_test(NAME test_fuzz_comments
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-test-fuzz-comments.py)
+        add_test(NAME docs
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-docs.py)
         find_package(Doxygen QUIET)
         if(DOXYGEN_FOUND)
             add_test(NAME doxygen_public_headers
