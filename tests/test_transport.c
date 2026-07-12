@@ -14,6 +14,7 @@
 
 
 #include "common/buffer.h"
+#include "common/trace.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"
 #include "transport/tcp.h"
@@ -44,6 +45,34 @@
             return 1;                                                                                                  \
         }                                                                                                              \
     } while (0)
+
+static int capture_stderr_fn(void (*fn)(void*), void* user_data, char* out, size_t out_len)
+{
+    int pipe_fds[2] = {-1, -1};
+    int saved = -1;
+    ssize_t got = 0;
+
+    if (!fn || !out || out_len == 0 || pipe(pipe_fds) != 0)
+        return 0;
+    saved = dup(STDERR_FILENO);
+    if (saved < 0)
+        return 0;
+    if (dup2(pipe_fds[1], STDERR_FILENO) < 0)
+        return 0;
+    close(pipe_fds[1]);
+    fn(user_data);
+    fflush(stderr);
+    if (dup2(saved, STDERR_FILENO) < 0)
+        return 0;
+    close(saved);
+
+    got = read(pipe_fds[0], out, out_len - 1u);
+    close(pipe_fds[0]);
+    if (got < 0)
+        got = 0;
+    out[got] = '\0';
+    return 1;
+}
 
 static int add_test_certificate_extension(X509* cert, X509* issuer, int nid, const char* value)
 {
@@ -365,6 +394,39 @@ out:
     if (child > 0)
         (void)waitpid(child, &child_status, 0);
     return ok;
+}
+
+typedef struct test_tls_trace_case
+{
+    EVP_PKEY* key;
+    X509* cert;
+    const char* wrong_fingerprint;
+    int ok;
+} test_tls_trace_case;
+
+static void run_tls_wrong_pin_trace(void* user_data)
+{
+    test_tls_trace_case* test = (test_tls_trace_case*)user_data;
+
+    if (!test)
+        return;
+    setenv("LIBRDP_TRACE_TRANSPORT", "1", 1);
+    unsetenv("LIBRDP_TRACE_LEVEL");
+    rdp_trace_reset_for_tests();
+    test->ok = run_tls_client_case(test->key,
+                                   test->cert,
+                                   NULL,
+                                   "localhost",
+                                   LIBRDP_TLS_POLICY_PINNED_FINGERPRINT,
+                                   0,
+                                   test->wrong_fingerprint,
+                                   NULL,
+                                   NULL,
+                                   LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                                   0,
+                                   NULL);
+    unsetenv("LIBRDP_TRACE_TRANSPORT");
+    rdp_trace_reset_for_tests();
 }
 
 /*
@@ -895,8 +957,10 @@ int test_transport(void)
     X509* expired_cert = NULL;
     test_tls_callback_state tofu_accept;
     test_tls_callback_state tofu_reject;
+    test_tls_trace_case trace_case;
     char self_signed_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
     char wrong_fingerprint[LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH + 1u];
+    char trace_output[4096];
     rdp_transport transport;
     char data[8];
     size_t got = 0;
@@ -1078,6 +1142,18 @@ int test_transport(void)
                               LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
                               0,
                               NULL));
+    memset(&trace_case, 0, sizeof(trace_case));
+    memset(trace_output, 0, sizeof(trace_output));
+    trace_case.key = self_signed_key;
+    trace_case.cert = self_signed_cert;
+    trace_case.wrong_fingerprint = wrong_fingerprint;
+    TCHECK(capture_stderr_fn(run_tls_wrong_pin_trace, &trace_case, trace_output, sizeof(trace_output)));
+    TCHECK(trace_case.ok);
+    TCHECK(strstr(trace_output, "transport.tls.connect.start") != NULL);
+    TCHECK(strstr(trace_output, "tls_certificate_rejected") != NULL);
+    TCHECK(strstr(trace_output, self_signed_fingerprint) == NULL);
+    TCHECK(strstr(trace_output, wrong_fingerprint) == NULL);
+    TCHECK(strstr(trace_output, "BEGIN CERTIFICATE") == NULL);
     memset(&tofu_accept, 0, sizeof(tofu_accept));
     tofu_accept.accept = 1;
     TCHECK(run_tls_client_case(self_signed_key,
