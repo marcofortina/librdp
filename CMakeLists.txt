@@ -5,6 +5,9 @@ cmake_minimum_required(VERSION 3.16)
 
 project(librdp VERSION 0.1.0 LANGUAGES C)
 
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
 set(LIBRDP_ABI_VERSION 0 CACHE STRING "Shared-library ABI version")
 
 option(LIBRDP_BUILD_TESTS "Build unit tests" ON)
@@ -145,6 +148,10 @@ endif()
 if("${LIBRDP_WITH_CUPS}" STREQUAL "ON" AND NOT LIBRDP_CUPS_FOUND)
     message(FATAL_ERROR "LIBRDP_WITH_CUPS=ON requires cups")
 endif()
+set(LIBRDP_CUPS_USES_PKG_CONFIG 0)
+if(LIBRDP_CUPS_FOUND AND TARGET PkgConfig::LIBRDP_CUPS)
+    set(LIBRDP_CUPS_USES_PKG_CONFIG 1)
+endif()
 
 set(LIBRDP_SOURCES
     src/client/error.c
@@ -228,7 +235,8 @@ target_include_directories(librdp_objects
 
 target_include_directories(librdp
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 set_target_properties(librdp_objects PROPERTIES
@@ -309,6 +317,86 @@ if(LIBRDP_ARCHIVE_FOUND)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ARCHIVE)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ARCHIVE)
 endif()
+
+set(LIBRDP_PC_REQUIRES_PRIVATE openssl)
+set(LIBRDP_PC_LIBS_PRIVATE "")
+if(LIBRDP_FFMPEG_AVC_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libavcodec libavutil libswscale)
+endif()
+if(LIBRDP_OPENH264_AVC_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE openh264)
+endif()
+if(LIBRDP_PCSC_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libpcsclite)
+endif()
+if(LIBRDP_LIBUSB_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libusb-1.0)
+endif()
+if(LIBRDP_FIDO2_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libfido2)
+endif()
+if(LIBRDP_CBOR_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libcbor)
+endif()
+if(LIBRDP_CUPS_FOUND AND TARGET PkgConfig::LIBRDP_CUPS)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE cups)
+elseif(LIBRDP_CUPS_FOUND)
+    list(APPEND LIBRDP_PC_LIBS_PRIVATE -lcups)
+endif()
+if(LIBRDP_ACL_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libacl)
+endif()
+if(LIBRDP_ATTR_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libattr)
+endif()
+if(LIBRDP_ARCHIVE_FOUND)
+    list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libarchive)
+endif()
+list(REMOVE_DUPLICATES LIBRDP_PC_REQUIRES_PRIVATE)
+list(JOIN LIBRDP_PC_REQUIRES_PRIVATE " " LIBRDP_PC_REQUIRES_PRIVATE)
+list(REMOVE_DUPLICATES LIBRDP_PC_LIBS_PRIVATE)
+list(JOIN LIBRDP_PC_LIBS_PRIVATE " " LIBRDP_PC_LIBS_PRIVATE)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdpConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/librdpConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/librdp
+)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/librdpConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/librdp.pc
+    @ONLY
+)
+
+install(TARGETS librdp
+    EXPORT librdpTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/librdp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h"
+)
+install(EXPORT librdpTargets
+    NAMESPACE librdp::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/librdp
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/librdpConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/librdpConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/librdp
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/librdp.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(librdp_objects PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
@@ -415,6 +503,15 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DLIBRDP_ABI_VERSION=${LIBRDP_ABI_VERSION}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
+    add_test(NAME installed_public_api_consumer
+        COMMAND ${CMAKE_COMMAND}
+            "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DLIBRDP_CMAKE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/install_consumer.cmake)
     if(Python3_Interpreter_FOUND)
         add_test(NAME public_api_docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)

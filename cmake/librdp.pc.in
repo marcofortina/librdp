@@ -1,0 +1,15 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: librdp
+Description: RDP client library
+Version: @PROJECT_VERSION@
+Requires.private: @LIBRDP_PC_REQUIRES_PRIVATE@
+Libs: -L${libdir} -llibrdp
+Libs.private: @LIBRDP_PC_LIBS_PRIVATE@
+Cflags: -I${includedir}
