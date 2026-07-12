@@ -17,6 +17,8 @@ Version changes should follow semantic versioning:
 - minor version: additive API, new optional features, new protocols, or new backend configuration;
 - major version: intentional API or ABI break.
 
+Shared library filenames use the project version as `VERSION`. The shared-library ABI identifier is configured by `LIBRDP_ABI_VERSION` and is used as `SOVERSION`; it remains `0` until a stable post-0.x ABI is declared.
+
 ## Public API boundary
 
 The public API is the set of headers under `include/librdp/`. Symbols, types, macros, enum values, structure layouts, callback signatures, and documented ownership rules in these headers form the compatibility surface.

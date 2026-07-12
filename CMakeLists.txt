@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(librdp VERSION 0.1.0 LANGUAGES C)
 
+set(LIBRDP_ABI_VERSION 0 CACHE STRING "Shared-library ABI version")
+
 option(LIBRDP_BUILD_TESTS "Build unit tests" ON)
 option(LIBRDP_BUILD_FUZZ "Build fuzz targets" OFF)
 option(LIBRDP_BUILD_X11_VIEWER "Build X11 viewer" OFF)
@@ -144,7 +146,7 @@ if("${LIBRDP_WITH_CUPS}" STREQUAL "ON" AND NOT LIBRDP_CUPS_FOUND)
     message(FATAL_ERROR "LIBRDP_WITH_CUPS=ON requires cups")
 endif()
 
-add_library(librdp
+set(LIBRDP_SOURCES
     src/client/error.c
     src/client/settings.c
     src/client/session.c
@@ -215,14 +217,30 @@ add_library(librdp
     src/transport/udp_transport.c
 )
 
-target_include_directories(librdp
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
+add_library(librdp $<TARGET_OBJECTS:librdp_objects>)
+
+target_include_directories(librdp_objects
     PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-set_target_properties(librdp PROPERTIES C_VISIBILITY_PRESET hidden)
+target_include_directories(librdp
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+set_target_properties(librdp_objects PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
+set_target_properties(librdp PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${LIBRDP_ABI_VERSION}
+)
+target_compile_definitions(librdp_objects PRIVATE _POSIX_C_SOURCE=200809L)
 target_compile_definitions(librdp PUBLIC _POSIX_C_SOURCE=200809L)
 target_link_libraries(librdp PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
 if(BUILD_SHARED_LIBS)
@@ -237,54 +255,103 @@ if(BUILD_SHARED_LIBS)
     endif()
 endif()
 if(LIBRDP_FFMPEG_AVC_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_FFMPEG_AVC=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FFMPEG_AVC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
 endif()
 if(LIBRDP_OPENH264_AVC_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_OPENH264_AVC=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_OPENH264_AVC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
 endif()
 if(LIBRDP_PCSC_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_PCSC=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_PCSC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_PCSC)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_PCSC)
 endif()
 if(LIBRDP_LIBUSB_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_LIBUSB=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_LIBUSB=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_LIBUSB)
 endif()
 if(LIBRDP_FIDO2_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_FIDO2=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FIDO2=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FIDO2)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_FIDO2)
 endif()
 if(LIBRDP_CBOR_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_CBOR=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CBOR=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CBOR)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CBOR)
 endif()
 if(LIBRDP_CUPS_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_CUPS=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CUPS=1)
     if(TARGET PkgConfig::LIBRDP_CUPS)
+        target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CUPS)
         target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_CUPS)
     else()
-        target_include_directories(librdp PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
+        target_include_directories(librdp_objects PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
         target_link_libraries(librdp PRIVATE ${LIBRDP_CUPS_LIBRARY})
     endif()
 endif()
 if(LIBRDP_ACL_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_ACL=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ACL=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ACL)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ACL)
 endif()
 if(LIBRDP_ATTR_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_ATTR=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ATTR=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ATTR)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ATTR)
 endif()
 if(LIBRDP_ARCHIVE_FOUND)
-    target_compile_definitions(librdp PRIVATE RDP_HAVE_ARCHIVE=1)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ARCHIVE=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ARCHIVE)
     target_link_libraries(librdp PRIVATE PkgConfig::LIBRDP_ARCHIVE)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(librdp PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+    target_compile_options(librdp_objects PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
+
+function(librdp_link_internal_runtime target)
+    target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
+    target_link_libraries(${target} PRIVATE librdp_objects OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+    if(LIBRDP_FFMPEG_AVC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+    endif()
+    if(LIBRDP_OPENH264_AVC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
+    endif()
+    if(LIBRDP_PCSC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_PCSC)
+    endif()
+    if(LIBRDP_LIBUSB_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    endif()
+    if(LIBRDP_FIDO2_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FIDO2)
+    endif()
+    if(LIBRDP_CBOR_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CBOR)
+    endif()
+    if(LIBRDP_CUPS_FOUND)
+        if(TARGET PkgConfig::LIBRDP_CUPS)
+            target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CUPS)
+        else()
+            target_link_libraries(${target} PRIVATE ${LIBRDP_CUPS_LIBRARY})
+        endif()
+    endif()
+    if(LIBRDP_ACL_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ACL)
+    endif()
+    if(LIBRDP_ATTR_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ATTR)
+    endif()
+    if(LIBRDP_ARCHIVE_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ARCHIVE)
+    endif()
+endfunction()
 
 if(LIBRDP_BUILD_EXAMPLES)
     function(add_librdp_example name source)
@@ -316,8 +383,11 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_protocol.c
         tests/test_transport.c
     )
-    target_include_directories(test_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_core PRIVATE librdp OpenSSL::SSL OpenSSL::Crypto)
+    target_include_directories(test_core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    librdp_link_internal_runtime(test_core)
     if(LIBRDP_FFMPEG_AVC_FOUND)
         target_compile_definitions(test_core PRIVATE RDP_HAVE_FFMPEG_AVC=1)
     endif()
@@ -343,6 +413,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
+            "-DLIBRDP_ABI_VERSION=${LIBRDP_ABI_VERSION}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
     if(Python3_Interpreter_FOUND)
         add_test(NAME public_api_docs
@@ -367,8 +438,11 @@ endif()
 if(LIBRDP_BUILD_FUZZ)
     function(add_librdp_fuzzer name source)
         add_executable(${name} ${source})
-        target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_link_libraries(${name} PRIVATE librdp)
+        target_include_directories(${name} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        librdp_link_internal_runtime(${name})
         if(LIBRDP_FFMPEG_AVC_FOUND)
             target_compile_definitions(${name} PRIVATE RDP_HAVE_FFMPEG_AVC=1)
         endif()
@@ -454,18 +528,19 @@ if(LIBRDP_BUILD_X11_VIEWER)
     )
     target_include_directories(librdp-x11-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
     target_link_libraries(librdp-x11-viewer PRIVATE
-        librdp
         ${X11_LIBRARIES}
         X11::Xcursor
         X11::Xfixes
         ${XKBCOMMON_LIBRARIES}
         Threads::Threads
     )
+    librdp_link_internal_runtime(librdp-x11-viewer)
     if(LIBRDP_PIPEWIRE_FOUND)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
         target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)

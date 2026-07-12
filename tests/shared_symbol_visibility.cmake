@@ -10,6 +10,9 @@ endif()
 if(NOT DEFINED LIBRDP_SHARED_LIBRARY_SUFFIX)
     message(FATAL_ERROR "LIBRDP_SHARED_LIBRARY_SUFFIX is required")
 endif()
+if(NOT DEFINED LIBRDP_ABI_VERSION)
+    message(FATAL_ERROR "LIBRDP_ABI_VERSION is required")
+endif()
 
 set(shared_binary_dir "${LIBRDP_BINARY_DIR}/shared-symbol-visibility")
 file(REMOVE_RECURSE "${shared_binary_dir}")
@@ -83,6 +86,25 @@ list(REMOVE_DUPLICATES approved_symbols)
 
 find_program(READELF_EXECUTABLE NAMES readelf)
 find_program(NM_EXECUTABLE NAMES nm)
+
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    if(NOT READELF_EXECUTABLE)
+        message(FATAL_ERROR "readelf is required for Linux SONAME checks")
+    endif()
+    execute_process(
+        COMMAND "${READELF_EXECUTABLE}" -d "${shared_library}"
+        RESULT_VARIABLE soname_result
+        OUTPUT_VARIABLE soname_output
+        ERROR_VARIABLE soname_error
+    )
+    if(NOT soname_result EQUAL 0)
+        message(FATAL_ERROR "SONAME inspection failed with ${soname_result}: ${soname_error}")
+    endif()
+    set(expected_soname "liblibrdp${LIBRDP_SHARED_LIBRARY_SUFFIX}.${LIBRDP_ABI_VERSION}")
+    if(NOT soname_output MATCHES "\\(SONAME\\).*\\[${expected_soname}\\]")
+        message(FATAL_ERROR "expected SONAME ${expected_soname} was not found")
+    endif()
+endif()
 
 if(READELF_EXECUTABLE)
     execute_process(
