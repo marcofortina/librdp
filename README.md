@@ -17,6 +17,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Contributing](docs/contributing.md)
 - [Coding standards](docs/coding-standards.md)
 - [API](docs/api.md)
+- [Examples](docs/examples.md)
 - [ABI and versioning](docs/abi-versioning.md)
 - [Architecture](docs/architecture.md)
 - [Portability](docs/portability.md)

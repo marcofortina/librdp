@@ -18,6 +18,7 @@ REQUIRED = (
     "docs/contributing.md",
     "docs/coding-standards.md",
     "docs/api.md",
+    "docs/examples.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
     "docs/portability.md",
