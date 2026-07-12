@@ -824,6 +824,9 @@ struct librdp_session
     uint32_t share_id;
     librdp_session_state state;
     librdp_session_lifecycle lifecycle;
+    short pending_tcp_revents;
+    short pending_udp_revents;
+    uint8_t pending_poll;
     uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
@@ -31445,6 +31448,34 @@ fail:
     return rdp_session_fail(session, status);
 }
 
+static librdp_status rdp_session_require_pollable(const librdp_session* session)
+{
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (session->transport.fd < 0)
+        return LIBRDP_STATUS_STATE;
+    return LIBRDP_STATUS_OK;
+}
+
+static size_t rdp_session_pollfd_count(const librdp_session* session)
+{
+    return session && session->audio_output_udp_fd >= 0 ? 2u : 1u;
+}
+
+static void rdp_session_fill_pollfds(const librdp_session* session, struct pollfd* fds)
+{
+    memset(fds, 0, sizeof(*fds) * rdp_session_pollfd_count(session));
+    fds[0].fd = session->transport.fd;
+    fds[0].events = POLLIN;
+    if (session->audio_output_udp_fd >= 0)
+    {
+        fds[1].fd = session->audio_output_udp_fd;
+        fds[1].events = POLLIN;
+    }
+}
+
 /*
  * Run one iteration of the active session loop. Transport readiness, PDU
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
@@ -31458,8 +31489,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
 
     if (!session || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (session->state != LIBRDP_SESSION_CONNECTED && session->state != LIBRDP_SESSION_ACTIVE)
-        return LIBRDP_STATUS_STATE;
+    status = rdp_session_require_pollable(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     rdp_buffer_init(&packet);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
@@ -31473,16 +31505,39 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
     }
 
-    if (session->audio_output_udp_fd >= 0)
+    if (session->pending_poll)
+    {
+        short udp_revents = session->pending_udp_revents;
+
+        revents = session->pending_tcp_revents;
+        session->pending_tcp_revents = 0;
+        session->pending_udp_revents = 0;
+        session->pending_poll = 0;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.wait.done",
+                              "source=notify tcp_revents=%d udp_revents=%d",
+                              (int)revents,
+                              (int)udp_revents);
+        if ((udp_revents & POLLIN) != 0)
+            status = rdp_session_handle_audio_output_udp_datagram(session);
+        if ((udp_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.udp.closed",
+                            "component=rdpsnd revents=%d",
+                            (int)udp_revents);
+            rdp_session_audio_output_udp_close(session);
+        }
+        if (status == LIBRDP_STATUS_OK && (revents & POLLIN) == 0)
+            goto done;
+    }
+    else if (session->audio_output_udp_fd >= 0)
     {
         struct pollfd pfds[2];
         int rc = 0;
 
-        memset(pfds, 0, sizeof(pfds));
-        pfds[0].fd = session->transport.fd;
-        pfds[0].events = POLLIN;
-        pfds[1].fd = session->audio_output_udp_fd;
-        pfds[1].events = POLLIN;
+        rdp_session_fill_pollfds(session, pfds);
         rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "transport.wait.start",
@@ -32386,6 +32441,88 @@ librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
     status = rdp_session_run_once_inner(session, timeout_ms);
     rdp_session_trace_scope_end(session);
     return status;
+}
+
+librdp_status librdp_session_get_pollfds(librdp_session* session,
+                                         struct pollfd* fds,
+                                         size_t capacity,
+                                         size_t* count)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t required = 0;
+
+    if (!count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_pollable(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    required = rdp_session_pollfd_count(session);
+    *count = required;
+    if (!fds)
+        return capacity == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (capacity < required)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_session_fill_pollfds(session, fds);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_notify_poll(librdp_session* session, const struct pollfd* fds, size_t count)
+{
+    size_t i = 0;
+    int matched = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!fds || count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_pollable(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    for (i = 0; i < count; i++)
+    {
+        if (fds[i].fd == session->transport.fd)
+        {
+            session->pending_tcp_revents = (short)(session->pending_tcp_revents | fds[i].revents);
+            matched = 1;
+        }
+        else if (session->audio_output_udp_fd >= 0 && fds[i].fd == session->audio_output_udp_fd)
+        {
+            session->pending_udp_revents = (short)(session->pending_udp_revents | fds[i].revents);
+            matched = 1;
+        }
+        else
+        {
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        }
+    }
+    if (matched && (session->pending_tcp_revents != 0 || session->pending_udp_revents != 0))
+        session->pending_poll = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_session_dispatch_pending(librdp_session* session)
+{
+    librdp_status status = rdp_session_require_pollable(session);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!session->pending_poll)
+        return LIBRDP_STATUS_OK;
+    return librdp_session_run_once(session, 0);
+}
+
+librdp_status librdp_session_get_next_timeout(const librdp_session* session, int* timeout_ms)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!timeout_ms)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_pollable(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *timeout_ms = session->pending_poll ? 0 : -1;
+    return LIBRDP_STATUS_OK;
 }
 
 /*

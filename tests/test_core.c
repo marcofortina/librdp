@@ -34,6 +34,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1495,6 +1496,9 @@ static int test_settings_surface_input_session(void)
     pid_t server_pid = -1;
     int child_status = 0;
     int trace_fd = -1;
+    int next_timeout = 0;
+    struct pollfd session_pfds[2];
+    size_t session_pfd_count = 0;
 
     memset(&counter, 0, sizeof(counter));
     memset(&trace, 0, sizeof(trace));
@@ -2186,7 +2190,36 @@ static int test_settings_surface_input_session(void)
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
     CHECK(librdp_surface_width(session_surface) == 64);
-    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_pollfds(NULL, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_pollfds(session, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_OK);
+    CHECK(session_pfd_count == 1);
+    CHECK(librdp_session_get_pollfds(session, session_pfds, 0, &session_pfd_count) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_pollfds(session, session_pfds, 2, &session_pfd_count) == LIBRDP_STATUS_OK);
+    CHECK(session_pfd_count == 1);
+    CHECK(session_pfds[0].fd >= 0);
+    CHECK((session_pfds[0].events & POLLIN) != 0);
+    CHECK(librdp_session_get_next_timeout(session, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_get_next_timeout(session, &next_timeout) == LIBRDP_STATUS_OK);
+    CHECK(next_timeout == -1);
+    CHECK(librdp_session_notify_poll(session, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    session_pfds[0].revents = 0;
+    CHECK(librdp_session_notify_poll(session, session_pfds, session_pfd_count) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_dispatch_pending(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
+    {
+        int poll_rc = 0;
+
+        do
+        {
+            poll_rc = poll(session_pfds, (nfds_t)session_pfd_count, 1000);
+        } while (poll_rc < 0 && errno == EINTR);
+        CHECK(poll_rc > 0);
+    }
+    CHECK(librdp_session_notify_poll(session, session_pfds, session_pfd_count) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_next_timeout(session, &next_timeout) == LIBRDP_STATUS_OK);
+    CHECK(next_timeout == 0);
+    CHECK(librdp_session_dispatch_pending(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVE);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);

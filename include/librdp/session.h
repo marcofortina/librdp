@@ -6,6 +6,7 @@
 #ifndef LIBRDP_SESSION_H
 #define LIBRDP_SESSION_H
 
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -393,6 +394,95 @@ LIBRDP_API librdp_status librdp_session_connect(librdp_session* session);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms);
+
+/**
+ * @brief Return the POSIX poll descriptors needed by the session loop.
+ *
+ * The descriptors are snapshots of session-owned transports. The caller does
+ * not own or close them. The returned events use POSIX poll(2) bits. Call with
+ * fds set to NULL and capacity set to 0 to query the required descriptor
+ * count without writing descriptors.
+ *
+ * @param[in] session Connected or active session; must not be NULL.
+ * @param[out] fds Destination array for poll descriptors; may be NULL only
+ * when capacity is 0.
+ * @param[in] capacity Number of entries available in fds.
+ * @param[out] count Required descriptor count; must not be NULL. Written on
+ * success and on insufficient-capacity failure.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * session/count or insufficient capacity; LIBRDP_STATUS_STATE when the session
+ * is not connected or active.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * Descriptor validity ends when the session disconnects or reconnects.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_pollfds(librdp_session* session,
+                                                    struct pollfd* fds,
+                                                    size_t capacity,
+                                                    size_t* count);
+
+/**
+ * @brief Notify the session about poll results collected by the application.
+ *
+ * Applications that drive their own event loop call librdp_session_get_pollfds(),
+ * pass those descriptors to poll(2), copy revents back into the same array, and
+ * then call this function before librdp_session_dispatch_pending().
+ *
+ * @param[in,out] session Connected or active session; must not be NULL.
+ * @param[in] fds Descriptor array previously obtained from
+ * librdp_session_get_pollfds(); must not be NULL when count is non-zero.
+ * @param[in] count Number of descriptors in fds.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * inputs, unknown descriptors, or zero count; LIBRDP_STATUS_STATE when the
+ * session is not connected or active.
+ *
+ * @note Thread-safety: call from the serialized session-driving context. The
+ * function records readiness only; packet parsing happens in
+ * librdp_session_dispatch_pending().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_notify_poll(librdp_session* session,
+                                                   const struct pollfd* fds,
+                                                   size_t count);
+
+/**
+ * @brief Dispatch work made ready by librdp_session_notify_poll().
+ *
+ * If no poll readiness is pending this function returns immediately. Otherwise
+ * it processes the same packet/channel paths as librdp_session_run_once()
+ * without performing another blocking poll.
+ *
+ * @param[in,out] session Connected or active session; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or idle pending state; status values
+ * propagated by the packet/channel dispatch path on error.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_dispatch_pending(librdp_session* session);
+
+/**
+ * @brief Return the next timeout required by the session event loop.
+ *
+ * The value is suitable for poll(2). A value of -1 means the current session
+ * has no internal deadline and the application may choose its own timeout. A
+ * value of 0 means work has already been notified and should be dispatched
+ * without blocking.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[out] timeout_ms Destination timeout in milliseconds; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments; LIBRDP_STATUS_STATE when the session is not connected or active.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_next_timeout(const librdp_session* session, int* timeout_ms);
 
 /**
  * @brief Close the transport and reset negotiated session state.

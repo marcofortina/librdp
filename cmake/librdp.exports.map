@@ -33,6 +33,10 @@ LIBRDP_0.1 {
         librdp_session_set_trace_policy;
         librdp_session_connect;
         librdp_session_run_once;
+        librdp_session_get_pollfds;
+        librdp_session_notify_poll;
+        librdp_session_dispatch_pending;
+        librdp_session_get_next_timeout;
         librdp_session_disconnect;
         librdp_session_resize;
         librdp_session_set_display_layout;
