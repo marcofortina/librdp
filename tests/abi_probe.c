@@ -71,6 +71,10 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_surface_access", librdp_surface_access, ",");
     ABI_TYPE_ENTRY("librdp_surface_mapping", librdp_surface_mapping, ",");
     ABI_TYPE_ENTRY("librdp_channel_id", librdp_channel_id, ",");
+    ABI_TYPE_ENTRY("librdp_channel_handle", librdp_channel_handle, ",");
+    ABI_TYPE_ENTRY("librdp_channel_priority", librdp_channel_priority, ",");
+    ABI_TYPE_ENTRY("librdp_channel_info", librdp_channel_info, ",");
+    ABI_TYPE_ENTRY("librdp_channel_send_options", librdp_channel_send_options, ",");
     ABI_TYPE_ENTRY("librdp_event_envelope", librdp_event_envelope, ",");
     ABI_TYPE_ENTRY("librdp_event_envelope_callback", librdp_event_envelope_callback, ",");
     ABI_TYPE_ENTRY("librdp_domain_event_callback", librdp_domain_event_callback, ",");

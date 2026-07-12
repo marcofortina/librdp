@@ -6947,6 +6947,7 @@ static int test_path_security_license_channels(void)
                                                     sizeof(dyn_create),
                                                     &dyn_create_request) == LIBRDP_STATUS_OK);
     PCHECK(dyn_create_request.channel_id == 7 && dyn_create_request.channel_id_bytes == 1 &&
+           dyn_create_request.priority == 2 &&
            dyn_create_request.name_len == 4 && memcmp(dyn_create_request.name, "ECHO", 4) == 0);
     {
         rdp_dynamic_channel_create_request valid_dyn_create_request = dyn_create_request;
@@ -6995,6 +6996,22 @@ static int test_path_security_license_channels(void)
     PCHECK(dyn_data_pdu.channel_id == 0x00123456u &&
            dyn_data_pdu.channel_id_bytes == 4 &&
            dyn_data_pdu.data_len == 3);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_data_ex(&dyn_response,
+                                             7,
+                                             1,
+                                             2,
+                                             dyn_data_pdu.data,
+                                             dyn_data_pdu.data_len) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 5 && dyn_response.data[0] == 0x38 && dyn_response.data[1] == 7);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_data_ex(&dyn_response,
+                                             7,
+                                             1,
+                                             3,
+                                             dyn_data_pdu.data,
+                                             dyn_data_pdu.data_len) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     dyn_response.length = 0;
     PCHECK(rdp_dynamic_channel_write_data(&dyn_response, 0x100u, 1, dyn_data, sizeof(dyn_data)) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);

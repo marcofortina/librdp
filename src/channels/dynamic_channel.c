@@ -171,6 +171,11 @@ static uint8_t rdp_dynamic_channel_length_code(uint8_t length_bytes)
     return 2;
 }
 
+static librdp_status rdp_dynamic_channel_validate_priority(uint8_t priority)
+{
+    return priority <= 2u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 uint16_t rdp_dynamic_channel_select_version(uint16_t server_version)
 {
     if (server_version == 0)
@@ -325,6 +330,7 @@ librdp_status rdp_dynamic_channel_parse_create_request(const void* data,
             LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
+    parsed.priority = header.priority;
     remaining = rdp_stream_remaining(&stream);
     if (remaining == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -406,18 +412,33 @@ librdp_status rdp_dynamic_channel_write_data(rdp_buffer* buffer,
                                              const void* data,
                                              size_t data_len)
 {
+    return rdp_dynamic_channel_write_data_ex(buffer, channel_id, channel_id_bytes, 0, data, data_len);
+}
+
+librdp_status rdp_dynamic_channel_write_data_ex(rdp_buffer* buffer,
+                                                uint32_t channel_id,
+                                                uint8_t channel_id_bytes,
+                                                uint8_t priority,
+                                                const void* data,
+                                                size_t data_len)
+{
     uint8_t cb_id = 0;
     librdp_status status = LIBRDP_STATUS_OK;
     size_t start = 0;
 
     if (!buffer || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_validate_priority(priority);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
     if (status != LIBRDP_STATUS_OK)
         return status;
 
     start = buffer->length;
-    status = rdp_buffer_append_u8(buffer, (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA << 4) | cb_id));
+    status = rdp_buffer_append_u8(buffer,
+                                  (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_DATA << 4) |
+                                            ((uint32_t)priority << 2) | cb_id));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_dynamic_channel_write_channel_id(buffer, channel_id, channel_id_bytes);
     if (status == LIBRDP_STATUS_OK)
@@ -468,6 +489,23 @@ librdp_status rdp_dynamic_channel_write_data_first(rdp_buffer* buffer,
                                                   const void* data,
                                                   size_t data_len)
 {
+    return rdp_dynamic_channel_write_data_first_ex(buffer,
+                                                  channel_id,
+                                                  channel_id_bytes,
+                                                  0,
+                                                  total_length,
+                                                  data,
+                                                  data_len);
+}
+
+librdp_status rdp_dynamic_channel_write_data_first_ex(rdp_buffer* buffer,
+                                                     uint32_t channel_id,
+                                                     uint8_t channel_id_bytes,
+                                                     uint8_t priority,
+                                                     uint32_t total_length,
+                                                     const void* data,
+                                                     size_t data_len)
+{
     uint8_t cb_id = 0;
     uint8_t length_bytes = 0;
     uint8_t length_code = 0;
@@ -476,6 +514,9 @@ librdp_status rdp_dynamic_channel_write_data_first(rdp_buffer* buffer,
 
     if (!buffer || (!data && data_len > 0) || data_len > total_length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_dynamic_channel_validate_priority(priority);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_dynamic_channel_channel_id_code(channel_id, channel_id_bytes, &cb_id);
     if (status != LIBRDP_STATUS_OK)
         return status;

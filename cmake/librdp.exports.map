@@ -88,6 +88,13 @@ LIBRDP_0.1 {
         librdp_status_name;
         librdp_status_description;
         librdp_status_string;
+        librdp_channel_info_init;
+        librdp_channel_send_options_init;
+        librdp_session_channel_list;
+        librdp_session_channel_handle_for_id;
+        librdp_session_channel_get_info;
+        librdp_session_channel_send_ex;
+        librdp_session_channel_close_handle;
         librdp_session_channel_send;
         librdp_session_channel_close;
         librdp_credentials_init;

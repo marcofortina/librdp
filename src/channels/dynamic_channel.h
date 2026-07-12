@@ -62,6 +62,7 @@ typedef struct rdp_dynamic_channel_create_request
 {
     uint32_t channel_id;
     uint8_t channel_id_bytes;
+    uint8_t priority;
     const char* name;
     size_t name_len;
 } rdp_dynamic_channel_create_request;
@@ -156,6 +157,12 @@ librdp_status rdp_dynamic_channel_write_data(rdp_buffer* buffer,
                                              uint8_t channel_id_bytes,
                                              const void* data,
                                              size_t data_len);
+librdp_status rdp_dynamic_channel_write_data_ex(rdp_buffer* buffer,
+                                                uint32_t channel_id,
+                                                uint8_t channel_id_bytes,
+                                                uint8_t priority,
+                                                const void* data,
+                                                size_t data_len);
 librdp_status rdp_dynamic_channel_parse_data_first(const void* data,
                                                    size_t length,
                                                    rdp_dynamic_channel_data_first_pdu* pdu);
@@ -165,6 +172,13 @@ librdp_status rdp_dynamic_channel_write_data_first(rdp_buffer* buffer,
                                                   uint32_t total_length,
                                                   const void* data,
                                                   size_t data_len);
+librdp_status rdp_dynamic_channel_write_data_first_ex(rdp_buffer* buffer,
+                                                     uint32_t channel_id,
+                                                     uint8_t channel_id_bytes,
+                                                     uint8_t priority,
+                                                     uint32_t total_length,
+                                                     const void* data,
+                                                     size_t data_len);
 librdp_status rdp_dynamic_channel_parse_close(const void* data,
                                               size_t length,
                                               rdp_dynamic_channel_close_pdu* pdu);
