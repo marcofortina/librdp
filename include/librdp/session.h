@@ -89,6 +89,7 @@ typedef enum librdp_session_lifecycle
 
 #define LIBRDP_METRICS_VERSION 1u /**< Current librdp_metrics version. */
 #define LIBRDP_GRAPHICS_UPDATE_VERSION 1u /**< Current librdp_graphics_update version. */
+#define LIBRDP_RECONNECT_POLICY_VERSION 1u /**< Current librdp_reconnect_policy version. */
 
 /**
  * @brief Normalized graphics callback event type.
@@ -161,6 +162,24 @@ typedef struct librdp_metrics
     uint64_t reconnects;              /**< Coordinated reconnect attempts started by public reconnect APIs. */
     uint64_t limits_rejected;         /**< Operations rejected because a configured limit was exceeded. */
 } librdp_metrics;
+
+/**
+ * @brief Versioned blocking reconnect policy.
+ *
+ * The policy controls librdp_session_reconnect(). Attempts are serialized on
+ * the session owner thread. Delays are interruptible through
+ * librdp_session_cancel().
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_reconnect_policy
+{
+    uint32_t version;          /**< Struct version, LIBRDP_RECONNECT_POLICY_VERSION. */
+    uint32_t size;             /**< Size of this struct in bytes. */
+    uint32_t max_attempts;     /**< Number of connect attempts; must be between 1 and 64. */
+    uint32_t initial_delay_ms; /**< Delay before the second attempt, or zero for no delay. */
+    uint32_t max_delay_ms;     /**< Maximum exponential-backoff delay, or zero for no delay cap. */
+} librdp_reconnect_policy;
 
 /**
  * @brief Monitor layout entry supplied to librdp_session_set_display_layout().
@@ -420,6 +439,21 @@ LIBRDP_API librdp_status librdp_trace_policy_init(librdp_trace_policy* policy);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_metrics_init(librdp_metrics* metrics);
+
+/**
+ * @brief Initialize a reconnect policy with safe defaults.
+ *
+ * Defaults perform one immediate reconnect attempt with no retry delay.
+ *
+ * @param[out] policy Caller-owned policy object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * policy is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_reconnect_policy_init(librdp_reconnect_policy* policy);
 
 /**
  * @brief Create a client session from immutable settings.
@@ -703,6 +737,36 @@ LIBRDP_API librdp_status librdp_session_set_trace_policy(librdp_session* session
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_connect(librdp_session* session);
+
+/**
+ * @brief Disconnect and reconnect an existing client session.
+ *
+ * The session must have previously started a connection; idle sessions return
+ * LIBRDP_STATUS_STATE. Connected or active sessions are disconnected first,
+ * invalidating channel handles and negotiated feature state. The same settings
+ * clone is reused for every reconnect attempt. On success the session is in
+ * the same post-connect state as librdp_session_connect() and must be driven
+ * with librdp_session_run_once().
+ *
+ * @param[in,out] session Session to reconnect; must not be NULL.
+ * @param[in] policy Optional reconnect policy. NULL uses defaults from
+ * librdp_reconnect_policy_init().
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * session or invalid policy metadata; LIBRDP_STATUS_STATE when the current
+ * state cannot reconnect; LIBRDP_STATUS_CANCELLED when cancellation is observed
+ * during a reconnect delay; otherwise the final status returned by
+ * librdp_session_connect().
+ *
+ * @note Thread-safety: call from the session owner thread. The only
+ * cross-thread exception is librdp_session_cancel(), which may interrupt a
+ * reconnect backoff delay.
+ * @warning Reconnect reuses configured credentials and TLS policy. Trace output
+ * redacts credential material but records reconnect attempts and statuses.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_reconnect(librdp_session* session,
+                                                  const librdp_reconnect_policy* policy);
 
 /**
  * @brief Drive one iteration of network and protocol processing.

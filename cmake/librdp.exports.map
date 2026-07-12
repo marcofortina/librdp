@@ -18,6 +18,7 @@ LIBRDP_0.1 {
         librdp_client_lifecycle;
         librdp_limits_init;
         librdp_metrics_init;
+        librdp_reconnect_policy_init;
         librdp_session_get_metrics;
         librdp_session_reset_metrics;
         librdp_settings_get_limits;
@@ -61,6 +62,7 @@ LIBRDP_0.1 {
         librdp_trace_policy_init;
         librdp_session_set_trace_policy;
         librdp_session_connect;
+        librdp_session_reconnect;
         librdp_session_run_once;
         librdp_session_cancel;
         librdp_session_get_pollfds;

@@ -1353,6 +1353,32 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
     return 1;
 }
 
+static int reserve_closed_loopback_port(uint16_t* port)
+{
+    int fd = -1;
+    struct sockaddr_in addr;
+    socklen_t addr_len = (socklen_t)sizeof(addr);
+
+    if (!port)
+        return 0;
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return 0;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0)
+    {
+        close(fd);
+        return 0;
+    }
+    *port = ntohs(addr.sin_port);
+    close(fd);
+    return 1;
+}
+
 /*
  * Fixture: starts a local handshake peer that feeds deterministic protocol
  * bytes to the client session. It isolates connection state-machine coverage
@@ -3259,6 +3285,74 @@ static int test_settings_surface_input_session(void)
     return 0;
 }
 
+static int test_reconnect_policy(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_reconnect_policy policy;
+    librdp_reconnect_policy bad_policy;
+    librdp_metrics metrics;
+    librdp_error_info error_info;
+    uint16_t closed_port = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    CHECK(librdp_reconnect_policy_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_reconnect_policy_init(&policy) == LIBRDP_STATUS_OK);
+    CHECK(policy.version == LIBRDP_RECONNECT_POLICY_VERSION);
+    CHECK(policy.size == sizeof(policy));
+    CHECK(policy.max_attempts == 1);
+    CHECK(policy.initial_delay_ms == 0);
+    CHECK(policy.max_delay_ms == 0);
+    CHECK(reserve_closed_loopback_port(&closed_port));
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, closed_port) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_reconnect(NULL, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_reconnect(session, NULL) == LIBRDP_STATUS_STATE);
+
+    status = librdp_session_connect(session);
+    CHECK(status != LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
+
+    bad_policy = policy;
+    bad_policy.version = 0;
+    CHECK(librdp_session_reconnect(session, &bad_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    bad_policy = policy;
+    bad_policy.size = offsetof(librdp_reconnect_policy, max_delay_ms);
+    CHECK(librdp_session_reconnect(session, &bad_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    bad_policy = policy;
+    bad_policy.max_attempts = 0;
+    CHECK(librdp_session_reconnect(session, &bad_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    bad_policy = policy;
+    bad_policy.max_attempts = 65;
+    CHECK(librdp_session_reconnect(session, &bad_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    policy.max_attempts = 2;
+    policy.initial_delay_ms = 0;
+    policy.max_delay_ms = 0;
+    status = librdp_session_reconnect(session, &policy);
+    CHECK(status != LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.reconnects == 1);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status != LIBRDP_STATUS_OK);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int test_common(void)
 {
     if (test_trace() != 0)
@@ -3279,6 +3373,8 @@ int test_client_core(void)
     if (test_usb_backend_boundary() != 0)
         return 1;
     if (test_static_channels() != 0)
+        return 1;
+    if (test_reconnect_policy() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

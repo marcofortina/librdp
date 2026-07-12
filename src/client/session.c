@@ -128,6 +128,7 @@
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
+#define RDP_SESSION_RECONNECT_MAX_ATTEMPTS 64u
 #define RDP_SESSION_MAX_FASTPATH_FRAGMENT (16u * 1024u * 1024u)
 #define RDP_SESSION_MAX_GRAPHICS_SURFACES 64u
 #define RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION 8192u
@@ -31487,6 +31488,17 @@ librdp_status librdp_metrics_init(librdp_metrics* metrics)
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_reconnect_policy_init(librdp_reconnect_policy* policy)
+{
+    if (!policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(policy, 0, sizeof(*policy));
+    policy->version = LIBRDP_RECONNECT_POLICY_VERSION;
+    policy->size = (uint32_t)sizeof(*policy);
+    policy->max_attempts = 1;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_session_set_trace_policy(librdp_session* session, const librdp_trace_policy* policy)
 {
     librdp_trace_policy copy;
@@ -32835,6 +32847,150 @@ fail:
         librdp_credentials_clear(&provider_credentials);
     rdp_session_trace_scope_end(session);
     return rdp_session_fail(session, status);
+}
+
+static int rdp_session_reconnect_policy_valid(const librdp_reconnect_policy* policy)
+{
+    return policy && policy->version == LIBRDP_RECONNECT_POLICY_VERSION &&
+           policy->size >= offsetof(librdp_reconnect_policy, max_delay_ms) + sizeof(policy->max_delay_ms) &&
+           policy->max_attempts > 0 && policy->max_attempts <= RDP_SESSION_RECONNECT_MAX_ATTEMPTS;
+}
+
+static uint32_t rdp_session_reconnect_next_delay(uint32_t delay_ms, uint32_t max_delay_ms)
+{
+    uint32_t next = 0;
+
+    if (delay_ms == 0)
+        return 0;
+    next = delay_ms > UINT32_MAX / 2u ? UINT32_MAX : delay_ms * 2u;
+    if (max_delay_ms != 0 && next > max_delay_ms)
+        return max_delay_ms;
+    return next;
+}
+
+static librdp_status rdp_session_reconnect_wait(librdp_session* session, uint32_t delay_ms)
+{
+    uint64_t remaining = delay_ms;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+        return rdp_session_finish_cancel(session);
+    while (remaining > 0)
+    {
+        struct pollfd wakeup;
+        int timeout = remaining > (uint64_t)INT_MAX ? INT_MAX : (int)remaining;
+        int rc = 0;
+
+        memset(&wakeup, 0, sizeof(wakeup));
+        wakeup.fd = session->wakeup_pipe[0];
+        wakeup.events = POLLIN;
+        rc = poll(wakeup.fd >= 0 ? &wakeup : NULL, wakeup.fd >= 0 ? 1u : 0u, timeout);
+        if (rc < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            return LIBRDP_STATUS_IO_ERROR;
+        }
+        if (rc > 0)
+        {
+            rdp_session_wakeup_drain(session);
+            if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
+                return rdp_session_finish_cancel(session);
+        }
+        if (remaining <= (uint64_t)timeout)
+            break;
+        remaining -= (uint64_t)timeout;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Reconnect owns the transient transport teardown/recreate boundary while
+ * preserving user settings and requested feature state.  Handles exported by a
+ * previous connection are invalidated by the disconnect path before a new
+ * activation is attempted, and any failed attempt leaves the session in FAILED
+ * rather than reporting partially active state.
+ */
+librdp_status librdp_session_reconnect(librdp_session* session, const librdp_reconnect_policy* policy)
+{
+    librdp_reconnect_policy effective;
+    rdp_trace_session_scope trace_scope;
+    uint32_t attempt = 0;
+    uint32_t delay_ms = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_bind_owner(session, "client.reconnect.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!policy)
+    {
+        status = librdp_reconnect_policy_init(&effective);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    else
+    {
+        effective = *policy;
+    }
+    if (!rdp_session_reconnect_policy_valid(&effective))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->state == LIBRDP_SESSION_IDLE || session->state == LIBRDP_SESSION_CONNECTING ||
+        session->state == LIBRDP_SESSION_CLOSING)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_session_trace_scope_begin(session, &trace_scope);
+    rdp_session_metric_add(&session->metrics.reconnects, 1);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.reconnect.start",
+                    "state=%d max_attempts=%u initial_delay_ms=%u max_delay_ms=%u",
+                    (int)session->state,
+                    effective.max_attempts,
+                    effective.initial_delay_ms,
+                    effective.max_delay_ms);
+
+    if (session->state == LIBRDP_SESSION_CONNECTED || session->state == LIBRDP_SESSION_ACTIVE ||
+        session->state == LIBRDP_SESSION_FAILED)
+    {
+        status = rdp_session_disconnect_inner(session);
+        if (status != LIBRDP_STATUS_OK)
+            goto done;
+    }
+
+    delay_ms = effective.initial_delay_ms;
+    for (attempt = 1; attempt <= effective.max_attempts; attempt++)
+    {
+        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_RECONNECTING);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.reconnect.attempt",
+                        "attempt=%u max_attempts=%u",
+                        attempt,
+                        effective.max_attempts);
+        status = librdp_session_connect(session);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.done", "attempt=%u", attempt);
+            goto done;
+        }
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.reconnect.attempt.failed",
+                        "attempt=%u status=%s",
+                        attempt,
+                        librdp_status_string(status));
+        if (attempt == effective.max_attempts)
+            break;
+        status = rdp_session_reconnect_wait(session, delay_ms);
+        if (status != LIBRDP_STATUS_OK)
+            goto done;
+        delay_ms = rdp_session_reconnect_next_delay(delay_ms, effective.max_delay_ms);
+    }
+    rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.failed", "status=%s", librdp_status_string(status));
+
+done:
+    rdp_session_trace_scope_end(session);
+    return status;
 }
 
 static librdp_status rdp_session_require_pollable(const librdp_session* session)

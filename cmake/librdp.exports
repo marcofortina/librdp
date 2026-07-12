@@ -16,6 +16,7 @@ _librdp_client_state
 _librdp_client_lifecycle
 _librdp_limits_init
 _librdp_metrics_init
+_librdp_reconnect_policy_init
 _librdp_session_get_metrics
 _librdp_session_reset_metrics
 _librdp_settings_get_limits
@@ -57,6 +58,7 @@ _librdp_session_set_graphics_update_callback
 _librdp_trace_policy_init
 _librdp_session_set_trace_policy
 _librdp_session_connect
+_librdp_session_reconnect
 _librdp_session_run_once
 _librdp_session_cancel
 _librdp_session_get_pollfds
