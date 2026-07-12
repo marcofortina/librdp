@@ -5,6 +5,16 @@
 
 LIBRDP_0.1 {
     global:
+        librdp_client_config_init;
+        librdp_client_new;
+        librdp_client_free;
+        librdp_client_settings;
+        librdp_client_session;
+        librdp_client_connect;
+        librdp_client_dispatch;
+        librdp_client_disconnect;
+        librdp_client_state;
+        librdp_client_lifecycle;
         librdp_session_video_capture_send_sample;
         librdp_session_video_capture_send_error;
         librdp_session_clipboard_set_data;

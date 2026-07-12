@@ -14,6 +14,7 @@ The published entry point for generated per-symbol pages is `docs/generated-api.
 | Header | Purpose | Generated group |
 | --- | --- | --- |
 | `include/librdp/librdp.h` | Convenience umbrella header for all public API families. | [Umbrella Header](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__umbrella.html) |
+| `include/librdp/client.h` | Compatibility client facade that owns settings and session objects. | [Client API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__client.html) |
 | `include/librdp/error.h` | Stable `librdp_status` error model and status-string helper. | [Error API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__error.html) |
 | `include/librdp/settings.h` | Session configuration, credentials, desktop size, security mode, features, and redirected devices. | [Settings API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__settings.html) |
 | `include/librdp/session.h` | Session lifecycle, event callback registration, connection loop, resize, display layout, refresh, and input send APIs. | [Session API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__session.html) |
@@ -26,6 +27,8 @@ The published entry point for generated per-symbol pages is `docs/generated-api.
 | `include/librdp/video.h` | Video capture media description and sample/error response APIs. | [Video API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__video.html) |
 
 ## Primary objects
+
+`librdp_client` is the compatibility facade for applications that prefer client/client_config naming. It owns one settings object and one session object.
 
 `librdp_settings` is the caller-configured input object. It owns copies of strings and device descriptors. A session clones settings during construction.
 

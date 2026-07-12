@@ -14,6 +14,7 @@
 
 #include <librdp/audio.h>
 #include <librdp/channel.h>
+#include <librdp/client.h>
 #include <librdp/clipboard.h>
 #include <librdp/error.h>
 #include <librdp/event.h>

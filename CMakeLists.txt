@@ -186,6 +186,7 @@ if(LIBRDP_CUPS_FOUND AND TARGET PkgConfig::LIBRDP_CUPS)
 endif()
 
 set(LIBRDP_SOURCES
+    src/client/client.c
     src/client/error.c
     src/client/settings.c
     src/client/session.c

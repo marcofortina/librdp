@@ -1439,6 +1439,8 @@ static int test_settings_surface_input_session(void)
     librdp_settings* copy = NULL;
     librdp_surface* surface = NULL;
     librdp_session* session = NULL;
+    librdp_client* client = NULL;
+    librdp_client_config client_config;
     const librdp_surface* session_surface = NULL;
     uint8_t pixels[16] = {
         1, 2, 3, 4, 5, 6, 7, 8,
@@ -1526,6 +1528,47 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_CLIENT), "client") == 0);
     CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_TRANSPORT), "transport") == 0);
     CHECK(strcmp(librdp_error_component_name((librdp_error_component)1000), "unknown") == 0);
+    CHECK(librdp_client_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_config_init(&client_config) == LIBRDP_STATUS_OK);
+    CHECK(client_config.version == LIBRDP_CLIENT_CONFIG_VERSION);
+    CHECK(client_config.port == 3389);
+    CHECK(client_config.width == 1024);
+    CHECK(client_config.height == 768);
+    CHECK(client_config.security == LIBRDP_SECURITY_AUTO);
+    CHECK(librdp_client_new(NULL) == NULL);
+    client = librdp_client_new(&client_config);
+    CHECK(client != NULL);
+    CHECK(librdp_client_settings(NULL) == NULL);
+    CHECK(librdp_client_session(NULL) == NULL);
+    CHECK(librdp_client_settings(client) != NULL);
+    CHECK(librdp_client_session(client) != NULL);
+    CHECK(librdp_client_state(NULL) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_client_lifecycle(NULL) == LIBRDP_LIFECYCLE_FAILED);
+    CHECK(librdp_client_state(client) == LIBRDP_SESSION_IDLE);
+    CHECK(librdp_client_lifecycle(client) == LIBRDP_LIFECYCLE_NEW);
+    CHECK(librdp_client_dispatch(client, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_connect(client) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(librdp_session_last_error(librdp_client_session(client)), &error_info) ==
+          LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
+    CHECK(librdp_client_disconnect(client) == LIBRDP_STATUS_OK);
+    librdp_client_free(client);
+    client = NULL;
+    client_config.target = "127.0.0.1";
+    client_config.username = "user";
+    client_config.password = "replacement";
+    client_config.width = 800;
+    client_config.height = 600;
+    client_config.security = LIBRDP_SECURITY_STANDARD;
+    client = librdp_client_new(&client_config);
+    CHECK(client != NULL);
+    CHECK(strcmp(librdp_settings_target(librdp_client_settings(client)), "127.0.0.1") == 0);
+    CHECK(librdp_settings_width(librdp_client_settings(client)) == 800);
+    CHECK(librdp_settings_height(librdp_client_settings(client)) == 600);
+    librdp_client_free(client);
+    client = NULL;
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
