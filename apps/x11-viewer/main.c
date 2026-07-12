@@ -566,6 +566,11 @@ static int xkb_name_equals(const char name[4], const char* text)
     return 1;
 }
 
+/*
+ * Map canonical XKB key names to RDP set-1 scancodes. The table is the
+ * viewer trust boundary between host layout metadata and remote input; unknown
+ * names fail closed so callers can fall back to Unicode input when available.
+ */
 static int xkb_key_name_to_rdp_scancode(const char name[4], uint32_t* scancode, uint32_t* flags)
 {
     static const x11_scancode_map map[] = {
@@ -705,6 +710,11 @@ static int xkb_to_rdp_scancode(const x11_app* app, KeyCode keycode, uint32_t* sc
     return xkb_key_name_to_rdp_scancode(name, scancode, flags);
 }
 
+/*
+ * Map evdev key codes to RDP scancodes for XKB fallback paths. The function
+ * preserves extended-key invariants explicitly and rejects unknown codes
+ * instead of guessing a remote keyboard position.
+ */
 static int evdev_to_rdp_scancode(unsigned int evdev, uint32_t* scancode, uint32_t* flags)
 {
     if (!scancode || !flags)

@@ -395,6 +395,11 @@ static librdp_status rdp_gdi_cbr2_bpp(uint32_t encoded, uint32_t* bits_per_pixel
     }
 }
 
+/*
+ * Parse cache-bitmap revision 3 orders with optional compressed payloads.
+ * Bounds and cache-key invariants are validated before exposing bitmap bytes
+ * to the cache decoder.
+ */
 static librdp_status rdp_gdi_parse_cache_bitmap_order_rev3(rdp_stream* stream,
                                                            const rdp_gdi_secondary_order_header* header,
                                                            rdp_gdi_cache_bitmap_order* order)
@@ -630,6 +635,11 @@ librdp_status rdp_gdi_parse_primary_order(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize a primary drawing order with field-presence deltas. The writer
+ * validates the order-specific payload first so the emitted control flags and
+ * body layout remain synchronized.
+ */
 librdp_status rdp_gdi_write_primary_order(rdp_buffer* buffer,
                                           uint8_t previous_order_type,
                                           uint8_t order_type,
@@ -1564,6 +1574,11 @@ librdp_status rdp_gdi_parse_stream_bitmap_first_order(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize the first streamed-bitmap cache order. The function checks bitmap
+ * dimensions, compression flags, and chunk bounds so later continuation orders
+ * can preserve stream state invariants.
+ */
 librdp_status rdp_gdi_write_stream_bitmap_first_order(
     rdp_buffer* buffer,
     const rdp_gdi_stream_bitmap_first_order* order)

@@ -38,6 +38,11 @@ static librdp_status rdp_mouse_cursor_parse_capset(rdp_stream* stream, rdp_mouse
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse pointer attributes from the mouse cursor virtual channel. Dimension,
+ * hotspot, stride, and mask-length invariants are checked before borrowed
+ * pixel/mask slices are returned to cursor-cache code.
+ */
 static librdp_status rdp_mouse_cursor_parse_pointer_attributes(rdp_stream* stream,
                                                               int large_lengths,
                                                               rdp_pointer_update* update)

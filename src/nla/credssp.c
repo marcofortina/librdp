@@ -1194,6 +1194,11 @@ static librdp_status rdp_credssp_parse_nego_tokens(const uint8_t* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse a CredSSP TSRequest ASN.1 sequence into borrowed token slices. Tags,
+ * version, and optional fields are validated before output assignment so NLA
+ * state never consumes partially trusted DER data.
+ */
 librdp_status rdp_credssp_parse_ts_request(const void* data, size_t length, rdp_credssp_ts_request* request)
 {
     rdp_stream stream;

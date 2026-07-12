@@ -18,10 +18,10 @@ CHECKED_ROOTS = (
     Path("apps/x11-viewer"),
 )
 CHECKED_SUFFIXES = {".c"}
-MIN_LARGE_FUNCTION_LINES = 160
+MIN_LARGE_FUNCTION_LINES = 120
 MIN_RISK_FUNCTION_LINES = 80
 MIN_COMPLEX_FUNCTION_LINES = 25
-MIN_COMPLEXITY_SCORE = 35
+MIN_COMPLEXITY_SCORE = 24
 MIN_FUNCTION_COMMENT_WORDS = 18
 MODULE_REQUIRED_FIELDS = (
     "Module:",
@@ -32,6 +32,7 @@ MODULE_REQUIRED_FIELDS = (
 )
 COMMENT_DETAIL_TERMS = (
     "backend",
+    "boundary",
     "bounds",
     "buffer",
     "cache",
@@ -45,6 +46,7 @@ COMMENT_DETAIL_TERMS = (
     "error",
     "failure",
     "handle",
+    "invariant",
     "length",
     "lifetime",
     "ownership",
@@ -62,6 +64,43 @@ COMMENT_DETAIL_TERMS = (
     "transport",
     "validate",
     "wire",
+)
+COMMENT_CONTRACT_TERMS = (
+    "apply",
+    "boundary",
+    "bounds",
+    "build",
+    "clear",
+    "copy",
+    "decode",
+    "dispatch",
+    "emit",
+    "encode",
+    "error",
+    "failure",
+    "fallback",
+    "flush",
+    "handle",
+    "invariant",
+    "lifetime",
+    "map",
+    "ownership",
+    "parse",
+    "policy",
+    "present",
+    "process",
+    "purpose",
+    "read",
+    "reassemble",
+    "render",
+    "reject",
+    "send",
+    "serialize",
+    "scope",
+    "state",
+    "trust",
+    "validate",
+    "write",
 )
 CRITICAL_NAME_PARTS = (
     "avc",
@@ -109,6 +148,7 @@ CRITICAL_NAME_PARTS = (
     "x224",
 )
 CONTROL_KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof"}
+COMMENT_ALLOWLIST: dict[tuple[str, str], str] = {}
 
 
 @dataclass(frozen=True)
@@ -391,27 +431,41 @@ def comment_quality_issue(definition: FunctionDefinition) -> str | None:
         return "comment should contain more than a label"
     if not any(term in normalized for term in COMMENT_DETAIL_TERMS):
         return "comment lacks validation, ownership, state, or boundary detail"
+    if not any(term in normalized for term in COMMENT_CONTRACT_TERMS):
+        return "comment lacks purpose, invariant, or failure-policy detail"
     return None
+
+
+def allowlist_key(definition: FunctionDefinition) -> tuple[str, str]:
+    return (str(definition.path.relative_to(ROOT)), definition.name)
 
 
 def main() -> int:
     module_findings: list[Path] = []
     targets: list[FunctionDefinition] = []
+    definitions_by_key: set[tuple[str, str]] = set()
     for path in checked_files():
         if not has_module_comment(path):
             module_findings.append(path)
-        targets.extend(definition for definition in collect_definitions(path) if is_documentation_target(definition))
-    findings = [definition for definition in targets if not definition.has_comment]
+        definitions = collect_definitions(path)
+        definitions_by_key.update(allowlist_key(definition) for definition in definitions)
+        targets.extend(definition for definition in definitions if is_documentation_target(definition))
+
+    stale_allowlist = sorted(key for key in COMMENT_ALLOWLIST if key not in definitions_by_key)
+    reviewed_targets = [
+        definition for definition in targets if allowlist_key(definition) not in COMMENT_ALLOWLIST
+    ]
+    findings = [definition for definition in reviewed_targets if not definition.has_comment]
     weak_comments = [
         (definition, issue)
-        for definition in targets
+        for definition in reviewed_targets
         if definition.has_comment
         for issue in [comment_quality_issue(definition)]
         if issue is not None
     ]
     seen_comments: dict[str, FunctionDefinition] = {}
     duplicate_comments: list[tuple[FunctionDefinition, FunctionDefinition]] = []
-    for definition in targets:
+    for definition in reviewed_targets:
         if not definition.has_comment:
             continue
         normalized = normalize_comment(definition.comment)
@@ -421,12 +475,16 @@ def main() -> int:
         else:
             seen_comments[normalized] = definition
 
-    if module_findings or findings or weak_comments or duplicate_comments:
+    if module_findings or stale_allowlist or findings or weak_comments or duplicate_comments:
         print("error: source comment guardrail failed:", file=sys.stderr)
         if module_findings:
             print("missing module comments:", file=sys.stderr)
             for path in module_findings:
                 print(f"  {path.relative_to(ROOT)}", file=sys.stderr)
+        if stale_allowlist:
+            print("stale comment allowlist entries:", file=sys.stderr)
+            for path, name in stale_allowlist:
+                print(f"  {path}: {name}", file=sys.stderr)
         if findings:
             print("missing function comments:", file=sys.stderr)
         for finding in findings:

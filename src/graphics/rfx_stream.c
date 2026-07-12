@@ -258,6 +258,11 @@ static librdp_status rdp_rfx_stream_parse_frame_begin(rdp_rfx_stream_state* stat
     return rdp_rfx_stream_require_consumed(stream);
 }
 
+/*
+ * Parse a RemoteFX region block and replace the current region state. Rectangle
+ * count and bounds validation happen before state mutation so malformed
+ * streams cannot leak stale region rectangles into tile decode.
+ */
 static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rdp_stream* stream)
 {
     uint8_t flags = 0;
@@ -310,6 +315,11 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
     return rdp_rfx_stream_require_consumed(stream);
 }
 
+/*
+ * Decode one RemoteFX tile using the current channel, quant, and region state.
+ * Tile coordinates and coefficient payloads are validated before pixels are
+ * appended to the output buffer.
+ */
 static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
                                                 rdp_stream* stream,
                                                 rdp_rfx_stream_tile* tile)
@@ -384,6 +394,11 @@ static librdp_status rdp_rfx_stream_decode_tile(rdp_rfx_stream_state* state,
     return status;
 }
 
+/*
+ * Parse a RemoteFX tileset block and decode each contained tile. The function
+ * enforces quant-table, channel, tile-count, and payload-length invariants so
+ * truncated tilesets fail without partial region output.
+ */
 static librdp_status rdp_rfx_stream_parse_tileset(rdp_rfx_stream_state* state,
                                                   rdp_stream* stream,
                                                   rdp_rfx_stream_pending_tiles* pending)

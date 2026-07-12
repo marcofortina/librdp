@@ -32,6 +32,11 @@ static int rdp_remote_programs_handshake_ex_flags_valid(uint32_t flags)
                       RDP_REMOTE_PROGRAMS_HANDSHAKE_EX_EXTENDED_SPI3)) == 0;
 }
 
+/*
+ * Validate whether a RAIL order type is part of the implemented dispatch set.
+ * Unknown values fail closed at the channel boundary so application lifecycle
+ * state is not advanced for unsupported remote-program messages.
+ */
 int rdp_remote_programs_order_valid(uint16_t order_type)
 {
     switch (order_type)

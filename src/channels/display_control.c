@@ -74,6 +74,11 @@ static int rdp_display_control_monitors_overlap(const rdp_display_control_monito
     return a_left < b_right && b_left < a_right && a_top < b_bottom && b_top < a_bottom;
 }
 
+/*
+ * Validate a display-control monitor layout before it is sent or accepted.
+ * The function enforces primary-monitor, overlap, scale, orientation, and
+ * server-capability invariants so invalid resize state fails locally.
+ */
 static librdp_status rdp_display_control_validate_layout(const rdp_display_control_monitor* monitors,
                                                          uint32_t monitor_count,
                                                          const rdp_display_control_caps* caps)
@@ -192,6 +197,11 @@ librdp_status rdp_display_control_parse_monitor_layout(const void* data,
                                                               NULL);
 }
 
+/*
+ * Parse a monitor-layout PDU and validate it against optional server caps.
+ * Output entries are zeroed before parsing, and malformed length/count/layout
+ * state is rejected without exposing partially trusted monitor data.
+ */
 librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* data,
                                                                  size_t length,
                                                                  rdp_display_control_monitor* monitors,

@@ -515,6 +515,11 @@ static librdp_status rdp_rfx_shift_band(int32_t* coefficients,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Apply RemoteFX inverse quantization to a coefficient block in place. The
+ * coefficient count and quant table are validated before shifting so malformed
+ * tiles cannot overflow the fixed transform layout.
+ */
 librdp_status rdp_rfx_inverse_quantize(int32_t* coefficients,
                                        size_t coefficient_count,
                                        const rdp_rfx_component_quant* quant)
@@ -822,6 +827,11 @@ static void rdp_rfx_inverse_dwt_extrapolated_block(int32_t* coefficients, int32_
                                output_step);
 }
 
+/*
+ * Apply extrapolated inverse quantization for progressive RemoteFX tiles.
+ * Extrapolated coefficients keep the same block-size invariant as the base
+ * path and fail before touching buffers with invalid quant metadata.
+ */
 static librdp_status rdp_rfx_inverse_quantize_extrapolated(int32_t* coefficients,
                                                           size_t coefficient_count,
                                                           const rdp_rfx_component_quant* quant)

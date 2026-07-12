@@ -98,6 +98,11 @@ librdp_status rdp_video_optimized_write_header(
     return rdp_buffer_append_u32_le(buffer, packet_type);
 }
 
+/*
+ * Parse a video-optimized presentation request and validate the H.264 subtype.
+ * Start/stop command invariants, dimensions, and optional payload lengths are
+ * checked before the request is exposed to the session media pipeline.
+ */
 librdp_status rdp_video_optimized_parse_presentation_request(
     const void* data,
     size_t length,
@@ -147,6 +152,11 @@ librdp_status rdp_video_optimized_parse_presentation_request(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize a presentation-start request for the optimized video channel.
+ * The writer validates dimensions, GUID subtype, and extension length first so
+ * callers cannot emit packets that the paired parser would reject.
+ */
 librdp_status rdp_video_optimized_write_presentation_start_request(
     rdp_buffer* buffer,
     uint8_t presentation_id,

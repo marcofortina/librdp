@@ -47,6 +47,11 @@ static librdp_status rdp_surface_commands_write_u64_le(rdp_buffer* buffer, uint6
     return rdp_buffer_append_u32_le(buffer, (uint32_t)(value >> 32u));
 }
 
+/*
+ * Parse surface-bits command bodies into borrowed bitmap payload slices. The
+ * parser validates codec, destination, and bitmap-length fields before
+ * exposing bytes to graphics decode paths.
+ */
 static librdp_status rdp_surface_commands_parse_bits(rdp_stream* stream,
                                                      uint16_t command_type,
                                                      rdp_surface_bits* bits)
@@ -157,6 +162,11 @@ librdp_status rdp_surface_commands_parse(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize a surface-bits command from caller-owned bitmap bytes. Dimensions,
+ * codec identifiers, and payload length are checked before writing so command
+ * framing stays consistent with the parser.
+ */
 librdp_status rdp_surface_commands_write_bits(rdp_buffer* buffer,
                                               const rdp_surface_bits* bits)
 {

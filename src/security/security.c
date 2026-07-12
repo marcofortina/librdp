@@ -445,6 +445,11 @@ librdp_status rdp_security_write_client_info_pdu(rdp_buffer* buffer, const rdp_c
     return rdp_security_write_client_info_body(buffer, info);
 }
 
+/*
+ * Serialize the legacy client-info body with UTF-16LE credential fields.
+ * Lengths are measured before appending so password/domain/user data fails on
+ * overflow without leaving a partial security PDU in the buffer.
+ */
 librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_client_info* info)
 {
     uint16_t domain_len = 0;

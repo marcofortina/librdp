@@ -294,6 +294,12 @@ librdp_status rdp_pnp_redirection_write_authenticated(rdp_buffer* buffer)
                                                 RDP_PNP_REDIRECTION_INFO_HEADER_LENGTH);
 }
 
+/*
+ * Parse a redirected PNP device descriptor with nested UTF-16 identifiers.
+ * Length fields are validated against the packet boundary so backend device
+ * mapping never receives truncated hardware, compatibility, or description
+ * strings.
+ */
 librdp_status rdp_pnp_redirection_parse_device_description(
     const void* data,
     size_t length,

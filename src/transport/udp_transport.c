@@ -580,6 +580,11 @@ static librdp_status rdp_udp2_parse_ack_vector_payload(rdp_stream* stream, rdp_u
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Validate the semantic consistency of a parsed UDP2 packet. Header flags,
+ * optional sections, timestamps, and data-body invariants are checked together
+ * so transport state rejects impossible combinations before dispatch.
+ */
 librdp_status rdp_udp2_validate_packet(const rdp_udp2_packet* packet)
 {
     uint16_t expected_flags = 0;
@@ -628,6 +633,11 @@ librdp_status rdp_udp2_validate_packet(const rdp_udp2_packet* packet)
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse a UDP2 packet into borrowed section views and then run semantic
+ * validation. The failure policy leaves caller output untouched until the
+ * packet has passed all length, flag, and payload checks.
+ */
 librdp_status rdp_udp2_parse_packet(const void* data, size_t length, rdp_udp2_packet* packet)
 {
     rdp_udp2_packet parsed;

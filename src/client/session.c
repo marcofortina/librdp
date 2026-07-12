@@ -1290,7 +1290,8 @@ static int rdp_session_pointer_xor_pixel_nonzero(const rdp_pointer_update* updat
 /*
  * Format pointer-shape metadata for trace without dumping sensitive or
  * unbounded pixel data. The routine keeps visibility, cache, hotspot, and mask
- * information correlated for cursor interop debugging.
+ * information correlated for cursor interop debugging, and its failure policy
+ * is to report only bounded counters instead of raw cursor payloads.
  */
 static void rdp_session_pointer_trace_shape(const rdp_pointer_update* update,
                                             const rdp_buffer* decoded,
@@ -1865,7 +1866,7 @@ static librdp_status rdp_session_pnp_multisz1(rdp_buffer* out, const char* text)
 /*
  * Announce configured PNP devices to the server. The function snapshots
  * session-owned backend descriptors into protocol packets so later host-device
- * changes cannot alter an in-flight announcement.
+ * changes cannot alter an in-flight announcement or violate lifecycle state.
  */
 static librdp_status rdp_session_pnp_send_devices(librdp_session* session)
 {
@@ -3631,6 +3632,11 @@ static librdp_status rdp_session_current_file_position(int fd, uint64_t* positio
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize FileAllInformation for redirected filesystem and printer handles.
+ * The writer derives every variable-length field from trusted host metadata
+ * and fails on overflow before appending the composite response.
+ */
 static librdp_status rdp_session_write_file_all_information(rdp_buffer* buffer,
                                                             const struct stat* st,
                                                             const rdp_session_redirected_file* file)
@@ -3911,6 +3917,11 @@ static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buff
 #endif
 }
 
+/*
+ * Dispatch file-information serialization by requested information class.
+ * Unsupported classes fail with STATUS_INVALID_PARAMETER so the device
+ * redirection state machine never emits a mismatched response layout.
+ */
 static librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
                                                         uint32_t information_class,
                                                         const struct stat* st,
@@ -4429,6 +4440,11 @@ static uint32_t rdp_session_append_allocated_range(rdp_buffer* payload,
                                         rdp_session_filesystem_error_from_status(status);
 }
 
+/*
+ * Query allocated filesystem ranges and encode bounded FILE_ALLOCATED_RANGE
+ * entries. The function clamps host sparse-file metadata to the requested
+ * window and reports buffer overflow through the returned NTSTATUS.
+ */
 static uint32_t rdp_session_query_allocated_ranges(rdp_session_redirected_file* file,
                                                    const uint8_t* data,
                                                    uint32_t length,
@@ -5837,6 +5853,11 @@ static int rdp_session_file_lock_seen_in_request(
     return 0;
 }
 
+/*
+ * Apply server-requested byte-range locks to redirected host files. Lock state
+ * is mirrored in session-owned metadata so unlock, cleanup, and failure paths
+ * cannot release ranges that were never accepted by the backend.
+ */
 static uint32_t rdp_session_apply_file_locks(librdp_session* session,
                                              rdp_session_redirected_file* file,
                                              const rdp_filesystem_redirection_lock_request* request)
@@ -19833,7 +19854,7 @@ static librdp_status rdp_session_send_usb_redirection_packet(librdp_session* ses
 /*
  * Announce configured USB devices to the server. Device identities,
  * interfaces, and endpoint metadata are snapshotted so backend hotplug changes
- * cannot corrupt in-flight packets.
+ * cannot corrupt in-flight packets or break announcement ordering invariants.
  */
 static librdp_status rdp_session_usb_send_device_announcements(librdp_session* session)
 {
@@ -21924,7 +21945,7 @@ static librdp_status rdp_session_usb_complete_transfer(librdp_session* session,
  * Classify a submitted USB URB as an IN or OUT transfer using the URB function
  * and direction bits embedded in the request payload. This keeps transfer
  * completion framing consistent even for vendor/class requests with different
- * header layouts.
+ * header layouts; invalid payloads fall back to the conservative IN policy.
  */
 static uint32_t rdp_session_usb_submit_urb_function_id(const uint8_t* ts_urb,
                                                        uint32_t cb_ts_urb,
@@ -22072,7 +22093,7 @@ static librdp_status rdp_session_usb_complete_submit_urb_control(
 /*
  * URBDRC packets describe host USB operations requested by the server. Route
  * only after validating the common header so backend execution never observes
- * truncated request structures or stale interface IDs.
+ * truncated request structures or stale interface IDs across failure paths.
  */
 static librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session,
                                                                 const uint8_t* data,
@@ -24781,7 +24802,7 @@ static librdp_status rdp_session_handle_video_capture_data_message(librdp_sessio
  * Dynamic virtual channels are the extension demultiplexer for display,
  * graphics, input, devices, media, and application-owned channels. Route known
  * channel names internally first; only unknown active user channels are exposed
- * to the public callback surface.
+ * to the public callback surface after state and payload validation.
  */
 static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* session,
                                                                 rdp_session_dynamic_channel* entry,

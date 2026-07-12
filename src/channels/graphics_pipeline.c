@@ -1834,6 +1834,11 @@ librdp_status rdp_graphics_progressive_write_frame_end(rdp_buffer* buffer)
                                                0);
 }
 
+/*
+ * Parse one progressive graphics region descriptor from a command stream.
+ * Rectangle counts and stream bounds are validated before the region is
+ * exposed so progressive decode state cannot reference truncated rectangles.
+ */
 librdp_status rdp_graphics_progressive_parse_region(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_region* region)

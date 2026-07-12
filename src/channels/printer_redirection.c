@@ -234,6 +234,11 @@ librdp_status rdp_printer_redirection_write_announce_data(
     return rdp_buffer_append(buffer, announce->cached_fields, announce->cached_fields_len);
 }
 
+/*
+ * Detect the print document format from bounded header bytes. The purpose is
+ * classification only: unknown or truncated buffers fail to RAW so spooler
+ * policy can decide how to handle untrusted content.
+ */
 librdp_status rdp_printer_redirection_detect_document_format(
     const void* data,
     size_t length,

@@ -2637,6 +2637,11 @@ librdp_status rdp_composited_write_render_data(rdp_buffer* buffer,
     return status;
 }
 
+/*
+ * Parse a bitmap-pixels command and expose borrowed bitmap/palette slices.
+ * Bounds, alignment, palette, and stride invariants are validated before any
+ * slice is returned so compositor state never points outside the PDU payload.
+ */
 librdp_status rdp_composited_parse_bitmap_pixels(const void* data,
                                                  size_t length,
                                                  rdp_composited_bitmap_pixels* order)
@@ -2700,6 +2705,11 @@ librdp_status rdp_composited_parse_bitmap_pixels(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize a bitmap-pixels command from caller-owned image buffers. The
+ * writer validates stride-derived lengths and palette invariants before
+ * appending so malformed compositor resources fail without partial packets.
+ */
 librdp_status rdp_composited_write_bitmap_pixels(rdp_buffer* buffer,
                                                  uint32_t target_resource,
                                                  uint32_t width,

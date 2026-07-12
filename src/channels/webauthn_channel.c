@@ -629,6 +629,11 @@ librdp_status rdp_webauthn_parse_request(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Serialize a WebAuthn request with bounded credential and relying-party
+ * fields. The purpose is to keep CTAP-facing data length-checked before it
+ * crosses from channel state into the authenticator backend.
+ */
 librdp_status rdp_webauthn_write_request(rdp_buffer* buffer,
                                          uint32_t command,
                                          uint32_t flags,
@@ -775,6 +780,11 @@ librdp_status rdp_webauthn_write_authenticator_response(rdp_buffer* buffer,
                                                         ctap_payload_len);
 }
 
+/*
+ * Serialize a WebAuthn authenticator response with optional extension data.
+ * Success and failure paths share one writer so status, payload bounds, and
+ * channel framing stay consistent for backend-generated results.
+ */
 librdp_status rdp_webauthn_write_authenticator_response_ex(rdp_buffer* buffer,
                                                            uint32_t hresult,
                                                            const rdp_webauthn_device_info* info,

@@ -488,6 +488,11 @@ static librdp_status rdp_gdi_render_decode_scrblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a PATBLT primary order into render state. Field flags and brush
+ * payloads are validated before updating the working order so malformed
+ * streams cannot corrupt subsequent delta decoding.
+ */
 static librdp_status rdp_gdi_render_decode_patblt(rdp_stream* stream,
                                                   uint32_t flags,
                                                   int delta,
@@ -874,6 +879,11 @@ static librdp_status rdp_gdi_render_decode_multi_patblt(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a multi-opaque-rectangle order with bounded rectangle arrays. The
+ * parser validates count and delta state before rendering so clipped surface
+ * updates cannot read past the order payload.
+ */
 static librdp_status rdp_gdi_render_decode_multi_opaque_rect(rdp_stream* stream,
                                                              uint32_t flags,
                                                              int delta,
@@ -948,6 +958,11 @@ static librdp_status rdp_gdi_render_decode_multi_opaque_rect(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode a line order and preserve the previous-order delta invariant. Invalid
+ * coordinate, pen, or bounds fields fail before the renderer mutates the
+ * destination surface.
+ */
 static librdp_status rdp_gdi_render_decode_line(rdp_stream* stream,
                                                 uint32_t flags,
                                                 int delta,
@@ -1228,6 +1243,11 @@ static librdp_status rdp_gdi_render_decode_ellipse_sc(rdp_stream* stream,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode an ellipse color-brush order with optional delta coordinates. Brush
+ * and bounding-box fields are validated before render dispatch to keep GDI
+ * surface state consistent on malformed packets.
+ */
 static librdp_status rdp_gdi_render_decode_ellipse_cb(rdp_stream* stream,
                                                       uint32_t flags,
                                                       int delta,

@@ -331,6 +331,11 @@ static librdp_status rdp_gcc_write_client_security(rdp_buffer* buffer)
     return status;
 }
 
+/*
+ * Serialize the GCC client network block from configured virtual channels.
+ * Channel counts and names are bounded before writing so the MCS/GCC
+ * handshake cannot emit malformed join-channel metadata.
+ */
 static librdp_status rdp_gcc_write_client_network(rdp_buffer* buffer, const rdp_gcc_client_config* config)
 {
     rdp_buffer payload;
