@@ -148,6 +148,15 @@ def required_doc_links_from_readme() -> set[str]:
     return links
 
 
+def required_doc_links_from_index() -> set[str]:
+    index = ROOT / "docs/index.md"
+    links: set[str] = set()
+    for target in local_links(index):
+        if target and not target.startswith("man/"):
+            links.add(str((index.parent / target).resolve().relative_to(ROOT)))
+    return links
+
+
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
@@ -340,6 +349,48 @@ def validate_pages_workflow(errors: list[str]) -> None:
             errors.append(f"pages workflow missing required step content: {snippet}")
 
 
+def validate_readme(errors: list[str]) -> None:
+    text = read("README.md")
+    required_snippets = (
+        "[docs/index.md](docs/index.md)",
+        "## Support",
+        "GitHub Sponsors",
+        "https://paypal.me/marcofortina",
+        "36jDV57roGb4o59TwK1CB7viPrXToQHGiP",
+        "[LICENSE](LICENSE)",
+    )
+    for snippet in required_snippets:
+        if snippet not in text:
+            errors.append(f"README.md missing required content: {snippet}")
+    forbidden_readme_links = (
+        "docs/build.md",
+        "docs/api.md",
+        "docs/man/librdp.7",
+        "docs/man/librdp-api.7",
+        "docs/man/librdp-tracing.7",
+        "docs/man/librdp-x11-viewer.1",
+    )
+    for snippet in forbidden_readme_links:
+        if snippet in text:
+            errors.append(f"README.md should link only docs/index.md for documentation: {snippet}")
+
+
+def validate_funding(errors: list[str]) -> None:
+    path = ROOT / ".github/FUNDING.yml"
+    if not path.is_file():
+        errors.append("missing GitHub funding file: .github/FUNDING.yml")
+        return
+    text = path.read_text(encoding="utf-8")
+    required_snippets = (
+        "github: [marcofortina]",
+        "https://paypal.me/marcofortina",
+        "https://www.blockchain.com/explorer/addresses/btc/36jDV57roGb4o59TwK1CB7viPrXToQHGiP",
+    )
+    for snippet in required_snippets:
+        if snippet not in text:
+            errors.append(f".github/FUNDING.yml missing required content: {snippet}")
+
+
 def validate_generated_api_page(errors: list[str]) -> None:
     page = read("docs/generated-api.md")
     link = "https://marcofortina.github.io/librdp/api/doxygen/html/index.html"
@@ -380,6 +431,7 @@ def main() -> int:
     errors: list[str] = []
     required_set = set(REQUIRED_MARKDOWN)
     readme_links = required_doc_links_from_readme()
+    index_links = required_doc_links_from_index()
     docs_files = markdown_files()
 
     for rel in FORBIDDEN_DOCS:
@@ -389,8 +441,11 @@ def main() -> int:
     for rel in docs_files:
         if rel not in required_set:
             errors.append(f"unregistered document: {rel}")
-        if rel not in readme_links:
-            errors.append(f"document not linked from README.md: {rel}")
+        if rel != "docs/index.md" and rel not in index_links:
+            errors.append(f"document not linked from docs/index.md: {rel}")
+
+    if "docs/index.md" not in readme_links:
+        errors.append("README.md must link docs/index.md")
 
     for rel in REQUIRED_FILES:
         path = ROOT / rel
@@ -417,6 +472,8 @@ def main() -> int:
     validate_doxygen_config(errors)
     validate_mkdocs(errors)
     validate_pages_workflow(errors)
+    validate_readme(errors)
+    validate_funding(errors)
     validate_generated_api_page(errors)
     validate_cross_document_links(errors)
 
