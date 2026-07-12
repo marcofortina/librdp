@@ -16,6 +16,7 @@ Protocol coverage, backend availability, and operational details are tracked in 
 - [Build](docs/build.md)
 - [API](docs/api.md)
 - [Architecture](docs/architecture.md)
+- [Portability](docs/portability.md)
 - [Protocol support](docs/protocol-support.md)
 - [Security](docs/security.md)
 - [Tracing](docs/tracing.md)

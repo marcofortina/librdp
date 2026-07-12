@@ -17,6 +17,7 @@ REQUIRED = (
     "docs/build.md",
     "docs/api.md",
     "docs/architecture.md",
+    "docs/portability.md",
     "docs/protocol-support.md",
     "docs/security.md",
     "docs/tracing.md",
