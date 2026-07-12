@@ -79,6 +79,15 @@ typedef struct event_counter
     int disconnected;
 } event_counter;
 
+typedef struct event_envelope_capture
+{
+    int count;
+    int state;
+    int surface;
+    int disconnected;
+    int invalid;
+} event_envelope_capture;
+
 typedef struct trace_capture
 {
     uint64_t count;
@@ -188,6 +197,36 @@ static void on_event(librdp_session* session, const librdp_event* event, void* u
             break;
         case LIBRDP_EVENT_DISCONNECTED:
             counter->disconnected++;
+            break;
+        default:
+            break;
+    }
+}
+
+static void on_event_envelope(librdp_session* session, const librdp_event_envelope* envelope, void* user_data)
+{
+    event_envelope_capture* capture = (event_envelope_capture*)user_data;
+    (void)session;
+
+    if (!capture || !envelope || envelope->version != LIBRDP_EVENT_ENVELOPE_VERSION ||
+        envelope->size < sizeof(*envelope) || !envelope->legacy_event ||
+        envelope->legacy_event->type != envelope->type)
+    {
+        if (capture)
+            capture->invalid++;
+        return;
+    }
+    capture->count++;
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_STATE_CHANGED:
+            capture->state += envelope->payload && envelope->payload_size == sizeof(envelope->legacy_event->data.state);
+            break;
+        case LIBRDP_EVENT_SURFACE_INVALIDATED:
+            capture->surface += envelope->payload && envelope->payload_size == sizeof(librdp_rect);
+            break;
+        case LIBRDP_EVENT_DISCONNECTED:
+            capture->disconnected += envelope->payload == NULL && envelope->payload_size == 0;
             break;
         default:
             break;
@@ -1522,8 +1561,10 @@ static int test_settings_surface_input_session(void)
     librdp_limits limits;
     librdp_limits limits_out;
     librdp_metrics metrics;
+    librdp_event_envelope envelope;
     librdp_trace_policy trace_policy;
     trace_capture trace;
+    event_envelope_capture envelope_capture;
     secure_string_capture secure_capture;
     credentials_provider_capture credentials_capture;
     cancel_thread_capture cancel_capture;
@@ -1539,6 +1580,7 @@ static int test_settings_surface_input_session(void)
     size_t session_pfd_count = 0;
 
     memset(&counter, 0, sizeof(counter));
+    memset(&envelope_capture, 0, sizeof(envelope_capture));
     memset(&trace, 0, sizeof(trace));
     memset(&secure_capture, 0, sizeof(secure_capture));
     memset(&credentials_capture, 0, sizeof(credentials_capture));
@@ -1563,6 +1605,10 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_CLIENT), "client") == 0);
     CHECK(strcmp(librdp_error_component_name(LIBRDP_ERROR_COMPONENT_TRANSPORT), "transport") == 0);
     CHECK(strcmp(librdp_error_component_name((librdp_error_component)1000), "unknown") == 0);
+    CHECK(librdp_event_envelope_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_event_envelope_init(&envelope) == LIBRDP_STATUS_OK);
+    CHECK(envelope.version == LIBRDP_EVENT_ENVELOPE_VERSION);
+    CHECK(envelope.size == sizeof(envelope));
     CHECK(librdp_client_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_config_init(&client_config) == LIBRDP_STATUS_OK);
     CHECK(client_config.version == LIBRDP_CLIENT_CONFIG_VERSION);
@@ -2352,6 +2398,7 @@ static int test_settings_surface_input_session(void)
     session = librdp_session_new(settings);
     CHECK(session != NULL);
     librdp_session_set_event_callback(session, on_event, &counter);
+    librdp_session_set_event_envelope_callback(session, on_event_envelope, &envelope_capture);
     memset(&trace, 0, sizeof(trace));
     CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
     trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
@@ -2375,7 +2422,10 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
     CHECK(counter.states == 2);
+    CHECK(envelope_capture.invalid == 0);
+    CHECK(envelope_capture.state == 2);
     CHECK(counter.surfaces == 1);
+    CHECK(envelope_capture.surface == 1);
     CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
@@ -2461,6 +2511,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_disconnect(session) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
     CHECK(counter.disconnected == 1);
+    CHECK(envelope_capture.disconnected == 1);
     {
         char file_trace[1024];
         int fd = open(trace_file_path, O_RDONLY);

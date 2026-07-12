@@ -49,6 +49,8 @@ LIBRDP_0.1 {
         librdp_session_new;
         librdp_session_free;
         librdp_session_set_event_callback;
+        librdp_event_envelope_init;
+        librdp_session_set_event_envelope_callback;
         librdp_trace_policy_init;
         librdp_session_set_trace_policy;
         librdp_session_connect;

@@ -45,6 +45,8 @@ _librdp_surface_unmap
 _librdp_session_new
 _librdp_session_free
 _librdp_session_set_event_callback
+_librdp_event_envelope_init
+_librdp_session_set_event_envelope_callback
 _librdp_trace_policy_init
 _librdp_session_set_trace_policy
 _librdp_session_connect

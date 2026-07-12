@@ -838,6 +838,8 @@ struct librdp_session
     uint8_t standard_security_active;
     librdp_event_callback callback;
     void* callback_data;
+    librdp_event_envelope_callback envelope_callback;
+    void* envelope_callback_data;
     uint8_t trace_policy_configured;
     librdp_trace_policy trace_policy;
     char* trace_file_path;
@@ -849,9 +851,123 @@ struct librdp_session
     uint64_t trace_first_ns;
 };
 
+/*
+ * Event envelopes expose only the active legacy union member and its exact
+ * byte extent. This table is the compatibility boundary for older consumers
+ * that intentionally read less than the current payload size.
+ */
+static void rdp_session_event_payload(const librdp_event* event, const void** payload, size_t* payload_size)
+{
+    if (!payload || !payload_size)
+        return;
+    *payload = NULL;
+    *payload_size = 0;
+    if (!event)
+        return;
+    switch (event->type)
+    {
+        case LIBRDP_EVENT_STATE_CHANGED:
+            *payload = &event->data.state;
+            *payload_size = sizeof(event->data.state);
+            break;
+        case LIBRDP_EVENT_SURFACE_INVALIDATED:
+            *payload = &event->data.surface;
+            *payload_size = sizeof(event->data.surface);
+            break;
+        case LIBRDP_EVENT_KEY_SENT:
+            *payload = &event->data.key;
+            *payload_size = sizeof(event->data.key);
+            break;
+        case LIBRDP_EVENT_MOUSE_SENT:
+            *payload = &event->data.mouse;
+            *payload_size = sizeof(event->data.mouse);
+            break;
+        case LIBRDP_EVENT_ERROR:
+            *payload = &event->data.error;
+            *payload_size = sizeof(event->data.error);
+            break;
+        case LIBRDP_EVENT_POINTER:
+            *payload = &event->data.pointer;
+            *payload_size = sizeof(event->data.pointer);
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
+            *payload = &event->data.clipboard_formats;
+            *payload_size = sizeof(event->data.clipboard_formats);
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_DATA:
+            *payload = &event->data.clipboard_data;
+            *payload_size = sizeof(event->data.clipboard_data);
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
+            *payload = &event->data.clipboard_request;
+            *payload_size = sizeof(event->data.clipboard_request);
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS:
+            *payload = &event->data.clipboard_file_contents;
+            *payload_size = sizeof(event->data.clipboard_file_contents);
+            break;
+        case LIBRDP_EVENT_CHANNEL_OPEN:
+            *payload = &event->data.channel_open;
+            *payload_size = sizeof(event->data.channel_open);
+            break;
+        case LIBRDP_EVENT_CHANNEL_DATA:
+            *payload = &event->data.channel_data;
+            *payload_size = sizeof(event->data.channel_data);
+            break;
+        case LIBRDP_EVENT_CHANNEL_CLOSE:
+            *payload = &event->data.channel_close;
+            *payload_size = sizeof(event->data.channel_close);
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+            *payload = &event->data.audio_output_formats;
+            *payload_size = sizeof(event->data.audio_output_formats);
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+            *payload = &event->data.audio_output_data;
+            *payload_size = sizeof(event->data.audio_output_data);
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
+            *payload = &event->data.audio_input_formats;
+            *payload_size = sizeof(event->data.audio_input_formats);
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+            *payload = &event->data.audio_input_open;
+            *payload_size = sizeof(event->data.audio_input_open);
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+            *payload = &event->data.video_capture_open;
+            *payload_size = sizeof(event->data.video_capture_open);
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+            *payload = &event->data.video_capture_sample_request;
+            *payload_size = sizeof(event->data.video_capture_sample_request);
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            *payload = &event->data.video_capture_close;
+            *payload_size = sizeof(event->data.video_capture_close);
+            break;
+        case LIBRDP_EVENT_NONE:
+        case LIBRDP_EVENT_DISCONNECTED:
+        default:
+            break;
+    }
+}
+
 static void rdp_session_emit(librdp_session* session, const librdp_event* event)
 {
-    if (session && session->callback && event)
+    if (!session || !event)
+        return;
+    if (session->envelope_callback)
+    {
+        librdp_event_envelope envelope;
+
+        (void)librdp_event_envelope_init(&envelope);
+        envelope.type = event->type;
+        envelope.legacy_event = event;
+        rdp_session_event_payload(event, &envelope.payload, &envelope.payload_size);
+        session->envelope_callback(session, &envelope, session->envelope_callback_data);
+    }
+    if (session->callback)
         session->callback(session, event, session->callback_data);
 }
 
@@ -30456,6 +30572,26 @@ void librdp_session_set_event_callback(librdp_session* session, librdp_event_cal
         return;
     session->callback = callback;
     session->callback_data = user_data;
+}
+
+librdp_status librdp_event_envelope_init(librdp_event_envelope* envelope)
+{
+    if (!envelope)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(envelope, 0, sizeof(*envelope));
+    envelope->version = LIBRDP_EVENT_ENVELOPE_VERSION;
+    envelope->size = (uint32_t)sizeof(*envelope);
+    return LIBRDP_STATUS_OK;
+}
+
+void librdp_session_set_event_envelope_callback(librdp_session* session,
+                                                librdp_event_envelope_callback callback,
+                                                void* user_data)
+{
+    if (!session)
+        return;
+    session->envelope_callback = callback;
+    session->envelope_callback_data = user_data;
 }
 
 librdp_status librdp_trace_policy_init(librdp_trace_policy* policy)

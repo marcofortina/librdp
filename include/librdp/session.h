@@ -274,6 +274,30 @@ typedef struct librdp_trace_policy
 typedef void (*librdp_event_callback)(librdp_session* session, const librdp_event* event, void* user_data);
 
 /**
+ * @brief Callback receiving versioned event envelopes.
+ *
+ * The callback runs synchronously on the same thread and call stack as the
+ * legacy event callback. envelope and its payload pointers are borrowed and
+ * valid only until the callback returns. user_data is the pointer registered
+ * with librdp_session_set_event_envelope_callback().
+ *
+ * @param[in,out] session Session that emitted the event; never NULL.
+ * @param[in] envelope Borrowed versioned event envelope; never NULL.
+ * @param[in,out] user_data Caller-supplied callback context; may be NULL.
+ *
+ * @note Thread-safety: callbacks execute on the serialized session-driving
+ * thread. Do not call non-reentrant session APIs from callbacks unless the API
+ * explicitly permits it.
+ * @warning Clipboard, channel, audio, video, and input payloads may contain
+ * sensitive data. Copy only what the application needs and avoid logging raw
+ * payload bytes.
+ * @since 0.1.0
+ */
+typedef void (*librdp_event_envelope_callback)(librdp_session* session,
+                                               const librdp_event_envelope* envelope,
+                                               void* user_data);
+
+/**
  * @brief Initialize a trace policy to safe stderr defaults.
  *
  * The initialized policy enables all categories at INFO level, sets the sink to
@@ -366,6 +390,25 @@ LIBRDP_API void librdp_session_free(librdp_session* session);
  * @since 0.1.0
  */
 LIBRDP_API void librdp_session_set_event_callback(librdp_session* session, librdp_event_callback callback, void* user_data);
+
+/**
+ * @brief Install or clear the versioned event-envelope callback.
+ *
+ * Passing NULL disables envelope delivery. Installing this callback does not
+ * disable the legacy callback; when both are installed the envelope callback is
+ * invoked first, followed by librdp_event_callback with the same event data.
+ *
+ * @param[in,out] session Session to configure; NULL is ignored.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @note Thread-safety: configure before driving the session, or serialize
+ * externally with event delivery.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_session_set_event_envelope_callback(librdp_session* session,
+                                                           librdp_event_envelope_callback callback,
+                                                           void* user_data);
 
 /**
  * @brief Install, replace, or clear a session-scoped trace policy.

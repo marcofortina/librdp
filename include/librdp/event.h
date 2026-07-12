@@ -62,6 +62,8 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS = 22      /**< data.clipboard_file_contents reports file-transfer bytes. */
 } librdp_event_type;
 
+#define LIBRDP_EVENT_ENVELOPE_VERSION 1u /**< Current librdp_event_envelope version. */
+
 /**
  * @brief Pointer update subtype delivered in librdp_pointer_event.
  *
@@ -363,6 +365,43 @@ typedef struct librdp_event
         librdp_video_capture_close_event video_capture_close; /**< Payload for camera close requests. */
     } data; /**< Event payload union selected by type. */
 } librdp_event;
+
+/**
+ * @brief Versioned event envelope for evolvable callbacks.
+ *
+ * The envelope separates the event type from the payload pointer and payload
+ * size. payload points into the matching member of legacy_event and remains
+ * valid only until the callback returns. Consumers compiled against an older
+ * payload definition must read no more than payload_size bytes.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_event_envelope
+{
+    uint32_t version;                 /**< Struct version, LIBRDP_EVENT_ENVELOPE_VERSION. */
+    uint32_t size;                    /**< Size of this struct in bytes. */
+    librdp_event_type type;           /**< Event discriminator. */
+    const void* payload;              /**< Borrowed payload pointer, or NULL when payload_size is 0. */
+    size_t payload_size;              /**< Bytes valid at payload. */
+    const librdp_event* legacy_event; /**< Borrowed legacy event view, valid only during the callback. */
+} librdp_event_envelope;
+
+/**
+ * @brief Initialize an event envelope descriptor.
+ *
+ * Applications normally receive envelopes from callbacks and do not need to
+ * initialize them. This helper is provided for tests, adapters, and stack-owned
+ * descriptors.
+ *
+ * @param[out] envelope Envelope to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * envelope is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_event_envelope_init(librdp_event_envelope* envelope);
 
 /** @} */
 
