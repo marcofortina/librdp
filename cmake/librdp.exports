@@ -44,6 +44,9 @@ _librdp_session_get_surface
 _librdp_status_string
 _librdp_session_channel_send
 _librdp_session_channel_close
+_librdp_credentials_init
+_librdp_credentials_clear
+_librdp_credentials_set
 _librdp_settings_new
 _librdp_settings_clone
 _librdp_settings_free
@@ -51,6 +54,8 @@ _librdp_settings_set_target
 _librdp_settings_set_username
 _librdp_settings_set_password
 _librdp_settings_set_domain
+_librdp_settings_set_credentials
+_librdp_settings_set_credentials_provider
 _librdp_settings_set_port
 _librdp_settings_set_desktop_size
 _librdp_settings_set_security_mode

@@ -65,6 +65,7 @@ typedef enum librdp_security_mode
 #define LIBRDP_TLS_POLICY_VERSION 1u           /**< Current librdp_tls_policy version. */
 #define LIBRDP_TLS_CERTIFICATE_INFO_VERSION 1u /**< Current librdp_tls_certificate_info version. */
 #define LIBRDP_TLS_SHA256_FINGERPRINT_HEX_LENGTH 64u /**< SHA-256 fingerprint length in lowercase hex. */
+#define LIBRDP_CREDENTIALS_VERSION 1u          /**< Current librdp_credentials version. */
 
 /**
  * @brief TLS certificate trust policy used by TLS and NLA security modes.
@@ -168,6 +169,49 @@ typedef struct librdp_tls_policy
     librdp_tls_certificate_callback certificate_callback; /**< Optional certificate decision callback. */
     void* certificate_callback_user_data; /**< Opaque pointer passed to certificate_callback. */
 } librdp_tls_policy;
+
+/**
+ * @brief Versioned client credentials object.
+ *
+ * The object owns string copies installed with librdp_credentials_set().
+ * librdp_credentials_clear() zeroizes password storage before release and
+ * resets all fields. Applications may allocate this object on the stack, but
+ * must initialize it before use.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_credentials
+{
+    uint32_t version; /**< Struct version, LIBRDP_CREDENTIALS_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    char* username;   /**< Owned user name string, or NULL. */
+    char* password;   /**< Owned password string, or NULL; zeroized by clear. */
+    char* domain;     /**< Owned domain string, or NULL. */
+} librdp_credentials;
+
+/**
+ * @brief Credentials provider callback.
+ *
+ * The callback runs synchronously on the thread performing
+ * librdp_session_connect(), immediately before authentication data is needed.
+ * credentials is initialized and owned by the caller; the provider should fill
+ * it with librdp_credentials_set(). The core clears it after the connection
+ * attempt and does not persist provider-supplied credentials. When a provider
+ * is installed, its returned object replaces stored settings credentials for
+ * that connection attempt; empty fields remain empty.
+ *
+ * @param[in,out] credentials Credentials object to fill; never NULL.
+ * @param[in,out] user_data Opaque application pointer; may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success, or a status code to abort connection.
+ *
+ * @note Thread-safety: invoked synchronously from the session connection
+ * thread. Applications must serialize user_data access as needed.
+ * @warning Providers handle plaintext credentials; do not log them.
+ * @since 0.1.0
+ */
+typedef librdp_status (*librdp_credentials_provider)(librdp_credentials* credentials,
+                                                    void* user_data);
 
 /**
  * @brief Optional feature bit advertised or enabled for a client session.
@@ -283,6 +327,60 @@ LIBRDP_API librdp_settings* librdp_settings_clone(const librdp_settings* setting
 LIBRDP_API void librdp_settings_free(librdp_settings* settings);
 
 /**
+ * @brief Initialize a credentials object.
+ *
+ * Existing contents are overwritten without being freed, so call
+ * librdp_credentials_clear() first when reusing a populated object.
+ *
+ * @param[out] credentials Credentials object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * credentials is NULL.
+ *
+ * @note Thread-safety: this function only writes caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_credentials_init(librdp_credentials* credentials);
+
+/**
+ * @brief Clear and release a credentials object.
+ *
+ * Passing NULL is allowed and has no effect. The password buffer, when present,
+ * is zeroized before release. Other strings are freed normally.
+ *
+ * @param[in,out] credentials Credentials object to clear, or NULL.
+ *
+ * @note Thread-safety: the caller must serialize access to credentials.
+ * @warning All pointers previously stored in credentials become invalid.
+ * @since 0.1.0
+ */
+LIBRDP_API void librdp_credentials_clear(librdp_credentials* credentials);
+
+/**
+ * @brief Replace credentials with copied string values.
+ *
+ * The function copies each non-NULL input string. Passing NULL for a field
+ * clears that field. On failure the credentials object is left unchanged.
+ *
+ * @param[in,out] credentials Initialized credentials object; must not be NULL.
+ * @param[in] username User name string to copy, or NULL.
+ * @param[in] password Password string to copy, or NULL.
+ * @param[in] domain Domain string to copy, or NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * credentials, invalid version, or invalid size; LIBRDP_STATUS_NO_MEMORY when
+ * a string copy fails.
+ *
+ * @note Thread-safety: the caller must serialize access to credentials.
+ * @warning Password contents are retained until replaced or cleared.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_credentials_set(librdp_credentials* credentials,
+                                                const char* username,
+                                                const char* password,
+                                                const char* domain);
+
+/**
  * @brief Set the remote target host name or address.
  *
  * The target string is copied during the call and must be non-empty.
@@ -350,6 +448,54 @@ LIBRDP_API librdp_status librdp_settings_set_password(librdp_settings* settings,
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* domain);
+
+/**
+ * @brief Replace stored settings credentials from a credentials object.
+ *
+ * Passing NULL clears username, password, and domain. Non-NULL credentials must
+ * have version LIBRDP_CREDENTIALS_VERSION and a valid size; strings are copied
+ * into settings. The current per-field setters are compatible wrappers around
+ * the same storage.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] credentials Credentials to copy, or NULL to clear stored credentials.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * settings or invalid credentials metadata; LIBRDP_STATUS_NO_MEMORY when a
+ * string copy fails.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @warning Stored passwords remain in settings memory until replaced or freed,
+ * and are zeroized during replacement and cleanup.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_credentials(librdp_settings* settings,
+                                                         const librdp_credentials* credentials);
+
+/**
+ * @brief Install or clear a just-in-time credentials provider.
+ *
+ * The callback pointer and user_data are stored by value. The provider is
+ * called synchronously during librdp_session_connect() and provider-supplied
+ * credentials are cleared immediately after the connection attempt. Passing
+ * NULL clears the provider.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] provider Provider callback, or NULL to clear it.
+ * @param[in,out] user_data Opaque pointer passed to provider; may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * settings is NULL.
+ *
+ * @note Thread-safety: configure before constructing or driving sessions, or
+ * serialize externally.
+ * @warning Provider callbacks receive and produce plaintext credentials; avoid
+ * logging and retain them only as long as necessary.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_credentials_provider(librdp_settings* settings,
+                                                                  librdp_credentials_provider provider,
+                                                                  void* user_data);
 
 /**
  * @brief Set the TCP port used for the RDP connection.

@@ -66,6 +66,8 @@ struct librdp_settings
     char* username;
     char* password;
     char* domain;
+    librdp_credentials_provider credentials_provider;
+    void* credentials_provider_user_data;
     char* audio_output_device;
     char* audio_input_device;
     char* video_output_path;
@@ -190,6 +192,114 @@ static librdp_status rdp_set_secure_string(char** field, const char* value)
     }
     rdp_secure_string_free(*field);
     *field = copy;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_secure_string_free_plain(char* value)
+{
+    if (!value)
+        return;
+    OPENSSL_cleanse(value, strlen(value) + 1u);
+    free(value);
+}
+
+static librdp_status rdp_credentials_copy_values(const char* username,
+                                                 const char* password,
+                                                 const char* domain,
+                                                 char** username_out,
+                                                 char** password_out,
+                                                 char** domain_out)
+{
+    char* username_copy = NULL;
+    char* password_copy = NULL;
+    char* domain_copy = NULL;
+
+    if (!username_out || !password_out || !domain_out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (username)
+    {
+        username_copy = rdp_strdup(username);
+        if (!username_copy)
+            goto no_memory;
+    }
+    if (password)
+    {
+        password_copy = rdp_secure_string_dup(password);
+        if (!password_copy)
+            goto no_memory;
+    }
+    if (domain)
+    {
+        domain_copy = rdp_strdup(domain);
+        if (!domain_copy)
+            goto no_memory;
+    }
+    *username_out = username_copy;
+    *password_out = password_copy;
+    *domain_out = domain_copy;
+    return LIBRDP_STATUS_OK;
+
+no_memory:
+    free(username_copy);
+    rdp_secure_string_free_plain(password_copy);
+    free(domain_copy);
+    return LIBRDP_STATUS_NO_MEMORY;
+}
+
+static int rdp_credentials_valid(const librdp_credentials* credentials)
+{
+    return credentials && credentials->version == LIBRDP_CREDENTIALS_VERSION &&
+           credentials->size >= sizeof(librdp_credentials);
+}
+
+librdp_status librdp_credentials_init(librdp_credentials* credentials)
+{
+    if (!credentials)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(credentials, 0, sizeof(*credentials));
+    credentials->version = LIBRDP_CREDENTIALS_VERSION;
+    credentials->size = (uint32_t)sizeof(*credentials);
+    return LIBRDP_STATUS_OK;
+}
+
+void librdp_credentials_clear(librdp_credentials* credentials)
+{
+    if (!credentials)
+        return;
+    free(credentials->username);
+    rdp_secure_string_free(credentials->password);
+    free(credentials->domain);
+    memset(credentials, 0, sizeof(*credentials));
+    credentials->version = LIBRDP_CREDENTIALS_VERSION;
+    credentials->size = (uint32_t)sizeof(*credentials);
+}
+
+librdp_status librdp_credentials_set(librdp_credentials* credentials,
+                                     const char* username,
+                                     const char* password,
+                                     const char* domain)
+{
+    char* username_copy = NULL;
+    char* password_copy = NULL;
+    char* domain_copy = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!rdp_credentials_valid(credentials))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_credentials_copy_values(username,
+                                         password,
+                                         domain,
+                                         &username_copy,
+                                         &password_copy,
+                                         &domain_copy);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    free(credentials->username);
+    rdp_secure_string_free(credentials->password);
+    free(credentials->domain);
+    credentials->username = username_copy;
+    credentials->password = password_copy;
+    credentials->domain = domain_copy;
     return LIBRDP_STATUS_OK;
 }
 
@@ -416,6 +526,8 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->height = settings->height;
     copy->features = settings->features;
     copy->security_mode = settings->security_mode;
+    copy->credentials_provider = settings->credentials_provider;
+    copy->credentials_provider_user_data = settings->credentials_provider_user_data;
     copy->tls_policy_mode = settings->tls_policy_mode;
     copy->tls_use_system_store = settings->tls_use_system_store;
     copy->tls_certificate_callback = settings->tls_certificate_callback;
@@ -599,6 +711,56 @@ librdp_status librdp_settings_set_domain(librdp_settings* settings, const char* 
     if (!settings)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_set_string(&settings->domain, domain);
+}
+
+librdp_status librdp_settings_set_credentials(librdp_settings* settings,
+                                              const librdp_credentials* credentials)
+{
+    char* username_copy = NULL;
+    char* password_copy = NULL;
+    char* domain_copy = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!credentials)
+    {
+        free(settings->username);
+        settings->username = NULL;
+        rdp_secure_string_free(settings->password);
+        settings->password = NULL;
+        free(settings->domain);
+        settings->domain = NULL;
+        return LIBRDP_STATUS_OK;
+    }
+    if (!rdp_credentials_valid(credentials))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_credentials_copy_values(credentials->username,
+                                         credentials->password,
+                                         credentials->domain,
+                                         &username_copy,
+                                         &password_copy,
+                                         &domain_copy);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    free(settings->username);
+    rdp_secure_string_free(settings->password);
+    free(settings->domain);
+    settings->username = username_copy;
+    settings->password = password_copy;
+    settings->domain = domain_copy;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_set_credentials_provider(librdp_settings* settings,
+                                                       librdp_credentials_provider provider,
+                                                       void* user_data)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    settings->credentials_provider = provider;
+    settings->credentials_provider_user_data = user_data;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status librdp_settings_set_port(librdp_settings* settings, uint16_t port)
@@ -1196,6 +1358,14 @@ librdp_security_mode librdp_settings_security_mode(const librdp_settings* settin
 const char* rdp_settings_password_internal(const librdp_settings* settings)
 {
     return settings ? settings->password : NULL;
+}
+
+librdp_credentials_provider rdp_settings_credentials_provider_internal(const librdp_settings* settings,
+                                                                       void** user_data)
+{
+    if (user_data)
+        *user_data = settings ? settings->credentials_provider_user_data : NULL;
+    return settings ? settings->credentials_provider : NULL;
 }
 
 uint32_t rdp_settings_drive_device_id_internal(const librdp_settings* settings, uint32_t index)

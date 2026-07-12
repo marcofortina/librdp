@@ -48,6 +48,9 @@ LIBRDP_0.1 {
         librdp_status_string;
         librdp_session_channel_send;
         librdp_session_channel_close;
+        librdp_credentials_init;
+        librdp_credentials_clear;
+        librdp_credentials_set;
         librdp_settings_new;
         librdp_settings_clone;
         librdp_settings_free;
@@ -55,6 +58,8 @@ LIBRDP_0.1 {
         librdp_settings_set_username;
         librdp_settings_set_password;
         librdp_settings_set_domain;
+        librdp_settings_set_credentials;
+        librdp_settings_set_credentials_provider;
         librdp_settings_set_port;
         librdp_settings_set_desktop_size;
         librdp_settings_set_security_mode;

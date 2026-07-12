@@ -22,6 +22,8 @@
 #include <librdp/settings.h>
 
 const char* rdp_settings_password_internal(const librdp_settings* settings);
+librdp_credentials_provider rdp_settings_credentials_provider_internal(const librdp_settings* settings,
+                                                                       void** user_data);
 typedef void (*rdp_settings_secure_string_observer)(const void* data, size_t length, void* user_data);
 void rdp_settings_secure_string_observer_for_tests(rdp_settings_secure_string_observer observer,
                                                    void* user_data);

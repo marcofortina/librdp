@@ -91,6 +91,12 @@ typedef struct secure_string_capture
     size_t last_length;
 } secure_string_capture;
 
+typedef struct credentials_provider_capture
+{
+    uint32_t calls;
+    uint32_t fail;
+} credentials_provider_capture;
+
 int test_protocol(void);
 /*
  * Coverage: validates TCP/TLS transport setup, local socket I/O, timeout
@@ -212,6 +218,19 @@ static void on_secure_string_cleanse(const void* data, size_t length, void* user
         if (bytes[i] != 0)
             capture->failed++;
     }
+}
+
+static librdp_status on_credentials_provider(librdp_credentials* credentials, void* user_data)
+{
+    credentials_provider_capture* capture = (credentials_provider_capture*)user_data;
+
+    if (capture)
+    {
+        capture->calls++;
+        if (capture->fail)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    return librdp_credentials_set(credentials, "provider-user", "provider-pass", "provider-domain");
 }
 
 static librdp_tls_certificate_decision core_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
@@ -1278,9 +1297,11 @@ static int test_settings_surface_input_session(void)
     librdp_feature_status feature_status;
     librdp_tls_policy tls_policy;
     librdp_tls_policy tls_policy_out;
+    librdp_credentials credentials;
     librdp_trace_policy trace_policy;
     trace_capture trace;
     secure_string_capture secure_capture;
+    credentials_provider_capture credentials_capture;
     char trace_file_path[] = "/tmp/librdp-trace-XXXXXX";
     event_counter counter;
     uint16_t test_port = 0;
@@ -1291,6 +1312,7 @@ static int test_settings_surface_input_session(void)
     memset(&counter, 0, sizeof(counter));
     memset(&trace, 0, sizeof(trace));
     memset(&secure_capture, 0, sizeof(secure_capture));
+    memset(&credentials_capture, 0, sizeof(credentials_capture));
 
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_OK), "ok") == 0);
     CHECK(strcmp(librdp_status_string(LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED),
@@ -1367,6 +1389,32 @@ static int test_settings_surface_input_session(void)
     CHECK(secure_capture.calls == 2);
     CHECK(secure_capture.failed == 0);
     CHECK(secure_capture.last_length == sizeof("replacement"));
+    CHECK(librdp_credentials_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_credentials_init(&credentials) == LIBRDP_STATUS_OK);
+    CHECK(credentials.version == LIBRDP_CREDENTIALS_VERSION);
+    CHECK(credentials.size == sizeof(credentials));
+    CHECK(librdp_credentials_set(NULL, "bulk-user", "bulk-pass", "bulk-domain") ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_credentials_set(&credentials, "bulk-user", "bulk-pass", "bulk-domain") ==
+          LIBRDP_STATUS_OK);
+    CHECK(strcmp(credentials.username, "bulk-user") == 0);
+    CHECK(strcmp(credentials.password, "bulk-pass") == 0);
+    CHECK(strcmp(credentials.domain, "bulk-domain") == 0);
+    CHECK(librdp_settings_set_credentials(NULL, &credentials) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_set_credentials(settings, &credentials) == LIBRDP_STATUS_OK);
+    CHECK(strcmp(librdp_settings_username(settings), "bulk-user") == 0);
+    CHECK(strcmp(rdp_settings_password_internal(settings), "bulk-pass") == 0);
+    CHECK(strcmp(librdp_settings_domain(settings), "bulk-domain") == 0);
+    CHECK(librdp_settings_set_credentials(settings, NULL) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_username(settings) == NULL);
+    CHECK(rdp_settings_password_internal(settings) == NULL);
+    CHECK(librdp_settings_domain(settings) == NULL);
+    librdp_credentials_clear(&credentials);
+    CHECK(credentials.username == NULL);
+    CHECK(credentials.password == NULL);
+    CHECK(credentials.domain == NULL);
+    CHECK(secure_capture.failed == 0);
+    CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_domain(settings, "domain") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_port(settings, 3390) == LIBRDP_STATUS_OK);
@@ -1841,6 +1889,9 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_dismiss_touch(NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_dismiss_touch(session, 1) == LIBRDP_STATUS_STATE);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_credentials_provider(settings,
+                                                   on_credentials_provider,
+                                                   &credentials_capture) == LIBRDP_STATUS_OK);
     CHECK(start_handshake_server(&test_port, &server_pid, 0, 0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     librdp_session_free(session);
@@ -1859,6 +1910,8 @@ static int test_settings_surface_input_session(void)
     trace_policy.trace_id = "trace-1";
     CHECK(librdp_session_set_trace_policy(session, &trace_policy) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(credentials_capture.calls == 1);
+    CHECK(secure_capture.failed == 0);
     CHECK(trace.count > 0);
     CHECK(trace.last_sequence == trace.count);
     CHECK(trace.saw_connect_start);
@@ -1934,12 +1987,27 @@ static int test_settings_surface_input_session(void)
         CHECK(strstr(file_trace, "trace_id=file-trace") != NULL);
     }
     librdp_session_free(session);
+    session = NULL;
+    CHECK(librdp_settings_set_credentials_provider(settings, NULL, NULL) == LIBRDP_STATUS_OK);
     CHECK(unlink(trace_file_path) == 0);
     if (server_pid > 0)
     {
         CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
         CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     }
+
+    credentials_capture.fail = 1;
+    CHECK(librdp_settings_set_credentials_provider(settings,
+                                                   on_credentials_provider,
+                                                   &credentials_capture) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(credentials_capture.calls == 2);
+    librdp_session_free(session);
+    session = NULL;
+    credentials_capture.fail = 0;
+    CHECK(librdp_settings_set_credentials_provider(settings, NULL, NULL) == LIBRDP_STATUS_OK);
 
     memset(&counter, 0, sizeof(counter));
     server_pid = -1;

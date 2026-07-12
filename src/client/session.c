@@ -29617,6 +29617,13 @@ librdp_status librdp_session_connect(librdp_session* session)
     uint32_t server_encryption_level = 0;
     int standard_security_ready = 0;
     rdp_trace_session_scope trace_scope;
+    librdp_credentials provider_credentials;
+    librdp_credentials_provider credentials_provider = NULL;
+    void* credentials_provider_user_data = NULL;
+    const char* credential_username = NULL;
+    const char* credential_password = NULL;
+    const char* credential_domain = NULL;
+    int provider_credentials_initialized = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -29644,6 +29651,31 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_init(&server_certificate);
     rdp_buffer_init(&request);
     rdp_buffer_init(&reply);
+
+    status = librdp_credentials_init(&provider_credentials);
+    if (status != LIBRDP_STATUS_OK)
+        goto fail;
+    provider_credentials_initialized = 1;
+    credential_username = librdp_settings_username(session->settings);
+    credential_password = rdp_settings_password_internal(session->settings);
+    credential_domain = librdp_settings_domain(session->settings);
+    credentials_provider =
+        rdp_settings_credentials_provider_internal(session->settings, &credentials_provider_user_data);
+    if (credentials_provider)
+    {
+        status = credentials_provider(&provider_credentials, credentials_provider_user_data);
+        if (status != LIBRDP_STATUS_OK)
+            goto fail;
+        if (provider_credentials.version != LIBRDP_CREDENTIALS_VERSION ||
+            provider_credentials.size < sizeof(provider_credentials))
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            goto fail;
+        }
+        credential_username = provider_credentials.username;
+        credential_password = provider_credentials.password;
+        credential_domain = provider_credentials.domain;
+    }
 
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     rdp_security_standard_clear(&session->standard_security);
@@ -29790,7 +29822,7 @@ librdp_status librdp_session_connect(librdp_session* session)
 
     protocols = rdp_security_protocol_mask(librdp_settings_security_mode(session->settings));
     rdp_trace_event(RDP_TRACE_PROTOCOL, "x224.negotiation.start", "protocols=%u", protocols);
-    status = rdp_x224_build_connection_request(&x224, librdp_settings_username(session->settings), protocols);
+    status = rdp_x224_build_connection_request(&x224, credential_username, protocols);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     status = rdp_tpkt_write(&request, x224.data, x224.length);
@@ -29908,7 +29940,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         if (status == LIBRDP_STATUS_OK)
             status = rdp_credssp_write_ntlm_negotiate(&ntlm_negotiate,
                                                       "librdp",
-                                                      librdp_settings_domain(session->settings));
+                                                      credential_domain);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_credssp_write_spnego_ntlm_negotiate(&spnego_negotiate,
                                                              ntlm_negotiate.data,
@@ -29964,15 +29996,14 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 ntlm_challenge.flags,
                                 (unsigned)ntlm_challenge.target_name_len,
                                 (unsigned)ntlm_challenge.target_info_len);
-            if (status == LIBRDP_STATUS_OK &&
-                (!librdp_settings_username(session->settings) || !rdp_settings_password_internal(session->settings)))
+            if (status == LIBRDP_STATUS_OK && (!credential_username || !credential_password))
                 status = LIBRDP_STATUS_INVALID_ARGUMENT;
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
                                                              &ntlm_challenge,
-                                                             librdp_settings_username(session->settings),
-                                                             rdp_settings_password_internal(session->settings),
-                                                             librdp_settings_domain(session->settings),
+                                                             credential_username,
+                                                             credential_password,
+                                                             credential_domain,
                                                              "librdp",
                                                              0,
                                                              NULL,
@@ -30078,9 +30109,9 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 (unsigned)pub_key_response.pub_key_auth_len);
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_credssp_encrypt_password_credentials(&ntlm_security,
-                                                                  librdp_settings_domain(session->settings),
-                                                                  librdp_settings_username(session->settings),
-                                                                  rdp_settings_password_internal(session->settings),
+                                                                  credential_domain,
+                                                                  credential_username,
+                                                                  credential_password,
                                                                   &auth_info);
             if (status == LIBRDP_STATUS_OK)
             {
@@ -30524,9 +30555,9 @@ librdp_status librdp_session_connect(librdp_session* session)
     {
         rdp_client_info info;
         memset(&info, 0, sizeof(info));
-        info.domain = librdp_settings_domain(session->settings);
-        info.username = librdp_settings_username(session->settings);
-        info.password = rdp_settings_password_internal(session->settings);
+        info.domain = credential_domain;
+        info.username = credential_username;
+        info.password = credential_password;
         info.alternate_shell = NULL;
         info.working_dir = NULL;
         if (standard_security_ready)
@@ -30548,8 +30579,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_trace_event(RDP_TRACE_PROTOCOL,
                     "rdp.client_info.start",
                     "domain_present=%u username_present=%u password=masked encrypted=%u",
-                    librdp_settings_domain(session->settings) ? 1u : 0u,
-                    librdp_settings_username(session->settings) ? 1u : 0u,
+                    credential_domain ? 1u : 0u,
+                    credential_username ? 1u : 0u,
                     standard_security_ready ? 1u : 0u);
     status = rdp_session_write_mcs_pdu(session, &security_data, "rdp.client_info.pdu", 0);
     if (status != LIBRDP_STATUS_OK)
@@ -30594,6 +30625,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    if (provider_credentials_initialized)
+        librdp_credentials_clear(&provider_credentials);
     rdp_session_trace_scope_end(session);
     return LIBRDP_STATUS_OK;
 
@@ -30688,6 +30721,8 @@ fail:
     rdp_buffer_free(&gcc_request);
     rdp_buffer_free(&gcc_blocks);
     rdp_buffer_free(&x224);
+    if (provider_credentials_initialized)
+        librdp_credentials_clear(&provider_credentials);
     rdp_session_trace_scope_end(session);
     return rdp_session_fail(session, status);
 }
