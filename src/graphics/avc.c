@@ -101,6 +101,7 @@ struct rdp_avc_decoder
     uint8_t unused;
 };
 
+#if defined(RDP_HAVE_ANY_AVC)
 static int rdp_avc_mul_overflow_size(size_t a, size_t b, size_t* out)
 {
     if (!out)
@@ -110,7 +111,9 @@ static int rdp_avc_mul_overflow_size(size_t a, size_t b, size_t* out)
     *out = a * b;
     return 0;
 }
+#endif
 
+#if defined(RDP_HAVE_ANY_AVC)
 static librdp_status rdp_avc_frame_prepare(rdp_avc_frame* frame, uint32_t width, uint32_t height)
 {
     size_t stride = 0;
@@ -132,6 +135,7 @@ static librdp_status rdp_avc_frame_prepare(rdp_avc_frame* frame, uint32_t width,
     frame->stride = stride;
     return LIBRDP_STATUS_OK;
 }
+#endif
 
 void rdp_avc_frame_init(rdp_avc_frame* frame)
 {
@@ -151,6 +155,7 @@ void rdp_avc_frame_free(rdp_avc_frame* frame)
     frame->stride = 0;
 }
 
+#if defined(RDP_HAVE_ANY_AVC)
 static void rdp_avc_frame_move(rdp_avc_frame* dst, rdp_avc_frame* src)
 {
     if (!dst || !src || dst == src)
@@ -164,10 +169,18 @@ static void rdp_avc_frame_move(rdp_avc_frame* dst, rdp_avc_frame* src)
     src->height = 0;
     src->stride = 0;
 }
+#endif
+
+static uint8_t rdp_avc_clip_u8(int value)
+{
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return (uint8_t)value;
+}
 
 #if defined(RDP_HAVE_ANY_AVC)
-static uint8_t rdp_avc_clip_u8(int value);
-
 static void rdp_avc_yuv420_init(rdp_avc_yuv420* yuv)
 {
     size_t i = 0;
@@ -320,6 +333,152 @@ static librdp_status rdp_avc_yuv420_prepare(rdp_avc_yuv420* yuv, uint32_t width,
     yuv->height = height;
     return LIBRDP_STATUS_OK;
 }
+#endif
+
+static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* meta,
+                                          uint32_t index,
+                                          rdp_graphics_rect16* rect)
+{
+    if (!meta || !rect || index >= meta->rect_count || meta->rects_len < ((size_t)index + 1u) * 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_graphics_parse_rect16(meta->rects + ((size_t)index * 8u), 8u, rect);
+}
+
+static librdp_status rdp_avc_validate_surface_rect(uint32_t surface_width,
+                                                   uint32_t surface_height,
+                                                   const rdp_graphics_rect16* rect)
+{
+    if (!rect || surface_width == 0 || surface_height == 0 ||
+        rect->left >= rect->right || rect->top >= rect->bottom ||
+        rect->right > surface_width || rect->bottom > surface_height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_avc_validate_metablock_regions(const rdp_graphics_avc420_metablock* meta,
+                                                        uint32_t surface_width,
+                                                        uint32_t surface_height)
+{
+    uint32_t i = 0;
+
+    if (!meta || meta->rect_count == 0 ||
+        meta->rects_len < (size_t)meta->rect_count * 8u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 0; i < meta->rect_count; i++)
+    {
+        rdp_graphics_rect16 rect;
+        librdp_status status = rdp_avc_parse_region(meta, i, &rect);
+
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_avc_validate_surface_rect(surface_width, surface_height, &rect);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Reconstruct AVC444 chroma planes from the split auxiliary stream. The merge
+ * path validates plane sizes and falls back predictably when chroma payloads
+ * are absent or clipped.
+ */
+librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view)
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t padded_height = 0;
+    uint32_t u_row = 0;
+    uint32_t v_row = 0;
+    uint32_t y = 0;
+    uint32_t odd_column_count = 0;
+    uint32_t first_odd_column = 0;
+    uint32_t even_row_count = 0;
+
+    if (!view || !view->aux_y || !view->aux_u || !view->aux_v || !view->dst_u || !view->dst_v ||
+        view->aux_width == 0 || view->aux_height == 0 || view->dst_width == 0 || view->dst_height == 0 ||
+        view->rect.left >= view->rect.right || view->rect.top >= view->rect.bottom ||
+        view->rect.right > view->aux_width || view->rect.bottom > view->aux_height ||
+        view->rect.right > view->dst_width || view->rect.bottom > view->dst_height ||
+        view->aux_y_stride < view->aux_width || view->dst_u_stride < view->dst_width ||
+        view->dst_v_stride < view->dst_width)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    width = (uint32_t)(view->rect.right - view->rect.left);
+    height = (uint32_t)(view->rect.bottom - view->rect.top);
+    padded_height = ((height + 15u) / 16u) * 16u;
+    odd_column_count = (uint32_t)(view->rect.right / 2u - view->rect.left / 2u);
+    first_odd_column = (view->rect.left & 1u) ? 0u : 1u;
+    even_row_count = (height + 1u) / 2u;
+    if (view->aux_u_stride < ((size_t)view->aux_width + 1u) / 2u ||
+        view->aux_v_stride < ((size_t)view->aux_width + 1u) / 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    for (y = 0; y < padded_height; y++)
+    {
+        uint32_t dest_row = 0;
+        uint32_t src_row = 0;
+        uint8_t* dest = NULL;
+        const uint8_t* src = NULL;
+
+        if ((y % 16u) < 8u)
+        {
+            dest_row = view->rect.top + 2u * u_row + 1u;
+            u_row++;
+            if (dest_row >= view->rect.bottom)
+                continue;
+            dest = view->dst_u + ((size_t)dest_row * view->dst_u_stride) + view->rect.left;
+        }
+        else
+        {
+            dest_row = view->rect.top + 2u * v_row + 1u;
+            v_row++;
+            if (dest_row >= view->rect.bottom)
+                continue;
+            dest = view->dst_v + ((size_t)dest_row * view->dst_v_stride) + view->rect.left;
+        }
+        src_row = view->rect.top + y;
+        if (src_row >= view->aux_height)
+            src_row = view->aux_height - 1u;
+        if (view->rect.left + width > view->aux_y_stride)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src = view->aux_y + ((size_t)src_row * view->aux_y_stride) + view->rect.left;
+        memcpy(dest, src, width);
+    }
+
+    for (y = 0; y < even_row_count; y++)
+    {
+        uint32_t dest_row = view->rect.top + 2u * y;
+        const uint8_t* src_u = NULL;
+        const uint8_t* src_v = NULL;
+        uint8_t* dest_u = NULL;
+        uint8_t* dest_v = NULL;
+        uint32_t x = 0;
+
+        if (dest_row >= view->rect.bottom)
+            break;
+        if ((size_t)(view->rect.top / 2u + y) >= (((size_t)view->aux_height + 1u) / 2u))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if ((size_t)(view->rect.left / 2u) + odd_column_count > view->aux_u_stride ||
+            (size_t)(view->rect.left / 2u) + odd_column_count > view->aux_v_stride)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        src_u = view->aux_u + ((size_t)(view->rect.top / 2u + y) * view->aux_u_stride) +
+                (view->rect.left / 2u);
+        src_v = view->aux_v + ((size_t)(view->rect.top / 2u + y) * view->aux_v_stride) +
+                (view->rect.left / 2u);
+        dest_u = view->dst_u + ((size_t)dest_row * view->dst_u_stride) + view->rect.left;
+        dest_v = view->dst_v + ((size_t)dest_row * view->dst_v_stride) + view->rect.left;
+        for (x = 0; x < odd_column_count; x++)
+        {
+            uint32_t dest_col = first_odd_column + 2u * x;
+
+            if (view->rect.left + dest_col >= view->rect.right)
+                break;
+            dest_u[dest_col] = src_u[x];
+            dest_v[dest_col] = src_v[x];
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
 
 /*
  * Reconstruct AVC444v2 chroma planes from luma-aligned decoder output. Plane
@@ -435,6 +594,8 @@ librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* 
 
     return LIBRDP_STATUS_OK;
 }
+
+#if defined(RDP_HAVE_ANY_AVC)
 
 #if defined(RDP_HAVE_FFMPEG_AVC)
 static void rdp_avc_h264_reset(rdp_avc_h264* h264)
@@ -809,155 +970,6 @@ static librdp_status rdp_avc_validate_rect(const rdp_avc_yuv420* yuv,
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* meta,
-                                          uint32_t index,
-                                          rdp_graphics_rect16* rect);
-
-static librdp_status rdp_avc_validate_surface_rect(uint32_t surface_width,
-                                                   uint32_t surface_height,
-                                                   const rdp_graphics_rect16* rect)
-{
-    if (!rect || surface_width == 0 || surface_height == 0 ||
-        rect->left >= rect->right || rect->top >= rect->bottom ||
-        rect->right > surface_width || rect->bottom > surface_height)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return LIBRDP_STATUS_OK;
-}
-
-static librdp_status rdp_avc_validate_metablock_regions(const rdp_graphics_avc420_metablock* meta,
-                                                        uint32_t surface_width,
-                                                        uint32_t surface_height)
-{
-    uint32_t i = 0;
-
-    if (!meta || meta->rect_count == 0 ||
-        meta->rects_len < (size_t)meta->rect_count * 8u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    for (i = 0; i < meta->rect_count; i++)
-    {
-        rdp_graphics_rect16 rect;
-        librdp_status status = rdp_avc_parse_region(meta, i, &rect);
-
-        if (status == LIBRDP_STATUS_OK)
-            status = rdp_avc_validate_surface_rect(surface_width, surface_height, &rect);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
-    }
-    return LIBRDP_STATUS_OK;
-}
-
-/*
- * Reconstruct AVC444 chroma planes from the split auxiliary stream. The merge
- * path validates plane sizes and falls back predictably when chroma payloads
- * are absent or clipped.
- */
-librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view)
-{
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint32_t padded_height = 0;
-    uint32_t u_row = 0;
-    uint32_t v_row = 0;
-    uint32_t y = 0;
-    uint32_t odd_column_count = 0;
-    uint32_t first_odd_column = 0;
-    uint32_t even_row_count = 0;
-
-    if (!view || !view->aux_y || !view->aux_u || !view->aux_v || !view->dst_u || !view->dst_v ||
-        view->aux_width == 0 || view->aux_height == 0 || view->dst_width == 0 || view->dst_height == 0 ||
-        view->rect.left >= view->rect.right || view->rect.top >= view->rect.bottom ||
-        view->rect.right > view->aux_width || view->rect.bottom > view->aux_height ||
-        view->rect.right > view->dst_width || view->rect.bottom > view->dst_height ||
-        view->aux_y_stride < view->aux_width || view->dst_u_stride < view->dst_width ||
-        view->dst_v_stride < view->dst_width)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    width = (uint32_t)(view->rect.right - view->rect.left);
-    height = (uint32_t)(view->rect.bottom - view->rect.top);
-    padded_height = ((height + 15u) / 16u) * 16u;
-    odd_column_count = (uint32_t)(view->rect.right / 2u - view->rect.left / 2u);
-    first_odd_column = (view->rect.left & 1u) ? 0u : 1u;
-    even_row_count = (height + 1u) / 2u;
-    if (view->aux_u_stride < ((size_t)view->aux_width + 1u) / 2u ||
-        view->aux_v_stride < ((size_t)view->aux_width + 1u) / 2u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-
-    for (y = 0; y < padded_height; y++)
-    {
-        uint32_t dest_row = 0;
-        uint32_t src_row = 0;
-        uint8_t* dest = NULL;
-        const uint8_t* src = NULL;
-
-        if ((y % 16u) < 8u)
-        {
-            dest_row = view->rect.top + 2u * u_row + 1u;
-            u_row++;
-            if (dest_row >= view->rect.bottom)
-                continue;
-            dest = view->dst_u + ((size_t)dest_row * view->dst_u_stride) + view->rect.left;
-        }
-        else
-        {
-            dest_row = view->rect.top + 2u * v_row + 1u;
-            v_row++;
-            if (dest_row >= view->rect.bottom)
-                continue;
-            dest = view->dst_v + ((size_t)dest_row * view->dst_v_stride) + view->rect.left;
-        }
-        src_row = view->rect.top + y;
-        if (src_row >= view->aux_height)
-            src_row = view->aux_height - 1u;
-        if (view->rect.left + width > view->aux_y_stride)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        src = view->aux_y + ((size_t)src_row * view->aux_y_stride) + view->rect.left;
-        memcpy(dest, src, width);
-    }
-
-    for (y = 0; y < even_row_count; y++)
-    {
-        uint32_t dest_row = view->rect.top + 2u * y;
-        const uint8_t* src_u = NULL;
-        const uint8_t* src_v = NULL;
-        uint8_t* dest_u = NULL;
-        uint8_t* dest_v = NULL;
-        uint32_t x = 0;
-
-        if (dest_row >= view->rect.bottom)
-            break;
-        if ((size_t)(view->rect.top / 2u + y) >= (((size_t)view->aux_height + 1u) / 2u))
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if ((size_t)(view->rect.left / 2u) + odd_column_count > view->aux_u_stride ||
-            (size_t)(view->rect.left / 2u) + odd_column_count > view->aux_v_stride)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        src_u = view->aux_u + ((size_t)(view->rect.top / 2u + y) * view->aux_u_stride) +
-                (view->rect.left / 2u);
-        src_v = view->aux_v + ((size_t)(view->rect.top / 2u + y) * view->aux_v_stride) +
-                (view->rect.left / 2u);
-        dest_u = view->dst_u + ((size_t)dest_row * view->dst_u_stride) + view->rect.left;
-        dest_v = view->dst_v + ((size_t)dest_row * view->dst_v_stride) + view->rect.left;
-        for (x = 0; x < odd_column_count; x++)
-        {
-            uint32_t dest_col = first_odd_column + 2u * x;
-
-            if (view->rect.left + dest_col >= view->rect.right)
-                break;
-            dest_u[dest_col] = src_u[x];
-            dest_v[dest_col] = src_v[x];
-        }
-    }
-    return LIBRDP_STATUS_OK;
-}
-
-static librdp_status rdp_avc_parse_region(const rdp_graphics_avc420_metablock* meta,
-                                          uint32_t index,
-                                          rdp_graphics_rect16* rect)
-{
-    if (!meta || !rect || index >= meta->rect_count || meta->rects_len < ((size_t)index + 1u) * 8u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_graphics_parse_rect16(meta->rects + ((size_t)index * 8u), 8u, rect);
-}
-
 /*
  * Apply decoded AVC luma data into the destination image while preserving
  * chroma state. Stride and rectangle checks keep partial tiles from
@@ -1155,15 +1167,6 @@ static librdp_status rdp_avc_apply_regions_chroma(rdp_avc_decoder* decoder,
     }
     decoder->yuv444_chroma_valid = 1;
     return LIBRDP_STATUS_OK;
-}
-
-static uint8_t rdp_avc_clip_u8(int value)
-{
-    if (value < 0)
-        return 0;
-    if (value > 255)
-        return 255;
-    return (uint8_t)value;
 }
 
 static void rdp_avc_yuv_to_bgra_pixel(uint8_t y, uint8_t u, uint8_t v, uint8_t* dst)
@@ -1466,11 +1469,10 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
                           frame ? (unsigned)frame->stride : 0u);
     return status;
 #else
-    (void)decoder;
-    (void)stream;
-    (void)surface_width;
-    (void)surface_height;
-    (void)frame;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_INFO,
+                          "client.graphics.avc420.decode.unavailable",
+                          "backend=none codec=AVC420");
     return LIBRDP_STATUS_UNSUPPORTED;
 #endif
 }
@@ -1615,12 +1617,12 @@ out:
                           decoder->yuv444_chroma_valid);
     return status;
 #else
-    (void)decoder;
-    (void)codec_id;
-    (void)stream;
-    (void)surface_width;
-    (void)surface_height;
-    (void)frame;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_INFO,
+                          "client.graphics.avc444.decode.unavailable",
+                          "backend=none codec_id=%u lc=%u",
+                          codec_id,
+                          stream->lc);
     return LIBRDP_STATUS_UNSUPPORTED;
 #endif
 }

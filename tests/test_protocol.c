@@ -8311,6 +8311,13 @@ static int test_path_security_license_channels(void)
                               0,
                               16,
                               &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+#if !defined(RDP_HAVE_FFMPEG_AVC) && !defined(RDP_HAVE_OPENH264_AVC)
+    PCHECK(rdp_avc_decode_420(avc_decoder,
+                              &graphics_avc420,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_UNSUPPORTED);
+#endif
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
                                             sizeof(graphics_avc444_both),
                                             &graphics_avc444_edge) == LIBRDP_STATUS_OK);
@@ -8378,6 +8385,14 @@ static int test_path_security_license_channels(void)
                               16,
                               16,
                               &avc_frame) == LIBRDP_STATUS_PROTOCOL_ERROR);
+#if !defined(RDP_HAVE_FFMPEG_AVC) && !defined(RDP_HAVE_OPENH264_AVC)
+    PCHECK(rdp_avc_decode_444(avc_decoder,
+                              RDP_GRAPHICS_CODECID_AVC444,
+                              &graphics_avc444_valid,
+                              16,
+                              16,
+                              &avc_frame) == LIBRDP_STATUS_UNSUPPORTED);
+#endif
     graphics_avc_status = rdp_avc_decode_444(avc_decoder,
                                              RDP_GRAPHICS_CODECID_AVC444,
                                              &graphics_avc444_valid,
