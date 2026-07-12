@@ -140,6 +140,7 @@ find_package(OpenSSL 3.0 REQUIRED)
 find_package(Iconv REQUIRED)
 find_package(Doxygen QUIET)
 find_package(PkgConfig QUIET)
+find_package(Threads REQUIRED)
 
 librdp_pkg_dependency(LIBRDP_WITH_FFMPEG_AVC LIBRDP_FFMPEG_AVC libavcodec libavutil libswscale)
 librdp_pkg_dependency(LIBRDP_WITH_OPENH264_AVC LIBRDP_OPENH264_AVC openh264)
@@ -188,6 +189,7 @@ set(LIBRDP_SOURCES
     src/client/error.c
     src/client/settings.c
     src/client/session.c
+    src/client/smartcard_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c
@@ -316,7 +318,7 @@ function(librdp_configure_library_target target kind)
         endif()
     endif()
     target_compile_definitions(${target} PUBLIC _POSIX_C_SOURCE=200809L)
-    target_link_libraries(${target} PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+    target_link_libraries(${target} PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv Threads::Threads)
 endfunction()
 
 function(librdp_link_library_targets)

@@ -21,6 +21,7 @@
 #include "common/stream.h"
 #include "common/trace.h"
 #include "client/settings_internal.h"
+#include "client/smartcard_backend.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "protocol/mcs.h"
@@ -218,6 +219,110 @@ static void on_secure_string_cleanse(const void* data, size_t length, void* user
         if (bytes[i] != 0)
             capture->failed++;
     }
+}
+
+static void test_sleep_ms(uint32_t timeout_ms)
+{
+    struct timespec requested;
+    struct timespec remaining;
+
+    requested.tv_sec = (time_t)(timeout_ms / 1000u);
+    requested.tv_nsec = (long)((timeout_ms % 1000u) * 1000000u);
+    while (nanosleep(&requested, &remaining) != 0 && errno == EINTR)
+        requested = remaining;
+}
+
+/*
+ * Coverage: exercises the smartcard backend boundary without a real reader.
+ * Bug classes: provider timeout, cancellation, reconnect after cancellation,
+ * output ownership, and APDU response bounds.
+ */
+static int test_smartcard_backend_mock(void)
+{
+    rdp_smartcard_backend backend;
+    rdp_smartcard_mock_backend mock;
+    SCARDCONTEXT context = 0;
+    SCARDHANDLE handle = 0;
+    DWORD active_protocol = 0;
+    SCARD_READERSTATE state;
+    SCARD_IO_REQUEST send_pci;
+    SCARD_IO_REQUEST recv_pci;
+    uint8_t apdu[] = {0x00u, 0x84u, 0x00u, 0x00u, 0x00u};
+    uint8_t response[8];
+    DWORD response_len = 0;
+
+    memset(&state, 0, sizeof(state));
+    memset(&send_pci, 0, sizeof(send_pci));
+    memset(&recv_pci, 0, sizeof(recv_pci));
+    memset(response, 0, sizeof(response));
+    rdp_smartcard_mock_backend_init(&mock);
+    rdp_smartcard_backend_init_mock(&backend, &mock);
+    rdp_smartcard_backend_set_timeout(&backend, 25u);
+
+    CHECK(rdp_smartcard_backend_establish_context(&backend, 0, &context) == SCARD_S_SUCCESS);
+    CHECK(context == mock.next_context);
+    CHECK(rdp_smartcard_backend_connect(&backend,
+                                        context,
+                                        "Mock Reader 0",
+                                        0,
+                                        0,
+                                        &handle,
+                                        &active_protocol) == SCARD_S_SUCCESS);
+    CHECK(handle == mock.next_handle);
+    CHECK(active_protocol == mock.next_protocol);
+
+    state.szReader = "Mock Reader 0";
+    CHECK(rdp_smartcard_backend_get_status_change(&backend, context, 0, &state, 1) == SCARD_S_SUCCESS);
+    CHECK(state.dwEventState == mock.next_state);
+    CHECK(atomic_load_explicit(&mock.status_change_calls, memory_order_relaxed) == 1u);
+
+    response_len = sizeof(response);
+    send_pci.dwProtocol = mock.next_protocol;
+    recv_pci.dwProtocol = mock.next_protocol;
+    CHECK(rdp_smartcard_backend_transmit(&backend,
+                                         context,
+                                         handle,
+                                         &send_pci,
+                                         apdu,
+                                         (DWORD)sizeof(apdu),
+                                         &recv_pci,
+                                         response,
+                                         &response_len) == SCARD_S_SUCCESS);
+    CHECK(response_len == mock.transmit_response_len);
+    CHECK(memcmp(response, mock.transmit_response, response_len) == 0);
+    CHECK(atomic_load_explicit(&mock.transmit_calls, memory_order_relaxed) == 1u);
+
+    atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
+    mock.hang_status_change_ms = 250u;
+    CHECK(rdp_smartcard_backend_get_status_change(&backend, context, 250u, &state, 1) == SCARD_E_TIMEOUT);
+    CHECK(atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed) >= 1u);
+    test_sleep_ms(50u);
+
+    atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
+    mock.hang_status_change_ms = 0;
+    mock.hang_transmit_ms = 250u;
+    response_len = sizeof(response);
+    CHECK(rdp_smartcard_backend_transmit(&backend,
+                                         context,
+                                         handle,
+                                         &send_pci,
+                                         apdu,
+                                         (DWORD)sizeof(apdu),
+                                         &recv_pci,
+                                         response,
+                                         &response_len) == SCARD_E_TIMEOUT);
+    CHECK(response_len == 0);
+    CHECK(atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed) >= 2u);
+    test_sleep_ms(50u);
+
+    atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
+    mock.hang_transmit_ms = 0;
+    active_protocol = 0;
+    CHECK(rdp_smartcard_backend_reconnect(&backend, handle, 0, 0, 0, &active_protocol) == SCARD_S_SUCCESS);
+    CHECK(active_protocol == mock.next_protocol);
+    CHECK(rdp_smartcard_backend_disconnect(&backend, handle, 0) == SCARD_S_SUCCESS);
+    CHECK(rdp_smartcard_backend_release_context(&backend, context) == SCARD_S_SUCCESS);
+    return 0;
 }
 
 static librdp_status on_credentials_provider(librdp_credentials* credentials, void* user_data)
@@ -2107,6 +2212,8 @@ int test_common(void)
 
 int test_client_core(void)
 {
+    if (test_smartcard_backend_mock() != 0)
+        return 1;
     return test_settings_surface_input_session();
 }
 
