@@ -27,11 +27,14 @@
 #include <string.h>
 #include <time.h>
 
+#define RDP_TRACE_REDACTED_HEADER_BYTES 16u
+
 typedef struct rdp_trace_config
 {
     bool client;
     bool transport;
     bool protocol;
+    bool unsafe_hexdump;
     size_t hex_limit;
     rdp_trace_level level;
     bool initialized;
@@ -106,6 +109,7 @@ void rdp_trace_refresh_from_env(void)
     g_trace.client = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_CLIENT"));
     g_trace.transport = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_TRANSPORT"));
     g_trace.protocol = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_PROTOCOL"));
+    g_trace.unsafe_hexdump = rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE"));
     g_trace.hex_limit = rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
     g_trace.level = rdp_trace_parse_level_value(getenv("LIBRDP_TRACE_LEVEL"));
     g_trace.initialized = true;
@@ -173,6 +177,33 @@ static const char* rdp_trace_level_name(rdp_trace_level level)
             return "debug";
         case RDP_TRACE_LEVEL_TRACE:
             return "trace";
+        default:
+            return "unknown";
+    }
+}
+
+static const char* rdp_trace_sensitivity_name(rdp_trace_sensitivity sensitivity)
+{
+    switch (sensitivity)
+    {
+        case RDP_TRACE_SENSITIVITY_HEADER:
+            return "header";
+        case RDP_TRACE_SENSITIVITY_AUTH:
+            return "auth";
+        case RDP_TRACE_SENSITIVITY_INPUT:
+            return "input";
+        case RDP_TRACE_SENSITIVITY_CLIPBOARD:
+            return "clipboard";
+        case RDP_TRACE_SENSITIVITY_FILE:
+            return "file";
+        case RDP_TRACE_SENSITIVITY_APDU:
+            return "apdu";
+        case RDP_TRACE_SENSITIVITY_AUDIO:
+            return "audio";
+        case RDP_TRACE_SENSITIVITY_VIDEO:
+            return "video";
+        case RDP_TRACE_SENSITIVITY_USB:
+            return "usb";
         default:
             return "unknown";
     }
@@ -274,11 +305,16 @@ void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, c
     va_end(ap);
 }
 
-void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_len)
+void rdp_trace_hexdump(const char* event,
+                       rdp_trace_sensitivity sensitivity,
+                       const void* payload,
+                       size_t payload_len)
 {
     const uint8_t* bytes = (const uint8_t*)payload;
-    const size_t limit = g_trace.initialized ? g_trace.hex_limit : rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
-    const size_t dumped = payload_len < limit ? payload_len : limit;
+    size_t limit = 0;
+    size_t dumped = 0;
+    bool unsafe = false;
+    bool redacted = false;
     uint64_t now = 0;
     uint64_t elapsed_us = 0;
     unsigned long long seq = 0;
@@ -288,8 +324,16 @@ void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_le
     size_t apos = 0;
     size_t i = 0;
 
-    if (!event || !rdp_trace_enabled_level(RDP_TRACE_PROTOCOL, RDP_TRACE_LEVEL_TRACE))
+    if (!event || (!payload && payload_len > 0) ||
+        !rdp_trace_enabled_level(RDP_TRACE_PROTOCOL, RDP_TRACE_LEVEL_TRACE))
         return;
+
+    unsafe = g_trace.initialized ? g_trace.unsafe_hexdump : rdp_trace_parse_bool_value(getenv("LIBRDP_TRACE_UNSAFE"));
+    limit = g_trace.initialized ? g_trace.hex_limit : rdp_trace_parse_hex_limit_value(getenv("LIBRDP_TRACE_HEX_BYTES"));
+    if (!unsafe && sensitivity != RDP_TRACE_SENSITIVITY_HEADER && limit > RDP_TRACE_REDACTED_HEADER_BYTES)
+        limit = RDP_TRACE_REDACTED_HEADER_BYTES;
+    dumped = payload_len < limit ? payload_len : limit;
+    redacted = !unsafe && sensitivity != RDP_TRACE_SENSITIVITY_HEADER && dumped < payload_len;
 
     for (i = 0; i < dumped && hpos + 3 < sizeof(hex); i++)
     {
@@ -308,7 +352,7 @@ void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_le
 
     seq = rdp_trace_next_seq(&now, &elapsed_us);
     fprintf(stderr,
-            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s level=trace payload_len=%llu dumped=%llu hex=%s ascii=\"%s\"\n",
+            "librdp trace seq=%llu ts_ns=%llu elapsed_us=%llu category=protocol event=%s level=trace payload_len=%llu dumped=%llu hex=%s ascii=\"%s\" sensitivity=%s redacted=%u unsafe=%u\n",
             seq,
             (unsigned long long)now,
             (unsigned long long)elapsed_us,
@@ -316,5 +360,8 @@ void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_le
             (unsigned long long)payload_len,
             (unsigned long long)dumped,
             hex,
-            ascii);
+            ascii,
+            rdp_trace_sensitivity_name(sensitivity),
+            redacted ? 1u : 0u,
+            unsafe ? 1u : 0u);
 }

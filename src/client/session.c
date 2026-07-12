@@ -1546,6 +1546,8 @@ static librdp_status rdp_session_pointer_apply_update(librdp_session* session, c
     }
 }
 
+static rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event);
+
 static librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
                                                const rdp_buffer* pdu,
                                                const char* event,
@@ -1567,13 +1569,41 @@ static librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
     if (status == LIBRDP_STATUS_OK)
     {
         if (allow_hexdump)
-            rdp_trace_hexdump(event, packet.data, packet.length);
+            rdp_trace_hexdump(event,
+                              rdp_session_trace_sensitivity_for_event(event),
+                              packet.data,
+                              packet.length);
         status = rdp_transport_write_all(&session->transport, packet.data, packet.length);
     }
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&x224_data);
     return status;
+}
+
+static rdp_trace_sensitivity rdp_session_trace_sensitivity_for_event(const char* event)
+{
+    if (!event)
+        return RDP_TRACE_SENSITIVITY_HEADER;
+    if (strstr(event, "security") || strstr(event, "client_info") || strstr(event, "credssp") ||
+        strstr(event, "nla"))
+        return RDP_TRACE_SENSITIVITY_AUTH;
+    if (strstr(event, "input") || strstr(event, "keyboard") || strstr(event, "mouse"))
+        return RDP_TRACE_SENSITIVITY_INPUT;
+    if (strstr(event, "clipboard") || strstr(event, "cliprdr"))
+        return RDP_TRACE_SENSITIVITY_CLIPBOARD;
+    if (strstr(event, "smartcard") || strstr(event, "apdu"))
+        return RDP_TRACE_SENSITIVITY_APDU;
+    if (strstr(event, "usb"))
+        return RDP_TRACE_SENSITIVITY_USB;
+    if (strstr(event, "audio") || strstr(event, "rdpsnd") || strstr(event, "audin"))
+        return RDP_TRACE_SENSITIVITY_AUDIO;
+    if (strstr(event, "graphics") || strstr(event, "fastpath") || strstr(event, "video") ||
+        strstr(event, "slowpath"))
+        return RDP_TRACE_SENSITIVITY_VIDEO;
+    if (strstr(event, "rdpdr") || strstr(event, "drive") || strstr(event, "file") || strstr(event, "printer"))
+        return RDP_TRACE_SENSITIVITY_FILE;
+    return RDP_TRACE_SENSITIVITY_HEADER;
 }
 
 static librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
@@ -17334,7 +17364,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                               channel_id,
                               header.cmd_id,
                               header.pdu_length);
-        rdp_trace_hexdump("rdp.graphics.pdu", pdu, header.pdu_length);
+        rdp_trace_hexdump("rdp.graphics.pdu", RDP_TRACE_SENSITIVITY_VIDEO, pdu, header.pdu_length);
         if (header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_CONFIRM)
         {
             rdp_graphics_caps_confirm confirm;
@@ -25741,7 +25771,10 @@ static librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
     status = rdp_transport_read_tpkt(&session->transport, packet);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    rdp_trace_hexdump(event, packet->data, packet->length);
+    rdp_trace_hexdump(event,
+                      rdp_session_trace_sensitivity_for_event(event),
+                      packet->data,
+                      packet->length);
     status = rdp_tpkt_parse(packet->data, packet->length, &parsed);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -25788,7 +25821,7 @@ static librdp_status rdp_session_read_fastpath_packet(librdp_session* session, r
     packet->length = total;
     status = rdp_transport_read_exact(&session->transport, packet->data + header_len, (size_t)total - header_len);
     if (status == LIBRDP_STATUS_OK)
-        rdp_trace_hexdump("rdp.fastpath.pdu", packet->data, packet->length);
+        rdp_trace_hexdump("rdp.fastpath.pdu", RDP_TRACE_SENSITIVITY_VIDEO, packet->data, packet->length);
     return status;
 }
 
@@ -29555,7 +29588,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     status = rdp_tpkt_write(&request, x224.data, x224.length);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
-    rdp_trace_hexdump("x224.negotiation.request", request.data, request.length);
+    rdp_trace_hexdump("x224.negotiation.request",
+                      RDP_TRACE_SENSITIVITY_HEADER,
+                      request.data,
+                      request.length);
     status = rdp_transport_write_all(&session->transport, request.data, request.length);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
@@ -29563,7 +29599,10 @@ librdp_status librdp_session_connect(librdp_session* session)
     status = rdp_transport_read_tpkt(&session->transport, &reply);
     if (status != LIBRDP_STATUS_OK)
         goto fail;
-    rdp_trace_hexdump("x224.negotiation.response", reply.data, reply.length);
+    rdp_trace_hexdump("x224.negotiation.response",
+                      RDP_TRACE_SENSITIVITY_HEADER,
+                      reply.data,
+                      reply.length);
     status = rdp_tpkt_parse(reply.data, reply.length, &packet);
     if (status != LIBRDP_STATUS_OK)
         goto fail;

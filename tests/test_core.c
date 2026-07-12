@@ -885,10 +885,58 @@ static void trace_protocol_hexdump(void)
     setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
     setenv("LIBRDP_TRACE_HEX_BYTES", "2", 1);
     rdp_trace_reset_for_tests();
-    rdp_trace_hexdump("rdp.fastpath.pdu", bytes, sizeof(bytes));
+    rdp_trace_hexdump("rdp.fastpath.pdu", RDP_TRACE_SENSITIVITY_HEADER, bytes, sizeof(bytes));
     unsetenv("LIBRDP_TRACE_PROTOCOL");
     unsetenv("LIBRDP_TRACE_LEVEL");
     unsetenv("LIBRDP_TRACE_HEX_BYTES");
+}
+
+static void trace_sensitive_hexdumps(void)
+{
+    const uint8_t password[] = "HDR:LIBRDP_PASSWORD_CANARY";
+    const uint8_t token[] = "HDR:LIBRDP_CREDSSP_TOKEN_CANARY";
+    const uint8_t clipboard[] = "HDR:LIBRDP_CLIPBOARD_CANARY";
+    const uint8_t input[] = "HDR:LIBRDP_INPUT_CANARY";
+    const uint8_t apdu[] = "HDR:LIBRDP_APDU_CANARY";
+    const uint8_t usb[] = "HDR:LIBRDP_USB_CANARY";
+    const uint8_t media[] = "HDR:LIBRDP_MEDIA_CANARY";
+
+    setenv("LIBRDP_TRACE_PROTOCOL", "1", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
+    setenv("LIBRDP_TRACE_HEX_BYTES", "96", 1);
+    unsetenv("LIBRDP_TRACE_UNSAFE");
+    rdp_trace_reset_for_tests();
+    rdp_trace_hexdump("rdp.client_info.pdu", RDP_TRACE_SENSITIVITY_AUTH, password, sizeof(password) - 1u);
+    rdp_trace_hexdump("credssp.token", RDP_TRACE_SENSITIVITY_AUTH, token, sizeof(token) - 1u);
+    rdp_trace_hexdump("client.clipboard.pdu",
+                      RDP_TRACE_SENSITIVITY_CLIPBOARD,
+                      clipboard,
+                      sizeof(clipboard) - 1u);
+    rdp_trace_hexdump("client.input.send", RDP_TRACE_SENSITIVITY_INPUT, input, sizeof(input) - 1u);
+    rdp_trace_hexdump("client.smartcard.apdu", RDP_TRACE_SENSITIVITY_APDU, apdu, sizeof(apdu) - 1u);
+    rdp_trace_hexdump("client.usb.urb", RDP_TRACE_SENSITIVITY_USB, usb, sizeof(usb) - 1u);
+    rdp_trace_hexdump("client.media.pdu", RDP_TRACE_SENSITIVITY_VIDEO, media, sizeof(media) - 1u);
+    unsetenv("LIBRDP_TRACE_PROTOCOL");
+    unsetenv("LIBRDP_TRACE_LEVEL");
+    unsetenv("LIBRDP_TRACE_HEX_BYTES");
+}
+
+static void trace_sensitive_hexdumps_unsafe(void)
+{
+    const uint8_t password[] = "HDR:LIBRDP_PASSWORD_CANARY";
+    const uint8_t input[] = "HDR:LIBRDP_INPUT_CANARY";
+
+    setenv("LIBRDP_TRACE_PROTOCOL", "1", 1);
+    setenv("LIBRDP_TRACE_LEVEL", "trace", 1);
+    setenv("LIBRDP_TRACE_HEX_BYTES", "96", 1);
+    setenv("LIBRDP_TRACE_UNSAFE", "1", 1);
+    rdp_trace_reset_for_tests();
+    rdp_trace_hexdump("rdp.client_info.pdu", RDP_TRACE_SENSITIVITY_AUTH, password, sizeof(password) - 1u);
+    rdp_trace_hexdump("client.input.send", RDP_TRACE_SENSITIVITY_INPUT, input, sizeof(input) - 1u);
+    unsetenv("LIBRDP_TRACE_PROTOCOL");
+    unsetenv("LIBRDP_TRACE_LEVEL");
+    unsetenv("LIBRDP_TRACE_HEX_BYTES");
+    unsetenv("LIBRDP_TRACE_UNSAFE");
 }
 
 static void trace_level_filtered_event(void)
@@ -917,7 +965,7 @@ static void trace_level_debug_event(void)
  */
 static int test_trace(void)
 {
-    char output[2048];
+    char output[4096];
 
     CHECK(rdp_trace_parse_bool_value("1"));
     CHECK(rdp_trace_parse_bool_value("true"));
@@ -975,6 +1023,25 @@ static int test_trace(void)
     CHECK(strstr(output, "category=protocol event=rdp.fastpath.pdu") != NULL);
     CHECK(strstr(output, "level=trace") != NULL);
     CHECK(strstr(output, "payload_len=4 dumped=2 hex=4142 ascii=\"AB\"") != NULL);
+    CHECK(strstr(output, "sensitivity=header redacted=0 unsafe=0") != NULL);
+
+    CHECK(capture_stderr(trace_sensitive_hexdumps, output, sizeof(output)));
+    CHECK(strstr(output, "sensitivity=auth redacted=1 unsafe=0") != NULL);
+    CHECK(strstr(output, "sensitivity=input redacted=1 unsafe=0") != NULL);
+    CHECK(strstr(output, "LIBRDP_PASSWORD_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CREDSSP_TOKEN_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_CLIPBOARD_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_INPUT_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_APDU_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_USB_CANARY") == NULL);
+    CHECK(strstr(output, "LIBRDP_MEDIA_CANARY") == NULL);
+    CHECK(strstr(output, "4c49425244505f50415353574f52445f43414e415259") == NULL);
+    CHECK(strstr(output, "4c49425244505f494e5055545f43414e415259") == NULL);
+
+    CHECK(capture_stderr(trace_sensitive_hexdumps_unsafe, output, sizeof(output)));
+    CHECK(strstr(output, "sensitivity=auth redacted=0 unsafe=1") != NULL);
+    CHECK(strstr(output, "LIBRDP_PASSWORD_CANARY") != NULL);
+    CHECK(strstr(output, "LIBRDP_INPUT_CANARY") != NULL);
     return 0;
 }
 

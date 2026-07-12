@@ -39,6 +39,19 @@ typedef enum rdp_trace_level
     RDP_TRACE_LEVEL_TRACE = 4
 } rdp_trace_level;
 
+typedef enum rdp_trace_sensitivity
+{
+    RDP_TRACE_SENSITIVITY_HEADER = 0,
+    RDP_TRACE_SENSITIVITY_AUTH = 1,
+    RDP_TRACE_SENSITIVITY_INPUT = 2,
+    RDP_TRACE_SENSITIVITY_CLIPBOARD = 3,
+    RDP_TRACE_SENSITIVITY_FILE = 4,
+    RDP_TRACE_SENSITIVITY_APDU = 5,
+    RDP_TRACE_SENSITIVITY_AUDIO = 6,
+    RDP_TRACE_SENSITIVITY_VIDEO = 7,
+    RDP_TRACE_SENSITIVITY_USB = 8
+} rdp_trace_sensitivity;
+
 bool rdp_trace_parse_bool_value(const char* value);
 size_t rdp_trace_parse_hex_limit_value(const char* value);
 rdp_trace_level rdp_trace_parse_level_value(const char* value);
@@ -48,6 +61,9 @@ bool rdp_trace_enabled(rdp_trace_category category);
 bool rdp_trace_enabled_level(rdp_trace_category category, rdp_trace_level level);
 void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...);
 void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, const char* event, const char* fmt, ...);
-void rdp_trace_hexdump(const char* event, const void* payload, size_t payload_len);
+void rdp_trace_hexdump(const char* event,
+                       rdp_trace_sensitivity sensitivity,
+                       const void* payload,
+                       size_t payload_len);
 
 #endif
