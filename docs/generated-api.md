@@ -26,6 +26,22 @@ It contains per-symbol pages for:
 
 [Open the generated Doxygen API reference](https://marcofortina.github.io/librdp/api/doxygen/html/index.html)
 
+Generated API groups:
+
+| API family | Generated group |
+| --- | --- |
+| Umbrella header | [Umbrella Header](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__umbrella.html) |
+| Errors | [Error API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__error.html) |
+| Settings | [Settings API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__settings.html) |
+| Session | [Session API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__session.html) |
+| Events | [Event API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__event.html) |
+| Surface | [Surface API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__surface.html) |
+| Input | [Input API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__input.html) |
+| Clipboard | [Clipboard API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__clipboard.html) |
+| Dynamic channels | [Dynamic Channel API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__channel.html) |
+| Audio | [Audio API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__audio.html) |
+| Video | [Video API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__video.html) |
+
 The GitHub Pages workflow builds this reference with Doxygen and publishes it under:
 
 ```text

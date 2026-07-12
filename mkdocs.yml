@@ -90,6 +90,7 @@ nav:
       - Protocol support: protocol-support.md
       - Backends: backends.md
       - Backend guide: backend-guide.md
+      - Glossary: glossary.md
   - Operations:
       - Security: security.md
       - Tracing: tracing.md

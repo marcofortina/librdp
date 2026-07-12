@@ -35,6 +35,14 @@ librdp trace seq=<n> ts_ns=<n> elapsed_us=<n> category=protocol event=<name> lev
 .fi
 .SH SECURITY
 Trace must not print passwords, authentication tokens, private keys, WebAuthn secrets, smartcard PIN-like data, clipboard contents, file contents, audio samples, or video frames. Prefer identifiers, sizes, result codes, flags, and timing data.
+.SH DIAGNOSTIC USE
+Use client trace for lifecycle, surfaces, input, pointer, clipboard, channel, audio, video, and backend behavior.
+.P
+Use transport trace for TCP, TLS, UDP, timeout, read, write, EOF, and close behavior.
+.P
+Use protocol trace for handshake, parser, PDU, capability, channel, fast-path, slow-path, security, and codec behavior.
+.P
+Enable bounded protocol hexdumps only when packet bytes are required for parser or interoperability analysis.
 .SH EXAMPLES
 .nf
 LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla

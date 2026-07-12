@@ -48,6 +48,22 @@ Public functions return
 where failure is possible. Applications should compare against named status constants and use
 .BR librdp_status_string ()
 for stable diagnostic tokens.
+.SH GENERATED REFERENCE
+The generated API reference is built from Doxygen comments in public headers. It contains per-symbol pages for functions, structs, enums, macros, callback types, parameters, return codes, ownership, threading, security warnings, and version tags.
+.P
+Local builds write HTML output to
+.IR build/doxygen/html/index.html .
+.P
+The documentation entry point is
+.IR docs/generated-api.md .
+.SH USAGE FLOW
+A typical application configures
+.BR librdp_settings ,
+creates a
+.BR librdp_session ,
+registers an event callback, connects, drives
+.BR librdp_session_run_once (),
+presents surface invalidations, sends input or feature responses, disconnects, and frees owned objects.
 .SH SEE ALSO
 .BR librdp (7),
 .BR librdp-tracing (7),
