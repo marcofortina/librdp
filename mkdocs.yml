@@ -80,6 +80,7 @@ nav:
   - API:
       - API guide: api.md
       - API reference: api-reference.md
+      - Generated API docs: generated-api.md
       - Programmer's reference: programmers-reference.md
       - Examples: examples.md
       - ABI and versioning: abi-versioning.md

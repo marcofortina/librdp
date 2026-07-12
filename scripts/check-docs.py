@@ -20,6 +20,7 @@ REQUIRED_MARKDOWN = (
     "docs/coding-standards.md",
     "docs/api.md",
     "docs/api-reference.md",
+    "docs/generated-api.md",
     "docs/programmers-reference.md",
     "docs/examples.md",
     "docs/abi-versioning.md",
@@ -334,6 +335,17 @@ def validate_pages_workflow(errors: list[str]) -> None:
             errors.append(f"pages workflow missing required step content: {snippet}")
 
 
+def validate_generated_api_page(errors: list[str]) -> None:
+    page = read("docs/generated-api.md")
+    link = "https://marcofortina.github.io/librdp/api/doxygen/html/index.html"
+    if link not in page:
+        errors.append("generated API page missing published Doxygen link")
+    if "api/doxygen/html/" not in read("docs/index.md"):
+        errors.append("documentation home missing generated Doxygen publish path")
+    if "generated-api.md" not in read("mkdocs.yml"):
+        errors.append("mkdocs.yml missing generated API page")
+
+
 def main() -> int:
     errors: list[str] = []
     required_set = set(REQUIRED_MARKDOWN)
@@ -375,6 +387,7 @@ def main() -> int:
     validate_doxygen_config(errors)
     validate_mkdocs(errors)
     validate_pages_workflow(errors)
+    validate_generated_api_page(errors)
 
     if errors:
         print("error: documentation guardrail failed:", file=sys.stderr)

@@ -128,6 +128,10 @@ Use `librdp_status_string()` for stable diagnostic tokens. Do not use status str
 
 Doxygen reads `include/librdp` and this API reference page. HTML output is written to `build/doxygen/html/index.html`; XML output is written to `build/doxygen/xml`.
 
+The generated reference contains the per-symbol pages for every public API:
+
+- [Open generated API documentation](https://marcofortina.github.io/librdp/api/doxygen/html/index.html)
+
 Build the local HTML reference with:
 
 ```sh
