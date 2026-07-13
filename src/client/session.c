@@ -26117,6 +26117,14 @@ static void rdp_session_emit_video_capture_close(librdp_session* session, uint8_
     rdp_session_emit(session, &event);
 }
 
+/*
+ * Reads one synthetic camera sample from a viewer-provided file source. The
+ * source string is untrusted configuration, so the function opens the final
+ * path directly, refuses symlink traversal when the platform exposes
+ * O_NOFOLLOW, validates the resulting descriptor with fstat, and caps the
+ * accumulated sample before it can be queued on the video-capture channel.
+ * Failures are converted to the protocol error code consumed by the caller.
+ */
 static librdp_status rdp_session_video_capture_read_sample(const char* source,
                                                            rdp_buffer* sample,
                                                            uint32_t* error_code)
