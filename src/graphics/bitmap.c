@@ -85,15 +85,17 @@ static librdp_status rdp_bitmap_parse_rectangles(rdp_stream* stream, uint16_t co
 librdp_status rdp_bitmap_parse_update_header(const void* data, size_t length, rdp_bitmap_update_header* header)
 {
     rdp_stream stream;
+    rdp_bitmap_update_header parsed;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &header->update_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->count) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.update_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -101,12 +103,13 @@ librdp_status rdp_bitmap_parse_update(const void* data, size_t length, rdp_bitma
 {
     rdp_stream stream;
     rdp_bitmap_update_header header;
+    rdp_bitmap_update parsed;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     status = rdp_bitmap_parse_update_header(data, length, &header);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -116,7 +119,11 @@ librdp_status rdp_bitmap_parse_update(const void* data, size_t length, rdp_bitma
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_bitmap_parse_rectangles(&stream, header.count, update);
+    status = rdp_bitmap_parse_rectangles(&stream, header.count, &parsed);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *update = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, rdp_bitmap_update* update)
@@ -124,26 +131,36 @@ librdp_status rdp_bitmap_parse_fastpath_update(const void* data, size_t length, 
     rdp_stream stream;
     uint16_t count = 0;
     uint16_t first = 0;
+    rdp_bitmap_update parsed;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u16_le(&stream, &first) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     count = first;
-    status = rdp_bitmap_parse_rectangles(&stream, count, update);
-    if (status == LIBRDP_STATUS_OK || first != RDP_UPDATE_TYPE_BITMAP)
+    status = rdp_bitmap_parse_rectangles(&stream, count, &parsed);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        *update = parsed;
+        return LIBRDP_STATUS_OK;
+    }
+    if (first != RDP_UPDATE_TYPE_BITMAP)
         return status;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 2) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_bitmap_parse_rectangles(&stream, count, update);
+    status = rdp_bitmap_parse_rectangles(&stream, count, &parsed);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *update = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_bitmap_parse_palette_body(rdp_stream* stream, rdp_palette_update* palette)
@@ -151,6 +168,7 @@ static librdp_status rdp_bitmap_parse_palette_body(rdp_stream* stream, rdp_palet
     uint16_t pad = 0;
     uint32_t count = 0;
     uint32_t i = 0;
+    rdp_palette_update parsed;
 
     if (!stream || !palette)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -161,15 +179,16 @@ static librdp_status rdp_bitmap_parse_palette_body(rdp_stream* stream, rdp_palet
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(stream) < (size_t)count * 3u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(palette, 0, sizeof(*palette));
-    palette->count = count;
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.count = count;
     for (i = 0; i < count; i++)
     {
-        if (rdp_stream_read_u8(stream, &palette->entries[i].red) != LIBRDP_STATUS_OK ||
-            rdp_stream_read_u8(stream, &palette->entries[i].green) != LIBRDP_STATUS_OK ||
-            rdp_stream_read_u8(stream, &palette->entries[i].blue) != LIBRDP_STATUS_OK)
+        if (rdp_stream_read_u8(stream, &parsed.entries[i].red) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(stream, &parsed.entries[i].green) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u8(stream, &parsed.entries[i].blue) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
+    *palette = parsed;
     (void)pad;
     return LIBRDP_STATUS_OK;
 }

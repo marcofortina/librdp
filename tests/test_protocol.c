@@ -4455,11 +4455,25 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, data_pdu.payload_len, &bitmap_header) ==
            LIBRDP_STATUS_OK);
     PCHECK(bitmap_header.update_type == RDP_UPDATE_TYPE_BITMAP && bitmap_header.count == 1);
-    PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, 3, &bitmap_header) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_bitmap_update_header valid_bitmap_header = bitmap_header;
+
+        PCHECK(rdp_bitmap_parse_update_header(data_pdu.payload, 3, &bitmap_header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&bitmap_header, &valid_bitmap_header, sizeof(bitmap_header)) == 0);
+    }
     PCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &bitmap_update) == LIBRDP_STATUS_OK);
     PCHECK(bitmap_update.count == 1);
     PCHECK(bitmap_update.rects[0].width == 2 && bitmap_update.rects[0].height == 2);
     PCHECK(bitmap_update.rects[0].bits_per_pixel == 32 && bitmap_update.rects[0].data_len == 16);
+    {
+        const rdp_bitmap_update valid_bitmap_update = bitmap_update;
+
+        PCHECK(rdp_bitmap_parse_update(data_pdu.payload,
+                                       data_pdu.payload_len - 1u,
+                                       &bitmap_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&bitmap_update, &valid_bitmap_update, sizeof(bitmap_update)) == 0);
+    }
     PCHECK(rdp_bitmap_decode_rect_bgra32(&bitmap_update.rects[0], &decoded_bitmap, &decoded_stride) ==
            LIBRDP_STATUS_OK);
     PCHECK(decoded_stride == 8 && decoded_bitmap.length == 16 && decoded_bitmap.data[0] == 9 &&
@@ -4479,6 +4493,14 @@ static int test_path_security_license_channels(void)
     PCHECK(bitmap_update.count == 1 &&
            bitmap_update.rects[0].bits_per_pixel == 32 &&
            bitmap_update.rects[0].data_len == 16);
+    {
+        const rdp_bitmap_update valid_bitmap_update = bitmap_update;
+
+        PCHECK(rdp_bitmap_parse_fastpath_update(decoded_bitmap.data,
+                                                decoded_bitmap.length - 1u,
+                                                &bitmap_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&bitmap_update, &valid_bitmap_update, sizeof(bitmap_update)) == 0);
+    }
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_init(&client_refresh_rect);
     PCHECK(rdp_slowpath_write_data_pdu(&client_refresh_rect,
@@ -4518,12 +4540,22 @@ static int test_path_security_license_channels(void)
                                                     &palette_roundtrip) == LIBRDP_STATUS_OK);
     PCHECK(palette_roundtrip.count == 4 && palette_roundtrip.entries[3].red == 9 &&
            palette_roundtrip.entries[3].green == 8 && palette_roundtrip.entries[3].blue == 7);
-    PCHECK(rdp_bitmap_parse_palette_update(palette_fastpath_data,
-                                           sizeof(palette_fastpath_data),
-                                           &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_bitmap_parse_palette_update(palette_invalid_count,
-                                           sizeof(palette_invalid_count),
-                                           &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_palette_update valid_palette_update = palette_roundtrip;
+
+        PCHECK(rdp_bitmap_parse_palette_update(palette_fastpath_data,
+                                               sizeof(palette_fastpath_data),
+                                               &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&palette_roundtrip, &valid_palette_update, sizeof(palette_roundtrip)) == 0);
+        PCHECK(rdp_bitmap_parse_palette_update(palette_invalid_count,
+                                               sizeof(palette_invalid_count),
+                                               &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&palette_roundtrip, &valid_palette_update, sizeof(palette_roundtrip)) == 0);
+        PCHECK(rdp_bitmap_parse_fastpath_palette_update(palette_fastpath_data,
+                                                        sizeof(palette_fastpath_data) - 1u,
+                                                        &palette_roundtrip) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&palette_roundtrip, &valid_palette_update, sizeof(palette_roundtrip)) == 0);
+    }
     PCHECK(rdp_bitmap_write_palette_update(&decoded_bitmap, &palette_update) == LIBRDP_STATUS_OK);
     PCHECK(rdp_bitmap_parse_palette_update(decoded_bitmap.data,
                                            decoded_bitmap.length,
