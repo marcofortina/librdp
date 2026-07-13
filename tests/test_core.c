@@ -4447,6 +4447,16 @@ static int test_settings_surface_input_session(void)
     CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
     CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_PNP,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_RAIL,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
                                              (librdp_feature)(LIBRDP_FEATURE_AUDIO_OUTPUT |
                                                              LIBRDP_FEATURE_VIDEO),
                                              &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -4501,6 +4511,16 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_rail_app_count(settings) == 1);
     CHECK(strcmp(librdp_settings_rail_app(settings, 0), "notepad.exe") == 0);
     CHECK(librdp_settings_rail_app(settings, 1) == NULL);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_PNP,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_RAIL,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(strcmp(librdp_settings_echo_payload(settings), "probe") == 0);
     CHECK(librdp_settings_set_port(settings, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_desktop_size(settings, 0, 48) == LIBRDP_STATUS_INVALID_ARGUMENT);

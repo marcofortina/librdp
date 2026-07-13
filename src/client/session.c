@@ -2475,6 +2475,45 @@ static uint32_t rdp_session_pixels_to_mm(uint16_t pixels)
     return mm;
 }
 
+/*
+ * GCC channel advertisement is stricter than a requested feature bit. A client
+ * must only ask the server for channels whose host-side backend is already
+ * configured and whose implementation is not parser-only.
+ */
+static uint8_t rdp_session_feature_ready_for_negotiation(const librdp_session* session, librdp_feature feature)
+{
+    librdp_feature_status status;
+
+    if (!session || !session->settings)
+        return 0;
+    memset(&status, 0, sizeof(status));
+    if (librdp_settings_get_feature_status(session->settings, feature, &status) != LIBRDP_STATUS_OK)
+        return 0;
+    return (status.requested && status.backend_ready &&
+            status.reason != LIBRDP_FEATURE_REASON_PARSER_ONLY) ?
+               1u :
+               0u;
+}
+
+static uint8_t rdp_session_device_redirection_ready_for_negotiation(const librdp_session* session)
+{
+    if (!session || !session->settings)
+        return 0;
+    if (librdp_settings_drive_count(session->settings) > 0 ||
+        librdp_settings_serial_port_count(session->settings) > 0 ||
+        librdp_settings_parallel_port_count(session->settings) > 0 ||
+        librdp_settings_printer_count(session->settings) > 0)
+    {
+        return 1;
+    }
+    if (rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_SMARTCARD) ||
+        rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_USB))
+    {
+        return 1;
+    }
+    return 0;
+}
+
 static librdp_status rdp_session_send_dynamic_channel_data_priority(librdp_session* session,
                                                                     uint32_t channel_id,
                                                                     uint8_t channel_id_bytes,
@@ -32800,23 +32839,15 @@ librdp_status librdp_session_connect(librdp_session* session)
         config.enable_dynamic_channels = 1;
         config.enable_clipboard = 1;
         config.enable_audio_output =
-            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u;
-        config.enable_device_redirection =
-            (librdp_settings_drive_count(session->settings) > 0 ||
-             librdp_settings_serial_port_count(session->settings) > 0 ||
-             librdp_settings_parallel_port_count(session->settings) > 0 ||
-             librdp_settings_printer_count(session->settings) > 0 ||
-             librdp_settings_smartcard_count(session->settings) > 0 ||
-             librdp_settings_usb_device_count(session->settings) > 0) ?
-                1u :
-                0u;
+            rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_AUDIO_OUTPUT);
+        config.enable_device_redirection = rdp_session_device_redirection_ready_for_negotiation(session);
         config.enable_pnp_redirection =
-            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP) ? 1u : 0u;
+            rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_PNP);
         config.enable_remote_programs =
-            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
+            rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_RAIL);
         config.enable_multitransport =
             (rdp_session_multitransport_runtime_supported() &&
-             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_MULTITRANSPORT)) ?
+             rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_MULTITRANSPORT)) ?
                 1u :
                 0u;
         config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
@@ -32947,20 +32978,12 @@ librdp_status librdp_session_connect(librdp_session* session)
         {
             uint16_t channel_index = 0;
             uint8_t audio_output_enabled =
-                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u;
-            uint8_t device_redirection_enabled =
-                (librdp_settings_drive_count(session->settings) > 0 ||
-                 librdp_settings_serial_port_count(session->settings) > 0 ||
-                 librdp_settings_parallel_port_count(session->settings) > 0 ||
-                 librdp_settings_printer_count(session->settings) > 0 ||
-                 librdp_settings_smartcard_count(session->settings) > 0 ||
-                 librdp_settings_usb_device_count(session->settings) > 0) ?
-                    1u :
-                    0u;
+                rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_AUDIO_OUTPUT);
+            uint8_t device_redirection_enabled = rdp_session_device_redirection_ready_for_negotiation(session);
             uint8_t pnp_redirection_enabled =
-                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_PNP) ? 1u : 0u;
+                rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_PNP);
             uint8_t remote_programs_enabled =
-                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
+                rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_RAIL);
 
             rdp_trace_event(RDP_TRACE_PROTOCOL,
                             "gcc.server.network",
