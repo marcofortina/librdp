@@ -27538,6 +27538,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                     first_pdu.data,
                                                     first_pdu.data_len,
                                                     &decoded);
+        if (status == LIBRDP_STATUS_OK && decoded.length == 0)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
         if (status == LIBRDP_STATUS_OK && decoded.length > first_pdu.total_length)
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
         if (status == LIBRDP_STATUS_OK)
@@ -27607,7 +27609,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                     &decoded);
         if (status == LIBRDP_STATUS_OK && entry->fragmenting)
         {
-            if (entry->fragment.length > entry->fragment_expected ||
+            if (decoded.length == 0 ||
+                entry->fragment.length > entry->fragment_expected ||
                 decoded.length > (size_t)entry->fragment_expected - entry->fragment.length)
             {
                 status = LIBRDP_STATUS_PROTOCOL_ERROR;

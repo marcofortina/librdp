@@ -65,6 +65,8 @@
 #define DVC_SCENARIO_EMPTY_CONTINUATION 4
 #define DVC_SCENARIO_NESTED_DATA_FIRST 5
 #define DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE 6
+#define DVC_SCENARIO_EMPTY_COMPRESSED_FIRST 7
+#define DVC_SCENARIO_EMPTY_COMPRESSED_CONTINUATION 8
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1522,6 +1524,48 @@ static int build_dynamic_channel_empty_data_packet(rdp_buffer* out)
     return ok;
 }
 
+static int build_dynamic_channel_empty_compressed_data_first_packet(rdp_buffer* out)
+{
+    static const uint8_t data[] = {0xe0u, 0x04u};
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_dynamic_channel_write_compressed_data_first(&payload, 7, 1, 8, data, sizeof(data)) ==
+             LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int build_dynamic_channel_compressed_data_first_packet(rdp_buffer* out)
+{
+    static const uint8_t data[] = {0xe0u, 0x04u, 'a', 'b', 'c', 'd'};
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_dynamic_channel_write_compressed_data_first(&payload, 7, 1, 8, data, sizeof(data)) ==
+             LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int build_dynamic_channel_empty_compressed_data_packet(rdp_buffer* out)
+{
+    static const uint8_t data[] = {0xe0u, 0x04u};
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_dynamic_channel_write_compressed_data(&payload, 7, 1, data, sizeof(data)) ==
+             LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int build_dynamic_channel_close_packet(rdp_buffer* out)
 {
     rdp_buffer payload;
@@ -1855,6 +1899,24 @@ static int start_handshake_server_full(uint16_t* port,
                         if (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
                             !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
                             !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_EMPTY_COMPRESSED_FIRST)
+                    {
+                        if (!build_dynamic_channel_empty_compressed_data_first_packet(&dvc_data_first) ||
+                            !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_EMPTY_COMPRESSED_CONTINUATION)
+                    {
+                        if (!build_dynamic_channel_compressed_data_first_packet(&dvc_data_first) ||
+                            !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
+                            !build_dynamic_channel_empty_compressed_data_packet(&dvc_data) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length))
                         {
                             _exit(5);
                         }
@@ -4087,6 +4149,64 @@ static int test_dynamic_channel_nested_data_first(void)
     return 0;
 }
 
+static int run_dynamic_channel_protocol_error_scenario(int scenario)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       scenario,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 7u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(counter.channel_open == 1);
+    CHECK(counter.channel_data == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: compressed DVC fragments must make forward progress after
+ * decompression. It catches zero-output bulk segments that would otherwise
+ * leave a fragmented message pending forever.
+ */
+static int test_dynamic_channel_empty_compressed_fragments(void)
+{
+    if (run_dynamic_channel_protocol_error_scenario(DVC_SCENARIO_EMPTY_COMPRESSED_FIRST) != 0)
+        return 1;
+    return run_dynamic_channel_protocol_error_scenario(DVC_SCENARIO_EMPTY_COMPRESSED_CONTINUATION);
+}
+
 /*
  * Coverage: validates that dynamic channel data cannot arrive before the
  * channel create handshake. It catches out-of-order DVC sequencing that would
@@ -4348,6 +4468,8 @@ int test_client_core(void)
     if (test_dynamic_channel_empty_continuation() != 0)
         return 1;
     if (test_dynamic_channel_nested_data_first() != 0)
+        return 1;
+    if (test_dynamic_channel_empty_compressed_fragments() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
         return 1;
