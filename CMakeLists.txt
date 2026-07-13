@@ -193,7 +193,6 @@ endif()
 set(LIBRDP_SOURCES
     src/client/client.c
     src/client/error.c
-    src/client/printer_backend.c
     src/client/settings.c
     src/client/session.c
     src/client/smartcard_backend.c
@@ -265,7 +264,12 @@ set(LIBRDP_SOURCES
     src/transport/udp_transport.c
 )
 
+set(LIBRDP_BACKEND_SOURCES
+    src/client/printer_backend.c
+)
+
 add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
+add_library(librdp_backend_objects OBJECT ${LIBRDP_BACKEND_SOURCES})
 if(LIBRDP_LIBRARY_TYPE STREQUAL "AUTO")
     if(BUILD_SHARED_LIBS)
         set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
@@ -286,14 +290,14 @@ else()
     set(LIBRDP_SECONDARY_LIBRARY_KIND SHARED)
 endif()
 
-add_library(librdp ${LIBRDP_PRIMARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects>)
+add_library(librdp ${LIBRDP_PRIMARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects> $<TARGET_OBJECTS:librdp_backend_objects>)
 set(LIBRDP_LIBRARY_TARGETS librdp)
 set(LIBRDP_SHARED_LIBRARY_TARGETS "")
 if(LIBRDP_PRIMARY_LIBRARY_KIND STREQUAL "SHARED")
     list(APPEND LIBRDP_SHARED_LIBRARY_TARGETS librdp)
 endif()
 if(DEFINED LIBRDP_SECONDARY_LIBRARY_TARGET)
-    add_library(${LIBRDP_SECONDARY_LIBRARY_TARGET} ${LIBRDP_SECONDARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects>)
+    add_library(${LIBRDP_SECONDARY_LIBRARY_TARGET} ${LIBRDP_SECONDARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects> $<TARGET_OBJECTS:librdp_backend_objects>)
     set_target_properties(${LIBRDP_SECONDARY_LIBRARY_TARGET} PROPERTIES OUTPUT_NAME librdp)
     list(APPEND LIBRDP_LIBRARY_TARGETS ${LIBRDP_SECONDARY_LIBRARY_TARGET})
     if(LIBRDP_SECONDARY_LIBRARY_KIND STREQUAL "SHARED")
@@ -365,14 +369,26 @@ target_include_directories(librdp_objects
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+target_include_directories(librdp_backend_objects
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 set_target_properties(librdp_objects PROPERTIES
     C_VISIBILITY_PRESET hidden
     POSITION_INDEPENDENT_CODE ON
 )
+set_target_properties(librdp_backend_objects PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
 target_compile_definitions(librdp_objects PRIVATE _POSIX_C_SOURCE=200809L)
+target_compile_definitions(librdp_backend_objects PRIVATE _POSIX_C_SOURCE=200809L)
 librdp_apply_warning_options(librdp_objects)
+librdp_apply_warning_options(librdp_backend_objects)
 librdp_apply_sanitizer_compile_options(librdp_objects)
+librdp_apply_sanitizer_compile_options(librdp_backend_objects)
 foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
     if(target IN_LIST LIBRDP_SHARED_LIBRARY_TARGETS)
         librdp_configure_library_target(${target} SHARED)
@@ -412,12 +428,12 @@ if(LIBRDP_CBOR_FOUND)
     librdp_link_library_targets(PkgConfig::LIBRDP_CBOR)
 endif()
 if(LIBRDP_CUPS_FOUND)
-    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CUPS=1)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_CUPS=1)
     if(TARGET PkgConfig::LIBRDP_CUPS)
-        target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CUPS)
+        target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_CUPS)
         librdp_link_library_targets(PkgConfig::LIBRDP_CUPS)
     else()
-        target_include_directories(librdp_objects PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
+        target_include_directories(librdp_backend_objects PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
         librdp_link_library_targets(${LIBRDP_CUPS_LIBRARY})
     endif()
 endif()
@@ -519,7 +535,7 @@ install(FILES
 
 function(librdp_link_internal_runtime target)
     target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
-    target_link_libraries(${target} PRIVATE librdp_objects OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
     if(LIBRDP_FFMPEG_AVC_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
     endif()
