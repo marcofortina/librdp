@@ -528,41 +528,45 @@ static librdp_status rdp_graphics_decode_compressed_segment(rdp_graphics_decompr
 
 librdp_status rdp_graphics_parse_header(const void* data, size_t length, rdp_graphics_header* header)
 {
+    rdp_graphics_header parsed;
     rdp_stream stream;
 
     if (!data || !header || length < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &header->cmd_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &header->pdu_length) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.cmd_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.pdu_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->flags != 0 || header->pdu_length < 8u || header->pdu_length > length)
+    if (parsed.flags != 0 || parsed.pdu_length < 8u || parsed.pdu_length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_graphics_parse_capset(const void* data, size_t length, rdp_graphics_capset* capset)
 {
+    rdp_graphics_capset parsed;
     rdp_stream stream;
     uint32_t caps_data_length = 0;
 
     if (!data || !capset || length < 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(capset, 0, sizeof(*capset));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &capset->version) != LIBRDP_STATUS_OK ||
+    if (rdp_stream_read_u32_le(&stream, &parsed.version) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &caps_data_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (caps_data_length != 4u || length != 8u + caps_data_length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_u32_le(&stream, &capset->flags) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_graphics_capset_valid(capset))
+    if (!rdp_graphics_capset_valid(&parsed))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *capset = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -660,19 +664,24 @@ librdp_status rdp_graphics_parse_caps_confirm(const void* data,
                                               size_t length,
                                               rdp_graphics_caps_confirm* confirm)
 {
+    rdp_graphics_caps_confirm parsed;
     rdp_graphics_header header;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !confirm)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(confirm, 0, sizeof(*confirm));
+    memset(&parsed, 0, sizeof(parsed));
     status = rdp_graphics_parse_header(data, length, &header);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (header.cmd_id != RDP_GRAPHICS_CMDID_CAPS_CONFIRM || header.pdu_length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_graphics_parse_capset(((const uint8_t*)data) + 8u, length - 8u, &confirm->selected);
+    status = rdp_graphics_parse_capset(((const uint8_t*)data) + 8u, length - 8u, &parsed.selected);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *confirm = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_graphics_parse_fixed_header(const void* data,
@@ -724,6 +733,7 @@ librdp_status rdp_graphics_parse_create_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_create_surface* create_surface)
 {
+    rdp_graphics_create_surface parsed;
     rdp_stream stream;
 
     if (!data || !create_surface)
@@ -731,17 +741,18 @@ librdp_status rdp_graphics_parse_create_surface(const void* data,
     if (rdp_graphics_parse_fixed_header(data, length, RDP_GRAPHICS_CMDID_CREATE_SURFACE, 15) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(create_surface, 0, sizeof(*create_surface));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &create_surface->surface_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &create_surface->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &create_surface->height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &create_surface->pixel_format) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u16_le(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.pixel_format) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (create_surface->width == 0 || create_surface->height == 0 ||
-        !rdp_graphics_pixel_format_supported(create_surface->pixel_format))
+    if (parsed.width == 0 || parsed.height == 0 ||
+        !rdp_graphics_pixel_format_supported(parsed.pixel_format))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *create_surface = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -771,6 +782,7 @@ librdp_status rdp_graphics_parse_delete_surface(const void* data,
                                                 size_t length,
                                                 rdp_graphics_delete_surface* delete_surface)
 {
+    rdp_graphics_delete_surface parsed;
     rdp_stream stream;
 
     if (!data || !delete_surface)
@@ -778,11 +790,12 @@ librdp_status rdp_graphics_parse_delete_surface(const void* data,
     if (rdp_graphics_parse_fixed_header(data, length, RDP_GRAPHICS_CMDID_DELETE_SURFACE, 10) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(delete_surface, 0, sizeof(*delete_surface));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &delete_surface->surface_id) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u16_le(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *delete_surface = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -800,6 +813,7 @@ librdp_status rdp_graphics_write_delete_surface(rdp_buffer* buffer, uint16_t sur
 
 librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_graphics_reset* reset)
 {
+    rdp_graphics_reset parsed;
     rdp_stream stream;
 
     if (!data || !reset)
@@ -807,16 +821,17 @@ librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_grap
     if (rdp_graphics_parse_fixed_header(data, length, RDP_GRAPHICS_CMDID_RESET_GRAPHICS, 340) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(reset, 0, sizeof(*reset));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &reset->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &reset->height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &reset->monitor_count) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.monitor_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (reset->width == 0 || reset->height == 0 || reset->width > 32766u || reset->height > 32766u ||
-        reset->monitor_count > 16u || reset->monitor_count > rdp_stream_remaining(&stream) / 20u)
+    if (parsed.width == 0 || parsed.height == 0 || parsed.width > 32766u || parsed.height > 32766u ||
+        parsed.monitor_count > 16u || parsed.monitor_count > rdp_stream_remaining(&stream) / 20u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *reset = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -846,6 +861,7 @@ librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
                                                        size_t length,
                                                        rdp_graphics_map_surface_to_output* map)
 {
+    rdp_graphics_map_surface_to_output parsed;
     rdp_stream stream;
     uint16_t reserved = 0;
 
@@ -855,16 +871,17 @@ librdp_status rdp_graphics_parse_map_surface_to_output(const void* data,
         LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(map, 0, sizeof(*map));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &map->surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &reserved) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->output_origin_x) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->output_origin_y) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.output_origin_x) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.output_origin_y) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (reserved != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *map = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -894,6 +911,7 @@ librdp_status rdp_graphics_parse_map_surface_to_scaled_output(
     size_t length,
     rdp_graphics_map_surface_to_scaled_output* map)
 {
+    rdp_graphics_map_surface_to_scaled_output parsed;
     rdp_stream stream;
     uint16_t reserved = 0;
 
@@ -903,18 +921,19 @@ librdp_status rdp_graphics_parse_map_surface_to_scaled_output(
         LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(map, 0, sizeof(*map));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 8) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &map->surface_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.surface_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &reserved) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->output_origin_x) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->output_origin_y) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->target_width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &map->target_height) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.output_origin_x) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.output_origin_y) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.target_width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.target_height) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (reserved != 0 || map->target_width == 0 || map->target_height == 0)
+    if (reserved != 0 || parsed.target_width == 0 || parsed.target_height == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *map = parsed;
     return LIBRDP_STATUS_OK;
 }
 
