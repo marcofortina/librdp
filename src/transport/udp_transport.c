@@ -998,18 +998,21 @@ librdp_status rdp_udp2_write_ack_of_acks_packet(rdp_buffer* buffer,
 
 librdp_status rdp_udp2_parse_prefix(uint8_t value, rdp_udp2_prefix* prefix)
 {
+    rdp_udp2_prefix parsed;
+
     if (!prefix)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(prefix, 0, sizeof(*prefix));
+    memset(&parsed, 0, sizeof(parsed));
     if ((value & 0x01u) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    prefix->packet_type = (uint8_t)((value & 0x1eu) >> 1);
-    prefix->short_packet_length = (uint8_t)(value >> 5);
-    if (prefix->packet_type != RDP_UDP2_PACKET_TYPE_DATA &&
-        prefix->packet_type != RDP_UDP2_PACKET_TYPE_DUMMY)
+    parsed.packet_type = (uint8_t)((value & 0x1eu) >> 1);
+    parsed.short_packet_length = (uint8_t)(value >> 5);
+    if (parsed.packet_type != RDP_UDP2_PACKET_TYPE_DATA &&
+        parsed.packet_type != RDP_UDP2_PACKET_TYPE_DUMMY)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (prefix->packet_type == RDP_UDP2_PACKET_TYPE_DATA && prefix->short_packet_length == 0)
+    if (parsed.packet_type == RDP_UDP2_PACKET_TYPE_DATA && parsed.short_packet_length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *prefix = parsed;
     return LIBRDP_STATUS_OK;
 }
 

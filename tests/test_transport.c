@@ -650,7 +650,14 @@ static int test_udp_transport_protocols(void)
                                      &udp2_header) == LIBRDP_STATUS_PROTOCOL_ERROR);
         TCHECK(memcmp(&udp2_header, &valid_udp2_header, sizeof(udp2_header)) == 0);
     }
-    TCHECK(rdp_udp2_parse_prefix(0x00u, &udp2_prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    TCHECK(rdp_udp2_parse_prefix((uint8_t)(RDP_UDP2_PACKET_TYPE_DUMMY << 1), &udp2_prefix) ==
+           LIBRDP_STATUS_OK);
+    {
+        rdp_udp2_prefix valid_udp2_prefix = udp2_prefix;
+
+        TCHECK(rdp_udp2_parse_prefix(0x00u, &udp2_prefix) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&udp2_prefix, &valid_udp2_prefix, sizeof(udp2_prefix)) == 0);
+    }
     TCHECK(rdp_udp2_wrap_packet(&buffer, NULL, 0, RDP_UDP2_PACKET_TYPE_DATA) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     TCHECK(rdp_udp2_write_data_packet(&buffer, 4, 0x1234u, NULL, 0) ==
