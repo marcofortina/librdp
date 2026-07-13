@@ -751,6 +751,8 @@ librdp_status rdp_dynamic_channel_parse_compressed_data_first(
     parsed.data_len = rdp_stream_remaining(&stream);
     if (parsed.data_len < 2u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.data_len > parsed.total_length)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_read_bytes(&stream, &parsed.data, parsed.data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *pdu = parsed;
