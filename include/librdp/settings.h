@@ -313,7 +313,8 @@ typedef enum librdp_feature
     LIBRDP_FEATURE_ECHO = 0x00000400u,           /**< Enable echo diagnostics channel. */
     LIBRDP_FEATURE_TELEMETRY = 0x00000800u,      /**< Query telemetry packet support. */
     LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u, /**< Query multitransport side-transport readiness. */
-    LIBRDP_FEATURE_DESKTOP_COMPOSITION = 0x00002000u /**< Query desktop composition channel availability. */
+    LIBRDP_FEATURE_DESKTOP_COMPOSITION = 0x00002000u, /**< Query desktop composition channel availability. */
+    LIBRDP_FEATURE_DISPLAY_CONTROL = 0x00004000u /**< Query display-control monitor layout availability. */
 } librdp_feature;
 
 /**

@@ -36645,6 +36645,12 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
             rdp_session_finish_feature_status(status, 0, 0, 1);
             break;
+        case LIBRDP_FEATURE_DISPLAY_CONTROL:
+            rdp_session_finish_feature_status(status,
+                                              session->display_control_channel_id != 0,
+                                              session->display_control_ready != 0,
+                                              0);
+            break;
         default:
             return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
