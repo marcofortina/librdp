@@ -693,6 +693,13 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
     }
 }
 
+static int rdp_settings_feature_parser_only(librdp_feature feature)
+{
+    return feature == LIBRDP_FEATURE_TELEMETRY ||
+           feature == LIBRDP_FEATURE_MULTITRANSPORT ||
+           feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION;
+}
+
 librdp_settings* librdp_settings_new(void)
 {
     librdp_settings* settings = (librdp_settings*)calloc(1, sizeof(*settings));
@@ -1274,6 +1281,11 @@ librdp_status librdp_settings_get_feature_status(const librdp_settings* settings
     if (!status->requested)
     {
         status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
+        return LIBRDP_STATUS_OK;
+    }
+    if (rdp_settings_feature_parser_only(feature))
+    {
+        status->reason = LIBRDP_FEATURE_REASON_PARSER_ONLY;
         return LIBRDP_STATUS_OK;
     }
     status->backend_ready = rdp_settings_feature_backend_ready(settings, feature) ? 1 : 0;

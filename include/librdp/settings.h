@@ -942,9 +942,12 @@ LIBRDP_API int librdp_settings_feature_enabled(const librdp_settings* settings, 
  *
  * The function validates one known feature bit and reports whether settings
  * request it, whether librdp was built with the relevant protocol path, and
- * whether the application supplied the required backend configuration. It does
- * not inspect a live server negotiation; use librdp_session_get_feature_status()
- * after creating a session for negotiated and active state.
+ * whether the application supplied the required backend configuration. Features
+ * that currently expose only parser or protocol-helper code report
+ * LIBRDP_FEATURE_REASON_PARSER_ONLY rather than backend-ready. The function
+ * does not inspect a live server negotiation; use
+ * librdp_session_get_feature_status() after creating a session for negotiated
+ * and active state.
  *
  * @param[in] settings Settings object to query; must not be NULL.
  * @param[in] feature Single known librdp_feature value to query; bitmasks with

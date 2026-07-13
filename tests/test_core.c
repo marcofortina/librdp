@@ -2836,13 +2836,18 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_TELEMETRY,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_MULTITRANSPORT,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_tls_policy_init(&tls_policy) == LIBRDP_STATUS_OK);
     tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
     tls_policy.use_system_store = 0;
@@ -3033,19 +3038,19 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_TELEMETRY,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_MULTITRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_session_set_display_layout(NULL, display_monitors, 1) ==
