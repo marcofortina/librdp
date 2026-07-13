@@ -26,6 +26,12 @@
 
 #include <librdp/session.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define RDP_TRACE_PRINTF(fmt_index, first_arg) __attribute__((format(printf, fmt_index, first_arg)))
+#else
+#define RDP_TRACE_PRINTF(fmt_index, first_arg)
+#endif
+
 typedef enum rdp_trace_category
 {
     RDP_TRACE_CLIENT = 1,
@@ -82,8 +88,10 @@ void rdp_trace_push_session(rdp_trace_session_scope* scope);
 void rdp_trace_pop_session(void);
 bool rdp_trace_enabled(rdp_trace_category category);
 bool rdp_trace_enabled_level(rdp_trace_category category, rdp_trace_level level);
-void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...);
-void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, const char* event, const char* fmt, ...);
+void rdp_trace_event(rdp_trace_category category, const char* event, const char* fmt, ...)
+    RDP_TRACE_PRINTF(3, 4);
+void rdp_trace_event_level(rdp_trace_category category, rdp_trace_level level, const char* event, const char* fmt, ...)
+    RDP_TRACE_PRINTF(4, 5);
 void rdp_trace_hexdump(const char* event,
                        rdp_trace_sensitivity sensitivity,
                        const void* payload,
