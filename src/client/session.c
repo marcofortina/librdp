@@ -15497,6 +15497,63 @@ static int rdp_session_dynamic_channel_is_internal(const rdp_session_dynamic_cha
     return entry && rdp_session_dynamic_channel_is_internal_name(entry->name);
 }
 
+static int rdp_session_dynamic_channel_request_name_equals(const rdp_dynamic_channel_create_request* request,
+                                                           const char* name)
+{
+    size_t name_len = 0;
+
+    if (!request || !request->name || !name)
+        return 0;
+    name_len = strlen(name);
+    return request->name_len == name_len && memcmp(request->name, name, name_len) == 0;
+}
+
+static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channel_create_request* request,
+                                                        librdp_feature* feature)
+{
+    if (!request || !feature)
+        return 0;
+    if (rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_ECHO_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_ECHO;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_WEBAUTHN_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_WEBAUTHN;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_USB;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_COMPOSITED_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_CR2;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) ||
+             rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) ||
+             rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL))
+        *feature = LIBRDP_FEATURE_VIDEO;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME) ||
+             rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_CAPTURE_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_CAMERA;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_AUDIO_INPUT_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_AUDIO_INPUT;
+    else
+        return 0;
+    return 1;
+}
+
+static uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
+                                                          const rdp_dynamic_channel_create_request* request)
+{
+    librdp_feature feature = (librdp_feature)0;
+    librdp_feature_status feature_status;
+
+    if (!rdp_session_dynamic_channel_optional_feature(request, &feature))
+        return RDP_DYNAMIC_CHANNEL_STATUS_OK;
+    memset(&feature_status, 0, sizeof(feature_status));
+    if (librdp_settings_get_feature_status(session ? session->settings : NULL,
+                                           feature,
+                                           &feature_status) != LIBRDP_STATUS_OK)
+        return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    if (!feature_status.requested || !feature_status.backend_ready ||
+        feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY)
+        return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    return RDP_DYNAMIC_CHANNEL_STATUS_OK;
+}
+
 static rdp_session_dynamic_channel* rdp_session_echo_channel_entry(const librdp_session* session)
 {
     if (!session)
@@ -27355,6 +27412,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         size_t trace_name_len = 0;
         int name_len = 0;
         rdp_session_dynamic_channel* entry = NULL;
+        uint32_t create_status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
 
         if (rdp_dynamic_channel_parse_create_response(channel_packet->payload,
                                                       channel_packet->payload_len,
@@ -27395,11 +27453,13 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                           channel_packet->payload_len,
                                                           &request);
         if (status == LIBRDP_STATUS_OK)
+            create_status_code = rdp_session_dynamic_channel_create_status(session, &request);
+        if (status == LIBRDP_STATUS_OK)
             status = rdp_dynamic_channel_write_create_response(&response,
                                                                request.channel_id,
                                                                request.channel_id_bytes,
-                                                               RDP_DYNAMIC_CHANNEL_STATUS_OK);
-        if (status == LIBRDP_STATUS_OK)
+                                                               create_status_code);
+        if (status == LIBRDP_STATUS_OK && create_status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK)
             status = rdp_session_dynamic_channel_add(session, &request);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_session_write_channel_pdu(session,
@@ -27413,6 +27473,17 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             return status;
         trace_name_len = request.name_len > 120u ? 120u : request.name_len;
         name_len = (int)trace_name_len;
+        if (create_status_code != RDP_DYNAMIC_CHANNEL_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.drdynvc.create.rejected",
+                            "channel_id=%u name=%.*s status=%u",
+                            request.channel_id,
+                            name_len,
+                            request.name,
+                            create_status_code);
+            return LIBRDP_STATUS_OK;
+        }
         if (request.name_len == sizeof(RDP_SESSION_DISPLAY_CONTROL_NAME) - 1u &&
             memcmp(request.name, RDP_SESSION_DISPLAY_CONTROL_NAME, request.name_len) == 0)
         {
