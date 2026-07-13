@@ -4647,6 +4647,31 @@ static int test_settings_surface_input_session(void)
                                             LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
                                             "t\0e\0x\0t\0\0",
                                             10) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_clipboard_set_named_data(session,
+                                                  LIBRDP_CLIPBOARD_FORMAT_HTML,
+                                                  LIBRDP_CLIPBOARD_FORMAT_NAME_HTML,
+                                                  "<p>x</p>",
+                                                  8) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_clipboard_set_named_data(NULL,
+                                                  LIBRDP_CLIPBOARD_FORMAT_HTML,
+                                                  LIBRDP_CLIPBOARD_FORMAT_NAME_HTML,
+                                                  "<p>x</p>",
+                                                  8) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_set_named_data(session,
+                                                  0,
+                                                  LIBRDP_CLIPBOARD_FORMAT_NAME_HTML,
+                                                  "<p>x</p>",
+                                                  8) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_set_named_data(session,
+                                                  LIBRDP_CLIPBOARD_FORMAT_HTML,
+                                                  NULL,
+                                                  "<p>x</p>",
+                                                  8) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_session_clipboard_set_named_data(session,
+                                                  LIBRDP_CLIPBOARD_FORMAT_HTML,
+                                                  "",
+                                                  "<p>x</p>",
+                                                  8) == LIBRDP_STATUS_INVALID_ARGUMENT);
     {
         char path[] = "/tmp/librdp-clip-XXXXXX";
         int fd = mkstemp(path);

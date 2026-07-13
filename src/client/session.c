@@ -643,10 +643,12 @@ struct librdp_session
     uint32_t clipboard_fragment_expected;
     uint32_t clipboard_general_flags;
     uint32_t clipboard_local_format_id;
+    uint8_t clipboard_local_has_name;
     uint32_t clipboard_pending_request_format_id;
     uint8_t clipboard_local_available;
     rdp_buffer clipboard_fragment;
     rdp_buffer clipboard_local_data;
+    rdp_buffer clipboard_local_format_name;
     uint8_t clipboard_local_files_available;
     uint32_t clipboard_local_file_count;
     rdp_session_clipboard_file_entry clipboard_local_files[RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES];
@@ -13901,6 +13903,11 @@ static librdp_status rdp_session_send_clipboard_format_list(librdp_session* sess
     if (session->clipboard_local_available)
     {
         entries[count].format_id = session->clipboard_local_format_id;
+        if (session->clipboard_local_has_name)
+        {
+            entries[count].name = session->clipboard_local_format_name.data;
+            entries[count].name_len = session->clipboard_local_format_name.length;
+        }
         count++;
     }
     if (session->clipboard_local_files_available)
@@ -15919,7 +15926,9 @@ static void rdp_session_clipboard_local_clear(librdp_session* session)
     if (!session)
         return;
     rdp_buffer_free(&session->clipboard_local_data);
+    rdp_buffer_free(&session->clipboard_local_format_name);
     session->clipboard_local_format_id = 0;
+    session->clipboard_local_has_name = 0;
     session->clipboard_local_available = 0;
     rdp_session_clipboard_files_clear(session);
 }
@@ -35116,14 +35125,21 @@ static librdp_status rdp_session_clipboard_set_file_entry(librdp_session* sessio
     return status;
 }
 
-librdp_status librdp_session_clipboard_set_data(librdp_session* session,
-                                                uint32_t format_id,
-                                                const void* data,
-                                                size_t data_len)
+/*
+ * Store local clipboard bytes with an optional registered-format name. The
+ * helper validates ownership, payload limit, and UTF-8 format-name conversion
+ * before publishing a new format list, so failed calls leave no partial local
+ * advertisement behind.
+ */
+static librdp_status rdp_session_clipboard_set_data_internal(librdp_session* session,
+                                                             uint32_t format_id,
+                                                             const char* format_name,
+                                                             const void* data,
+                                                             size_t data_len)
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!session || format_id == 0 || (!data && data_len > 0))
+    if (!session || format_id == 0 || (format_name && format_name[0] == '\0') || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_session_require_owner(session, "client.clipboard.set_data.owner");
     if (status != LIBRDP_STATUS_OK)
@@ -35142,14 +35158,45 @@ librdp_status librdp_session_clipboard_set_data(librdp_session* session,
             return status;
         }
     }
+    if (format_name)
+    {
+        rdp_buffer_init(&session->clipboard_local_format_name);
+        status = rdp_session_clipboard_format_name(format_name, &session->clipboard_local_format_name);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            rdp_session_clipboard_local_clear(session);
+            return status;
+        }
+        session->clipboard_local_has_name = 1;
+    }
     session->clipboard_local_format_id = format_id;
     session->clipboard_local_available = 1;
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "client.clipboard.local_data",
-                    "format_id=%u data_len=%u",
+                    "format_id=%u named=%u data_len=%u",
                     format_id,
+                    format_name ? 1u : 0u,
                     (unsigned)data_len);
     return rdp_session_send_clipboard_format_list(session);
+}
+
+librdp_status librdp_session_clipboard_set_data(librdp_session* session,
+                                                uint32_t format_id,
+                                                const void* data,
+                                                size_t data_len)
+{
+    return rdp_session_clipboard_set_data_internal(session, format_id, NULL, data, data_len);
+}
+
+librdp_status librdp_session_clipboard_set_named_data(librdp_session* session,
+                                                      uint32_t format_id,
+                                                      const char* format_name,
+                                                      const void* data,
+                                                      size_t data_len)
+{
+    if (!format_name)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_session_clipboard_set_data_internal(session, format_id, format_name, data, data_len);
 }
 
 librdp_status librdp_session_clipboard_set_files(librdp_session* session,

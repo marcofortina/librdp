@@ -36,6 +36,10 @@ typedef struct librdp_session librdp_session;
 #define LIBRDP_CLIPBOARD_FORMAT_DIB 8u         /**< Device-independent bitmap clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT 13u /**< UTF-16 text clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_HDROP 15u      /**< File-list clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_HTML 0xc100u   /**< Local registered HTML clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_PNG 0xc101u    /**< Local registered PNG clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_NAME_HTML "HTML Format" /**< Registered HTML clipboard format name. */
+#define LIBRDP_CLIPBOARD_FORMAT_NAME_PNG "PNG"          /**< Registered PNG clipboard format name. */
 
 /**
  * @brief Clipboard format descriptor delivered by format-list events.
@@ -96,6 +100,43 @@ LIBRDP_API librdp_status librdp_session_clipboard_set_data(librdp_session* sessi
                                                 uint32_t format_id,
                                                 const void* data,
                                                 size_t data_len);
+
+/**
+ * @brief Advertise one named local clipboard format and payload.
+ *
+ * Existing local clipboard data or file entries are cleared. The payload is
+ * copied into the session during the call; the caller retains ownership of the
+ * input buffer. The UTF-8 format name is converted to the wire format and
+ * advertised with the supplied local format identifier.
+ *
+ * @param[in,out] session Session whose clipboard state is updated; must not be
+ * NULL.
+ * @param[in] format_id Local clipboard format identifier; must be non-zero and
+ * stable until replaced or cleared.
+ * @param[in] format_name Registered clipboard format name; must not be NULL or
+ * empty and remains owned by the caller.
+ * @param[in] data Clipboard payload bytes. NULL is allowed only when data_len
+ * is 0.
+ * @param[in] data_len Payload length in bytes.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid arguments; LIBRDP_STATUS_NO_MEMORY when the payload or converted
+ * name cannot be allocated; LIBRDP_STATUS_STATE or transport errors when the
+ * format list cannot be sent in the current session state.
+ *
+ * @note Thread-safety: sessions are not internally synchronized; call from one
+ * serialized session-driving context.
+ * @warning Named clipboard payloads can contain sensitive application data.
+ * The library stores a copy until it is replaced, cleared, or the session is
+ * freed. Trace output redacts payload bodies unless unsafe tracing is
+ * explicitly enabled.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_clipboard_set_named_data(librdp_session* session,
+                                                      uint32_t format_id,
+                                                      const char* format_name,
+                                                      const void* data,
+                                                      size_t data_len);
 
 /**
  * @brief Advertise local files through clipboard file transfer.

@@ -51,6 +51,7 @@
     "librdp_session_clipboard_request_file_range",
     "librdp_session_clipboard_request_file_size",
     "librdp_session_clipboard_set_data",
+    "librdp_session_clipboard_set_named_data",
     "librdp_session_clipboard_set_files",
     "librdp_session_connect",
     "librdp_session_reconnect",

@@ -30,6 +30,7 @@ LIBRDP_0.1 {
         librdp_session_video_capture_send_sample;
         librdp_session_video_capture_send_error;
         librdp_session_clipboard_set_data;
+        librdp_session_clipboard_set_named_data;
         librdp_session_clipboard_set_files;
         librdp_session_clipboard_clear;
         librdp_session_clipboard_request_data;
