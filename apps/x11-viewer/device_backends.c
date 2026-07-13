@@ -18,7 +18,7 @@
 
 #include "device_backends.h"
 
-#include "common/trace.h"
+#include "viewer_trace.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -91,7 +91,7 @@ static int x11_probe_file_readable(const char* path, const char* event_name)
     fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         event_name,
                         "ok=0 path=\"%s\" errno=%d",
                         path,
@@ -102,14 +102,14 @@ static int x11_probe_file_readable(const char* path, const char* event_name)
     close(fd);
     if (read_bytes < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         event_name,
                         "ok=0 path=\"%s\" errno=%d",
                         path,
                         errno);
         return 0;
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     event_name,
                     "ok=1 path=\"%s\" bytes=%u",
                     path,
@@ -126,7 +126,7 @@ static int x11_probe_open_path(const char* path, int flags, const char* event_na
     fd = open(path, flags | O_CLOEXEC);
     if (fd < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         event_name,
                         "ok=0 path=\"%s\" errno=%d",
                         path,
@@ -134,7 +134,7 @@ static int x11_probe_open_path(const char* path, int flags, const char* event_na
         return 0;
     }
     close(fd);
-    rdp_trace_event(RDP_TRACE_CLIENT, event_name, "ok=1 path=\"%s\"", path);
+    x11_trace_event(X11_TRACE_CLIENT, event_name, "ok=1 path=\"%s\"", path);
     return 1;
 }
 
@@ -169,7 +169,7 @@ static int x11_probe_camera(const char* source)
     fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.v4l2.probe",
                         "ok=0 source=\"%s\" errno=%d",
                         path,
@@ -179,7 +179,7 @@ static int x11_probe_camera(const char* source)
     memset(&capability, 0, sizeof(capability));
     if (ioctl(fd, VIDIOC_QUERYCAP, &capability) < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.v4l2.probe",
                         "ok=0 source=\"%s\" errno=%d",
                         path,
@@ -188,7 +188,7 @@ static int x11_probe_camera(const char* source)
         return 0;
     }
     close(fd);
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.camera.v4l2.probe",
                     "ok=1 source=\"%s\" driver=\"%s\" card=\"%s\" bus=\"%s\" caps=%u device_caps=%u",
                     path,
@@ -225,7 +225,7 @@ static int x11_probe_vsmartcard_socket(const char* path)
     memcpy(address.sun_path, path, strlen(path) + 1u);
     ok = connect(fd, (const struct sockaddr*)&address, sizeof(address)) == 0;
     close(fd);
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.smartcard.vsmartcard.probe",
                     "ok=%u path=\"%s\" errno=%d",
                     ok ? 1u : 0u,
@@ -251,13 +251,13 @@ static int x11_probe_pcsc(void)
     status = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &context);
     if (status != SCARD_S_SUCCESS)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 stage=context status=%ld", status);
+        x11_trace_event(X11_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 stage=context status=%ld", status);
         return 0;
     }
     status = SCardListReaders(context, NULL, NULL, &readers_len);
     if (status != SCARD_S_SUCCESS || readers_len == 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 stage=list status=%ld", status);
+        x11_trace_event(X11_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 stage=list status=%ld", status);
         SCardReleaseContext(context);
         return 0;
     }
@@ -277,7 +277,7 @@ static int x11_probe_pcsc(void)
             cursor += strlen(cursor) + 1u;
         }
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.smartcard.pcsc.probe",
                     "ok=%u readers=%u status=%ld",
                     status == SCARD_S_SUCCESS && count > 0 ? 1u : 0u,
@@ -287,7 +287,7 @@ static int x11_probe_pcsc(void)
     SCardReleaseContext(context);
     return status == SCARD_S_SUCCESS && count > 0;
 #else
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 reason=pcsc_unavailable");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.smartcard.pcsc.probe", "ok=0 reason=pcsc_unavailable");
     return 0;
 #endif
 }
@@ -300,7 +300,7 @@ static int x11_probe_smartcard(const char* source)
         return x11_probe_vsmartcard_socket(path);
     if (!source || strcmp(source, "pcsc") == 0)
         return x11_probe_pcsc();
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.smartcard.probe",
                     "ok=0 source=\"%s\" reason=rejected_source",
                     source ? source : "");
@@ -353,7 +353,7 @@ static int x11_probe_usb(const char* selector)
 
     if (!x11_parse_pair(selector, &first, &second, &decimal_only))
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.usb.probe",
                         "ok=0 selector=\"%s\" reason=invalid_selector",
                         selector ? selector : "");
@@ -362,13 +362,13 @@ static int x11_probe_usb(const char* selector)
     bus_mode = decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
     if (libusb_init(&context) != 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.usb.probe", "ok=0 selector=\"%s\" reason=init", selector);
+        x11_trace_event(X11_TRACE_CLIENT, "x11.usb.probe", "ok=0 selector=\"%s\" reason=init", selector);
         return 0;
     }
     count = libusb_get_device_list(context, &list);
     if (count < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.usb.probe", "ok=0 selector=\"%s\" reason=list", selector);
+        x11_trace_event(X11_TRACE_CLIENT, "x11.usb.probe", "ok=0 selector=\"%s\" reason=list", selector);
         libusb_exit(context);
         return 0;
     }
@@ -388,7 +388,7 @@ static int x11_probe_usb(const char* selector)
                 found = descriptor.idVendor == first && descriptor.idProduct == second;
         }
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.usb.probe",
                     "ok=%u selector=\"%s\" mode=%s devices=%d",
                     found ? 1u : 0u,
@@ -402,7 +402,7 @@ static int x11_probe_usb(const char* selector)
 #else
 static int x11_probe_usb(const char* selector)
 {
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.usb.probe",
                     "ok=0 selector=\"%s\" reason=libusb_unavailable",
                     selector ? selector : "");
@@ -417,7 +417,7 @@ static int x11_probe_webauthn(const char* provider)
 
     if (!provider || strcmp(provider, "mock") == 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.webauthn.mock.probe", "ok=1 provider=mock");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.webauthn.mock.probe", "ok=1 provider=mock");
         return 1;
     }
     if (mock_path)
@@ -451,7 +451,7 @@ static int x11_probe_webauthn(const char* provider)
                 }
             }
         }
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.webauthn.fido2.probe",
                         "ok=%u provider=\"%s\" devices=%u",
                         ok ? 1u : 0u,
@@ -460,14 +460,14 @@ static int x11_probe_webauthn(const char* provider)
         fido_dev_info_free(&info, 64);
         return ok;
 #else
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.webauthn.fido2.probe",
                         "ok=0 provider=\"%s\" reason=fido2_unavailable",
                         provider);
         return 0;
 #endif
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.webauthn.probe",
                     "ok=0 provider=\"%s\" reason=rejected_provider",
                     provider);
@@ -550,7 +550,7 @@ static int x11_register_pnp_device(librdp_settings* settings,
                                        description,
                                        caps) != LIBRDP_STATUS_OK)
         return 0;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.pnp.device",
                     "class=\"%s\" name=\"%s\" hardware=\"%s\" caps=%u",
                     class_name,
@@ -620,7 +620,7 @@ static int x11_probe_pnp(librdp_settings* settings)
     }
     else
         registered = librdp_settings_pnp_device_count(settings);
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.pnp.probe",
                     "ok=%u input=%u block=%u net=%u registered=%u",
                     registered > 0 ? 1u : 0u,
@@ -634,7 +634,7 @@ static int x11_probe_pnp(librdp_settings* settings)
 
 static void x11_probe_cr2(uint32_t width, uint32_t height)
 {
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.cr2.compositor.init",
                     "root=1 width=%u height=%u layers=1",
                     width,

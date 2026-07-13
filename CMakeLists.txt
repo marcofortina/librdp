@@ -881,22 +881,35 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11-viewer/camera_v4l2.c
         apps/x11-viewer/device_backends.c
         apps/x11-viewer/main.c
+        apps/x11-viewer/viewer_trace.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
     target_link_libraries(librdp-x11-viewer PRIVATE
+        librdp
+        Iconv::Iconv
         ${X11_LIBRARIES}
         X11::Xcursor
         X11::Xfixes
         ${XKBCOMMON_LIBRARIES}
         Threads::Threads
     )
-    librdp_link_internal_runtime(librdp-x11-viewer)
+    target_compile_definitions(librdp-x11-viewer PRIVATE _POSIX_C_SOURCE=200809L)
+    get_target_property(LIBRDP_X11_VIEWER_INCLUDES librdp-x11-viewer INCLUDE_DIRECTORIES)
+    foreach(LIBRDP_X11_VIEWER_INCLUDE IN LISTS LIBRDP_X11_VIEWER_INCLUDES)
+        if(NOT IS_ABSOLUTE "${LIBRDP_X11_VIEWER_INCLUDE}")
+            continue()
+        endif()
+        file(REAL_PATH "${LIBRDP_X11_VIEWER_INCLUDE}" LIBRDP_X11_VIEWER_INCLUDE_REAL)
+        file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src" LIBRDP_SOURCE_PRIVATE_INCLUDE_REAL)
+        if(LIBRDP_X11_VIEWER_INCLUDE_REAL STREQUAL LIBRDP_SOURCE_PRIVATE_INCLUDE_REAL)
+            message(FATAL_ERROR "librdp-x11-viewer must not include private src headers")
+        endif()
+    endforeach()
     librdp_apply_warning_options(librdp-x11-viewer)
     librdp_apply_sanitizer_compile_options(librdp-x11-viewer)
     librdp_apply_sanitizer_link_options(librdp-x11-viewer)

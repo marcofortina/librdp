@@ -18,7 +18,7 @@
 
 #include "audio_pipewire.h"
 
-#include "common/trace.h"
+#include "viewer_trace.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -223,11 +223,11 @@ static int x11_pipewire_ensure(x11_pipewire_audio* audio)
     if (pw_thread_loop_start(audio->loop) < 0)
         goto fail;
     audio->ready = 1;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.pipewire.ready", "ready=1");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.pipewire.ready", "ready=1");
     return 1;
 
 fail:
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.pipewire.failed", "stage=init");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.pipewire.failed", "stage=init");
     return 0;
 }
 
@@ -338,8 +338,8 @@ static void x11_pipewire_input_process(void* data)
                 dropped = x11_audio_ring_write(&audio->input_ring, input, spa_data->chunk->size);
                 pthread_mutex_unlock(&audio->lock);
                 if (dropped > 0)
-                    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                          RDP_TRACE_LEVEL_DEBUG,
+                    x11_trace_event_level(X11_TRACE_CLIENT,
+                                          X11_TRACE_LEVEL_DEBUG,
                                           "x11.audio.input.overflow",
                                           "dropped=%u",
                                           (unsigned)dropped);
@@ -392,7 +392,7 @@ void x11_pipewire_audio_stop_output(x11_pipewire_audio* audio)
     audio->output_ring.write_pos = 0;
     audio->output_ring.size = 0;
     pthread_mutex_unlock(&audio->lock);
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.output.stop", "backend=pipewire");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.output.stop", "backend=pipewire");
 }
 
 void x11_pipewire_audio_stop_input(x11_pipewire_audio* audio)
@@ -408,7 +408,7 @@ void x11_pipewire_audio_stop_input(x11_pipewire_audio* audio)
     audio->input_ring.write_pos = 0;
     audio->input_ring.size = 0;
     pthread_mutex_unlock(&audio->lock);
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.input.stop", "backend=pipewire");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.input.stop", "backend=pipewire");
 }
 
 void x11_pipewire_audio_free(x11_pipewire_audio* audio)
@@ -446,7 +446,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
         return 0;
     if (!x11_pipewire_map_format(format, &spa_format, &frame_size))
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.failed",
                         "reason=rejected_format tag=%u channels=%u rate=%u bits=%u block_align=%u",
                         format->format_tag,
@@ -490,7 +490,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
     }
     pw_thread_loop_unlock(audio->loop);
     if (result)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.start",
                         "backend=pipewire device=\"%s\" channels=%u rate=%u bits=%u frame_size=%u",
                         device ? device : "pipewire",
@@ -499,7 +499,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
                         audio->output_bits,
                         (unsigned)audio->output_frame_size);
     else
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.output.failed", "reason=connect");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.audio.output.failed", "reason=connect");
     return result;
 }
 
@@ -518,7 +518,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
         return 0;
     if (!x11_pipewire_map_format(format, &spa_format, &frame_size))
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.input.failed",
                         "reason=rejected_format tag=%u channels=%u rate=%u bits=%u block_align=%u",
                         format->format_tag,
@@ -559,7 +559,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
     }
     pw_thread_loop_unlock(audio->loop);
     if (result)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.input.start",
                         "backend=pipewire device=\"%s\" channels=%u rate=%u bits=%u frame_size=%u",
                         device ? device : "pipewire",
@@ -568,7 +568,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
                         audio->input_bits,
                         (unsigned)audio->input_frame_size);
     else
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.input.failed", "reason=connect");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.audio.input.failed", "reason=connect");
     return result;
 }
 
@@ -584,8 +584,8 @@ int x11_pipewire_audio_write_output(x11_pipewire_audio* audio, const void* data,
     dropped = x11_audio_ring_write(&audio->output_ring, (const uint8_t*)data, data_len);
     pthread_mutex_unlock(&audio->lock);
     if (dropped > 0)
-        rdp_trace_event_level(RDP_TRACE_CLIENT,
-                              RDP_TRACE_LEVEL_DEBUG,
+        x11_trace_event_level(X11_TRACE_CLIENT,
+                              X11_TRACE_LEVEL_DEBUG,
                               "x11.audio.output.overflow",
                               "dropped=%u",
                               (unsigned)dropped);
@@ -621,7 +621,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
     (void)audio;
     (void)format;
     (void)device;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.output.failed", "reason=pipewire_unavailable");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.output.failed", "reason=pipewire_unavailable");
     return 0;
 }
 
@@ -632,7 +632,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
     (void)audio;
     (void)format;
     (void)device;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.audio.input.failed", "reason=pipewire_unavailable");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.audio.input.failed", "reason=pipewire_unavailable");
     return 0;
 }
 

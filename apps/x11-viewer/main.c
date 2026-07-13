@@ -20,9 +20,8 @@
 
 #include "audio_pipewire.h"
 #include "camera_v4l2.h"
-#include "common/charset.h"
-#include "common/trace.h"
 #include "device_backends.h"
+#include "viewer_trace.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -35,6 +34,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <iconv.h>
 #include <limits.h>
 #include <locale.h>
 #include <stdio.h>
@@ -167,7 +167,7 @@ static uint64_t x11_trace_hash_bgra(const uint8_t* pixels, uint32_t width, uint3
     uint64_t samples = 0;
     uint64_t i = 0;
 
-    if (!rdp_trace_enabled_level(RDP_TRACE_CLIENT, RDP_TRACE_LEVEL_TRACE) ||
+    if (!x11_trace_enabled_level(X11_TRACE_CLIENT, X11_TRACE_LEVEL_TRACE) ||
         !pixels || width == 0 || height == 0 || stride < row_bytes)
         return 0;
 
@@ -208,7 +208,7 @@ static int handle_x_error(Display* display, XErrorEvent* error)
     {
         if (error->error_code == BadDrawable || error->error_code == BadWindow)
             x11_window_invalid = 1;
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.error",
                         "code=%u request=%u resource=%lu",
                         (unsigned)error->error_code,
@@ -281,7 +281,7 @@ static void restore_cursor_after_local_mouse(x11_app* app)
     XUndefineCursor(app->display, app->window);
     XFlush(app->display);
     app->hidden_cursor_locally_visible = 1;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.local_restore", "visible=1");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.pointer.local_restore", "visible=1");
 }
 
 static Cursor create_hidden_cursor(x11_app* app)
@@ -364,7 +364,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
         clear_viewer_cursor(app);
         app->cursor_mode = X11_CURSOR_DEFAULT;
         apply_viewer_cursor(app);
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.default", "visible=1");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.pointer.default", "visible=1");
     }
     else if (pointer->update_type == LIBRDP_POINTER_UPDATE_HIDDEN)
     {
@@ -376,7 +376,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
         app->cursor_mode = X11_CURSOR_HIDDEN;
         app->hidden_cursor_locally_visible = 0;
         apply_viewer_cursor(app);
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.hidden", "visible=0");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.pointer.hidden", "visible=0");
     }
     else if (pointer->update_type == LIBRDP_POINTER_UPDATE_POSITION)
     {
@@ -386,7 +386,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
             XWarpPointer(app->display, None, app->window, 0, 0, 0, 0, pointer->x, pointer->y);
             XFlush(app->display);
         }
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.pointer.position", "x=%u y=%u", pointer->x, pointer->y);
+        x11_trace_event(X11_TRACE_CLIENT, "x11.pointer.position", "x=%u y=%u", pointer->x, pointer->y);
     }
     else if (pointer->update_type == LIBRDP_POINTER_UPDATE_SHAPE)
     {
@@ -398,7 +398,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
         app->cursor_mode = X11_CURSOR_SHAPE;
         app->hidden_cursor_locally_visible = 0;
         apply_viewer_cursor(app);
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.pointer.shape",
                         "cache_index=%u width=%u height=%u hot_x=%u hot_y=%u",
                         pointer->cache_index,
@@ -522,7 +522,7 @@ static void maybe_grab_keyboard(x11_app* app, Time time)
         app->keyboard_grabbed = 1;
         app->pending_ungrab = 0;
     }
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.keyboard.grab", "result=%d active=%u", result, app->keyboard_grabbed);
+    x11_trace_event(X11_TRACE_CLIENT, "x11.keyboard.grab", "result=%d active=%u", result, app->keyboard_grabbed);
 }
 
 static void ungrab_keyboard(x11_app* app, Time time, int force)
@@ -538,7 +538,7 @@ static void ungrab_keyboard(x11_app* app, Time time, int force)
     XUngrabKeyboard(app->display, time == 0 ? CurrentTime : time);
     app->keyboard_grabbed = 0;
     app->pending_ungrab = 0;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.keyboard.ungrab", "active=0");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.keyboard.ungrab", "active=0");
 }
 
 static int xkb_name_equals(const char name[4], const char* text)
@@ -953,28 +953,144 @@ static int x11_clipboard_store_utf8(x11_app* app, const uint8_t* data, size_t le
     return 1;
 }
 
+static int x11_convert_text_alloc(const char* to,
+                                  const char* from,
+                                  const uint8_t* data,
+                                  size_t length,
+                                  uint8_t** out,
+                                  size_t* out_len)
+{
+    iconv_t cd = (iconv_t)-1;
+    uint8_t* output = NULL;
+    char* input_cursor = NULL;
+    char* output_cursor = NULL;
+    size_t input_left = length;
+    size_t output_left = 0;
+    size_t capacity = 0;
+    int ok = 0;
+
+    if (!to || !from || (!data && length > 0) || !out || !out_len)
+        return 0;
+    *out = NULL;
+    *out_len = 0;
+    capacity = length > 0 ? (length * 4u) + 16u : 16u;
+    if (capacity < length)
+        return 0;
+    output = (uint8_t*)calloc(1u, capacity);
+    if (!output)
+        return 0;
+    cd = iconv_open(to, from);
+    if (cd == (iconv_t)-1)
+    {
+        free(output);
+        return 0;
+    }
+    input_cursor = (char*)data;
+    output_cursor = (char*)output;
+    output_left = capacity;
+    while (1)
+    {
+        const size_t converted = iconv(cd, &input_cursor, &input_left, &output_cursor, &output_left);
+
+        if (converted != (size_t)-1)
+        {
+            ok = 1;
+            break;
+        }
+        if (errno != E2BIG)
+            break;
+        {
+            const size_t used = (size_t)((uint8_t*)output_cursor - output);
+            const size_t next_capacity = capacity * 2u;
+            uint8_t* resized = NULL;
+
+            if (next_capacity <= capacity)
+                break;
+            resized = (uint8_t*)realloc(output, next_capacity);
+            if (!resized)
+                break;
+            output = resized;
+            memset(output + capacity, 0, next_capacity - capacity);
+            capacity = next_capacity;
+            output_cursor = (char*)output + used;
+            output_left = capacity - used;
+        }
+    }
+    if (ok)
+    {
+        *out_len = (size_t)((uint8_t*)output_cursor - output);
+        *out = output;
+        output = NULL;
+    }
+    iconv_close(cd);
+    free(output);
+    return ok;
+}
+
 static size_t utf8_to_utf16le_bytes(const uint8_t* data, size_t length, uint8_t** out)
 {
-    size_t out_len = 0;
+    size_t converted_len = 0;
+    uint8_t* converted = NULL;
+    uint8_t* resized = NULL;
 
     if (!out || (!data && length > 0) || length > X11_CLIPBOARD_MAX_BYTES)
         return 0;
-    if (rdp_charset_utf8_bytes_to_utf16le_alloc(data, length, 1, out, &out_len) != LIBRDP_STATUS_OK)
+    if (!x11_convert_text_alloc("UTF-16LE", "UTF-8", data, length, &converted, &converted_len))
         return 0;
-    return out_len;
+    if (converted_len > SIZE_MAX - 2u)
+    {
+        free(converted);
+        return 0;
+    }
+    resized = (uint8_t*)realloc(converted, converted_len + 2u);
+    if (!resized)
+    {
+        free(converted);
+        return 0;
+    }
+    converted = resized;
+    converted[converted_len++] = 0;
+    converted[converted_len++] = 0;
+    *out = converted;
+    return converted_len;
 }
 
 static size_t utf16le_to_utf8_bytes(const uint8_t* data, size_t length, uint8_t** out)
 {
-    char* text = NULL;
-    size_t text_len = 0;
+    size_t input_len = length;
+    size_t converted_len = 0;
+    uint8_t* converted = NULL;
+    uint8_t* resized = NULL;
+    size_t i = 0;
 
     if (!out || (!data && length > 0) || (length & 1u) != 0 || length > X11_CLIPBOARD_MAX_BYTES)
         return 0;
-    if (rdp_charset_utf16le_to_utf8_alloc(data, length, 1, &text, &text_len) != LIBRDP_STATUS_OK)
+    while (i + 1u < length)
+    {
+        if (data[i] == 0 && data[i + 1u] == 0)
+        {
+            input_len = i;
+            break;
+        }
+        i += 2u;
+    }
+    if (!x11_convert_text_alloc("UTF-8", "UTF-16LE", data, input_len, &converted, &converted_len))
         return 0;
-    *out = (uint8_t*)text;
-    return text_len;
+    if (converted_len > SIZE_MAX - 1u)
+    {
+        free(converted);
+        return 0;
+    }
+    resized = (uint8_t*)realloc(converted, converted_len + 1u);
+    if (!resized)
+    {
+        free(converted);
+        return 0;
+    }
+    converted = resized;
+    converted[converted_len] = 0;
+    *out = converted;
+    return converted_len;
 }
 
 static void x11_clipboard_init(x11_app* app)
@@ -995,7 +1111,7 @@ static void x11_clipboard_init(x11_app* app)
                                    app->window,
                                    app->clipboard_selection,
                                    XFixesSetSelectionOwnerNotifyMask);
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.clipboard.init",
                     "xfixes=%u",
                     app->xfixes_available ? 1u : 0u);
@@ -1018,7 +1134,7 @@ static void x11_clipboard_request_local(x11_app* app, Time time)
                       app->window,
                       time == 0 ? CurrentTime : time);
     app->clipboard_request_pending = 1;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.clipboard.request_local", "owner=%lu", owner);
+    x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.request_local", "owner=%lu", owner);
 }
 
 static void x11_clipboard_handle_owner_notify(x11_app* app, XEvent* event)
@@ -1069,7 +1185,7 @@ static void x11_clipboard_handle_selection_notify(x11_app* app, XSelectionEvent*
     {
         if (property)
             XFree(property);
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.clipboard.local_ignored",
                         "type=%lu format=%d nitems=%lu bytes_after=%lu",
                         actual_type,
@@ -1087,7 +1203,7 @@ static void x11_clipboard_handle_selection_notify(x11_app* app, XSelectionEvent*
                                                     LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
                                                     utf16,
                                                     utf16_len);
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.clipboard.local_data",
                             "utf8_len=%lu utf16_len=%u",
                             nitems,
@@ -1158,7 +1274,7 @@ static void x11_clipboard_handle_selection_request(x11_app* app, XSelectionReque
 
     XSendEvent(app->display, request->requestor, False, 0, (XEvent*)&response);
     XFlush(app->display);
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.clipboard.selection_request",
                     "target=%lu served=%u data_len=%u",
                     request->target,
@@ -1175,7 +1291,7 @@ static void x11_clipboard_set_remote_data(x11_app* app, const uint8_t* data, siz
     XSetSelectionOwner(app->display, app->clipboard_selection, app->window, CurrentTime);
     app->clipboard_owns_selection =
         XGetSelectionOwner(app->display, app->clipboard_selection) == app->window ? 1 : 0;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.clipboard.remote_data",
                     "utf8_len=%u owner=%u",
                     (unsigned)length,
@@ -1461,7 +1577,7 @@ static void trace_viewer_settings(const librdp_settings* settings)
     if (!settings)
         return;
 
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.viewer.features",
                     "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u drives=%u printers=%u pnp_devices=%u",
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
@@ -1481,45 +1597,45 @@ static void trace_viewer_settings(const librdp_settings* settings)
                     librdp_settings_printer_count(settings),
                     librdp_settings_pnp_device_count(settings));
     if (librdp_settings_audio_output_device(settings))
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.config",
                         "backend=pipewire device=\"%s\"",
                         librdp_settings_audio_output_device(settings));
     if (librdp_settings_audio_input_device(settings))
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.input.config",
                         "backend=pipewire device=\"%s\"",
                         librdp_settings_audio_input_device(settings));
     if (librdp_settings_video_output_path(settings))
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.video.config",
                         "path=\"%s\"",
                         librdp_settings_video_output_path(settings));
     for (i = 0; i < librdp_settings_camera_count(settings); i++)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.config",
                         "index=%u source=\"%s\"",
                         i,
                         librdp_settings_camera_source(settings, i));
     for (i = 0; i < librdp_settings_smartcard_count(settings); i++)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.smartcard.config",
                         "index=%u source=\"%s\"",
                         i,
                         librdp_settings_smartcard_source(settings, i));
     for (i = 0; i < librdp_settings_usb_device_count(settings); i++)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.usb.config",
                         "index=%u selector=\"%s\"",
                         i,
                         librdp_settings_usb_device_selector(settings, i));
     if (librdp_settings_webauthn_provider(settings))
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.webauthn.config",
                         "provider=\"%s\"",
                         librdp_settings_webauthn_provider(settings));
     for (i = 0; i < librdp_settings_rail_app_count(settings); i++)
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.rail.config",
                         "index=%u app=\"%s\"",
                         i,
@@ -1557,7 +1673,7 @@ static int x11_audio_configure(x11_app* app, const librdp_settings* settings)
     app->audio = x11_pipewire_audio_new();
     if (!app->audio)
         return 0;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.audio.configured",
                     "output=%u input=%u backend=pipewire",
                     app->audio_output_requested ? 1u : 0u,
@@ -1600,14 +1716,14 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
             app->video_output_file = fopen(video_path, "ab");
             if (!app->video_output_file)
             {
-                rdp_trace_event(RDP_TRACE_CLIENT,
+                x11_trace_event(X11_TRACE_CLIENT,
                                 "x11.video.file.failed",
                                 "path=\"%s\" errno=%d",
                                 video_path,
                                 errno);
                 return 0;
             }
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.video.file.open",
                             "path=\"%s\"",
                             video_path);
@@ -1623,7 +1739,7 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
         if (!app->camera)
             return 0;
     }
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.runtime.features",
                     "echo=%u telemetry=%u video=%u video_file=%u camera=%u",
                     app->echo_requested ? 1u : 0u,
@@ -1690,7 +1806,7 @@ static int x11_audio_output_select_format(x11_app* app, uint32_t format_no)
         return 0;
     if (format_no >= app->audio_output_format_count)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.format.failed",
                         "reason=index format=%u count=%u",
                         format_no,
@@ -1705,7 +1821,7 @@ static int x11_audio_output_select_format(x11_app* app, uint32_t format_no)
     if (ok)
     {
         app->audio_output_current_format = format_no;
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.format",
                         "format=%u tag=%u channels=%u rate=%u bits=%u",
                         format_no,
@@ -1732,7 +1848,7 @@ static void x11_audio_input_pump(x11_app* app)
     status = librdp_session_audio_input_send_data(app->session, app->audio_input_buffer, bytes);
     if (status != LIBRDP_STATUS_OK)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.input.send.failed",
                         "status=%s bytes=%u",
                         librdp_status_string(status),
@@ -1741,8 +1857,8 @@ static void x11_audio_input_pump(x11_app* app)
     }
     else
     {
-        rdp_trace_event_level(RDP_TRACE_CLIENT,
-                              RDP_TRACE_LEVEL_TRACE,
+        x11_trace_event_level(X11_TRACE_CLIENT,
+                              X11_TRACE_LEVEL_TRACE,
                               "x11.audio.input.send",
                               "bytes=%u",
                               (unsigned)bytes);
@@ -1783,7 +1899,7 @@ static void x11_handle_channel_open(x11_app* app, librdp_session* session, const
     if (!app || !session || !event)
         return;
     (void)session;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.channel.open",
                     "id=%u name=\"%.*s\" echo=%u telemetry=%u video=%u",
                     event->channel_id,
@@ -1809,8 +1925,8 @@ static void x11_handle_channel_data(x11_app* app, librdp_session* session, const
         video_written = fwrite(event->data, 1, event->data_len, app->video_output_file);
         fflush(app->video_output_file);
     }
-    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                          RDP_TRACE_LEVEL_DEBUG,
+    x11_trace_event_level(X11_TRACE_CLIENT,
+                          X11_TRACE_LEVEL_DEBUG,
                           "x11.channel.data",
                           "id=%u name=\"%.*s\" bytes=%u video_written=%u",
                           event->channel_id,
@@ -1824,7 +1940,7 @@ static void x11_handle_channel_close(x11_app* app, const librdp_channel_close_ev
 {
     if (!app || !event)
         return;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.channel.close",
                     "id=%u name=\"%.*s\"",
                     event->channel_id,
@@ -1852,8 +1968,8 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             const int dirty_before = app->dirty;
 
             app->dirty = 1;
-            rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                  RDP_TRACE_LEVEL_TRACE,
+            x11_trace_event_level(X11_TRACE_CLIENT,
+                                  X11_TRACE_LEVEL_TRACE,
                                   "client.active.framebuffer.blit",
                                   "x=%u y=%u width=%u height=%u dirty_before=%u event_serial=%llu",
                                   event->data.surface.x,
@@ -1880,7 +1996,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                 {
                     (void)librdp_session_clipboard_request_data(app->session,
                                                                 LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
-                    rdp_trace_event(RDP_TRACE_CLIENT,
+                    x11_trace_event(X11_TRACE_CLIENT,
                                     "x11.clipboard.remote_formats",
                                     "unicode_text=1 count=%u total=%u",
                                     event->data.clipboard_formats.count,
@@ -1912,7 +2028,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             x11_audio_output_store_formats(app, &event->data.audio_output_formats);
             if (app->audio_output_format_count > 0)
                 (void)x11_audio_output_select_format(app, 0);
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.audio.output.formats",
                             "count=%u stored=%u version=%u requested=%u",
                             event->data.audio_output_formats.count,
@@ -1927,8 +2043,8 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                 (void)x11_pipewire_audio_write_output(app->audio,
                                                       event->data.audio_output_data.data,
                                                       event->data.audio_output_data.data_len);
-            rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                  RDP_TRACE_LEVEL_TRACE,
+            x11_trace_event_level(X11_TRACE_CLIENT,
+                                  X11_TRACE_LEVEL_TRACE,
                                   "x11.audio.output.data",
                                   "bytes=%u format=%u block=%u requested=%u",
                                   (unsigned)event->data.audio_output_data.data_len,
@@ -1941,13 +2057,13 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             if (app->audio)
                 x11_pipewire_audio_stop_output(app->audio);
             app->audio_output_current_format = UINT32_MAX;
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.audio.output.close",
                             "requested=%u",
                             app->audio_output_requested ? 1u : 0u);
             break;
         case LIBRDP_EVENT_AUDIO_INPUT_FORMATS:
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.audio.input.formats",
                             "count=%u version=%u requested=%u",
                             event->data.audio_input_formats.count,
@@ -1968,7 +2084,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                                                         ok ? LIBRDP_AUDIO_INPUT_RESULT_OK :
                                                              LIBRDP_AUDIO_INPUT_RESULT_FAIL);
             app->audio_input_active = ok ? 1 : 0;
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.audio.input.open",
                             "ok=%u requested=%u frames=%u chunk=%u initial_format=%u",
                             ok ? 1u : 0u,
@@ -1986,7 +2102,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                 ok = x11_camera_capture_start(app->camera,
                                               app->camera_source,
                                               &event->data.video_capture_open.media);
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.camera.open",
                             "ok=%u requested=%u stream=%u format=%u width=%u height=%u",
                             ok ? 1u : 0u,
@@ -2018,8 +2134,8 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                     event->data.video_capture_sample_request.stream_index,
                     sample_result == 0 ? LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
                                          LIBRDP_VIDEO_CAPTURE_ERROR_UNEXPECTED);
-            rdp_trace_event_level(RDP_TRACE_CLIENT,
-                                  RDP_TRACE_LEVEL_DEBUG,
+            x11_trace_event_level(X11_TRACE_CLIENT,
+                                  X11_TRACE_LEVEL_DEBUG,
                                   "x11.camera.sample.reply",
                                   "status=%s result=%d stream=%u bytes=%u",
                                   librdp_status_string(status),
@@ -2032,7 +2148,7 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
         case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
             if (app->camera)
                 x11_camera_capture_stop(app->camera);
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.camera.close",
                             "stream=%u",
                             event->data.video_capture_close.stream_index);
@@ -2113,8 +2229,8 @@ static void draw_surface(x11_app* app)
     height = librdp_surface_height(surface);
     stride = librdp_surface_stride(surface);
     surface_hash = x11_trace_hash_bgra(librdp_surface_pixels(surface), width, height, stride);
-    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                          RDP_TRACE_LEVEL_TRACE,
+    x11_trace_event_level(X11_TRACE_CLIENT,
+                          X11_TRACE_LEVEL_TRACE,
                           "x11.surface.draw.start",
                           "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u dirty=%u hash=%016llx",
                           width,
@@ -2128,7 +2244,7 @@ static void draw_surface(x11_app* app)
         (app->window_height != 0 && app->window_height != height))
     {
         XClearWindow(app->display, app->window);
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.window.clear",
                         "reason=surface_window_mismatch surface_width=%u surface_height=%u window_width=%u window_height=%u",
                         width,
@@ -2148,7 +2264,7 @@ static void draw_surface(x11_app* app)
                          (int)stride);
     if (!image)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.surface.draw.failed",
                         "stage=create_image surface_width=%u surface_height=%u surface_stride=%u",
                         width,
@@ -2161,8 +2277,8 @@ static void draw_surface(x11_app* app)
     image->data = NULL;
     XDestroyImage(image);
     XFlush(app->display);
-    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                          RDP_TRACE_LEVEL_TRACE,
+    x11_trace_event_level(X11_TRACE_CLIENT,
+                          X11_TRACE_LEVEL_TRACE,
                           "x11.surface.draw.done",
                           "surface_width=%u surface_height=%u surface_stride=%u window_width=%u window_height=%u put_result=%d hash=%016llx",
                           width,
@@ -2197,7 +2313,7 @@ static void handle_key_press(x11_app* app, XKeyEvent* key)
             app->pressed[key->keycode].event = event;
             app->pressed_count++;
         }
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.keyboard.key",
                         "keycode=%u scancode=%u flags=%u state=pressed text=%u",
                         key->keycode,
@@ -2208,7 +2324,7 @@ static void handle_key_press(x11_app* app, XKeyEvent* key)
     else if (text_len > 0 && (key->state & (ControlMask | Mod1Mask | Mod4Mask)) == 0)
     {
         send_unicode_text(app, text, text_len);
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.keyboard.unicode",
                         "keycode=%u bytes=%u",
                         key->keycode,
@@ -2233,7 +2349,7 @@ static void handle_key_release(x11_app* app, XKeyEvent* key)
         app->pressed[key->keycode].down = 0;
         if (app->pressed_count > 0)
             app->pressed_count--;
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.keyboard.key",
                         "keycode=%u scancode=%u flags=%u state=released",
                         key->keycode,
@@ -2295,7 +2411,7 @@ static void handle_button(x11_app* app, XButtonEvent* button, librdp_mouse_state
             event.button = LIBRDP_MOUSE_BUTTON_X2;
             break;
         default:
-            rdp_trace_event(RDP_TRACE_CLIENT,
+            x11_trace_event(X11_TRACE_CLIENT,
                             "x11.mouse.button_ignored",
                             "button=%u state=%u",
                             button->button,
@@ -2702,7 +2818,7 @@ int main(int argc, char** argv)
             XCloseDisplay(app.display);
             return 1;
         }
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.clipboard.local_file", "configured=1");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.local_file", "configured=1");
     }
     status = librdp_session_connect(app.session);
     if (status != LIBRDP_STATUS_OK)
@@ -2744,7 +2860,7 @@ int main(int argc, char** argv)
                 continue;
             if (event.type == Expose)
             {
-                rdp_trace_event(RDP_TRACE_CLIENT,
+                x11_trace_event(X11_TRACE_CLIENT,
                                 "x11.window.expose",
                                 "x=%d y=%d width=%d height=%d count=%d dirty_before=%u",
                                 event.xexpose.x,
@@ -2772,7 +2888,7 @@ int main(int argc, char** argv)
             else if (event.type == SelectionClear && event.xselectionclear.selection == app.clipboard_selection)
             {
                 app.clipboard_owns_selection = 0;
-                rdp_trace_event(RDP_TRACE_CLIENT, "x11.clipboard.selection_clear", "owner=0");
+                x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.selection_clear", "owner=0");
             }
             else if (event.type == DestroyNotify)
             {
@@ -2834,7 +2950,7 @@ int main(int argc, char** argv)
 
                 if (configured_width == app.window_width && configured_height == app.window_height)
                     continue;
-                rdp_trace_event(RDP_TRACE_CLIENT,
+                x11_trace_event(X11_TRACE_CLIENT,
                                 "x11.window.configure",
                                 "old_width=%u old_height=%u new_width=%u new_height=%u",
                                 app.window_width,
@@ -2845,7 +2961,7 @@ int main(int argc, char** argv)
                 app.window_height = configured_height;
                 (void)librdp_session_resize(app.session, configured_width, configured_height);
                 XClearWindow(app.display, app.window);
-                rdp_trace_event(RDP_TRACE_CLIENT,
+                x11_trace_event(X11_TRACE_CLIENT,
                                 "x11.window.clear",
                                 "reason=configure width=%u height=%u",
                                 configured_width,

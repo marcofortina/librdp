@@ -18,7 +18,7 @@
 
 #include "camera_v4l2.h"
 
-#include "common/trace.h"
+#include "viewer_trace.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -264,7 +264,7 @@ static int x11_camera_apply_format(x11_camera_capture* capture, const librdp_vid
     if (media->format == LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG &&
         x11_camera_set_format(capture, media, V4L2_PIX_FMT_YUYV))
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.format.fallback",
                         "backend=v4l2 requested=%u capture_fourcc=%u output=%u",
                         fourcc,
@@ -409,7 +409,7 @@ void x11_camera_capture_stop(x11_camera_capture* capture)
     capture->height = 0;
     capture->fourcc = 0;
     capture->output_format = 0;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.camera.stop", "backend=v4l2");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.camera.stop", "backend=v4l2");
 #else
     (void)capture;
 #endif
@@ -437,7 +437,7 @@ int x11_camera_capture_start(x11_camera_capture* capture,
     capture->fd = x11_camera_open_source(source);
     if (capture->fd < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.start.failed",
                         "backend=v4l2 reason=open errno=%d",
                         errno);
@@ -448,14 +448,14 @@ int x11_camera_capture_start(x11_camera_capture* capture,
         (capability.capabilities & V4L2_CAP_VIDEO_CAPTURE) == 0 ||
         (capability.capabilities & V4L2_CAP_STREAMING) == 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=capability");
+        x11_trace_event(X11_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=capability");
         x11_camera_capture_stop(capture);
         return 0;
     }
     if (!x11_camera_apply_format(capture, media) || !x11_camera_prepare_buffers(capture) ||
         x11_camera_ioctl(capture->fd, VIDIOC_STREAMON, &type) < 0)
     {
-        rdp_trace_event(RDP_TRACE_CLIENT,
+        x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.start.failed",
                         "backend=v4l2 reason=stream format=%u width=%u height=%u",
                         media->format,
@@ -465,7 +465,7 @@ int x11_camera_capture_start(x11_camera_capture* capture,
         return 0;
     }
     capture->streaming = 1;
-    rdp_trace_event(RDP_TRACE_CLIENT,
+    x11_trace_event(X11_TRACE_CLIENT,
                     "x11.camera.start",
                     "backend=v4l2 width=%u height=%u fourcc=%u output_format=%u buffers=%u",
                     capture->width,
@@ -478,7 +478,7 @@ int x11_camera_capture_start(x11_camera_capture* capture,
     (void)capture;
     (void)source;
     (void)media;
-    rdp_trace_event(RDP_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=unavailable");
+    x11_trace_event(X11_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=unavailable");
     return 0;
 #endif
 }
@@ -555,8 +555,8 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
         *data_len = 0;
         return -1;
     }
-    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                          RDP_TRACE_LEVEL_TRACE,
+    x11_trace_event_level(X11_TRACE_CLIENT,
+                          X11_TRACE_LEVEL_TRACE,
                           "x11.camera.sample",
                           "backend=v4l2 fourcc=%u output_format=%u bytes=%u",
                           capture->fourcc,
