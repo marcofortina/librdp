@@ -21,8 +21,6 @@
 
 #include <string.h>
 
-#define RDP_MOUSE_CURSOR_MAX_DIMENSION 512u
-
 static librdp_status rdp_mouse_cursor_parse_capset(rdp_stream* stream, rdp_mouse_cursor_capset* capset)
 {
     if (!stream || !capset)
@@ -80,8 +78,8 @@ static librdp_status rdp_mouse_cursor_parse_pointer_attributes(rdp_stream* strea
     }
 
     if (update->width == 0 || update->height == 0 ||
-        update->width > RDP_MOUSE_CURSOR_MAX_DIMENSION ||
-        update->height > RDP_MOUSE_CURSOR_MAX_DIMENSION)
+        update->width > RDP_POINTER_MAX_DIMENSION ||
+        update->height > RDP_POINTER_MAX_DIMENSION)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (update->hot_x >= update->width || update->hot_y >= update->height)
         return LIBRDP_STATUS_PROTOCOL_ERROR;

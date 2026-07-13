@@ -23,8 +23,6 @@
 #include <limits.h>
 #include <string.h>
 
-#define RDP_POINTER_MAX_DIMENSION 512u
-
 static size_t rdp_pointer_mask_stride(uint16_t width)
 {
     return (((size_t)width + 15u) / 16u) * 2u;
