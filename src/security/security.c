@@ -403,11 +403,11 @@ static librdp_status rdp_security_key_update(uint8_t key[16],
 
     memset(&rc4, 0, sizeof(rc4));
 
-    // codeql[cpp/weak-cryptographic-algorithm]
+    /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
     status = rdp_rc4_init(&rc4, key, key_len);
     if (status == LIBRDP_STATUS_OK)
     {
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_crypt(&rc4, key, key_len);
     }
     rdp_rc4_clear(&rc4);
@@ -583,11 +583,11 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
         memcpy(context->encrypt_update_key, context->encrypt_key, sizeof(context->encrypt_update_key));
         memcpy(context->decrypt_update_key, context->decrypt_key, sizeof(context->decrypt_update_key));
 
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
         if (status == LIBRDP_STATUS_OK)
         {
-            // codeql[cpp/weak-cryptographic-algorithm]
+            /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
             status = rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
         }
     }
@@ -707,12 +707,12 @@ librdp_status rdp_security_license_crypt(const uint8_t encryption_key[RDP_SECURI
     status = rdp_buffer_append(output, input, length);
     if (status == LIBRDP_STATUS_OK)
     {
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_init(&rc4, encryption_key, RDP_SECURITY_LICENSE_KEY_LEN);
     }
     if (status == LIBRDP_STATUS_OK)
     {
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_crypt(&rc4, output->data + start, length);
     }
     if (status != LIBRDP_STATUS_OK)
@@ -827,14 +827,14 @@ librdp_status rdp_security_encrypt_payload(rdp_standard_security_context* contex
         if (status != LIBRDP_STATUS_OK)
             return status;
 
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_init(&context->encrypt_rc4, context->encrypt_key, context->key_len);
         if (status != LIBRDP_STATUS_OK)
             return status;
         context->encrypt_count = 0;
     }
     {
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         librdp_status status = rdp_rc4_crypt(&context->encrypt_rc4, (uint8_t*)data, length);
         if (status != LIBRDP_STATUS_OK)
             return status;
@@ -856,14 +856,14 @@ librdp_status rdp_security_decrypt_payload(rdp_standard_security_context* contex
         if (status != LIBRDP_STATUS_OK)
             return status;
 
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         status = rdp_rc4_init(&context->decrypt_rc4, context->decrypt_key, context->key_len);
         if (status != LIBRDP_STATUS_OK)
             return status;
         context->decrypt_count = 0;
     }
     {
-        // codeql[cpp/weak-cryptographic-algorithm]
+        /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
         librdp_status status = rdp_rc4_crypt(&context->decrypt_rc4, (uint8_t*)data, length);
         if (status != LIBRDP_STATUS_OK)
             return status;

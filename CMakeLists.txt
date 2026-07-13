@@ -266,6 +266,7 @@ set(LIBRDP_SOURCES
 
 set(LIBRDP_BACKEND_SOURCES
     src/client/printer_backend.c
+    src/client/webauthn_backend.c
 )
 
 add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
@@ -418,8 +419,8 @@ if(LIBRDP_LIBUSB_FOUND)
     librdp_link_library_targets(PkgConfig::LIBRDP_LIBUSB)
 endif()
 if(LIBRDP_FIDO2_FOUND)
-    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FIDO2=1)
-    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FIDO2)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_FIDO2=1)
+    target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_FIDO2)
     librdp_link_library_targets(PkgConfig::LIBRDP_FIDO2)
 endif()
 if(LIBRDP_CBOR_FOUND)
