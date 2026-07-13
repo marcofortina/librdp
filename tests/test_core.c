@@ -944,7 +944,7 @@ static int build_demand_active_packet(rdp_buffer* out)
          rdp_buffer_append_u16_le(&caps, 1) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u16_le(&caps, 8) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&caps, 0) == LIBRDP_STATUS_OK;
-    total = 6u + 4u + 2u + 2u + sizeof(source) + caps.length;
+    total = 6u + 4u + 2u + 2u + sizeof(source) + caps.length + 4u;
     if (ok)
         ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)) ==
@@ -954,7 +954,8 @@ static int build_demand_active_packet(rdp_buffer* out)
              rdp_buffer_append_u16_le(&slow, (uint16_t)sizeof(source)) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u16_le(&slow, (uint16_t)caps.length) == LIBRDP_STATUS_OK &&
              rdp_buffer_append(&slow, source, sizeof(source)) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(&slow, caps.data, caps.length) == LIBRDP_STATUS_OK;
+             rdp_buffer_append(&slow, caps.data, caps.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0) == LIBRDP_STATUS_OK;
     if (ok)
         ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&

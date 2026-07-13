@@ -2413,9 +2413,16 @@ static int test_path_security_license_channels(void)
     const uint8_t fast_bad_update_compression[] = {0x00, 0x05, 0x40, 0x00, 0x00};
     const uint8_t slow[] = {0x06, 0x00, 0x13, 0x00, 0xea, 0x03};
     const uint8_t demand_active[] = {
-        0x1d, 0x00, 0x11, 0x00, 0xea, 0x03, 0x78, 0x56, 0x34, 0x12,
+        0x21, 0x00, 0x11, 0x00, 0xea, 0x03, 0x78, 0x56, 0x34, 0x12,
         0x03, 0x00, 0x0c, 0x00, 's',  'r',  'v',  0x01, 0x00, 0x00,
-        0x00, 0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd
+        0x00, 0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x44,
+        0x33, 0x22, 0x11
+    };
+    const uint8_t demand_active_trailing[] = {
+        0x22, 0x00, 0x11, 0x00, 0xea, 0x03, 0x78, 0x56, 0x34, 0x12,
+        0x03, 0x00, 0x0c, 0x00, 's',  'r',  'v',  0x01, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x44,
+        0x33, 0x22, 0x11, 0xff
     };
     const uint8_t capability_list_trailing[] = {0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0xff};
     const uint8_t bitmap_data_pdu[] = {
@@ -4483,6 +4490,7 @@ static int test_path_security_license_channels(void)
                                                    1004) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active), &demand) == LIBRDP_STATUS_OK);
     PCHECK(demand.share_id == 0x12345678u);
+    PCHECK(demand.session_id == 0x11223344u);
     PCHECK(demand.source_descriptor_len == 3 && memcmp(demand.source_descriptor, "srv", 3) == 0);
     PCHECK(demand.capabilities.count == 1 && demand.capabilities.sets[0].type == 1);
     PCHECK(rdp_capabilities_find(&demand.capabilities, RDP_CAPABILITY_TYPE_GENERAL) == &demand.capabilities.sets[0]);
@@ -4492,6 +4500,10 @@ static int test_path_security_license_channels(void)
 
         PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active) - 1u, &demand) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&demand, &valid_demand, sizeof(demand)) == 0);
+        PCHECK(rdp_slowpath_parse_demand_active(demand_active_trailing,
+                                                sizeof(demand_active_trailing),
+                                                &demand) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&demand, &valid_demand, sizeof(demand)) == 0);
     }
     PCHECK(rdp_capabilities_parse(capability_list_trailing,

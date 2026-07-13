@@ -134,7 +134,6 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
     const uint8_t* capabilities = NULL;
     uint16_t capabilities_len = 0;
     uint16_t source_len = 0;
-    uint16_t pad = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !demand)
@@ -160,14 +159,15 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
     if (rdp_stream_read_bytes(&stream, &parsed.source_descriptor, source_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_bytes(&stream, &capabilities, capabilities_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) != 4u ||
+        rdp_stream_read_u32_le(&stream, &parsed.session_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.source_descriptor_len = source_len;
     status = rdp_capabilities_parse(capabilities, capabilities_len, &parsed.capabilities);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (rdp_stream_remaining(&stream) >= 4)
-        (void)rdp_stream_read_u16_le(&stream, &pad);
     *demand = parsed;
-    (void)pad;
     return LIBRDP_STATUS_OK;
 }
 
