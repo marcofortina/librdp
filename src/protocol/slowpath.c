@@ -235,28 +235,13 @@ static librdp_status rdp_slowpath_write_order_capability(rdp_buffer* buffer)
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    order_support[RDP_GDI_ORDER_DSTBLT] = 1;
-    order_support[RDP_GDI_ORDER_PATBLT] = 1;
-    order_support[RDP_GDI_ORDER_SCRBLT] = 1;
-    order_support[RDP_GDI_ORDER_DRAWNINEGRID] = 1;
-    order_support[RDP_GDI_ORDER_MULTI_DRAWNINEGRID] = 1;
-    order_support[RDP_GDI_ORDER_LINETO] = 1;
-    order_support[RDP_GDI_ORDER_OPAQUERECT] = 1;
-    order_support[RDP_GDI_ORDER_SAVEBITMAP] = 1;
-    order_support[RDP_GDI_ORDER_MEMBLT] = 1;
-    order_support[RDP_GDI_ORDER_MEM3BLT] = 1;
-    order_support[RDP_GDI_ORDER_MULTIDSTBLT] = 1;
-    order_support[RDP_GDI_ORDER_MULTIPATBLT] = 1;
-    order_support[RDP_GDI_ORDER_MULTISCRBLT] = 1;
-    order_support[RDP_GDI_ORDER_MULTIOPAQUERECT] = 1;
-    order_support[RDP_GDI_ORDER_FAST_INDEX] = 1;
-    order_support[RDP_GDI_ORDER_POLYGON_SC] = 1;
-    order_support[RDP_GDI_ORDER_POLYGON_CB] = 1;
-    order_support[RDP_GDI_ORDER_POLYLINE] = 1;
-    order_support[RDP_GDI_ORDER_FAST_GLYPH] = 1;
-    order_support[RDP_GDI_ORDER_ELLIPSE_SC] = 1;
-    order_support[RDP_GDI_ORDER_ELLIPSE_CB] = 1;
-    order_support[RDP_GDI_ORDER_GLYPH_INDEX] = 1;
+    for (size_t i = 0; i < sizeof(order_support); i++)
+    {
+        uint8_t field_bytes = 0;
+
+        if (rdp_gdi_primary_order_field_bytes((uint8_t)i, &field_bytes))
+            order_support[i] = 1;
+    }
     status = rdp_slowpath_write_capability_header(buffer, RDP_CAPABILITY_TYPE_ORDER, 88);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_slowpath_append_zeros(buffer, 16);

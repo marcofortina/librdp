@@ -29,8 +29,16 @@ static uint16_t rdp_gdi_read_u16_le_unchecked(const uint8_t* data)
     return (uint16_t)((uint32_t)data[0] | ((uint32_t)data[1] << 8u));
 }
 
-static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
+/*
+ * Return the field-mask width for every primary order the client can decode
+ * and render. Capability advertisement, parser framing, and renderer state
+ * all use this table so unsupported or incorrectly sized orders are rejected
+ * before payload fields are consumed.
+ */
+int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
 {
+    if (!bytes)
+        return 0;
     switch (order_type)
     {
         case RDP_GDI_ORDER_DSTBLT:
@@ -48,7 +56,6 @@ static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_PATBLT:
         case RDP_GDI_ORDER_LINETO:
         case RDP_GDI_ORDER_MEMBLT:
-        case RDP_GDI_ORDER_MEM3BLT:
         case RDP_GDI_ORDER_MULTIPATBLT:
         case RDP_GDI_ORDER_MULTISCRBLT:
         case RDP_GDI_ORDER_MULTIOPAQUERECT:
@@ -58,6 +65,7 @@ static int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
         case RDP_GDI_ORDER_ELLIPSE_CB:
             *bytes = 2;
             return 1;
+        case RDP_GDI_ORDER_MEM3BLT:
         case RDP_GDI_ORDER_GLYPH_INDEX:
             *bytes = 3;
             return 1;

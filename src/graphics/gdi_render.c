@@ -22,43 +22,6 @@
 
 #include <string.h>
 
-static int rdp_gdi_render_field_bytes(uint8_t order_type, uint8_t* bytes)
-{
-    switch (order_type)
-    {
-        case RDP_GDI_ORDER_DSTBLT:
-        case RDP_GDI_ORDER_SCRBLT:
-        case RDP_GDI_ORDER_DRAWNINEGRID:
-        case RDP_GDI_ORDER_MULTI_DRAWNINEGRID:
-        case RDP_GDI_ORDER_OPAQUERECT:
-        case RDP_GDI_ORDER_MULTIDSTBLT:
-        case RDP_GDI_ORDER_POLYGON_SC:
-        case RDP_GDI_ORDER_POLYLINE:
-        case RDP_GDI_ORDER_ELLIPSE_SC:
-        case RDP_GDI_ORDER_SAVEBITMAP:
-            *bytes = 1;
-            return 1;
-        case RDP_GDI_ORDER_PATBLT:
-        case RDP_GDI_ORDER_LINETO:
-        case RDP_GDI_ORDER_MEMBLT:
-        case RDP_GDI_ORDER_MULTIPATBLT:
-        case RDP_GDI_ORDER_MULTISCRBLT:
-        case RDP_GDI_ORDER_MULTIOPAQUERECT:
-        case RDP_GDI_ORDER_FAST_INDEX:
-        case RDP_GDI_ORDER_POLYGON_CB:
-        case RDP_GDI_ORDER_FAST_GLYPH:
-        case RDP_GDI_ORDER_ELLIPSE_CB:
-            *bytes = 2;
-            return 1;
-        case RDP_GDI_ORDER_MEM3BLT:
-        case RDP_GDI_ORDER_GLYPH_INDEX:
-            *bytes = 3;
-            return 1;
-        default:
-            return 0;
-    }
-}
-
 static librdp_status rdp_gdi_render_read_i16(rdp_stream* stream, int32_t* value)
 {
     uint16_t raw = 0;
@@ -1803,7 +1766,7 @@ librdp_status rdp_gdi_decode_primary_render_order(rdp_gdi_render_state* state,
         if (rdp_stream_read_u8(&stream, &order_type) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (!rdp_gdi_render_field_bytes(order_type, &field_bytes))
+    if (!rdp_gdi_primary_order_field_bytes(order_type, &field_bytes))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     zero_field_bytes = (uint8_t)(((control & RDP_GDI_TS_ZERO_FIELD_BYTE_BIT0) ? 1u : 0u) |
                                  ((control & RDP_GDI_TS_ZERO_FIELD_BYTE_BIT1) ? 2u : 0u));

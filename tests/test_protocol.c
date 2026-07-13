@@ -5891,37 +5891,12 @@ static int test_path_security_license_channels(void)
            confirm_order.order_flags == 0x002au &&
            confirm_order.desktop_save_size == 230400u &&
            confirm_order.text_ansi_code_page == 65001u);
+    for (i = 0; i < sizeof(confirm_order.order_support); i++)
     {
-        const uint8_t supported_orders[] = {
-            RDP_GDI_ORDER_DSTBLT,
-            RDP_GDI_ORDER_PATBLT,
-            RDP_GDI_ORDER_SCRBLT,
-            RDP_GDI_ORDER_DRAWNINEGRID,
-            RDP_GDI_ORDER_MULTI_DRAWNINEGRID,
-            RDP_GDI_ORDER_LINETO,
-            RDP_GDI_ORDER_OPAQUERECT,
-            RDP_GDI_ORDER_SAVEBITMAP,
-            RDP_GDI_ORDER_MEMBLT,
-            RDP_GDI_ORDER_MEM3BLT,
-            RDP_GDI_ORDER_MULTIDSTBLT,
-            RDP_GDI_ORDER_MULTIPATBLT,
-            RDP_GDI_ORDER_MULTISCRBLT,
-            RDP_GDI_ORDER_MULTIOPAQUERECT,
-            RDP_GDI_ORDER_FAST_INDEX,
-            RDP_GDI_ORDER_POLYGON_SC,
-            RDP_GDI_ORDER_POLYGON_CB,
-            RDP_GDI_ORDER_POLYLINE,
-            RDP_GDI_ORDER_FAST_GLYPH,
-            RDP_GDI_ORDER_ELLIPSE_SC,
-            RDP_GDI_ORDER_ELLIPSE_CB,
-            RDP_GDI_ORDER_GLYPH_INDEX
-        };
-        uint8_t expected_order_support[sizeof(confirm_order.order_support)] = {0};
+        uint8_t field_bytes = 0;
+        const uint8_t expected = rdp_gdi_primary_order_field_bytes((uint8_t)i, &field_bytes) ? 1u : 0u;
 
-        for (i = 0; i < sizeof(supported_orders) / sizeof(supported_orders[0]); i++)
-            expected_order_support[supported_orders[i]] = 1;
-        for (i = 0; i < sizeof(confirm_order.order_support); i++)
-            PCHECK(confirm_order.order_support[i] == expected_order_support[i]);
+        PCHECK(confirm_order.order_support[i] == expected);
     }
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BITMAP_CACHE_V2);
     PCHECK(confirm_set != NULL);

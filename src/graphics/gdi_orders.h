@@ -60,6 +60,8 @@
 #define RDP_GDI_ORDER_ELLIPSE_CB 0x1au
 #define RDP_GDI_ORDER_GLYPH_INDEX 0x1bu
 
+int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes);
+
 #define RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED 0x00u
 #define RDP_GDI_SECONDARY_CACHE_COLOR_TABLE 0x01u
 #define RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED 0x02u
