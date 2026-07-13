@@ -868,9 +868,14 @@ static int test_multitransport_protocol(void)
     TCHECK(rdp_multitransport_parse_create_request(buffer.data, buffer.length, &request) ==
            LIBRDP_STATUS_OK);
     TCHECK(request.request_id == 7 && memcmp(request.security_cookie, cookie, sizeof(cookie)) == 0);
-    buffer.data[8] = 1;
-    TCHECK(rdp_multitransport_parse_create_request(buffer.data, buffer.length, &request) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_multitransport_create_request request_before = request;
+
+        buffer.data[8] = 1;
+        TCHECK(rdp_multitransport_parse_create_request(buffer.data, buffer.length, &request) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&request, &request_before, sizeof(request)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -878,6 +883,14 @@ static int test_multitransport_protocol(void)
     TCHECK(rdp_multitransport_parse_create_response(buffer.data, buffer.length, &response) ==
            LIBRDP_STATUS_OK);
     TCHECK(response.hresult == 0);
+    {
+        rdp_multitransport_create_response response_before = response;
+
+        buffer.data[1] = 3u;
+        TCHECK(rdp_multitransport_parse_create_response(buffer.data, buffer.length, &response) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&response, &response_before, sizeof(response)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -894,6 +907,21 @@ static int test_multitransport_protocol(void)
     TCHECK(parsed_subheader.length == sizeof(autodetect) + 2u);
     TCHECK(parsed_subheader.data_len == 2);
     TCHECK(memcmp(parsed_subheader.data, autodetect, sizeof(autodetect)) == 0);
+    {
+        rdp_multitransport_subheader subheader_before = parsed_subheader;
+        uint16_t count_before = subheader_count;
+
+        subheader.data[1] = 0xffu;
+        TCHECK(rdp_multitransport_parse_subheader(subheader.data,
+                                                  subheader.length,
+                                                  &parsed_subheader) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(memcmp(&parsed_subheader, &subheader_before, sizeof(parsed_subheader)) == 0);
+        TCHECK(rdp_multitransport_count_subheaders(subheader.data,
+                                                   subheader.length,
+                                                   &subheader_count) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        TCHECK(subheader_count == count_before);
+        subheader.data[1] = RDP_MULTITRANSPORT_SUBHEADER_AUTODETECT_REQUEST;
+    }
     TCHECK(rdp_multitransport_count_subheaders(subheader.data,
                                                subheader.length,
                                                &subheader_count) == LIBRDP_STATUS_OK);
