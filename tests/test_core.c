@@ -75,6 +75,7 @@
 #define DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT 10
 #define DVC_SCENARIO_ECHO_VALIDATE 11
 #define DVC_SCENARIO_CLIENT_FRAGMENT_SEND 12
+#define DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT 13
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1662,7 +1663,10 @@ static int build_dynamic_channel_empty_compressed_data_packet(rdp_buffer* out)
     return ok;
 }
 
-static int build_dynamic_channel_display_control_caps_packet(rdp_buffer* out)
+static int build_dynamic_channel_display_control_caps_packet_ex(rdp_buffer* out,
+                                                                uint32_t max_monitors,
+                                                                uint32_t area_factor_a,
+                                                                uint32_t area_factor_b)
 {
     rdp_buffer caps;
     rdp_buffer payload;
@@ -1672,14 +1676,19 @@ static int build_dynamic_channel_display_control_caps_packet(rdp_buffer* out)
     rdp_buffer_init(&payload);
     ok = rdp_buffer_append_u32_le(&caps, RDP_DISPLAY_CONTROL_PDU_CAPS) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&caps, 20u) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&caps, 1u) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&caps, 8192u) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&caps, 8192u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&caps, max_monitors) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&caps, area_factor_a) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&caps, area_factor_b) == LIBRDP_STATUS_OK &&
          rdp_dynamic_channel_write_data(&payload, 7, 1, caps.data, caps.length) == LIBRDP_STATUS_OK &&
          build_static_channel_packet(out, &payload, 1004);
     rdp_buffer_free(&payload);
     rdp_buffer_free(&caps);
     return ok;
+}
+
+static int build_dynamic_channel_display_control_caps_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_display_control_caps_packet_ex(out, 1u, 8192u, 8192u);
 }
 
 static int build_dynamic_channel_close_packet(rdp_buffer* out)
@@ -2003,6 +2012,92 @@ static int read_client_dynamic_create_response_fd(int fd,
     return 0;
 }
 
+static int test_display_control_layout_bounds(const rdp_display_control_monitor* monitors,
+                                              uint32_t monitor_count,
+                                              uint32_t* width,
+                                              uint32_t* height)
+{
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+
+    if (!monitors || monitor_count == 0 || !width || !height)
+        return 0;
+    left = monitors[0].left;
+    top = monitors[0].top;
+    right = (int64_t)monitors[0].left + (int64_t)monitors[0].width;
+    bottom = (int64_t)monitors[0].top + (int64_t)monitors[0].height;
+    for (uint32_t i = 1; i < monitor_count; i++)
+    {
+        int64_t monitor_right = (int64_t)monitors[i].left + (int64_t)monitors[i].width;
+        int64_t monitor_bottom = (int64_t)monitors[i].top + (int64_t)monitors[i].height;
+
+        if ((int64_t)monitors[i].left < left)
+            left = monitors[i].left;
+        if ((int64_t)monitors[i].top < top)
+            top = monitors[i].top;
+        if (monitor_right > right)
+            right = monitor_right;
+        if (monitor_bottom > bottom)
+            bottom = monitor_bottom;
+    }
+    if (right <= left || bottom <= top ||
+        right - left > UINT32_MAX ||
+        bottom - top > UINT32_MAX)
+        return 0;
+    *width = (uint32_t)(right - left);
+    *height = (uint32_t)(bottom - top);
+    return 1;
+}
+
+static int read_client_display_control_layout_fd(int fd,
+                                                 uint8_t* input,
+                                                 size_t capacity,
+                                                 uint16_t expected_static_channel_id,
+                                                 uint32_t expected_dynamic_channel_id,
+                                                 uint32_t expected_monitor_count,
+                                                 uint32_t expected_width,
+                                                 uint32_t expected_height)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_dynamic_channel_data_pdu data_pdu;
+        rdp_display_control_monitor monitors[LIBRDP_DISPLAY_MAX_MONITORS];
+        uint32_t monitor_count = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &response_packet))
+            continue;
+        if (rdp_dynamic_channel_parse_data(response_packet.payload,
+                                           response_packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK)
+            return 0;
+        if (data_pdu.channel_id != expected_dynamic_channel_id)
+            return 0;
+        if (rdp_display_control_parse_monitor_layout(data_pdu.data,
+                                                     data_pdu.data_len,
+                                                     monitors,
+                                                     LIBRDP_DISPLAY_MAX_MONITORS,
+                                                     &monitor_count) != LIBRDP_STATUS_OK)
+            return 0;
+        if (!test_display_control_layout_bounds(monitors, monitor_count, &width, &height))
+            return 0;
+        return monitor_count == expected_monitor_count &&
+               width == expected_width &&
+               height == expected_height;
+    }
+    return 0;
+}
+
 static int reserve_closed_loopback_port(uint16_t* port)
 {
     int fd = -1;
@@ -2276,7 +2371,8 @@ static int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         }
                     }
-                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT)
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
+                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT)
                     {
                         if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
                             !write_exact_fd(client, dvc_create.data, dvc_create.length))
@@ -2368,6 +2464,17 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         if (!build_dynamic_channel_display_control_caps_packet(&dvc_data) ||
                             !write_exact_fd(client, dvc_data.data, dvc_data.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT)
+                    {
+                        if (!read_client_dynamic_create_response_fd(client, input, sizeof(input), 1004, 7) ||
+                            !build_dynamic_channel_display_control_caps_packet_ex(&dvc_data, 2u, 8192u, 8192u) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 2u, 1440u, 600u) ||
+                            !read_client_display_control_layout_fd(client, input, sizeof(input), 1004, 7, 1u, 1024u, 768u))
                         {
                             _exit(5);
                         }
@@ -4885,6 +4992,78 @@ static int test_display_control_caps_reject_pending_layout(void)
 }
 
 /*
+ * Coverage: validates the positive display-control path. A pending two-monitor
+ * layout is sent after server capabilities arrive, and a later public resize
+ * sends an immediate single-monitor layout while channel metrics advance.
+ */
+static int test_display_control_accept_pending_and_resize(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_display_monitor monitors[2];
+    librdp_metrics before_resize;
+    librdp_metrics after_resize;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    memset(monitors, 0, sizeof(monitors));
+    monitors[0].flags = LIBRDP_DISPLAY_MONITOR_PRIMARY;
+    monitors[0].width = 800;
+    monitors[0].height = 600;
+    monitors[0].physical_width = 210;
+    monitors[0].physical_height = 158;
+    monitors[0].desktop_scale_factor = 100;
+    monitors[0].device_scale_factor = 100;
+    monitors[1].left = 800;
+    monitors[1].width = 640;
+    monitors[1].height = 480;
+    monitors[1].physical_width = 169;
+    monitors[1].physical_height = 127;
+    monitors[1].desktop_scale_factor = 100;
+    monitors[1].device_scale_factor = 100;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_session_set_display_layout(session, monitors, 2) == LIBRDP_STATUS_OK);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 6u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&before_resize) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &before_resize) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_resize(session, 1024, 768) == LIBRDP_STATUS_OK);
+    CHECK(librdp_metrics_init(&after_resize) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &after_resize) == LIBRDP_STATUS_OK);
+    CHECK(after_resize.channel_out == before_resize.channel_out + 1u);
+    CHECK(after_resize.channel_bytes_out == before_resize.channel_bytes_out + 58u);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that dynamic channel data cannot arrive before the
  * channel create handshake. It catches out-of-order DVC sequencing that would
  * otherwise hide malformed server traffic and lose channel metrics.
@@ -5295,6 +5474,8 @@ int test_client_core(void)
     if (test_echo_channel_auto_response() != 0)
         return 1;
     if (test_display_control_caps_reject_pending_layout() != 0)
+        return 1;
+    if (test_display_control_accept_pending_and_resize() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
         return 1;
