@@ -44,11 +44,18 @@ librdp_status rdp_capabilities_parse(const void* data, size_t length, rdp_capabi
     for (i = 0; i < count; i++)
     {
         rdp_capability_set* set = &list->sets[i];
+        uint16_t j = 0;
+
         if (rdp_stream_read_u16_le(&stream, &set->type) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u16_le(&stream, &set->length) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (set->length < 4 || rdp_stream_remaining(&stream) < (size_t)set->length - 4u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (j = 0; j < i; j++)
+        {
+            if (list->sets[j].type == set->type)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
         set->data_len = (size_t)set->length - 4u;
         if (rdp_stream_read_bytes(&stream, &set->data, set->data_len) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;

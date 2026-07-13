@@ -1641,6 +1641,11 @@ static int test_mcs_gcc_capabilities(void)
         0x01, 0x00, 0x08, 0x00, 0xaa, 0xbb, 0xcc, 0xdd,
         0x02, 0x00, 0x04, 0x00
     };
+    const uint8_t duplicate_caps[] = {
+        0x02, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x04, 0x00,
+        0x01, 0x00, 0x04, 0x00
+    };
     rdp_stream stream;
     size_t length = 0;
     rdp_mcs_connect_response response;
@@ -1721,6 +1726,8 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(list.sets[0].type == 1 && list.sets[0].data_len == 4);
     PCHECK(list.sets[1].type == 2 && list.sets[1].data_len == 0);
     PCHECK(rdp_capabilities_parse(caps, 5, &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_capabilities_parse(duplicate_caps, sizeof(duplicate_caps), &list) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
 
     memset(&config, 0, sizeof(config));
     config.desktop_width = 1024;
