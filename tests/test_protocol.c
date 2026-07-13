@@ -6915,6 +6915,19 @@ static int test_path_security_license_channels(void)
     PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_INITIAL);
     PCHECK(rdp_license_client_state_step(&license_state,
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                         RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE) == LIBRDP_STATUS_OK);
+    PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RECEIVED);
+    PCHECK(rdp_license_client_state_step(&license_state,
+                                         RDP_LICENSE_DIRECTION_CLIENT_TO_SERVER,
+                                         RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE_RESPONSE) == LIBRDP_STATUS_OK);
+    PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_PLATFORM_CHALLENGE_RESPONSE_SENT);
+    PCHECK(rdp_license_client_state_step(&license_state,
+                                         RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                         RDP_LICENSE_MESSAGE_NEW_LICENSE) == LIBRDP_STATUS_OK);
+    PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_COMPLETED);
+    rdp_license_client_state_init(&license_state);
+    PCHECK(rdp_license_client_state_step(&license_state,
+                                         RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                          RDP_LICENSE_MESSAGE_NEW_LICENSE) == LIBRDP_STATUS_OK);
     PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_COMPLETED);
     rdp_license_client_state_init(&license_state);
