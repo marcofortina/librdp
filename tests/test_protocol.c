@@ -10165,6 +10165,16 @@ static int test_path_security_license_channels(void)
     PCHECK(clear_payload.residual_len == 4 &&
            clear_payload.bands_len == 0 &&
            clear_payload.subcodec_len == 0);
+    {
+        rdp_clearcodec_composite_payload valid_clear_payload = clear_payload;
+
+        PCHECK(rdp_clearcodec_parse_composite_payload(clear_stream.payload,
+                                                      clear_stream.payload_len - 1u,
+                                                      &clear_payload) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&clear_payload,
+                      &valid_clear_payload,
+                      sizeof(clear_payload)) == 0);
+    }
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_residual_bitmap,
                                         sizeof(clear_residual_bitmap),
@@ -10211,6 +10221,16 @@ static int test_path_security_license_channels(void)
            clear_subcodec.height == 2 &&
            clear_subcodec.bitmap_data_len == 12 &&
            clear_subcodec.subcodec_id == RDP_CLEARCODEC_SUBCODEC_RAW);
+    {
+        rdp_clearcodec_subcodec valid_clear_subcodec = clear_subcodec;
+
+        PCHECK(rdp_clearcodec_parse_subcodec(clear_payload.subcodec,
+                                             clear_payload.subcodec_len - 1u,
+                                             &clear_subcodec) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&clear_subcodec,
+                      &valid_clear_subcodec,
+                      sizeof(clear_subcodec)) == 0);
+    }
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_raw_subcodec_bitmap,
                                         sizeof(clear_raw_subcodec_bitmap),
@@ -10378,9 +10398,14 @@ static int test_path_security_license_channels(void)
                                        sizeof(clear_max_glyph_hit),
                                        &clear_stream) == LIBRDP_STATUS_OK);
     PCHECK(clear_stream.glyph_index == RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES - 1u);
-    PCHECK(rdp_clearcodec_parse_stream(clear_bad_glyph_hit,
-                                       sizeof(clear_bad_glyph_hit),
-                                       &clear_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_clearcodec_stream valid_clear_stream = clear_stream;
+
+        PCHECK(rdp_clearcodec_parse_stream(clear_bad_glyph_hit,
+                                           sizeof(clear_bad_glyph_hit),
+                                           &clear_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&clear_stream, &valid_clear_stream, sizeof(clear_stream)) == 0);
+    }
     PCHECK(rdp_clearcodec_decode_bitmap(&clear_context,
                                         clear_empty_payload,
                                         sizeof(clear_empty_payload),

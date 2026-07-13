@@ -860,36 +860,38 @@ static librdp_status rdp_clearcodec_decode_subcodecs(rdp_clearcodec_context* con
 
 librdp_status rdp_clearcodec_parse_stream(const void* data, size_t length, rdp_clearcodec_stream* stream)
 {
+    rdp_clearcodec_stream parsed;
     rdp_stream input;
 
     if (!data || !stream || length < 2u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(stream, 0, sizeof(*stream));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&input, data, length);
-    if (rdp_stream_read_u8(&input, &stream->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&input, &stream->seq_number) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&input, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&input, &parsed.seq_number) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((stream->flags & ~(RDP_CLEARCODEC_FLAG_GLYPH_INDEX |
+    if ((parsed.flags & ~(RDP_CLEARCODEC_FLAG_GLYPH_INDEX |
                            RDP_CLEARCODEC_FLAG_GLYPH_HIT |
                            RDP_CLEARCODEC_FLAG_CACHE_RESET)) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((stream->flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0 &&
-        (stream->flags & RDP_CLEARCODEC_FLAG_GLYPH_INDEX) == 0)
+    if ((parsed.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0 &&
+        (parsed.flags & RDP_CLEARCODEC_FLAG_GLYPH_INDEX) == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((stream->flags & RDP_CLEARCODEC_FLAG_GLYPH_INDEX) != 0)
+    if ((parsed.flags & RDP_CLEARCODEC_FLAG_GLYPH_INDEX) != 0)
     {
-        stream->has_glyph_index = 1;
-        if (rdp_stream_read_u16_le(&input, &stream->glyph_index) != LIBRDP_STATUS_OK ||
-            stream->glyph_index >= RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES)
+        parsed.has_glyph_index = 1;
+        if (rdp_stream_read_u16_le(&input, &parsed.glyph_index) != LIBRDP_STATUS_OK ||
+            parsed.glyph_index >= RDP_CLEARCODEC_GLYPH_STORAGE_ENTRIES)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    stream->payload_len = rdp_stream_remaining(&input);
-    if ((stream->flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0 && stream->payload_len != 0)
+    parsed.payload_len = rdp_stream_remaining(&input);
+    if ((parsed.flags & RDP_CLEARCODEC_FLAG_GLYPH_HIT) != 0 && parsed.payload_len != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (stream->payload_len > 0 &&
-        rdp_stream_read_bytes(&input, &stream->payload, stream->payload_len) != LIBRDP_STATUS_OK)
+    if (parsed.payload_len > 0 &&
+        rdp_stream_read_bytes(&input, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *stream = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -897,30 +899,32 @@ librdp_status rdp_clearcodec_parse_composite_payload(const void* data,
                                                      size_t length,
                                                      rdp_clearcodec_composite_payload* payload)
 {
+    rdp_clearcodec_composite_payload parsed;
     rdp_stream stream;
     uint64_t total = 0;
 
     if (!data || !payload || length < 12u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(payload, 0, sizeof(*payload));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &payload->residual_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &payload->bands_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &payload->subcodec_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.residual_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.bands_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.subcodec_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    total = 12ull + payload->residual_len + payload->bands_len + payload->subcodec_len;
+    total = 12ull + parsed.residual_len + parsed.bands_len + parsed.subcodec_len;
     if (total != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (payload->residual_len > 0 &&
-        rdp_stream_read_bytes(&stream, &payload->residual, payload->residual_len) != LIBRDP_STATUS_OK)
+    if (parsed.residual_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.residual, parsed.residual_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (payload->bands_len > 0 &&
-        rdp_stream_read_bytes(&stream, &payload->bands, payload->bands_len) != LIBRDP_STATUS_OK)
+    if (parsed.bands_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.bands, parsed.bands_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (payload->subcodec_len > 0 &&
-        rdp_stream_read_bytes(&stream, &payload->subcodec, payload->subcodec_len) != LIBRDP_STATUS_OK)
+    if (parsed.subcodec_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.subcodec, parsed.subcodec_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *payload = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -928,26 +932,28 @@ librdp_status rdp_clearcodec_parse_subcodec(const void* data,
                                             size_t length,
                                             rdp_clearcodec_subcodec* subcodec)
 {
+    rdp_clearcodec_subcodec parsed;
     rdp_stream stream;
 
     if (!data || !subcodec || length < 13u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(subcodec, 0, sizeof(*subcodec));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &subcodec->x) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &subcodec->y) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &subcodec->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &subcodec->height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &subcodec->bitmap_data_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &subcodec->subcodec_id) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.x) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.y) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.bitmap_data_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.subcodec_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (subcodec->width == 0 || subcodec->height == 0 ||
-        rdp_stream_remaining(&stream) < subcodec->bitmap_data_len)
+    if (parsed.width == 0 || parsed.height == 0 ||
+        rdp_stream_remaining(&stream) < parsed.bitmap_data_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &subcodec->bitmap_data, subcodec->bitmap_data_len) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&stream, &parsed.bitmap_data, parsed.bitmap_data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    subcodec->total_len = 13u + subcodec->bitmap_data_len;
+    parsed.total_len = 13u + parsed.bitmap_data_len;
+    *subcodec = parsed;
     return LIBRDP_STATUS_OK;
 }
 
