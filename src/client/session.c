@@ -8536,12 +8536,13 @@ static librdp_status rdp_session_handle_printer_close(librdp_session* session,
         if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
             job->printer_backend == RDP_SESSION_PRINTER_BACKEND_CUPS)
         {
-            io_status = rdp_printer_backend_submit_cups(
+            io_status = rdp_printer_backend_submit_cups_async(
                 job->printer_index,
                 librdp_settings_printer_output_path(session->settings, job->printer_index),
                 librdp_settings_printer_name(session->settings, job->printer_index),
-                job->path);
-            remove_spool = io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS ? 1u : 0u;
+                job->path,
+                1);
+            remove_spool = 0;
         }
         if (remove_spool && job->path && unlink(job->path) != 0 && io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
             io_status = rdp_session_errno_to_device_status(errno);

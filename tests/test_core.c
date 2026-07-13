@@ -20,6 +20,7 @@
 #include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
+#include "client/printer_backend.h"
 #include "client/settings_internal.h"
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
@@ -660,6 +661,27 @@ static int test_smartcard_backend_mock(void)
     CHECK(active_protocol == mock.next_protocol);
     CHECK(rdp_smartcard_backend_disconnect(&backend, handle, 0) == SCARD_S_SUCCESS);
     CHECK(rdp_smartcard_backend_release_context(&backend, context) == SCARD_S_SUCCESS);
+    return 0;
+}
+
+/*
+ * Coverage: validates the printer backend queue boundary without contacting a
+ * host print service. It catches malformed CUPS selectors and null spool paths
+ * before any asynchronous worker can be created.
+ */
+static int test_printer_backend_boundary(void)
+{
+    static const uint32_t device_invalid_parameter = 0xc000000du;
+
+    CHECK(!rdp_printer_backend_output_is_cups(NULL));
+    CHECK(!rdp_printer_backend_output_is_cups(""));
+    CHECK(!rdp_printer_backend_output_is_cups("file:/tmp/out"));
+    CHECK(rdp_printer_backend_output_is_cups("cups"));
+    CHECK(rdp_printer_backend_output_is_cups("cups:Office"));
+    CHECK(rdp_printer_backend_submit_cups_async(0, "file:/tmp/out", "title", "/tmp/spool", 0) ==
+          device_invalid_parameter);
+    CHECK(rdp_printer_backend_submit_cups_async(0, "cups", "title", NULL, 0) ==
+          device_invalid_parameter);
     return 0;
 }
 
@@ -7209,6 +7231,8 @@ int test_common(void)
 int test_client_core(void)
 {
     if (test_smartcard_backend_mock() != 0)
+        return 1;
+    if (test_printer_backend_boundary() != 0)
         return 1;
     if (test_usb_backend_boundary() != 0)
         return 1;

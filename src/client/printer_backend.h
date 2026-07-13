@@ -24,5 +24,10 @@ uint32_t rdp_printer_backend_submit_cups(uint32_t printer_index,
                                          const char* output,
                                          const char* title,
                                          const char* path);
+uint32_t rdp_printer_backend_submit_cups_async(uint32_t printer_index,
+                                               const char* output,
+                                               const char* title,
+                                               const char* path,
+                                               int unlink_spool);
 
 #endif

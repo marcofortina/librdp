@@ -21,8 +21,11 @@
 #include "channels/printer_redirection.h"
 #include "common/trace.h"
 
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #ifdef RDP_HAVE_CUPS
 #include <cups/cups.h>
@@ -32,12 +35,47 @@
 #define RDP_PRINTER_BACKEND_DEVICE_NOT_SUPPORTED 0xc00000bbu
 #define RDP_PRINTER_BACKEND_DEVICE_INVALID_PARAMETER 0xc000000du
 #define RDP_PRINTER_BACKEND_DEVICE_UNSUCCESSFUL 0xc0000001u
+#define RDP_PRINTER_BACKEND_DEVICE_NO_MEMORY 0xc0000017u
 #define RDP_PRINTER_BACKEND_FORMAT_PROBE 512u
+
+typedef struct rdp_printer_backend_cups_job
+{
+    uint32_t printer_index;
+    char* output;
+    char* title;
+    char* path;
+    int unlink_spool;
+} rdp_printer_backend_cups_job;
 
 int rdp_printer_backend_output_is_cups(const char* output)
 {
     return output && (strcmp(output, "cups") == 0 ||
                       (strncmp(output, "cups:", 5u) == 0 && output[5] != '\0'));
+}
+
+static char* rdp_printer_backend_strdup(const char* value)
+{
+    size_t length = 0;
+    char* copy = NULL;
+
+    if (!value)
+        return NULL;
+    length = strlen(value);
+    copy = (char*)malloc(length + 1u);
+    if (!copy)
+        return NULL;
+    memcpy(copy, value, length + 1u);
+    return copy;
+}
+
+static void rdp_printer_backend_cups_job_free(rdp_printer_backend_cups_job* job)
+{
+    if (!job)
+        return;
+    free(job->output);
+    free(job->title);
+    free(job->path);
+    free(job);
 }
 
 #ifdef RDP_HAVE_CUPS
@@ -146,3 +184,77 @@ uint32_t rdp_printer_backend_submit_cups(uint32_t printer_index,
     return RDP_PRINTER_BACKEND_DEVICE_NOT_SUPPORTED;
 }
 #endif
+
+/*
+ * Run native CUPS submission outside the protocol dispatch path. The worker
+ * owns copied strings and optional spool cleanup, so session teardown cannot
+ * invalidate pointers after the close response has been sent.
+ */
+static void* rdp_printer_backend_cups_worker(void* opaque)
+{
+    rdp_printer_backend_cups_job* job = (rdp_printer_backend_cups_job*)opaque;
+    uint32_t status = RDP_PRINTER_BACKEND_DEVICE_INVALID_PARAMETER;
+
+    if (job)
+    {
+        status = rdp_printer_backend_submit_cups(job->printer_index,
+                                                job->output,
+                                                job->title,
+                                                job->path);
+        if (job->unlink_spool && job->path && status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+            (void)unlink(job->path);
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.printer.cups.worker",
+                        "printer_index=%u status=%u cleanup=%u",
+                        job->printer_index,
+                        status,
+                        job->unlink_spool ? 1u : 0u);
+    }
+    rdp_printer_backend_cups_job_free(job);
+    return NULL;
+}
+
+/*
+ * Queue a CUPS print job after the local spool file has been closed. Returning
+ * success means the backend accepted ownership of copied metadata; it does not
+ * claim that the host print system has already completed the job.
+ */
+uint32_t rdp_printer_backend_submit_cups_async(uint32_t printer_index,
+                                               const char* output,
+                                               const char* title,
+                                               const char* path,
+                                               int unlink_spool)
+{
+    rdp_printer_backend_cups_job* job = NULL;
+    pthread_t thread;
+    int rc = 0;
+
+    if (!rdp_printer_backend_output_is_cups(output) || !path)
+        return RDP_PRINTER_BACKEND_DEVICE_INVALID_PARAMETER;
+    job = (rdp_printer_backend_cups_job*)calloc(1, sizeof(*job));
+    if (!job)
+        return RDP_PRINTER_BACKEND_DEVICE_NO_MEMORY;
+    job->printer_index = printer_index;
+    job->unlink_spool = unlink_spool ? 1 : 0;
+    job->output = rdp_printer_backend_strdup(output);
+    job->title = rdp_printer_backend_strdup(title ? title : "RDP print job");
+    job->path = rdp_printer_backend_strdup(path);
+    if (!job->output || !job->title || !job->path)
+    {
+        rdp_printer_backend_cups_job_free(job);
+        return RDP_PRINTER_BACKEND_DEVICE_NO_MEMORY;
+    }
+    rc = pthread_create(&thread, NULL, rdp_printer_backend_cups_worker, job);
+    if (rc != 0)
+    {
+        rdp_printer_backend_cups_job_free(job);
+        return RDP_PRINTER_BACKEND_DEVICE_UNSUCCESSFUL;
+    }
+    (void)pthread_detach(thread);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.rdpdr.printer.cups.queued",
+                    "printer_index=%u cleanup=%u",
+                    printer_index,
+                    unlink_spool ? 1u : 0u);
+    return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+}
