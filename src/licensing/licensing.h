@@ -53,6 +53,13 @@
 
 #define RDP_LICENSE_KEY_EXCHANGE_RSA 0x00000001u
 #define RDP_LICENSE_SCOPE_MAX_COUNT 32u
+#define RDP_LICENSE_PREMASTER_SECRET_LEN 48u
+#define RDP_LICENSE_HARDWARE_ID_LEN 20u
+#define RDP_LICENSE_MAC_LEN 16u
+#define RDP_LICENSE_PLATFORM_ID_CLIENT 0x04000000u
+#define RDP_LICENSE_CLIENT_TYPE_OTHER 0xff00u
+#define RDP_LICENSE_DETAIL_LEVEL_DETAIL 0x0003u
+#define RDP_LICENSE_PLATFORM_CHALLENGE_RESPONSE_VERSION 0x0100u
 #define RDP_LICENSE_PRODUCT_INFO_LICENSE_ENFORCED 0x00008000u
 #define RDP_LICENSE_PRODUCT_INFO_RTM_LICENSE 0x00800000u
 #define RDP_LICENSE_PRODUCT_INFO_TEMPORARY_LICENSE 0x80000000u
@@ -246,7 +253,19 @@ typedef struct rdp_license_client_state
     uint8_t last_direction;
 } rdp_license_client_state;
 
+typedef struct rdp_license_crypto_context
+{
+    uint8_t ready;
+    uint8_t client_random[32];
+    uint8_t server_random[32];
+    uint8_t premaster_secret[RDP_LICENSE_PREMASTER_SECRET_LEN];
+    uint8_t mac_salt_key[RDP_LICENSE_MAC_LEN];
+    uint8_t encryption_key[RDP_LICENSE_MAC_LEN];
+    uint8_t hardware_id[RDP_LICENSE_HARDWARE_ID_LEN];
+} rdp_license_crypto_context;
+
 void rdp_license_client_state_init(rdp_license_client_state* state);
+void rdp_license_crypto_context_clear(rdp_license_crypto_context* context);
 librdp_status rdp_license_classify_message(const void* data, size_t length, uint8_t* message_type);
 librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
                                             rdp_license_direction direction,
@@ -347,5 +366,13 @@ librdp_status rdp_license_write_platform_challenge_response(
     const rdp_license_binary_blob* encrypted_response,
     const rdp_license_binary_blob* encrypted_hardware_id,
     const uint8_t mac[16]);
+librdp_status rdp_license_build_new_license_request(rdp_license_crypto_context* context,
+                                                    const rdp_license_server_request* request,
+                                                    const char* username,
+                                                    const char* machine_name,
+                                                    rdp_buffer* output);
+librdp_status rdp_license_build_platform_challenge_response(rdp_license_crypto_context* context,
+                                                            const rdp_license_platform_challenge* challenge,
+                                                            rdp_buffer* output);
 
 #endif

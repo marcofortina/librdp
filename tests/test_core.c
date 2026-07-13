@@ -99,6 +99,31 @@
 #define CLIPBOARD_SCENARIO_NONE 0
 #define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
 
+static const uint8_t core_test_server_random[32] = {
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+    0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
+};
+
+static const uint8_t core_test_server_certificate[] = {
+    0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+    0xeb, 0x63, 0x25, 0x72, 0xe3, 0xeb, 0x4e, 0x15, 0x13, 0x3c, 0x7b, 0x9c,
+    0x5c, 0x66, 0x61, 0x89, 0x0f, 0x7f, 0x79, 0x1a, 0x93, 0x75, 0x9c, 0xe2,
+    0x98, 0xeb, 0xa5, 0xa6, 0x73, 0xd2, 0xc7, 0x14, 0x2c, 0x5a, 0x57, 0x10,
+    0x48, 0x3b, 0x04, 0x69, 0xaf, 0x52, 0x86, 0x58, 0xe3, 0xf7, 0x05, 0xcf,
+    0x22, 0x0f, 0x6e, 0x25, 0x41, 0xe0, 0x3a, 0x26, 0x62, 0x2f, 0x31, 0xcf,
+    0xd5, 0x97, 0xd3, 0xa0, 0x93, 0x73, 0x4c, 0x9b, 0xc1, 0x9c, 0x2a, 0x30,
+    0x66, 0x7f, 0x61, 0x25, 0x67, 0xab, 0xd3, 0xe7, 0xe2, 0x7f, 0x5e, 0x57,
+    0x2a, 0x3a, 0x2b, 0x9c, 0x4f, 0x4e, 0x2c, 0xba, 0x8e, 0xf0, 0x93, 0x29,
+    0x3f, 0xf7, 0xca, 0x9e, 0x46, 0xd4, 0x1e, 0x11, 0x96, 0x84, 0xef, 0x2d,
+    0xa9, 0x57, 0x3d, 0x8b, 0x9b, 0x27, 0x90, 0x5b, 0x98, 0x9d, 0x5b, 0x80,
+    0x64, 0x24, 0x76, 0xc0, 0xba, 0x8d, 0xe4, 0xb2, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+};
+
 typedef struct event_counter
 {
     int states;
@@ -845,29 +870,6 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted, int ext
 {
     static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
     static const uint8_t key[] = {'M', 'c', 'D', 'n'};
-    static const uint8_t server_random[32] = {
-        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
-        0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
-        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
-        0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
-    };
-    static const uint8_t server_certificate[] = {
-        0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-        0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
-        0x00, 0x04, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-        0xeb, 0x63, 0x25, 0x72, 0xe3, 0xeb, 0x4e, 0x15, 0x13, 0x3c, 0x7b, 0x9c,
-        0x5c, 0x66, 0x61, 0x89, 0x0f, 0x7f, 0x79, 0x1a, 0x93, 0x75, 0x9c, 0xe2,
-        0x98, 0xeb, 0xa5, 0xa6, 0x73, 0xd2, 0xc7, 0x14, 0x2c, 0x5a, 0x57, 0x10,
-        0x48, 0x3b, 0x04, 0x69, 0xaf, 0x52, 0x86, 0x58, 0xe3, 0xf7, 0x05, 0xcf,
-        0x22, 0x0f, 0x6e, 0x25, 0x41, 0xe0, 0x3a, 0x26, 0x62, 0x2f, 0x31, 0xcf,
-        0xd5, 0x97, 0xd3, 0xa0, 0x93, 0x73, 0x4c, 0x9b, 0xc1, 0x9c, 0x2a, 0x30,
-        0x66, 0x7f, 0x61, 0x25, 0x67, 0xab, 0xd3, 0xe7, 0xe2, 0x7f, 0x5e, 0x57,
-        0x2a, 0x3a, 0x2b, 0x9c, 0x4f, 0x4e, 0x2c, 0xba, 0x8e, 0xf0, 0x93, 0x29,
-        0x3f, 0xf7, 0xca, 0x9e, 0x46, 0xd4, 0x1e, 0x11, 0x96, 0x84, 0xef, 0x2d,
-        0xa9, 0x57, 0x3d, 0x8b, 0x9b, 0x27, 0x90, 0x5b, 0x98, 0x9d, 0x5b, 0x80,
-        0x64, 0x24, 0x76, 0xc0, 0xba, 0x8d, 0xe4, 0xb2, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00
-    };
     rdp_buffer core;
     rdp_buffer security;
     rdp_buffer network;
@@ -895,10 +897,15 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted, int ext
         ok = rdp_buffer_append_u32_le(&security, encrypted ? RDP_SECURITY_METHOD_128BIT : 0) == LIBRDP_STATUS_OK &&
              rdp_buffer_append_u32_le(&security, encrypted ? 3u : 0) == LIBRDP_STATUS_OK;
         if (ok && encrypted)
-            ok = rdp_buffer_append_u32_le(&security, (uint32_t)sizeof(server_random)) == LIBRDP_STATUS_OK &&
-                 rdp_buffer_append_u32_le(&security, (uint32_t)sizeof(server_certificate)) == LIBRDP_STATUS_OK &&
-                 rdp_buffer_append(&security, server_random, sizeof(server_random)) == LIBRDP_STATUS_OK &&
-                 rdp_buffer_append(&security, server_certificate, sizeof(server_certificate)) == LIBRDP_STATUS_OK;
+            ok = rdp_buffer_append_u32_le(&security, (uint32_t)sizeof(core_test_server_random)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append_u32_le(&security,
+                                          (uint32_t)sizeof(core_test_server_certificate)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append(&security,
+                                   core_test_server_random,
+                                   sizeof(core_test_server_random)) == LIBRDP_STATUS_OK &&
+                 rdp_buffer_append(&security,
+                                   core_test_server_certificate,
+                                   sizeof(core_test_server_certificate)) == LIBRDP_STATUS_OK;
         if (ok)
             ok = append_gcc_block(&blocks, 0x0c02u, &security);
     }
@@ -1015,6 +1022,23 @@ static int validate_encrypted_client_info(const uint8_t* input, size_t input_len
     if (!read_security_payload(input, input_len, &payload, &payload_len) || payload_len < 20)
         return 0;
     return payload[0] == flags && payload[1] == 0 && payload[2] == 0 && payload[3] == 0;
+}
+
+static int validate_new_license_request(const uint8_t* input, size_t input_len)
+{
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+    rdp_license_client_new_license_request request;
+
+    if (!read_security_payload(input, input_len, &payload, &payload_len))
+        return 0;
+    if (rdp_license_parse_client_new_license_request(payload, payload_len, &request) != LIBRDP_STATUS_OK)
+        return 0;
+    return request.preferred_key_exchange_alg == RDP_LICENSE_KEY_EXCHANGE_RSA &&
+           request.platform_id == RDP_LICENSE_PLATFORM_ID_CLIENT &&
+           request.encrypted_pre_master.length == 128u &&
+           request.user_name.length > 1u &&
+           request.machine_name.length > 1u;
 }
 
 static int build_demand_active_packet(rdp_buffer* out)
@@ -1155,9 +1179,7 @@ static int build_license_request_packet(rdp_buffer* out)
     static const uint8_t company[] = {'L', 0, 'a', 0, 'b', 0, 0, 0};
     static const uint8_t product[] = {'T', 0, 'e', 0, 's', 0, 't', 0, 0, 0};
     static const uint8_t key_exchange[] = {1, 0, 0, 0};
-    static const uint8_t certificate[] = {0x30, 0x03, 0x02, 0x01, 0x01};
     static const uint8_t scope[] = {'s', 'c', 'o', 'p', 'e', 0};
-    static const uint8_t server_random[32] = {0};
     rdp_buffer payload;
     rdp_buffer license;
     rdp_buffer mcs;
@@ -1167,7 +1189,7 @@ static int build_license_request_packet(rdp_buffer* out)
     rdp_buffer_init(&payload);
     rdp_buffer_init(&license);
     rdp_buffer_init(&mcs);
-    ok = rdp_buffer_append(&payload, server_random, sizeof(server_random)) == LIBRDP_STATUS_OK &&
+    ok = rdp_buffer_append(&payload, core_test_server_random, sizeof(core_test_server_random)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, 0x00060002u) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, (uint32_t)sizeof(company)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&payload, company, sizeof(company)) == LIBRDP_STATUS_OK &&
@@ -1179,8 +1201,8 @@ static int build_license_request_packet(rdp_buffer* out)
                                        (uint16_t)sizeof(key_exchange)) == LIBRDP_STATUS_OK &&
          rdp_license_write_binary_blob(&payload,
                                        RDP_LICENSE_BLOB_CERTIFICATE,
-                                       certificate,
-                                       (uint16_t)sizeof(certificate)) == LIBRDP_STATUS_OK &&
+                                       core_test_server_certificate,
+                                       (uint16_t)sizeof(core_test_server_certificate)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK &&
          rdp_license_write_binary_blob(&payload,
                                        RDP_LICENSE_BLOB_SCOPE,
@@ -3086,7 +3108,11 @@ static int start_handshake_server_full(uint16_t* port,
                     if (!build_license_request_packet(&license_request) ||
                         !write_exact_fd(client, license_request.data, license_request.length))
                         _exit(4);
-                    goto done_connection;
+                    if (!read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                        !validate_new_license_request(input, input_len) ||
+                        !build_license_valid_client_alert_packet(&license_alert) ||
+                        !write_exact_fd(client, license_alert.data, license_alert.length))
+                        _exit(4);
                 }
                 if (!build_demand_active_packet(&demand_active) ||
                     !write_exact_fd(client, demand_active.data, demand_active.length) ||
@@ -7069,17 +7095,17 @@ static int test_licensing_valid_client_alert_before_activation(void)
 }
 
 /*
- * Coverage: validates that a legacy License Request is classified by the
- * licensing state machine and fails explicitly as unsupported until the full
- * encrypted licensing responder is implemented.
+ * Coverage: validates that a legacy License Request produces a client new
+ * license request, accepts a valid-client alert, and continues activation.
  */
-static int test_licensing_request_before_activation_unsupported(void)
+static int test_licensing_request_before_activation(void)
 {
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
+    size_t i = 0;
 
     settings = librdp_settings_new();
     CHECK(settings != NULL);
@@ -7100,8 +7126,13 @@ static int test_licensing_request_before_activation_unsupported(void)
     CHECK(session != NULL);
 
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
-    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_UNSUPPORTED);
-    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    for (i = 0; i < 4u; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -7183,7 +7214,7 @@ int test_client_core(void)
         return 1;
     if (test_licensing_valid_client_alert_before_activation() != 0)
         return 1;
-    if (test_licensing_request_before_activation_unsupported() != 0)
+    if (test_licensing_request_before_activation() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

@@ -420,6 +420,8 @@ static librdp_status rdp_security_key_update(uint8_t key[16],
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_security_write_u32_le(uint8_t output[4], uint32_t value);
+
 librdp_status rdp_security_write_header(rdp_buffer* buffer, uint16_t flags)
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -595,6 +597,116 @@ void rdp_security_standard_clear(rdp_standard_security_context* context)
     rdp_rc4_clear(&context->encrypt_rc4);
     rdp_rc4_clear(&context->decrypt_rc4);
     OPENSSL_cleanse(context, sizeof(*context));
+}
+
+librdp_status rdp_security_license_keys(const uint8_t premaster_secret[RDP_SECURITY_PREMASTER_SECRET_LEN],
+                                        const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                        const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                        uint8_t mac_salt_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                        uint8_t encryption_key[RDP_SECURITY_LICENSE_KEY_LEN])
+{
+    static const uint8_t a[] = {'A'};
+    static const uint8_t bb[] = {'B', 'B'};
+    static const uint8_t ccc[] = {'C', 'C', 'C'};
+    uint8_t master[48];
+    uint8_t session_blob[48];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!premaster_secret || !client_random || !server_random || !mac_salt_key || !encryption_key)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_secret_triplet(premaster_secret, a, bb, ccc, client_random, server_random, master);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_secret_triplet(master, a, bb, ccc, server_random, client_random, session_blob);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        memcpy(mac_salt_key, session_blob, RDP_SECURITY_LICENSE_KEY_LEN);
+        status = rdp_digest_concat(EVP_md5(),
+                                   encryption_key,
+                                   RDP_SECURITY_LICENSE_KEY_LEN,
+                                   session_blob + RDP_SECURITY_LICENSE_KEY_LEN,
+                                   RDP_SECURITY_LICENSE_KEY_LEN,
+                                   client_random,
+                                   RDP_SECURITY_CLIENT_RANDOM_LEN,
+                                   server_random,
+                                   RDP_SECURITY_CLIENT_RANDOM_LEN,
+                                   NULL,
+                                   0);
+    }
+
+    OPENSSL_cleanse(master, sizeof(master));
+    OPENSSL_cleanse(session_blob, sizeof(session_blob));
+    return status;
+}
+
+librdp_status rdp_security_license_mac(const uint8_t mac_salt_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                       const void* data,
+                                       size_t length,
+                                       uint8_t mac[RDP_SECURITY_LICENSE_KEY_LEN])
+{
+    EVP_MD_CTX* digest = NULL;
+    uint8_t len_le[4];
+    uint8_t sha1[20];
+    unsigned int got = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!mac_salt_key || (!data && length > 0) || !mac || length > UINT32_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_security_write_u32_le(len_le, (uint32_t)length);
+    digest = EVP_MD_CTX_new();
+    if (!digest)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (EVP_DigestInit_ex(digest, EVP_sha1(), NULL) != 1 ||
+        EVP_DigestUpdate(digest, mac_salt_key, RDP_SECURITY_LICENSE_KEY_LEN) != 1 ||
+        EVP_DigestUpdate(digest, rdp_pad1, sizeof(rdp_pad1)) != 1 ||
+        EVP_DigestUpdate(digest, len_le, sizeof(len_le)) != 1 ||
+        (length > 0 && EVP_DigestUpdate(digest, data, length) != 1) ||
+        EVP_DigestFinal_ex(digest, sha1, &got) != 1 ||
+        got != sizeof(sha1))
+        goto out;
+    if (EVP_DigestInit_ex(digest, EVP_md5(), NULL) != 1 ||
+        EVP_DigestUpdate(digest, mac_salt_key, RDP_SECURITY_LICENSE_KEY_LEN) != 1 ||
+        EVP_DigestUpdate(digest, rdp_pad2, sizeof(rdp_pad2)) != 1 ||
+        EVP_DigestUpdate(digest, sha1, sizeof(sha1)) != 1 ||
+        EVP_DigestFinal_ex(digest, mac, &got) != 1 ||
+        got != RDP_SECURITY_LICENSE_KEY_LEN)
+        goto out;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MD_CTX_free(digest);
+    OPENSSL_cleanse(sha1, sizeof(sha1));
+    return status;
+}
+
+librdp_status rdp_security_license_crypt(const uint8_t encryption_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                         const void* input,
+                                         size_t length,
+                                         rdp_buffer* output)
+{
+    rdp_rc4_context rc4;
+    size_t start = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!encryption_key || (!input && length > 0) || !output || length > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    memset(&rc4, 0, sizeof(rc4));
+    start = output->length;
+    status = rdp_buffer_append(output, input, length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rc4_init(&rc4, encryption_key, RDP_SECURITY_LICENSE_KEY_LEN);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rc4_crypt(&rc4, output->data + start, length);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        if (output->length > start)
+            OPENSSL_cleanse(output->data + start, output->length - start);
+        output->length = start;
+    }
+    rdp_rc4_clear(&rc4);
+    return status;
 }
 
 librdp_status rdp_security_mac_signature(const rdp_standard_security_context* context,

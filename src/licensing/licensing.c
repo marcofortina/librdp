@@ -18,6 +18,11 @@
 #include "licensing/licensing.h"
 
 #include "common/stream.h"
+#include "security/security.h"
+
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include <limits.h>
 #include <string.h>
@@ -160,6 +165,106 @@ void rdp_license_client_state_init(rdp_license_client_state* state)
         return;
     memset(state, 0, sizeof(*state));
     state->state = RDP_LICENSE_CLIENT_STATE_INITIAL;
+}
+
+void rdp_license_crypto_context_clear(rdp_license_crypto_context* context)
+{
+    if (!context)
+        return;
+    OPENSSL_cleanse(context, sizeof(*context));
+}
+
+static int rdp_license_key_exchange_supports_rsa(const rdp_license_binary_blob* blob)
+{
+    size_t offset = 0;
+
+    if (!blob || blob->type != RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG || !blob->data ||
+        blob->length == 0 || (blob->length % 4u) != 0)
+        return 0;
+    while (offset < blob->length)
+    {
+        uint32_t alg = (uint32_t)blob->data[offset] |
+                       ((uint32_t)blob->data[offset + 1u] << 8u) |
+                       ((uint32_t)blob->data[offset + 2u] << 16u) |
+                       ((uint32_t)blob->data[offset + 3u] << 24u);
+
+        if (alg == RDP_LICENSE_KEY_EXCHANGE_RSA)
+            return 1;
+        offset += 4u;
+    }
+    return 0;
+}
+
+static librdp_status rdp_license_write_u32_le_bytes(uint8_t output[4], uint32_t value)
+{
+    if (!output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    output[0] = (uint8_t)(value & 0xffu);
+    output[1] = (uint8_t)((value >> 8u) & 0xffu);
+    output[2] = (uint8_t)((value >> 16u) & 0xffu);
+    output[3] = (uint8_t)((value >> 24u) & 0xffu);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_license_build_hardware_id(const char* machine_name,
+                                                   uint8_t hardware_id[RDP_LICENSE_HARDWARE_ID_LEN])
+{
+    EVP_MD_CTX* digest = NULL;
+    unsigned int got = 0;
+    const uint8_t* hash_data = (const uint8_t*)(machine_name ? machine_name : "librdp");
+    size_t hash_len = strlen((const char*)hash_data);
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!hardware_id)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(hardware_id, 0, RDP_LICENSE_HARDWARE_ID_LEN);
+    status = rdp_license_write_u32_le_bytes(hardware_id, RDP_LICENSE_PLATFORM_ID_CLIENT);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    digest = EVP_MD_CTX_new();
+    if (!digest)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (EVP_DigestInit_ex(digest, EVP_md5(), NULL) != 1 ||
+        (hash_len > 0 && EVP_DigestUpdate(digest, hash_data, hash_len) != 1) ||
+        EVP_DigestFinal_ex(digest, hardware_id + 4u, &got) != 1 ||
+        got != RDP_LICENSE_HARDWARE_ID_LEN - 4u)
+        goto out;
+    status = LIBRDP_STATUS_OK;
+
+out:
+    EVP_MD_CTX_free(digest);
+    return status;
+}
+
+static librdp_status rdp_license_blob_from_buffer(rdp_license_binary_blob* blob,
+                                                  uint16_t type,
+                                                  const rdp_buffer* buffer)
+{
+    if (!blob || !buffer || buffer->length > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    blob->type = type;
+    blob->length = (uint16_t)buffer->length;
+    blob->data = buffer->data;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_license_build_response_data(const rdp_buffer* challenge,
+                                                     rdp_buffer* response)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!challenge || !response || challenge->length > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u16_le(response, RDP_LICENSE_PLATFORM_CHALLENGE_RESPONSE_VERSION);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(response, RDP_LICENSE_CLIENT_TYPE_OTHER);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(response, RDP_LICENSE_DETAIL_LEVEL_DETAIL);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(response, (uint16_t)challenge->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(response, challenge->data, challenge->length);
+    return status;
 }
 
 static int rdp_license_message_from_server(uint8_t message_type)
@@ -1188,4 +1293,208 @@ librdp_status rdp_license_write_platform_challenge_response(
         return rdp_license_restore_on_error(buffer, start, status);
     status = rdp_buffer_append(buffer, mac, 16u);
     return rdp_license_restore_on_error(buffer, start, status);
+}
+
+/*
+ * Purpose: create the client response to a server License Request and install
+ * the transient licensing crypto context only after every derivation and
+ * serialization step succeeds.
+ * Invariants: server certificate and key-exchange list are validated before
+ * generating secrets, generated secrets never leave the context except through
+ * the RSA-encrypted premaster blob, and the caller-owned output buffer is the
+ * only committed wire artifact.
+ * Failure policy: cleanse all temporary secret material, leave the previous
+ * context unchanged unless the new response is complete, and return a precise
+ * protocol/unsupported/status error to the session state machine.
+ */
+librdp_status rdp_license_build_new_license_request(rdp_license_crypto_context* context,
+                                                    const rdp_license_server_request* request,
+                                                    const char* username,
+                                                    const char* machine_name,
+                                                    rdp_buffer* output)
+{
+    rdp_license_crypto_context next;
+    rdp_security_public_key public_key;
+    rdp_buffer encrypted_premaster;
+    rdp_license_binary_blob encrypted_blob;
+    rdp_license_binary_blob user_blob;
+    rdp_license_binary_blob machine_blob;
+    const char* safe_user = username ? username : "user";
+    const char* safe_machine = machine_name ? machine_name : "librdp";
+    size_t user_len = strlen(safe_user) + 1u;
+    size_t machine_len = strlen(safe_machine) + 1u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!context || !request || !output || user_len > UINT16_MAX || machine_len > UINT16_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_license_key_exchange_supports_rsa(&request->key_exchange_list))
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    memset(&next, 0, sizeof(next));
+    memset(&public_key, 0, sizeof(public_key));
+    rdp_buffer_init(&encrypted_premaster);
+
+    memcpy(next.server_random, request->server_random, sizeof(next.server_random));
+    status = rdp_security_parse_server_certificate(request->server_certificate.data,
+                                                   request->server_certificate.length,
+                                                   &public_key);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_generate_client_random(next.client_random);
+    if (status == LIBRDP_STATUS_OK && RAND_bytes(next.premaster_secret, sizeof(next.premaster_secret)) != 1)
+        status = LIBRDP_STATUS_IO_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_license_keys(next.premaster_secret,
+                                           next.client_random,
+                                           next.server_random,
+                                           next.mac_salt_key,
+                                           next.encryption_key);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_build_hardware_id(safe_machine, next.hardware_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_encrypt_public_secret(&public_key,
+                                                    next.premaster_secret,
+                                                    sizeof(next.premaster_secret),
+                                                    &encrypted_premaster);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_blob_from_buffer(&encrypted_blob,
+                                              RDP_LICENSE_BLOB_RANDOM,
+                                              &encrypted_premaster);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        user_blob.type = RDP_LICENSE_BLOB_CLIENT_USER_NAME;
+        user_blob.length = (uint16_t)user_len;
+        user_blob.data = (const uint8_t*)safe_user;
+        machine_blob.type = RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME;
+        machine_blob.length = (uint16_t)machine_len;
+        machine_blob.data = (const uint8_t*)safe_machine;
+        status = rdp_license_write_client_new_license_request(output,
+                                                              request->preamble.version,
+                                                              RDP_LICENSE_KEY_EXCHANGE_RSA,
+                                                              RDP_LICENSE_PLATFORM_ID_CLIENT,
+                                                              next.client_random,
+                                                              &encrypted_blob,
+                                                              &user_blob,
+                                                              &machine_blob);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_license_crypto_context_clear(context);
+        next.ready = 1;
+        *context = next;
+        OPENSSL_cleanse(&next, sizeof(next));
+    }
+    else
+        rdp_license_crypto_context_clear(&next);
+
+    if (encrypted_premaster.data)
+        OPENSSL_cleanse(encrypted_premaster.data, encrypted_premaster.length);
+    rdp_buffer_free(&encrypted_premaster);
+    rdp_security_public_key_clear(&public_key);
+    return status;
+}
+
+/*
+ * Purpose: answer a server Platform Challenge using the negotiated licensing
+ * key material from the preceding License Request.
+ * Invariants: encrypted challenge data is decrypted with a fresh RC4 instance,
+ * authenticated against the server MAC before reuse, and response MAC covers
+ * the exact plaintext response plus CLIENT_HARDWARE_ID bytes.
+ * Failure policy: reject out-of-order challenges as protocol errors, cleanse
+ * plaintext challenge/response buffers and MAC scratch space, and emit no
+ * partially serialized response on authentication or allocation failure.
+ */
+librdp_status rdp_license_build_platform_challenge_response(rdp_license_crypto_context* context,
+                                                            const rdp_license_platform_challenge* challenge,
+                                                            rdp_buffer* output)
+{
+    rdp_buffer plain_challenge;
+    rdp_buffer response_data;
+    rdp_buffer mac_input;
+    rdp_buffer encrypted_response;
+    rdp_buffer encrypted_hardware;
+    rdp_license_binary_blob response_blob;
+    rdp_license_binary_blob hardware_blob;
+    uint8_t expected_mac[RDP_LICENSE_MAC_LEN];
+    uint8_t response_mac[RDP_LICENSE_MAC_LEN];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!context || !challenge || !output)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!context->ready || challenge->encrypted_challenge.type != RDP_LICENSE_BLOB_ENCRYPTED_DATA)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    rdp_buffer_init(&plain_challenge);
+    rdp_buffer_init(&response_data);
+    rdp_buffer_init(&mac_input);
+    rdp_buffer_init(&encrypted_response);
+    rdp_buffer_init(&encrypted_hardware);
+    memset(expected_mac, 0, sizeof(expected_mac));
+    memset(response_mac, 0, sizeof(response_mac));
+
+    status = rdp_security_license_crypt(context->encryption_key,
+                                        challenge->encrypted_challenge.data,
+                                        challenge->encrypted_challenge.length,
+                                        &plain_challenge);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_license_mac(context->mac_salt_key,
+                                          plain_challenge.data,
+                                          plain_challenge.length,
+                                          expected_mac);
+    if (status == LIBRDP_STATUS_OK &&
+        CRYPTO_memcmp(expected_mac, challenge->mac, sizeof(expected_mac)) != 0)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_build_response_data(&plain_challenge, &response_data);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&mac_input, response_data.data, response_data.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&mac_input, context->hardware_id, sizeof(context->hardware_id));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_license_mac(context->mac_salt_key,
+                                          mac_input.data,
+                                          mac_input.length,
+                                          response_mac);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_license_crypt(context->encryption_key,
+                                            response_data.data,
+                                            response_data.length,
+                                            &encrypted_response);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_license_crypt(context->encryption_key,
+                                            context->hardware_id,
+                                            sizeof(context->hardware_id),
+                                            &encrypted_hardware);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_blob_from_buffer(&response_blob,
+                                              RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                              &encrypted_response);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_blob_from_buffer(&hardware_blob,
+                                              RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                              &encrypted_hardware);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_license_write_platform_challenge_response(output,
+                                                               challenge->preamble.version,
+                                                               &response_blob,
+                                                               &hardware_blob,
+                                                               response_mac);
+
+    if (plain_challenge.data)
+        OPENSSL_cleanse(plain_challenge.data, plain_challenge.length);
+    if (response_data.data)
+        OPENSSL_cleanse(response_data.data, response_data.length);
+    if (mac_input.data)
+        OPENSSL_cleanse(mac_input.data, mac_input.length);
+    if (encrypted_response.data)
+        OPENSSL_cleanse(encrypted_response.data, encrypted_response.length);
+    if (encrypted_hardware.data)
+        OPENSSL_cleanse(encrypted_hardware.data, encrypted_hardware.length);
+    OPENSSL_cleanse(expected_mac, sizeof(expected_mac));
+    OPENSSL_cleanse(response_mac, sizeof(response_mac));
+    rdp_buffer_free(&encrypted_hardware);
+    rdp_buffer_free(&encrypted_response);
+    rdp_buffer_free(&mac_input);
+    rdp_buffer_free(&response_data);
+    rdp_buffer_free(&plain_challenge);
+    return status;
 }

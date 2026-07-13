@@ -249,8 +249,9 @@ librdp_status rdp_security_generate_client_random(uint8_t random[RDP_SECURITY_CL
  * Certificate parsing and provider encryption remain in this boundary so
  * secret random bytes are never exposed after failure.
  */
-librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
-                                                 const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+librdp_status rdp_security_encrypt_public_secret(const rdp_security_public_key* public_key,
+                                                 const uint8_t* secret,
+                                                 size_t secret_len,
                                                  rdp_buffer* encrypted)
 {
     librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -265,9 +266,9 @@ librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* 
     BIGNUM* c = NULL;
     BN_CTX* bn_ctx = NULL;
 
-    if (!public_key || !random || !encrypted)
+    if (!public_key || !secret || !encrypted)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!public_key->modulus_le || public_key->modulus_len <= RDP_SECURITY_CLIENT_RANDOM_LEN ||
+    if (!public_key->modulus_le || secret_len == 0 || public_key->modulus_len <= secret_len ||
         public_key->modulus_len > (size_t)INT_MAX || public_key->exponent == 0)
         return LIBRDP_STATUS_UNSUPPORTED;
 
@@ -282,7 +283,7 @@ librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* 
         goto out;
     }
 
-    memcpy(input_le, random, RDP_SECURITY_CLIENT_RANDOM_LEN);
+    memcpy(input_le, secret, secret_len);
     rdp_reverse_copy(input_be, input_le, public_key->modulus_len);
     rdp_reverse_copy(modulus_be, public_key->modulus_le, public_key->modulus_len);
 
@@ -335,4 +336,14 @@ out:
         free(modulus_be);
     }
     return status;
+}
+
+librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
+                                                 const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                 rdp_buffer* encrypted)
+{
+    return rdp_security_encrypt_public_secret(public_key,
+                                              random,
+                                              RDP_SECURITY_CLIENT_RANDOM_LEN,
+                                              encrypted);
 }

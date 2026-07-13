@@ -36,6 +36,8 @@
 #define RDP_SEC_LICENSE_ENCRYPT_SC 0x0200u
 #define RDP_SEC_SECURE_CHECKSUM 0x0800u
 #define RDP_SECURITY_CLIENT_RANDOM_LEN 32u
+#define RDP_SECURITY_PREMASTER_SECRET_LEN 48u
+#define RDP_SECURITY_LICENSE_KEY_LEN 16u
 #define RDP_SECURITY_METHOD_40BIT 0x00000001u
 #define RDP_SECURITY_METHOD_128BIT 0x00000002u
 #define RDP_SECURITY_METHOD_56BIT 0x00000008u
@@ -116,11 +118,28 @@ librdp_status rdp_security_generate_client_random(uint8_t random[RDP_SECURITY_CL
 librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
                                                  const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
                                                  rdp_buffer* encrypted);
+librdp_status rdp_security_encrypt_public_secret(const rdp_security_public_key* public_key,
+                                                 const uint8_t* secret,
+                                                 size_t secret_len,
+                                                 rdp_buffer* encrypted);
 librdp_status rdp_security_standard_client_init(rdp_standard_security_context* context,
                                                 uint32_t method,
                                                 const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
                                                 const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN]);
 void rdp_security_standard_clear(rdp_standard_security_context* context);
+librdp_status rdp_security_license_keys(const uint8_t premaster_secret[RDP_SECURITY_PREMASTER_SECRET_LEN],
+                                        const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                        const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                        uint8_t mac_salt_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                        uint8_t encryption_key[RDP_SECURITY_LICENSE_KEY_LEN]);
+librdp_status rdp_security_license_mac(const uint8_t mac_salt_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                       const void* data,
+                                       size_t length,
+                                       uint8_t mac[RDP_SECURITY_LICENSE_KEY_LEN]);
+librdp_status rdp_security_license_crypt(const uint8_t encryption_key[RDP_SECURITY_LICENSE_KEY_LEN],
+                                         const void* input,
+                                         size_t length,
+                                         rdp_buffer* output);
 librdp_status rdp_security_mac_signature(const rdp_standard_security_context* context,
                                          const void* data,
                                          size_t length,
