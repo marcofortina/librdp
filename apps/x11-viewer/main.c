@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /*
- * Module: X11 viewer entry point, option parsing, event loop, framebuffer
- * presentation, and public client API exercise path.
+ * Module: X11 viewer entry point, event loop, framebuffer presentation, and
+ * public client API exercise path.
  * Invariants: viewer state, X11 resources, and session callbacks are kept
  * consistent with focus and resize events.
  * Ownership: the viewer state owns X11 handles and session callbacks, while
@@ -21,6 +21,8 @@
 #include "audio_pipewire.h"
 #include "camera_v4l2.h"
 #include "device_backends.h"
+#include "viewer_app.h"
+#include "viewer_clipboard.h"
 #include "viewer_cli.h"
 #include "viewer_trace.h"
 
@@ -35,92 +37,12 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <iconv.h>
 #include <limits.h>
 #include <locale.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct x11_pressed_key
-{
-    int down;
-    librdp_key_event event;
-} x11_pressed_key;
-
-#define X11_AUDIO_OUTPUT_FORMATS_MAX 32u
-
-typedef struct x11_app
-{
-    Display* display;
-    int screen;
-    Window window;
-    GC gc;
-    Atom wm_delete;
-    Atom xwayland_grab;
-    XIM im;
-    XIC ic;
-    XkbDescPtr xkb;
-    Cursor cursor;
-    int cursor_mode;
-    int hidden_cursor_locally_visible;
-    int suppress_motion;
-    librdp_session* session;
-    int running;
-    int dirty;
-    uint64_t event_serial;
-    uint32_t window_width;
-    uint32_t window_height;
-    int focused;
-    int pointer_inside;
-    int keyboard_grabbed;
-    int pending_ungrab;
-    int detectable_auto_repeat;
-    int xfixes_event_base;
-    int xfixes_error_base;
-    int xfixes_available;
-    Atom clipboard_selection;
-    Atom clipboard_property;
-    Atom atom_targets;
-    Atom atom_utf8_string;
-    Atom atom_text;
-    Atom atom_incr;
-    uint8_t* clipboard_remote_utf8;
-    size_t clipboard_remote_utf8_len;
-    int clipboard_owns_selection;
-    int clipboard_request_pending;
-    char* clipboard_file_path;
-    x11_pipewire_audio* audio;
-    x11_camera_capture* camera;
-    char* audio_output_device;
-    char* audio_input_device;
-    char* camera_source;
-    FILE* video_output_file;
-    int audio_output_requested;
-    int audio_input_requested;
-    int echo_requested;
-    int telemetry_requested;
-    int video_requested;
-    int audio_input_active;
-    uint32_t audio_output_format_count;
-    uint32_t audio_output_current_format;
-    librdp_audio_format audio_output_formats[X11_AUDIO_OUTPUT_FORMATS_MAX];
-    int camera_requested;
-    size_t audio_input_chunk;
-    uint8_t audio_input_buffer[16384];
-    unsigned int pressed_count;
-    x11_pressed_key pressed[256];
-} x11_app;
-
-#define X11_CURSOR_DEFAULT 0
-#define X11_CURSOR_HIDDEN 1
-#define X11_CURSOR_SHAPE 2
-#define X11_MAX_EVENTS_PER_TICK 128u
-#define X11_MAX_NETWORK_PUMP 64u
-#define X11_MAX_SESSION_POLL_FDS 8u
-#define X11_CLIPBOARD_MAX_BYTES (16u * 1024u * 1024u)
-#define X11_AUDIO_INPUT_BUFFER_BYTES 16384u
 
 static char* x11_strdup_text(const char* text)
 {
@@ -925,382 +847,6 @@ static void send_unicode_text(x11_app* app, const char* text, size_t length)
         send_unicode_codepoint(app, codepoint);
 }
 
-static void x11_clipboard_free(x11_app* app)
-{
-    if (!app)
-        return;
-    free(app->clipboard_remote_utf8);
-    app->clipboard_remote_utf8 = NULL;
-    app->clipboard_remote_utf8_len = 0;
-    app->clipboard_owns_selection = 0;
-    app->clipboard_request_pending = 0;
-    free(app->clipboard_file_path);
-    app->clipboard_file_path = NULL;
-}
-
-static int x11_clipboard_store_utf8(x11_app* app, const uint8_t* data, size_t length)
-{
-    uint8_t* copy = NULL;
-
-    if (!app || (!data && length > 0) || length > X11_CLIPBOARD_MAX_BYTES)
-        return 0;
-    copy = (uint8_t*)malloc(length + 1u);
-    if (!copy)
-        return 0;
-    if (length > 0)
-        memcpy(copy, data, length);
-    copy[length] = 0;
-    free(app->clipboard_remote_utf8);
-    app->clipboard_remote_utf8 = copy;
-    app->clipboard_remote_utf8_len = length;
-    return 1;
-}
-
-static int x11_convert_text_alloc(const char* to,
-                                  const char* from,
-                                  const uint8_t* data,
-                                  size_t length,
-                                  uint8_t** out,
-                                  size_t* out_len)
-{
-    iconv_t cd = (iconv_t)-1;
-    uint8_t* output = NULL;
-    char* input_cursor = NULL;
-    char* output_cursor = NULL;
-    size_t input_left = length;
-    size_t output_left = 0;
-    size_t capacity = 0;
-    int ok = 0;
-
-    if (!to || !from || (!data && length > 0) || !out || !out_len)
-        return 0;
-    *out = NULL;
-    *out_len = 0;
-    capacity = length > 0 ? (length * 4u) + 16u : 16u;
-    if (capacity < length)
-        return 0;
-    output = (uint8_t*)calloc(1u, capacity);
-    if (!output)
-        return 0;
-    cd = iconv_open(to, from);
-    if (cd == (iconv_t)-1)
-    {
-        free(output);
-        return 0;
-    }
-    input_cursor = (char*)data;
-    output_cursor = (char*)output;
-    output_left = capacity;
-    while (1)
-    {
-        const size_t converted = iconv(cd, &input_cursor, &input_left, &output_cursor, &output_left);
-
-        if (converted != (size_t)-1)
-        {
-            ok = 1;
-            break;
-        }
-        if (errno != E2BIG)
-            break;
-        {
-            const size_t used = (size_t)((uint8_t*)output_cursor - output);
-            const size_t next_capacity = capacity * 2u;
-            uint8_t* resized = NULL;
-
-            if (next_capacity <= capacity)
-                break;
-            resized = (uint8_t*)realloc(output, next_capacity);
-            if (!resized)
-                break;
-            output = resized;
-            memset(output + capacity, 0, next_capacity - capacity);
-            capacity = next_capacity;
-            output_cursor = (char*)output + used;
-            output_left = capacity - used;
-        }
-    }
-    if (ok)
-    {
-        *out_len = (size_t)((uint8_t*)output_cursor - output);
-        *out = output;
-        output = NULL;
-    }
-    iconv_close(cd);
-    free(output);
-    return ok;
-}
-
-static size_t utf8_to_utf16le_bytes(const uint8_t* data, size_t length, uint8_t** out)
-{
-    size_t converted_len = 0;
-    uint8_t* converted = NULL;
-    uint8_t* resized = NULL;
-
-    if (!out || (!data && length > 0) || length > X11_CLIPBOARD_MAX_BYTES)
-        return 0;
-    if (!x11_convert_text_alloc("UTF-16LE", "UTF-8", data, length, &converted, &converted_len))
-        return 0;
-    if (converted_len > SIZE_MAX - 2u)
-    {
-        free(converted);
-        return 0;
-    }
-    resized = (uint8_t*)realloc(converted, converted_len + 2u);
-    if (!resized)
-    {
-        free(converted);
-        return 0;
-    }
-    converted = resized;
-    converted[converted_len++] = 0;
-    converted[converted_len++] = 0;
-    *out = converted;
-    return converted_len;
-}
-
-static size_t utf16le_to_utf8_bytes(const uint8_t* data, size_t length, uint8_t** out)
-{
-    size_t input_len = length;
-    size_t converted_len = 0;
-    uint8_t* converted = NULL;
-    uint8_t* resized = NULL;
-    size_t i = 0;
-
-    if (!out || (!data && length > 0) || (length & 1u) != 0 || length > X11_CLIPBOARD_MAX_BYTES)
-        return 0;
-    while (i + 1u < length)
-    {
-        if (data[i] == 0 && data[i + 1u] == 0)
-        {
-            input_len = i;
-            break;
-        }
-        i += 2u;
-    }
-    if (!x11_convert_text_alloc("UTF-8", "UTF-16LE", data, input_len, &converted, &converted_len))
-        return 0;
-    if (converted_len > SIZE_MAX - 1u)
-    {
-        free(converted);
-        return 0;
-    }
-    resized = (uint8_t*)realloc(converted, converted_len + 1u);
-    if (!resized)
-    {
-        free(converted);
-        return 0;
-    }
-    converted = resized;
-    converted[converted_len] = 0;
-    *out = converted;
-    return converted_len;
-}
-
-static void x11_clipboard_init(x11_app* app)
-{
-    if (!app || !app->display || !app->window)
-        return;
-    app->clipboard_selection = XInternAtom(app->display, "CLIPBOARD", False);
-    app->clipboard_property = XInternAtom(app->display, "LIBRDP_CLIPBOARD_DATA", False);
-    app->atom_targets = XInternAtom(app->display, "TARGETS", False);
-    app->atom_utf8_string = XInternAtom(app->display, "UTF8_STRING", False);
-    app->atom_text = XInternAtom(app->display, "TEXT", False);
-    app->atom_incr = XInternAtom(app->display, "INCR", False);
-    app->xfixes_available = XFixesQueryExtension(app->display,
-                                                 &app->xfixes_event_base,
-                                                 &app->xfixes_error_base);
-    if (app->xfixes_available)
-        XFixesSelectSelectionInput(app->display,
-                                   app->window,
-                                   app->clipboard_selection,
-                                   XFixesSetSelectionOwnerNotifyMask);
-    x11_trace_event(X11_TRACE_CLIENT,
-                    "x11.clipboard.init",
-                    "xfixes=%u",
-                    app->xfixes_available ? 1u : 0u);
-}
-
-static void x11_clipboard_request_local(x11_app* app, Time time)
-{
-    Window owner = None;
-
-    if (!app || !app->display || !app->window || app->clipboard_selection == None ||
-        app->atom_utf8_string == None || app->clipboard_property == None)
-        return;
-    owner = XGetSelectionOwner(app->display, app->clipboard_selection);
-    if (owner == None || owner == app->window)
-        return;
-    XConvertSelection(app->display,
-                      app->clipboard_selection,
-                      app->atom_utf8_string,
-                      app->clipboard_property,
-                      app->window,
-                      time == 0 ? CurrentTime : time);
-    app->clipboard_request_pending = 1;
-    x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.request_local", "owner=%lu", owner);
-}
-
-static void x11_clipboard_handle_owner_notify(x11_app* app, XEvent* event)
-{
-    XFixesSelectionNotifyEvent* notify = NULL;
-
-    if (!app || !event || !app->xfixes_available || event->type != app->xfixes_event_base + XFixesSelectionNotify)
-        return;
-    notify = (XFixesSelectionNotifyEvent*)event;
-    if (notify->selection != app->clipboard_selection)
-        return;
-    if (notify->owner == app->window)
-        return;
-    app->clipboard_owns_selection = 0;
-    x11_clipboard_request_local(app, notify->timestamp);
-}
-
-static void x11_clipboard_handle_selection_notify(x11_app* app, XSelectionEvent* selection)
-{
-    Atom actual_type = None;
-    int actual_format = 0;
-    unsigned long nitems = 0;
-    unsigned long bytes_after = 0;
-    unsigned char* property = NULL;
-    uint8_t* utf16 = NULL;
-    size_t utf16_len = 0;
-
-    if (!app || !selection || selection->selection != app->clipboard_selection)
-        return;
-    app->clipboard_request_pending = 0;
-    if (selection->property == None)
-        return;
-    if (XGetWindowProperty(app->display,
-                           app->window,
-                           selection->property,
-                           0,
-                           (long)((X11_CLIPBOARD_MAX_BYTES / 4u) + 1u),
-                           True,
-                           AnyPropertyType,
-                           &actual_type,
-                           &actual_format,
-                           &nitems,
-                           &bytes_after,
-                           &property) != Success)
-        return;
-    if (actual_type == app->atom_incr || actual_format != 8 || bytes_after != 0 ||
-        nitems > X11_CLIPBOARD_MAX_BYTES)
-    {
-        if (property)
-            XFree(property);
-        x11_trace_event(X11_TRACE_CLIENT,
-                        "x11.clipboard.local_ignored",
-                        "type=%lu format=%d nitems=%lu bytes_after=%lu",
-                        actual_type,
-                        actual_format,
-                        nitems,
-                        bytes_after);
-        return;
-    }
-    if (actual_type == app->atom_utf8_string || actual_type == XA_STRING || actual_type == app->atom_text)
-    {
-        utf16_len = utf8_to_utf16le_bytes(property, (size_t)nitems, &utf16);
-        if (utf16_len > 0)
-        {
-            (void)librdp_session_clipboard_set_data(app->session,
-                                                    LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
-                                                    utf16,
-                                                    utf16_len);
-            x11_trace_event(X11_TRACE_CLIENT,
-                            "x11.clipboard.local_data",
-                            "utf8_len=%lu utf16_len=%u",
-                            nitems,
-                            (unsigned)utf16_len);
-        }
-        free(utf16);
-    }
-    if (property)
-        XFree(property);
-}
-
-static void x11_clipboard_handle_selection_request(x11_app* app, XSelectionRequestEvent* request)
-{
-    XSelectionEvent response;
-    Atom property = None;
-    Atom type = None;
-
-    if (!app || !request)
-        return;
-
-    memset(&response, 0, sizeof(response));
-    response.type = SelectionNotify;
-    response.display = request->display;
-    response.requestor = request->requestor;
-    response.selection = request->selection;
-    response.target = request->target;
-    response.time = request->time;
-    response.property = None;
-
-    if (request->selection == app->clipboard_selection)
-    {
-        property = request->property == None ? request->target : request->property;
-        if (request->target == app->atom_targets)
-        {
-            Atom targets[4];
-
-            targets[0] = app->atom_targets;
-            targets[1] = app->atom_utf8_string;
-            targets[2] = app->atom_text;
-            targets[3] = XA_STRING;
-            XChangeProperty(app->display,
-                            request->requestor,
-                            property,
-                            XA_ATOM,
-                            32,
-                            PropModeReplace,
-                            (const unsigned char*)targets,
-                            4);
-            response.property = property;
-        }
-        else if ((request->target == app->atom_utf8_string ||
-                  request->target == XA_STRING ||
-                  request->target == app->atom_text) &&
-                 app->clipboard_remote_utf8)
-        {
-            type = request->target == app->atom_text ? app->atom_utf8_string : request->target;
-            XChangeProperty(app->display,
-                            request->requestor,
-                            property,
-                            type,
-                            8,
-                            PropModeReplace,
-                            app->clipboard_remote_utf8,
-                            (int)app->clipboard_remote_utf8_len);
-            response.property = property;
-        }
-    }
-
-    XSendEvent(app->display, request->requestor, False, 0, (XEvent*)&response);
-    XFlush(app->display);
-    x11_trace_event(X11_TRACE_CLIENT,
-                    "x11.clipboard.selection_request",
-                    "target=%lu served=%u data_len=%u",
-                    request->target,
-                    response.property == None ? 0u : 1u,
-                    response.property == None ? 0u : (unsigned)app->clipboard_remote_utf8_len);
-}
-
-static void x11_clipboard_set_remote_data(x11_app* app, const uint8_t* data, size_t length)
-{
-    if (!app || !app->display || !app->window)
-        return;
-    if (!x11_clipboard_store_utf8(app, data, length))
-        return;
-    XSetSelectionOwner(app->display, app->clipboard_selection, app->window, CurrentTime);
-    app->clipboard_owns_selection =
-        XGetSelectionOwner(app->display, app->clipboard_selection) == app->window ? 1 : 0;
-    x11_trace_event(X11_TRACE_CLIENT,
-                    "x11.clipboard.remote_data",
-                    "utf8_len=%u owner=%u",
-                    (unsigned)length,
-                    app->clipboard_owns_selection ? 1u : 0u);
-}
-
 static size_t lookup_utf8_text(x11_app* app, XKeyEvent* key, char* buffer, size_t capacity)
 {
     Status status = 0;
@@ -1736,22 +1282,12 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             break;
         }
         case LIBRDP_EVENT_CLIPBOARD_DATA:
-        {
-            uint8_t* utf8 = NULL;
-            size_t utf8_len = 0;
-
             if (event->data.clipboard_data.ok &&
                 event->data.clipboard_data.format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
-            {
-                utf8_len = utf16le_to_utf8_bytes(event->data.clipboard_data.data,
-                                                 event->data.clipboard_data.data_len,
-                                                 &utf8);
-                if (utf8_len > 0 || utf8)
-                    x11_clipboard_set_remote_data(app, utf8, utf8_len);
-                free(utf8);
-            }
+                x11_clipboard_set_remote_utf16le(app,
+                                                 event->data.clipboard_data.data,
+                                                 event->data.clipboard_data.data_len);
             break;
-        }
         case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
         {
             x11_audio_output_store_formats(app, &event->data.audio_output_formats);
@@ -2500,10 +2036,7 @@ int main(int argc, char** argv)
             else if (event.type == SelectionRequest)
                 x11_clipboard_handle_selection_request(&app, &event.xselectionrequest);
             else if (event.type == SelectionClear && event.xselectionclear.selection == app.clipboard_selection)
-            {
-                app.clipboard_owns_selection = 0;
-                x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.selection_clear", "owner=0");
-            }
+                x11_clipboard_handle_selection_clear(&app, &event.xselectionclear);
             else if (event.type == DestroyNotify)
             {
                 x11_window_invalid = 1;

@@ -898,6 +898,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11-viewer/camera_v4l2.c
         apps/x11-viewer/device_backends.c
         apps/x11-viewer/main.c
+        apps/x11-viewer/viewer_clipboard.c
         apps/x11-viewer/viewer_cli.c
         apps/x11-viewer/viewer_trace.c
     )
