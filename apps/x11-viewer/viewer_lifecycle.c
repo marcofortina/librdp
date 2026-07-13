@@ -753,6 +753,7 @@ int x11_viewer_run(int argc, char** argv)
     set_window_identity(&app);
     x11_input_allow_xwayland_keyboard_grab(&app);
     x11_clipboard_init(&app);
+    (void)x11_render_init(&app);
     app.wm_delete = XInternAtom(app.display, "WM_DELETE_WINDOW", False);
     (void)XSetWMProtocols(app.display, app.window, &app.wm_delete, 1);
     app.im = XOpenIM(app.display, NULL, NULL, NULL);
@@ -787,6 +788,7 @@ int x11_viewer_run(int argc, char** argv)
         if (app.im)
             XCloseIM(app.im);
         x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
         x11_input_clear_cursor(&app);
         XFreeGC(app.display, app.gc);
         XDestroyWindow(app.display, app.window);
@@ -807,6 +809,7 @@ int x11_viewer_run(int argc, char** argv)
         if (app.im)
             XCloseIM(app.im);
         x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
         x11_input_clear_cursor(&app);
         XFreeGC(app.display, app.gc);
         XDestroyWindow(app.display, app.window);
@@ -827,6 +830,7 @@ int x11_viewer_run(int argc, char** argv)
         if (app.im)
             XCloseIM(app.im);
         x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
         x11_input_clear_cursor(&app);
         XFreeGC(app.display, app.gc);
         XDestroyWindow(app.display, app.window);
@@ -847,6 +851,7 @@ int x11_viewer_run(int argc, char** argv)
         if (app.im)
             XCloseIM(app.im);
         x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
         x11_input_clear_cursor(&app);
         XFreeGC(app.display, app.gc);
         XDestroyWindow(app.display, app.window);
@@ -876,6 +881,7 @@ int x11_viewer_run(int argc, char** argv)
             if (app.im)
                 XCloseIM(app.im);
             x11_clipboard_free(&app);
+            x11_render_shutdown(&app);
             x11_input_clear_cursor(&app);
             XFreeGC(app.display, app.gc);
             XDestroyWindow(app.display, app.window);
@@ -899,6 +905,7 @@ int x11_viewer_run(int argc, char** argv)
         if (app.im)
             XCloseIM(app.im);
         x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
         x11_input_clear_cursor(&app);
         XFreeGC(app.display, app.gc);
         XDestroyWindow(app.display, app.window);
@@ -1060,6 +1067,7 @@ int x11_viewer_run(int argc, char** argv)
     if (app.im)
         XCloseIM(app.im);
     x11_clipboard_free(&app);
+    x11_render_shutdown(&app);
     x11_input_clear_cursor(&app);
     XFreeGC(app.display, app.gc);
     if (!x11_window_is_invalid())

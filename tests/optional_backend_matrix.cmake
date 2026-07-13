@@ -25,6 +25,7 @@ set(all_backend_off_args
     -DLIBRDP_WITH_ARCHIVE=OFF
     -DLIBRDP_WITH_PIPEWIRE=OFF
     -DLIBRDP_WITH_JPEG=OFF
+    -DLIBRDP_WITH_XSHM=OFF
 )
 
 set(common_configure_args

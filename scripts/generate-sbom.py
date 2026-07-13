@@ -35,6 +35,7 @@ OPTIONAL_FEATURES = (
     ("archive", "LIBRDP_WITH_ARCHIVE", "LIBRDP_ARCHIVE", ("libarchive",)),
     ("pipewire", "LIBRDP_WITH_PIPEWIRE", "LIBRDP_PIPEWIRE", ("libpipewire-0.3",)),
     ("jpeg", "LIBRDP_WITH_JPEG", "LIBRDP_JPEG", ("libjpeg",)),
+    ("xshm", "LIBRDP_WITH_XSHM", "LIBRDP_XSHM", ("xext",)),
 )
 BUILD_OPTIONS = (
     "LIBRDP_ABI_VERSION",
@@ -169,6 +170,8 @@ def dependency_components(cache: dict[str, str]) -> tuple[list[dict[str, object]
                     return value
         if prefix == "LIBRDP_CUPS":
             return cache.get("LIBRDP_CUPS_LIBRARY", "")
+        if prefix == "LIBRDP_XSHM":
+            return cache.get("X11_Xext_LIB", "")
         return ""
 
     def add_dependency(name: str, version: str = "", path: str = "", scope: str = "required") -> None:

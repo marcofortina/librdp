@@ -17,6 +17,17 @@
 
 #include "viewer_app.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+int x11_render_init(x11_app* app);
+void x11_render_shutdown(x11_app* app);
+int x11_render_copy_bgra_rows(uint8_t* dst,
+                              size_t dst_stride,
+                              const uint8_t* src,
+                              size_t src_stride,
+                              uint32_t width,
+                              uint32_t height);
 void x11_render_draw_surface(x11_app* app);
 
 #endif

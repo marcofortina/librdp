@@ -26,6 +26,7 @@ Optional libraries are detected through CMake and `pkg-config` where available:
 - Printing: `cups`.
 - Filesystem metadata: `libacl`, `libattr`, `libarchive`.
 - X11 viewer: X11, Xcursor, Xfixes, xkbcommon, pthreads.
+- X11 viewer shared-memory presentation: Xext.
 - X11 viewer audio: PipeWire `libpipewire-0.3`.
 - X11 viewer image conversion paths: `libjpeg`.
 
@@ -57,6 +58,7 @@ Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the 
 - `LIBRDP_WITH_ARCHIVE=AUTO|ON|OFF`: archive-backed print payload support.
 - `LIBRDP_WITH_PIPEWIRE=AUTO|ON|OFF`: PipeWire audio backend in the X11 viewer.
 - `LIBRDP_WITH_JPEG=AUTO|ON|OFF`: JPEG camera conversion backend in the X11 viewer.
+- `LIBRDP_WITH_XSHM=AUTO|ON|OFF`: MIT-SHM presentation path in the X11 viewer.
 
 ## Library and tests
 

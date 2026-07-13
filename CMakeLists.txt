@@ -135,6 +135,7 @@ librdp_feature_option(LIBRDP_WITH_ATTR "Use extended attribute filesystem metada
 librdp_feature_option(LIBRDP_WITH_ARCHIVE "Use archive-backed print payload support")
 librdp_feature_option(LIBRDP_WITH_PIPEWIRE "Use PipeWire audio backend in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_JPEG "Use JPEG camera conversion backend in the X11 viewer")
+librdp_feature_option(LIBRDP_WITH_XSHM "Use MIT-SHM presentation path in the X11 viewer")
 
 find_package(OpenSSL 3.0 REQUIRED)
 find_package(Iconv REQUIRED)
@@ -160,6 +161,8 @@ if(NOT "${LIBRDP_WITH_CUPS}" STREQUAL "OFF")
         pkg_check_modules(LIBRDP_CUPS QUIET IMPORTED_TARGET cups)
     endif()
 endif()
+
+set(LIBRDP_XSHM_FOUND 0 CACHE INTERNAL "MIT-SHM support found for the X11 viewer" FORCE)
 
 if(NOT LIBRDP_CUPS_FOUND AND NOT "${LIBRDP_WITH_CUPS}" STREQUAL "OFF")
     find_path(LIBRDP_CUPS_INCLUDE_DIR NAMES cups/cups.h PATHS
@@ -890,6 +893,14 @@ endif()
 
 if(LIBRDP_BUILD_X11_VIEWER)
     find_package(X11 REQUIRED COMPONENTS Xcursor Xfixes)
+    if(NOT "${LIBRDP_WITH_XSHM}" STREQUAL "OFF")
+        find_package(X11 QUIET COMPONENTS Xext)
+        if(X11_Xext_FOUND OR X11_Xext_LIB)
+            set(LIBRDP_XSHM_FOUND 1 CACHE INTERNAL "MIT-SHM support found for the X11 viewer" FORCE)
+        elseif("${LIBRDP_WITH_XSHM}" STREQUAL "ON")
+            message(FATAL_ERROR "LIBRDP_WITH_XSHM=ON requires Xext")
+        endif()
+    endif()
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
@@ -956,6 +967,42 @@ if(LIBRDP_BUILD_X11_VIEWER)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_JPEG=1)
         target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_JPEG)
     endif()
+    if(LIBRDP_XSHM_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_XSHM=1)
+        if(TARGET X11::Xext)
+            target_link_libraries(librdp-x11-viewer PRIVATE X11::Xext)
+        else()
+            target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xext_LIB})
+        endif()
+    endif()
+    if(LIBRDP_BUILD_TESTS)
+        add_executable(test_viewer_render
+            tests/test_viewer_render.c
+            apps/x11-viewer/viewer_render.c
+            apps/x11-viewer/viewer_trace.c
+            apps/x11-viewer/viewer_window.c
+        )
+        target_include_directories(test_viewer_render PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${X11_INCLUDE_DIR}
+        )
+        target_compile_definitions(test_viewer_render PRIVATE _POSIX_C_SOURCE=200809L)
+        target_link_libraries(test_viewer_render PRIVATE librdp ${X11_LIBRARIES})
+        if(LIBRDP_XSHM_FOUND)
+            target_compile_definitions(test_viewer_render PRIVATE LIBRDP_HAVE_XSHM=1)
+            if(TARGET X11::Xext)
+                target_link_libraries(test_viewer_render PRIVATE X11::Xext)
+            else()
+                target_link_libraries(test_viewer_render PRIVATE ${X11_Xext_LIB})
+            endif()
+        endif()
+        librdp_apply_warning_options(test_viewer_render)
+        librdp_apply_sanitizer_compile_options(test_viewer_render)
+        librdp_apply_sanitizer_link_options(test_viewer_render)
+        add_test(NAME viewer_render COMMAND test_viewer_render)
+        set_tests_properties(viewer_render PROPERTIES TIMEOUT 30)
+    endif()
 endif()
 
 message(STATUS "librdp feature summary begin")
@@ -1001,4 +1048,5 @@ librdp_summary_optional_backend(attr LIBRDP_WITH_ATTR LIBRDP_ATTR_FOUND librdp)
 librdp_summary_optional_backend(archive LIBRDP_WITH_ARCHIVE LIBRDP_ARCHIVE_FOUND librdp)
 librdp_summary_viewer_backend(pipewire LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE_FOUND)
 librdp_summary_viewer_backend(jpeg LIBRDP_WITH_JPEG LIBRDP_JPEG_FOUND)
+librdp_summary_viewer_backend(xshm LIBRDP_WITH_XSHM LIBRDP_XSHM_FOUND)
 message(STATUS "librdp feature summary end")

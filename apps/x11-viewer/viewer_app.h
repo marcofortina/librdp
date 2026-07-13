@@ -27,6 +27,7 @@
 
 typedef struct x11_camera_capture x11_camera_capture;
 typedef struct x11_pipewire_audio x11_pipewire_audio;
+typedef struct x11_render_state x11_render_state;
 
 typedef struct x11_pressed_key
 {
@@ -85,6 +86,7 @@ typedef struct x11_app
     char* clipboard_file_path;
     x11_pipewire_audio* audio;
     x11_camera_capture* camera;
+    x11_render_state* render;
     char* audio_output_device;
     char* audio_input_device;
     char* camera_source;
