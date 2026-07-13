@@ -1713,6 +1713,7 @@ static int test_mcs_gcc_capabilities(void)
     rdp_capability_list list;
     rdp_buffer ber;
     rdp_buffer client_blocks;
+    rdp_buffer server_blocks;
     rdp_buffer gcc_request;
     rdp_buffer mcs_initial;
     rdp_buffer mcs_domain;
@@ -1727,6 +1728,7 @@ static int test_mcs_gcc_capabilities(void)
 
     rdp_buffer_init(&ber);
     rdp_buffer_init(&client_blocks);
+    rdp_buffer_init(&server_blocks);
     rdp_buffer_init(&gcc_request);
     rdp_buffer_init(&mcs_initial);
     rdp_buffer_init(&mcs_domain);
@@ -1768,6 +1770,39 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(server_data.early_capability_flags == 0x40);
     PCHECK(server_data.encryption_method == 0 && server_data.encryption_level == 0);
     PCHECK(server_data.mcs_channel_id == 1003 && server_data.channel_count == 1 && server_data.channel_ids[0] == 1004);
+    {
+        const uint8_t multitransport_block[] = {
+            0x08, 0x0c, 0x08, 0x00, 0x05, 0x03, 0x00, 0x00
+        };
+
+        PCHECK(rdp_buffer_append(&server_blocks,
+                                 gcc_server_blocks,
+                                 sizeof(gcc_server_blocks)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_buffer_append(&server_blocks,
+                                 multitransport_block,
+                                 sizeof(multitransport_block)) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_gcc_parse_server_data_blocks(server_blocks.data,
+                                                server_blocks.length,
+                                                &server_data) == LIBRDP_STATUS_OK);
+        PCHECK(server_data.has_multitransport &&
+               server_data.multitransport_flags ==
+                   (RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                    RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                    RDP_GCC_MULTITRANSPORT_UDP_PREFERRED |
+                    RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP));
+        server_blocks.data[sizeof(gcc_server_blocks) + 4u] = 0x00u;
+        server_blocks.data[sizeof(gcc_server_blocks) + 5u] = 0x01u;
+        PCHECK(rdp_gcc_parse_server_data_blocks(server_blocks.data,
+                                                server_blocks.length,
+                                                &server_data) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        server_blocks.data[sizeof(gcc_server_blocks) + 5u] = 0x00u;
+        server_blocks.data[sizeof(gcc_server_blocks) + 7u] = 0x80u;
+        PCHECK(rdp_gcc_parse_server_data_blocks(server_blocks.data,
+                                                server_blocks.length,
+                                                &server_data) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        rdp_buffer_free(&server_blocks);
+        rdp_buffer_init(&server_blocks);
+    }
     PCHECK(rdp_gcc_parse_server_data_blocks(gcc_server_blocks, sizeof(gcc_server_blocks) - 1u, &server_data) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_gcc_parse_conference_create_response(gcc_response, sizeof(gcc_response), &conference_response) ==
@@ -1937,6 +1972,7 @@ static int test_mcs_gcc_capabilities(void)
     rdp_buffer_free(&mcs_domain);
     rdp_buffer_free(&mcs_initial);
     rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&server_blocks);
     rdp_buffer_free(&client_blocks);
     rdp_buffer_free(&ber);
     return 0;
@@ -20648,6 +20684,28 @@ static int test_udp_transport(void)
            memcmp(packet.data_body, data_payload, sizeof(data_payload)) == 0);
     PCHECK(rdp_udp2_classify_packet(&packet, &packet_kind) == LIBRDP_STATUS_OK &&
            packet_kind == RDP_UDP2_PACKET_KIND_DATA);
+    {
+        const uint16_t reordered_sequences[] = {9u, 7u, 8u};
+        uint16_t previous_sequence = 0;
+        uint32_t reorder_events = 0;
+
+        for (i = 0; i < sizeof(reordered_sequences) / sizeof(reordered_sequences[0]); i++)
+        {
+            rdp_buffer_free(&buffer);
+            rdp_buffer_init(&buffer);
+            PCHECK(rdp_udp2_write_data_packet(&buffer,
+                                              3u,
+                                              reordered_sequences[i],
+                                              data_payload,
+                                              sizeof(data_payload)) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_udp2_parse_packet(buffer.data, buffer.length, &packet) == LIBRDP_STATUS_OK);
+            PCHECK(packet.has_data && packet.data_sequence_number == reordered_sequences[i]);
+            if (i > 0 && reordered_sequences[i] < previous_sequence)
+                reorder_events++;
+            previous_sequence = reordered_sequences[i];
+        }
+        PCHECK(reorder_events == 1u);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 

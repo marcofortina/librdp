@@ -622,6 +622,11 @@ static void rdp_session_set_last_error(librdp_session* session,
                                        const char* phase,
                                        const char* message);
 
+static int rdp_session_multitransport_runtime_supported(void)
+{
+    return RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED != 0;
+}
+
 struct librdp_session
 {
     librdp_settings* settings;
@@ -27816,7 +27821,7 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                                                                  &request);
             if (status == LIBRDP_STATUS_OK &&
                 request.tunnel_count > 0 &&
-                (!RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED ||
+                (!rdp_session_multitransport_runtime_supported() ||
                  !session->multitransport_negotiated ||
                  session->multitransport_flags == 0))
             {
@@ -32493,7 +32498,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         config.enable_remote_programs =
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
         config.enable_multitransport =
-            (RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED &&
+            (rdp_session_multitransport_runtime_supported() &&
              librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_MULTITRANSPORT)) ?
                 1u :
                 0u;
@@ -32601,7 +32606,7 @@ librdp_status librdp_session_connect(librdp_session* session)
                         server_data.encryption_level,
                         server_data.server_random_len,
                         server_data.server_certificate_len);
-        if (server_data.has_multitransport && RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED)
+        if (server_data.has_multitransport && rdp_session_multitransport_runtime_supported())
         {
             session->multitransport_negotiated = 1;
             session->multitransport_flags = server_data.multitransport_flags;
@@ -36240,7 +36245,7 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
                                               session->multitransport_negotiated != 0 &&
                                                   session->multitransport_flags != 0,
                                               0,
-                                              RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED == 0);
+                                              !rdp_session_multitransport_runtime_supported());
             break;
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
             rdp_session_finish_feature_status(status, 0, 0, 1);
