@@ -8325,12 +8325,18 @@ static int test_path_security_license_channels(void)
     PCHECK(dyn_response.length <= sizeof(display_mutated));
     memcpy(display_mutated, dyn_response.data, dyn_response.length);
     display_mutated[36] = 9;
+    memset(display_monitors, 0xa5, sizeof(display_monitors));
+    display_monitor_count = 99;
     PCHECK(rdp_display_control_parse_monitor_layout(display_mutated,
                                                     dyn_response.length,
                                                     display_monitors,
                                                     2,
                                                     &display_monitor_count) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(display_monitor_count == 0 &&
+           display_monitors[0].flags == 0 &&
+           display_monitors[0].width == 0 &&
+           display_monitors[1].flags == 0);
     display_monitors[0] = display_monitor;
     display_monitors[1] = display_monitor;
     display_monitors[1].flags = 0;

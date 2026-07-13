@@ -249,17 +249,20 @@ librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* dat
 
     if (!data || !monitors || !monitor_count)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (length < 16u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
     memset(monitors, 0, sizeof(*monitors) * monitor_capacity);
     *monitor_count = 0;
+    if (length < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u32_le(&stream, &pdu_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &pdu_length) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &monitor_layout_size) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &count) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
     if (pdu_type != RDP_DISPLAY_CONTROL_PDU_MONITOR_LAYOUT ||
         pdu_length != length ||
         monitor_layout_size != RDP_DISPLAY_CONTROL_MONITOR_LAYOUT_SIZE ||
@@ -267,7 +270,10 @@ librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* dat
         count > monitor_capacity ||
         count > RDP_DISPLAY_CONTROL_MAX_MONITORS ||
         pdu_length != 16u + RDP_DISPLAY_CONTROL_MONITOR_LAYOUT_SIZE * count)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
 
     for (i = 0; i < count; i++)
     {
@@ -284,17 +290,28 @@ librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* dat
             rdp_stream_read_u32_le(&stream, &monitors[i].orientation) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u32_le(&stream, &monitors[i].desktop_scale_factor) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u32_le(&stream, &monitors[i].device_scale_factor) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        {
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            goto fail;
+        }
         monitors[i].left = (int32_t)left;
         monitors[i].top = (int32_t)top;
     }
     if (rdp_stream_remaining(&stream) != 0)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    {
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        goto fail;
+    }
     status = rdp_display_control_validate_layout(monitors, count, caps);
     if (status != LIBRDP_STATUS_OK)
-        return status;
+        goto fail;
     *monitor_count = count;
     return LIBRDP_STATUS_OK;
+
+fail:
+    memset(monitors, 0, sizeof(*monitors) * monitor_capacity);
+    *monitor_count = 0;
+    return status;
 }
 
 librdp_status rdp_display_control_write_monitor_layout(rdp_buffer* buffer,
