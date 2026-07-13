@@ -422,21 +422,27 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
             break;
         case LIBRDP_EVENT_CLIPBOARD_FORMATS:
         {
-            uint32_t i = 0;
+            uint32_t kind = X11_CLIPBOARD_REMOTE_KIND_NONE;
+            const uint32_t format_id =
+                x11_clipboard_choose_remote_format(event->data.clipboard_formats.formats,
+                                                   event->data.clipboard_formats.count,
+                                                   &kind);
 
-            for (i = 0; i < event->data.clipboard_formats.count; i++)
+            x11_clipboard_clear_remote(app);
+            if (format_id != 0)
             {
-                if (event->data.clipboard_formats.formats[i].format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
-                {
-                    (void)librdp_session_clipboard_request_data(app->session,
-                                                                LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
-                    x11_trace_event(X11_TRACE_CLIENT,
-                                    "x11.clipboard.remote_formats",
-                                    "unicode_text=1 count=%u total=%u",
-                                    event->data.clipboard_formats.count,
-                                    event->data.clipboard_formats.total_count);
-                    break;
-                }
+                if (kind == X11_CLIPBOARD_REMOTE_KIND_HTML)
+                    app->clipboard_remote_html_format_id = format_id;
+                else if (kind == X11_CLIPBOARD_REMOTE_KIND_PNG)
+                    app->clipboard_remote_png_format_id = format_id;
+                (void)librdp_session_clipboard_request_data(app->session, format_id);
+                x11_trace_event(X11_TRACE_CLIENT,
+                                "x11.clipboard.remote_formats",
+                                "selected=%u kind=%u count=%u total=%u",
+                                format_id,
+                                kind,
+                                event->data.clipboard_formats.count,
+                                event->data.clipboard_formats.total_count);
             }
             break;
         }
@@ -446,6 +452,16 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
                 x11_clipboard_set_remote_utf16le(app,
                                                  event->data.clipboard_data.data,
                                                  event->data.clipboard_data.data_len);
+            else if (event->data.clipboard_data.ok &&
+                     event->data.clipboard_data.format_id == app->clipboard_remote_html_format_id)
+                x11_clipboard_set_remote_html(app,
+                                              event->data.clipboard_data.data,
+                                              event->data.clipboard_data.data_len);
+            else if (event->data.clipboard_data.ok &&
+                     event->data.clipboard_data.format_id == app->clipboard_remote_png_format_id)
+                x11_clipboard_set_remote_png(app,
+                                             event->data.clipboard_data.data,
+                                             event->data.clipboard_data.data_len);
             break;
         case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
         {

@@ -82,8 +82,18 @@ typedef struct x11_app
     Atom atom_utf8_string;
     Atom atom_text;
     Atom atom_incr;
+    Atom atom_text_html;
+    Atom atom_image_png;
+    Atom atom_text_uri_list;
     uint8_t* clipboard_remote_utf8;
     size_t clipboard_remote_utf8_len;
+    uint8_t* clipboard_remote_html;
+    size_t clipboard_remote_html_len;
+    uint8_t* clipboard_remote_png;
+    size_t clipboard_remote_png_len;
+    uint32_t clipboard_remote_html_format_id;
+    uint32_t clipboard_remote_png_format_id;
+    Atom clipboard_pending_target;
     int clipboard_owns_selection;
     int clipboard_request_pending;
     int clipboard_incr_active;
@@ -97,6 +107,8 @@ typedef struct x11_app
     Window clipboard_out_requestor;
     Atom clipboard_out_property;
     Atom clipboard_out_target;
+    const uint8_t* clipboard_out_data;
+    size_t clipboard_out_data_len;
     size_t clipboard_out_offset;
     uint64_t clipboard_out_deadline_ms;
     char* clipboard_file_path;
