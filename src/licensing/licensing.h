@@ -48,6 +48,9 @@
 #define RDP_LICENSE_BLOB_CLIENT_USER_NAME 0x000fu
 #define RDP_LICENSE_BLOB_CLIENT_MACHINE_NAME 0x0010u
 
+#define RDP_LICENSE_ERROR_STATUS_VALID_CLIENT 0x00000007u
+#define RDP_LICENSE_STATE_TRANSITION_NO_TRANSITION 0x00000002u
+
 #define RDP_LICENSE_KEY_EXCHANGE_RSA 0x00000001u
 #define RDP_LICENSE_SCOPE_MAX_COUNT 32u
 #define RDP_LICENSE_PRODUCT_INFO_LICENSE_ENFORCED 0x00008000u
@@ -300,6 +303,7 @@ librdp_status rdp_license_write_platform_challenge_response_data(
     rdp_buffer* buffer,
     const rdp_license_platform_challenge_response_data* response);
 librdp_status rdp_license_parse_error_alert(const void* data, size_t length, rdp_license_error_alert* alert);
+int rdp_license_error_alert_is_terminal_success(const rdp_license_error_alert* alert);
 librdp_status rdp_license_write_error_alert(rdp_buffer* buffer,
                                             uint8_t version,
                                             uint32_t error_code,

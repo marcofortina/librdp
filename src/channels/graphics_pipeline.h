@@ -87,6 +87,8 @@
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_SIMPLE 0xccc5u
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST 0xccc6u
 #define RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE 0xccc7u
+#define RDP_GRAPHICS_PROGRESSIVE_SYNC_MAGIC 0xcaccaccau
+#define RDP_GRAPHICS_PROGRESSIVE_SYNC_VERSION 0x0100u
 #define RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE 0x40u
 #define RDP_GRAPHICS_PROGRESSIVE_MAX_REGIONS 4096u
 #define RDP_GRAPHICS_PROGRESSIVE_MAX_RECTS 4096u
@@ -370,6 +372,7 @@ typedef struct rdp_graphics_progressive_stream
     uint32_t simple_tile_count;
     uint32_t first_tile_count;
     uint32_t upgrade_tile_count;
+    uint8_t has_sync;
     uint8_t has_context;
     uint8_t has_frame_begin;
     uint8_t has_frame_end;

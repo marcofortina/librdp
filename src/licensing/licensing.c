@@ -878,6 +878,16 @@ librdp_status rdp_license_parse_error_alert(const void* data, size_t length, rdp
     return LIBRDP_STATUS_OK;
 }
 
+int rdp_license_error_alert_is_terminal_success(const rdp_license_error_alert* alert)
+{
+    return alert &&
+           alert->message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT &&
+           alert->error_code == RDP_LICENSE_ERROR_STATUS_VALID_CLIENT &&
+           alert->state_transition == RDP_LICENSE_STATE_TRANSITION_NO_TRANSITION &&
+           alert->blob_type == RDP_LICENSE_BLOB_ERROR &&
+           alert->blob_length == 0;
+}
+
 librdp_status rdp_license_write_error_alert(rdp_buffer* buffer,
                                             uint8_t version,
                                             uint32_t error_code,

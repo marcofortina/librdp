@@ -2459,6 +2459,24 @@ static int rdp_graphics_progressive_known_block(uint16_t type)
            type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE;
 }
 
+static librdp_status rdp_graphics_progressive_validate_sync(const rdp_graphics_progressive_block* block)
+{
+    rdp_stream stream;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+
+    if (!block || block->type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_SYNC || block->length != 12u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, block->payload, block->payload_len);
+    if (rdp_stream_read_u32_le(&stream, &magic) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &version) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (magic != RDP_GRAPHICS_PROGRESSIVE_SYNC_MAGIC || version != RDP_GRAPHICS_PROGRESSIVE_SYNC_VERSION)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_graphics_progressive_validate_tile_quant(uint8_t quant_idx_y,
                                                                   uint8_t quant_idx_cb,
                                                                   uint8_t quant_idx_cr,
@@ -2581,7 +2599,14 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
         parsed.block_count++;
         if (rdp_graphics_progressive_known_block(block.type))
             parsed.known_block_count++;
-        if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT)
+        if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_SYNC)
+        {
+            if (parsed.has_sync || frame_active || frame_done || parsed.block_count != 1u ||
+                rdp_graphics_progressive_validate_sync(&block) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.has_sync = 1;
+        }
+        else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT)
         {
             rdp_graphics_progressive_context context;
 
@@ -2599,7 +2624,7 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
         {
             rdp_graphics_progressive_frame_begin frame_begin;
 
-            if (!parsed.has_context || parsed.has_frame_begin || frame_active || frame_done)
+            if (parsed.has_frame_begin || frame_active || frame_done)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (rdp_graphics_progressive_parse_frame_begin((const uint8_t*)data + offset,
                                                            length - offset,

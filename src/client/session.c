@@ -33751,6 +33751,28 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             status = rdp_session_handle_dynamic_channel(session, &channel_packet);
             if (status != LIBRDP_STATUS_OK)
             {
+                rdp_dynamic_channel_header failed_header;
+                uint8_t failed_command = 0;
+                uint8_t failed_raw = channel_packet.payload_len > 0 ? channel_packet.payload[0] : 0;
+
+                if (rdp_dynamic_channel_parse_header(channel_packet.payload,
+                                                     channel_packet.payload_len,
+                                                     &failed_header) == LIBRDP_STATUS_OK)
+                    failed_command = failed_header.command;
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.drdynvc.dispatch.failed",
+                                "status=%s static_channel_id=%u flags=%u virtual_len=%u payload_len=%u raw=%u command=%u",
+                                librdp_status_string(status),
+                                indication.channel_id,
+                                channel_packet.flags,
+                                channel_packet.length,
+                                (unsigned)channel_packet.payload_len,
+                                failed_raw,
+                                failed_command);
+                rdp_trace_hexdump("client.drdynvc.dispatch.failed",
+                                  RDP_TRACE_SENSITIVITY_HEADER,
+                                  channel_packet.payload,
+                                  channel_packet.payload_len);
                 rdp_buffer_free(&security_payload);
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
@@ -34274,7 +34296,15 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     license_status = rdp_license_parse_error_alert(indication_payload,
                                                                    indication_payload_len,
                                                                    &alert);
-                    if (license_status == LIBRDP_STATUS_OK)
+                    if (license_status == LIBRDP_STATUS_OK &&
+                        rdp_license_error_alert_is_terminal_success(&alert))
+                    {
+                        session->license_state.state = RDP_LICENSE_CLIENT_STATE_COMPLETED;
+                        session->license_state.last_message_type = license_message_type;
+                        session->license_state.last_direction =
+                            (uint8_t)RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT;
+                    }
+                    else if (license_status == LIBRDP_STATUS_OK)
                         license_status = rdp_license_client_state_step(&session->license_state,
                                                                        RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
                                                                        license_message_type);
@@ -34290,7 +34320,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                                         alert.blob_type,
                                         alert.blob_length,
                                         (unsigned)session->license_state.state);
-                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                        status = rdp_license_error_alert_is_terminal_success(&alert) ?
+                                     LIBRDP_STATUS_OK :
+                                     LIBRDP_STATUS_PROTOCOL_ERROR;
                     }
                 }
                 else if (license_message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE ||

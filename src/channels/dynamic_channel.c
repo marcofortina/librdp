@@ -173,7 +173,7 @@ static uint8_t rdp_dynamic_channel_length_code(uint8_t length_bytes)
 
 static librdp_status rdp_dynamic_channel_validate_priority(uint8_t priority)
 {
-    return priority <= 2u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    return priority <= 3u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
 uint16_t rdp_dynamic_channel_select_version(uint16_t server_version)
@@ -235,13 +235,6 @@ librdp_status rdp_dynamic_channel_parse_header(const void* data,
         if (parsed.priority == 3)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         parsed.length_bytes = parsed.priority == 0 ? 1u : (parsed.priority == 1 ? 2u : 4u);
-    }
-    else if ((parsed.command == RDP_DYNAMIC_CHANNEL_CMD_CREATE ||
-              parsed.command == RDP_DYNAMIC_CHANNEL_CMD_DATA ||
-              parsed.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_COMPRESSED) &&
-             parsed.priority == 3)
-    {
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     *header = parsed;
     return LIBRDP_STATUS_OK;
