@@ -129,67 +129,95 @@ librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
                                          rdp_pointer_update* update)
 {
     rdp_stream stream;
+    rdp_pointer_update parsed;
 
     if (!update || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     switch (update_code)
     {
         case RDP_FASTPATH_UPDATE_POINTER_NULL:
             if (length != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_NULL;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_NULL;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_FASTPATH_UPDATE_POINTER_DEFAULT:
             if (length != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_FASTPATH_UPDATE_POINTER_POSITION:
-            if (rdp_stream_read_u16_le(&stream, &update->x) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(&stream, &update->y) != LIBRDP_STATUS_OK ||
+            if (rdp_stream_read_u16_le(&stream, &parsed.x) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed.y) != LIBRDP_STATUS_OK ||
                 rdp_stream_remaining(&stream) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_POSITION;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_POSITION;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_FASTPATH_UPDATE_POINTER_CACHED:
-            if (rdp_stream_read_u16_le(&stream, &update->cache_index) != LIBRDP_STATUS_OK ||
+            if (rdp_stream_read_u16_le(&stream, &parsed.cache_index) != LIBRDP_STATUS_OK ||
                 rdp_stream_remaining(&stream) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_CACHED;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_FASTPATH_UPDATE_POINTER_COLOR:
-            return rdp_pointer_parse_color_attributes(&stream, 24, 0, update);
+        {
+            librdp_status status = rdp_pointer_parse_color_attributes(&stream, 24, 0, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
+        }
         case RDP_FASTPATH_UPDATE_POINTER_NEW:
         {
+            librdp_status status = LIBRDP_STATUS_OK;
             uint16_t bpp = 0;
             if (rdp_stream_read_u16_le(&stream, &bpp) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            return rdp_pointer_parse_color_attributes(&stream, bpp, 0, update);
+            status = rdp_pointer_parse_color_attributes(&stream, bpp, 0, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
         }
         case RDP_FASTPATH_UPDATE_POINTER_LARGE:
         {
+            librdp_status status = LIBRDP_STATUS_OK;
             uint16_t bpp = 0;
             if (rdp_stream_read_u16_le(&stream, &bpp) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            return rdp_pointer_parse_color_attributes(&stream, bpp, 1, update);
+            status = rdp_pointer_parse_color_attributes(&stream, bpp, 1, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
         }
         default:
             return LIBRDP_STATUS_UNSUPPORTED;
     }
 }
 
+/*
+ * Parse slow-path pointer updates into a single normalized pointer event.
+ * The function keeps all decoded fields local until message type, payload
+ * length, dimensions, hotspots, and mask bounds are accepted, so malformed
+ * cursor PDUs cannot replace the caller's last valid pointer state.
+ */
 librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_pointer_update* update)
 {
     rdp_stream stream;
+    rdp_pointer_update parsed;
     uint16_t message_type = 0;
 
     if (!update || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u16_le(&stream, &message_type) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -203,41 +231,60 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
                 rdp_stream_remaining(&stream) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (pointer_type == RDP_POINTER_SYSTEM_NULL)
-                update->kind = RDP_POINTER_UPDATE_KIND_NULL;
+                parsed.kind = RDP_POINTER_UPDATE_KIND_NULL;
             else if (pointer_type == RDP_POINTER_SYSTEM_DEFAULT)
-                update->kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+                parsed.kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
             else
                 return LIBRDP_STATUS_UNSUPPORTED;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         }
         case RDP_POINTER_MESSAGE_TYPE_POSITION:
-            if (rdp_stream_read_u16_le(&stream, &update->x) != LIBRDP_STATUS_OK ||
-                rdp_stream_read_u16_le(&stream, &update->y) != LIBRDP_STATUS_OK ||
+            if (rdp_stream_read_u16_le(&stream, &parsed.x) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed.y) != LIBRDP_STATUS_OK ||
                 rdp_stream_remaining(&stream) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_POSITION;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_POSITION;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_POINTER_MESSAGE_TYPE_COLOR:
-            return rdp_pointer_parse_color_attributes(&stream, 24, 0, update);
+        {
+            librdp_status status = rdp_pointer_parse_color_attributes(&stream, 24, 0, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
+        }
         case RDP_POINTER_MESSAGE_TYPE_CACHED:
-            if (rdp_stream_read_u16_le(&stream, &update->cache_index) != LIBRDP_STATUS_OK ||
+            if (rdp_stream_read_u16_le(&stream, &parsed.cache_index) != LIBRDP_STATUS_OK ||
                 rdp_stream_remaining(&stream) != 0)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            update->kind = RDP_POINTER_UPDATE_KIND_CACHED;
+            parsed.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+            *update = parsed;
             return LIBRDP_STATUS_OK;
         case RDP_POINTER_MESSAGE_TYPE_POINTER:
         {
+            librdp_status status = LIBRDP_STATUS_OK;
             uint16_t bpp = 0;
             if (rdp_stream_read_u16_le(&stream, &bpp) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            return rdp_pointer_parse_color_attributes(&stream, bpp, 0, update);
+            status = rdp_pointer_parse_color_attributes(&stream, bpp, 0, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
         }
         case RDP_POINTER_MESSAGE_TYPE_LARGE:
         {
+            librdp_status status = LIBRDP_STATUS_OK;
             uint16_t bpp = 0;
             if (rdp_stream_read_u16_le(&stream, &bpp) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            return rdp_pointer_parse_color_attributes(&stream, bpp, 1, update);
+            status = rdp_pointer_parse_color_attributes(&stream, bpp, 1, &parsed);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            *update = parsed;
+            return LIBRDP_STATUS_OK;
         }
         default:
             return LIBRDP_STATUS_UNSUPPORTED;

@@ -4375,10 +4375,15 @@ static int test_path_security_license_channels(void)
     PCHECK(pointer_stride == 4 &&
            decoded_pointer.length == 4 &&
            decoded_pointer.data[3] == 0x00);
-    PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
-                                      pointer_shape_32,
-                                      sizeof(pointer_shape_32) - 1u,
-                                      &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_pointer_update valid_pointer_update = pointer_update;
+
+        PCHECK(rdp_pointer_parse_fastpath(RDP_FASTPATH_UPDATE_POINTER_NEW,
+                                          pointer_shape_32,
+                                          sizeof(pointer_shape_32) - 1u,
+                                          &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&pointer_update, &valid_pointer_update, sizeof(pointer_update)) == 0);
+    }
     PCHECK(rdp_pointer_parse_slowpath(pointer_slow_position,
                                       sizeof(pointer_slow_position),
                                       &pointer_update) == LIBRDP_STATUS_OK);
@@ -4396,6 +4401,14 @@ static int test_path_security_license_channels(void)
            pointer_update.width == 2 &&
            pointer_update.height == 2 &&
            pointer_update.xor_bpp == 32);
+    {
+        const rdp_pointer_update valid_pointer_update = pointer_update;
+
+        PCHECK(rdp_pointer_parse_slowpath(pointer_slow_large,
+                                          sizeof(pointer_slow_large) - 1u,
+                                          &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&pointer_update, &valid_pointer_update, sizeof(pointer_update)) == 0);
+    }
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);
