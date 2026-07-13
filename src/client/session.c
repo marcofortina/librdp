@@ -28703,7 +28703,7 @@ static librdp_status rdp_session_apply_surface_commands(librdp_session* session,
                             command->bits.width,
                             command->bits.height,
                             command->bits.bitmap_data_length);
-            continue;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         if (status != LIBRDP_STATUS_OK)
             return status;
