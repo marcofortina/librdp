@@ -56,6 +56,10 @@
         }                                                                                                              \
     } while (0)
 
+#define DVC_SCENARIO_NORMAL 0
+#define DVC_SCENARIO_DUPLICATE_CREATE 1
+#define DVC_SCENARIO_CLOSE_PENDING_FRAGMENT 2
+
 typedef struct event_counter
 {
     int states;
@@ -1420,7 +1424,7 @@ static int start_handshake_server_multi(uint16_t* port,
                                         int extra_static_channel,
                                         int client_dynamic_channel_open_response,
                                         int connection_count,
-                                        int duplicate_dynamic_channel_create)
+                                        int dynamic_channel_scenario)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1582,10 +1586,20 @@ static int start_handshake_server_multi(uint16_t* port,
                     {
                         _exit(5);
                     }
-                    if (duplicate_dynamic_channel_create)
+                    if (dynamic_channel_scenario == DVC_SCENARIO_DUPLICATE_CREATE)
                     {
                         if (!write_exact_fd(client, dvc_create.data, dvc_create.length))
                             _exit(5);
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_CLOSE_PENDING_FRAGMENT)
+                    {
+                        if (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
+                            !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
+                            !build_dynamic_channel_close_packet(&dvc_close) ||
+                            !write_exact_fd(client, dvc_close.data, dvc_close.length))
+                        {
+                            _exit(5);
+                        }
                     }
                     else if (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
                              !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
@@ -1643,7 +1657,7 @@ static int start_handshake_server_ex(uint16_t* port,
                                         extra_static_channel,
                                         client_dynamic_channel_open_response,
                                         1,
-                                        0);
+                                        DVC_SCENARIO_NORMAL);
 }
 
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
@@ -3486,7 +3500,14 @@ static int test_reconnect_success(void)
     CHECK(settings != NULL);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
-    CHECK(start_handshake_server_multi(&test_port, &server_pid, 0, 0, 0, 0, 2, 0));
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       2,
+                                       DVC_SCENARIO_NORMAL));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3536,7 +3557,14 @@ static int test_dynamic_channel_duplicate_create(void)
     CHECK(settings != NULL);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
-    CHECK(start_handshake_server_multi(&test_port, &server_pid, 0, 0, 0, 0, 1, 1));
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DUPLICATE_CREATE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3549,6 +3577,56 @@ static int test_dynamic_channel_duplicate_create(void)
     status = librdp_session_run_once(session, 1000);
     CHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: validates that closing a dynamic virtual channel while reassembly
+ * is pending drops the partial payload, emits close, and does not expose stale
+ * channel handles or data events.
+ */
+static int test_dynamic_channel_close_pending_fragment(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t channel_count = 99u;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_CLOSE_PENDING_FRAGMENT));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (size_t i = 0; i < 7u && counter.channel_close == 0; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.channel_open == 1);
+    CHECK(counter.channel_data == 0);
+    CHECK(counter.channel_close == 1);
+    CHECK(counter.last_channel_id == 7);
+    CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
+    CHECK(channel_count == 0);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -3583,6 +3661,8 @@ int test_client_core(void)
     if (test_reconnect_success() != 0)
         return 1;
     if (test_dynamic_channel_duplicate_create() != 0)
+        return 1;
+    if (test_dynamic_channel_close_pending_fragment() != 0)
         return 1;
     return test_settings_surface_input_session();
 }
