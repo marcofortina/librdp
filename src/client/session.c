@@ -799,6 +799,7 @@ struct librdp_session
     uint32_t usb_message_id;
     uint32_t usb_request_completion_interface_id;
     uint32_t usb_device_count_sent;
+    rdp_license_client_state license_state;
     uint8_t multitransport_negotiated;
     uint32_t multitransport_flags;
     rdp_graphics_decompressor graphics_decompressor;
@@ -31450,6 +31451,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
 
     session->state = LIBRDP_SESSION_IDLE;
     session->lifecycle = LIBRDP_LIFECYCLE_NEW;
+    rdp_license_client_state_init(&session->license_state);
     if (pthread_mutex_init(&session->owner_mutex, NULL) != 0)
     {
         rdp_session_wakeup_close(session);
@@ -31946,6 +31948,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_set_state(session, LIBRDP_SESSION_CONNECTING);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
+    rdp_license_client_state_init(&session->license_state);
     rdp_session_credssp_security_reset(session);
     rdp_session_auth_redirection_channel_reset(session);
     rdp_session_webauthn_channel_reset(session);
@@ -32985,6 +32988,7 @@ fail:
     rdp_session_audio_output_udp_close(session);
     rdp_security_standard_clear(&session->standard_security);
     session->standard_security_active = 0;
+    rdp_license_client_state_init(&session->license_state);
     session->clipboard_channel_id = 0;
     rdp_session_clipboard_clear(session);
     session->audio_output_channel_id = 0;
@@ -34031,17 +34035,22 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                                                                    indication_payload_len,
                                                                    &alert);
                     if (license_status == LIBRDP_STATUS_OK)
+                        license_status = rdp_license_client_state_step(&session->license_state,
+                                                                       RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                                                       license_message_type);
+                    if (license_status == LIBRDP_STATUS_OK)
                     {
                         rdp_trace_event(RDP_TRACE_PROTOCOL,
                                         "rdp.licensing.error_alert",
-                                        "type=%u flags=%u error=%u state=%u blob_type=%u blob_len=%u",
+                                        "type=%u flags=%u error=%u state=%u blob_type=%u blob_len=%u client_state=%u",
                                         alert.message_type,
                                         alert.flags,
                                         alert.error_code,
                                         alert.state_transition,
                                         alert.blob_type,
-                                        alert.blob_length);
-                        status = LIBRDP_STATUS_OK;
+                                        alert.blob_length,
+                                        (unsigned)session->license_state.state);
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
                     }
                 }
                 else if (license_message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE ||
@@ -34053,16 +34062,76 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                                                                       indication_payload_len,
                                                                       &license);
                     if (license_status == LIBRDP_STATUS_OK)
+                        license_status = rdp_license_client_state_step(&session->license_state,
+                                                                       RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                                                       license_message_type);
+                    if (license_status == LIBRDP_STATUS_OK)
                     {
                         rdp_trace_event(RDP_TRACE_PROTOCOL,
                                         "rdp.licensing.new_or_upgrade",
-                                        "type=%u blob_type=%u blob_len=%u",
+                                        "type=%u blob_type=%u blob_len=%u client_state=%u",
                                         license.preamble.message_type,
                                         license.encrypted_license_info.type,
-                                        license.encrypted_license_info.length);
+                                        license.encrypted_license_info.length,
+                                        (unsigned)session->license_state.state);
                         status = LIBRDP_STATUS_OK;
                     }
                 }
+                else if (license_message_type == RDP_LICENSE_MESSAGE_REQUEST)
+                {
+                    rdp_license_server_request request;
+
+                    license_status = rdp_license_parse_server_request(indication_payload,
+                                                                      indication_payload_len,
+                                                                      &request);
+                    if (license_status == LIBRDP_STATUS_OK)
+                        license_status = rdp_license_client_state_step(&session->license_state,
+                                                                       RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                                                       license_message_type);
+                    if (license_status == LIBRDP_STATUS_OK)
+                    {
+                        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                        "rdp.licensing.request.unsupported",
+                                        "scope_count=%u key_exchange_blob_len=%u cert_len=%u client_state=%u",
+                                        request.scope_list.count,
+                                        request.key_exchange_list.length,
+                                        request.server_certificate.length,
+                                        (unsigned)session->license_state.state);
+                        status = LIBRDP_STATUS_UNSUPPORTED;
+                    }
+                }
+                else if (license_message_type == RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE)
+                {
+                    rdp_license_platform_challenge challenge;
+
+                    license_status = rdp_license_parse_platform_challenge(indication_payload,
+                                                                          indication_payload_len,
+                                                                          &challenge);
+                    if (license_status == LIBRDP_STATUS_OK)
+                        license_status = rdp_license_client_state_step(&session->license_state,
+                                                                       RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
+                                                                       license_message_type);
+                    if (license_status == LIBRDP_STATUS_OK)
+                    {
+                        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                        "rdp.licensing.platform_challenge.unsupported",
+                                        "connect_flags=%u challenge_len=%u client_state=%u",
+                                        challenge.connect_flags,
+                                        challenge.encrypted_challenge.length,
+                                        (unsigned)session->license_state.state);
+                        status = LIBRDP_STATUS_UNSUPPORTED;
+                    }
+                }
+            }
+            if (license_status == LIBRDP_STATUS_OK)
+            {
+                if (status != LIBRDP_STATUS_OK)
+                {
+                    rdp_buffer_free(&security_payload);
+                    rdp_buffer_free(&packet);
+                    return rdp_session_fail(session, status);
+                }
+                goto done;
             }
         }
         if (have_slow_header && status == LIBRDP_STATUS_OK &&
