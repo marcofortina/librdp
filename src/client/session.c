@@ -165,6 +165,7 @@
 #define RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES 64u
 #define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
 #define RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX (4u * 1024u * 1024u)
+#define RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED 0
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
@@ -32284,7 +32285,10 @@ librdp_status librdp_session_connect(librdp_session* session)
         config.enable_remote_programs =
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_RAIL) ? 1u : 0u;
         config.enable_multitransport =
-            librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u;
+            (RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED &&
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_MULTITRANSPORT)) ?
+                1u :
+                0u;
         config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
                                       RDP_GCC_MULTITRANSPORT_UDP_FECL |
                                       RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
@@ -32389,7 +32393,7 @@ librdp_status librdp_session_connect(librdp_session* session)
                         server_data.encryption_level,
                         server_data.server_random_len,
                         server_data.server_certificate_len);
-        if (server_data.has_multitransport)
+        if (server_data.has_multitransport && RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED)
         {
             session->multitransport_negotiated = 1;
             session->multitransport_flags = server_data.multitransport_flags;
@@ -32401,6 +32405,13 @@ librdp_status librdp_session_connect(librdp_session* session)
                             (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_UDP_FECL) ? 1u : 0u,
                             (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_UDP_PREFERRED) ? 1u : 0u,
                             (server_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP) ? 1u : 0u);
+        }
+        else if (server_data.has_multitransport)
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "gcc.server.multitransport.ignored",
+                            "flags=%u reason=runtime_unavailable",
+                            server_data.multitransport_flags);
         }
         if (server_data.has_network)
         {
@@ -35980,7 +35991,7 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
                                               session->multitransport_negotiated != 0 &&
                                                   session->multitransport_flags != 0,
                                               0,
-                                              0);
+                                              RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED == 0);
             break;
         default:
             return LIBRDP_STATUS_INVALID_ARGUMENT;

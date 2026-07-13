@@ -2813,6 +2813,12 @@ static int test_settings_surface_input_session(void)
     CHECK(feature_status.requested && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_MULTITRANSPORT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
     CHECK(librdp_session_set_display_layout(NULL, display_monitors, 1) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_set_display_layout(session, NULL, 1) ==
