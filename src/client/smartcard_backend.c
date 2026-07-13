@@ -807,6 +807,7 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
                                        DWORD* active_protocol)
 {
     rdp_smartcard_mock_backend* mock = rdp_smartcard_mock(user_data);
+    uint32_t waited = 0;
 
     (void)context;
     (void)reader;
@@ -814,10 +815,18 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
     (void)preferred_protocols;
     if (!mock || !handle || !active_protocol)
         return SCARD_E_INVALID_PARAMETER;
+    atomic_fetch_add_explicit(&mock->connect_calls, 1u, memory_order_relaxed);
     if (mock->connect_status == SCARD_S_SUCCESS)
     {
         *handle = mock->next_handle ? mock->next_handle : (SCARDHANDLE)2u;
         *active_protocol = mock->next_protocol;
+    }
+    while (mock->hang_connect_ms > waited)
+    {
+        if (atomic_load_explicit(&mock->cancelled, memory_order_acquire))
+            return SCARD_E_CANCELLED;
+        rdp_smartcard_sleep_ms(10u);
+        waited += 10u;
     }
     return mock->connect_status;
 }
@@ -828,7 +837,10 @@ static LONG rdp_smartcard_mock_disconnect(void* user_data, SCARDHANDLE handle, D
 
     (void)handle;
     (void)disposition;
-    return mock ? mock->disconnect_status : SCARD_E_INVALID_PARAMETER;
+    if (!mock)
+        return SCARD_E_INVALID_PARAMETER;
+    atomic_fetch_add_explicit(&mock->disconnect_calls, 1u, memory_order_relaxed);
+    return mock->disconnect_status;
 }
 
 static LONG rdp_smartcard_mock_end_transaction(void* user_data, SCARDHANDLE handle, DWORD disposition)
@@ -1044,6 +1056,8 @@ void rdp_smartcard_mock_backend_init(rdp_smartcard_mock_backend* mock)
     mock->transmit_response[1] = 0x00u;
     mock->transmit_response_len = 2u;
     atomic_init(&mock->cancel_calls, 0u);
+    atomic_init(&mock->connect_calls, 0u);
+    atomic_init(&mock->disconnect_calls, 0u);
     atomic_init(&mock->status_change_calls, 0u);
     atomic_init(&mock->transmit_calls, 0u);
     atomic_init(&mock->cancelled, 0u);

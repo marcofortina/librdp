@@ -495,6 +495,8 @@ static int test_smartcard_backend_mock(void)
     uint8_t apdu[] = {0x00u, 0x84u, 0x00u, 0x00u, 0x00u};
     uint8_t response[8];
     DWORD response_len = 0;
+    unsigned int cancel_calls = 0;
+    unsigned int disconnect_calls = 0;
 
     memset(&state, 0, sizeof(state));
     memset(&send_pci, 0, sizeof(send_pci));
@@ -515,6 +517,7 @@ static int test_smartcard_backend_mock(void)
                                         &active_protocol) == SCARD_S_SUCCESS);
     CHECK(handle == mock.next_handle);
     CHECK(active_protocol == mock.next_protocol);
+    CHECK(atomic_load_explicit(&mock.connect_calls, memory_order_relaxed) == 1u);
 
     state.szReader = "Mock Reader 0";
     CHECK(rdp_smartcard_backend_get_status_change(&backend, context, 0, &state, 1) == SCARD_S_SUCCESS);
@@ -562,7 +565,29 @@ static int test_smartcard_backend_mock(void)
 
     atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
     mock.hang_transmit_ms = 0;
+    mock.hang_connect_ms = 250u;
+    cancel_calls = atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed);
+    disconnect_calls = atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed);
+    handle = (SCARDHANDLE)99u;
+    active_protocol = 99u;
+    CHECK(rdp_smartcard_backend_connect(&backend,
+                                        context,
+                                        "Mock Reader 0",
+                                        0,
+                                        0,
+                                        &handle,
+                                        &active_protocol) == SCARD_E_TIMEOUT);
+    CHECK(handle == 0);
+    CHECK(active_protocol == 0);
+    CHECK(atomic_load_explicit(&mock.connect_calls, memory_order_relaxed) == 2u);
+    CHECK(atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed) > cancel_calls);
+    test_sleep_ms(50u);
+    CHECK(atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed) > disconnect_calls);
+
+    atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
+    mock.hang_connect_ms = 0;
     active_protocol = 0;
+    handle = mock.next_handle;
     CHECK(rdp_smartcard_backend_reconnect(&backend, handle, 0, 0, 0, &active_protocol) == SCARD_S_SUCCESS);
     CHECK(active_protocol == mock.next_protocol);
     CHECK(rdp_smartcard_backend_disconnect(&backend, handle, 0) == SCARD_S_SUCCESS);

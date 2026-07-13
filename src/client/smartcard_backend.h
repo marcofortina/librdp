@@ -102,9 +102,12 @@ typedef struct rdp_smartcard_mock_backend
     DWORD atr_len;
     uint8_t transmit_response[258];
     DWORD transmit_response_len;
+    uint32_t hang_connect_ms;
     uint32_t hang_status_change_ms;
     uint32_t hang_transmit_ms;
     atomic_uint cancel_calls;
+    atomic_uint connect_calls;
+    atomic_uint disconnect_calls;
     atomic_uint status_change_calls;
     atomic_uint transmit_calls;
     atomic_uint cancelled;
