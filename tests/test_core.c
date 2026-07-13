@@ -2427,6 +2427,16 @@ static int read_client_printer_device_id_fd(int fd,
         {
             if (list.devices[i].device_type == RDP_DEVICE_REDIRECTION_TYPE_PRINTER)
             {
+                rdp_printer_redirection_announce announce;
+
+                if (rdp_printer_redirection_parse_announce_data(list.devices[i].data,
+                                                                list.devices[i].data_len,
+                                                                &announce) != LIBRDP_STATUS_OK ||
+                    (announce.flags & RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_XPS) != 0)
+                {
+                    ok = 0;
+                    break;
+                }
                 *device_id = list.devices[i].device_id;
                 ok = 1;
                 break;

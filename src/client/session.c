@@ -13327,7 +13327,7 @@ static librdp_status rdp_session_send_device_redirection_device_list(librdp_sess
             status = rdp_session_utf8_to_utf16le(printer_name, &printer, 1);
         if (status == LIBRDP_STATUS_OK)
         {
-            announce.flags = RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_XPS;
+            announce.flags = 0;
             if (i == 0)
                 announce.flags |= RDP_PRINTER_REDIRECTION_ANNOUNCE_FLAG_DEFAULT;
             announce.driver_name = driver.data;
