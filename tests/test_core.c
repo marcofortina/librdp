@@ -63,6 +63,9 @@
 #define DVC_SCENARIO_CLOSE_PENDING_FRAGMENT 2
 #define DVC_SCENARIO_DATA_BEFORE_CREATE 3
 
+#define GDI_SCENARIO_NORMAL 0
+#define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
+
 #define CLIPBOARD_SCENARIO_NONE 0
 #define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
 
@@ -1107,6 +1110,65 @@ static int build_bitmap_update_packet(rdp_buffer* out)
  * operations. It exercises order sequencing, cache lifetime, and renderer
  * bounds handling.
  */
+static int build_gdi_update_packet_from_orders(rdp_buffer* out,
+                                               const void* order_data,
+                                               size_t order_data_len,
+                                               uint16_t order_count)
+{
+    rdp_buffer payload;
+    rdp_buffer slow;
+    rdp_buffer mcs;
+    size_t total = 0;
+    int ok = 0;
+
+    if (!out || (!order_data && order_data_len > 0))
+        return 0;
+
+    rdp_buffer_init(&payload);
+    rdp_buffer_init(&slow);
+    rdp_buffer_init(&mcs);
+
+    ok = rdp_gdi_write_slow_orders_update_payload(&payload,
+                                                  order_count,
+                                                  order_data,
+                                                  order_data_len) == LIBRDP_STATUS_OK;
+    total = payload.length + 18u;
+    if (ok)
+        ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA)) ==
+                 LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 1004) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u32_le(&slow, 0x10203040u) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 1) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, (uint16_t)payload.length) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, RDP_SLOWPATH_DATA_PDU_UPDATE) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_le(&slow, 0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(&slow, payload.data, payload.length) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
+             append_per_length(&mcs, slow.length) &&
+             rdp_buffer_append(&mcs, slow.data, slow.length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok)
+        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&slow);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int build_gdi_orders_update_packet(rdp_buffer* out)
 {
     static const uint8_t render_opaque[] = {
@@ -1159,61 +1221,43 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
         0x31u, 0x32u, 0x33u
     };
     rdp_buffer orders;
-    rdp_buffer payload;
-    rdp_buffer slow;
-    rdp_buffer mcs;
-    size_t total = 0;
     int ok = 0;
 
     rdp_buffer_init(&orders);
-    rdp_buffer_init(&payload);
-    rdp_buffer_init(&slow);
-    rdp_buffer_init(&mcs);
 
     ok = rdp_buffer_append(&orders, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_scrblt, sizeof(render_scrblt)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_patblt, sizeof(render_patblt)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_lineto, sizeof(render_lineto)) == LIBRDP_STATUS_OK &&
-         rdp_gdi_write_slow_orders_update_payload(&payload,
-                                                  4,
-                                                  orders.data,
-                                                  orders.length) == LIBRDP_STATUS_OK;
-    total = payload.length + 18u;
-    if (ok)
-        ok = rdp_buffer_append_u16_le(&slow, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, (uint16_t)(RDP_SLOWPATH_PDU_VERSION | RDP_SLOWPATH_PDU_TYPE_DATA)) ==
-                 LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, 1004) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u32_le(&slow, 0x10203040u) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&slow, 1) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, (uint16_t)payload.length) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&slow, RDP_SLOWPATH_DATA_PDU_UPDATE) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&slow, 0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_le(&slow, 0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(&slow, payload.data, payload.length) == LIBRDP_STATUS_OK;
-    if (ok)
-        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
-             append_per_length(&mcs, slow.length) &&
-             rdp_buffer_append(&mcs, slow.data, slow.length) == LIBRDP_STATUS_OK;
-    total = mcs.length + 7u;
-    if (ok)
-        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
-             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 4);
 
-    rdp_buffer_free(&mcs);
-    rdp_buffer_free(&slow);
-    rdp_buffer_free(&payload);
     rdp_buffer_free(&orders);
     return ok;
+}
+
+static int build_gdi_unsupported_altsec_update_packet(rdp_buffer* out)
+{
+    static const uint8_t gdiplus_first_altsec[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
+        0x03u,
+        0x00u,
+        0x03u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x03u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0xaau,
+        0xbbu,
+        0xccu
+    };
+
+    return build_gdi_update_packet_from_orders(out,
+                                               gdiplus_first_altsec,
+                                               sizeof(gdiplus_first_altsec),
+                                               1);
 }
 
 static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
@@ -1496,16 +1540,17 @@ static int reserve_closed_loopback_port(uint16_t* port)
  * bytes to the client session. It isolates connection state-machine coverage
  * from external network and credential dependencies.
  */
-static int start_handshake_server_multi(uint16_t* port,
-                                        pid_t* child_pid,
-                                        int encrypted,
-                                        uint32_t error_info,
-                                        int extra_static_channel,
-                                        int client_dynamic_channel_open_response,
-                                        int connection_count,
-                                        int dynamic_channel_scenario,
-                                        int send_license_new,
-                                        int clipboard_scenario)
+static int start_handshake_server_full(uint16_t* port,
+                                       pid_t* child_pid,
+                                       int encrypted,
+                                       uint32_t error_info,
+                                       int extra_static_channel,
+                                       int client_dynamic_channel_open_response,
+                                       int connection_count,
+                                       int dynamic_channel_scenario,
+                                       int gdi_scenario,
+                                       int send_license_new,
+                                       int clipboard_scenario)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1514,6 +1559,9 @@ static int start_handshake_server_multi(uint16_t* port,
     if (!port || !child_pid)
         return 0;
     if (connection_count <= 0 || connection_count > 4)
+        return 0;
+    if (gdi_scenario != GDI_SCENARIO_NORMAL &&
+        gdi_scenario != GDI_SCENARIO_UNSUPPORTED_ALTSEC)
         return 0;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1665,9 +1713,12 @@ static int start_handshake_server_multi(uint16_t* port,
                 {
                     if (!build_bitmap_update_packet(&bitmap_update) ||
                         !write_exact_fd(client, bitmap_update.data, bitmap_update.length) ||
-                        !build_gdi_orders_update_packet(&gdi_orders_update) ||
+                        !((gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC) ?
+                              build_gdi_unsupported_altsec_update_packet(&gdi_orders_update) :
+                              build_gdi_orders_update_packet(&gdi_orders_update)) ||
                         !write_exact_fd(client, gdi_orders_update.data, gdi_orders_update.length) ||
-                        (extra_static_channel &&
+                        (gdi_scenario == GDI_SCENARIO_NORMAL &&
+                         extra_static_channel &&
                          (!build_application_static_channel_first_packet(&static_first) ||
                           !write_exact_fd(client, static_first.data, static_first.length) ||
                           !build_application_static_channel_last_packet(&static_last) ||
@@ -1675,6 +1726,8 @@ static int start_handshake_server_multi(uint16_t* port,
                     {
                         _exit(5);
                     }
+                    if (gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC)
+                        goto done_connection;
                     if (clipboard_scenario == CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES)
                     {
                         if (!extra_static_channel ||
@@ -1735,6 +1788,7 @@ static int start_handshake_server_multi(uint16_t* port,
                     }
                 }
             }
+done_connection:
             ts.tv_sec = 1;
             ts.tv_nsec = 0;
             (void)nanosleep(&ts, NULL);
@@ -1761,6 +1815,30 @@ static int start_handshake_server_multi(uint16_t* port,
 
     close(fd);
     return 1;
+}
+
+static int start_handshake_server_multi(uint16_t* port,
+                                        pid_t* child_pid,
+                                        int encrypted,
+                                        uint32_t error_info,
+                                        int extra_static_channel,
+                                        int client_dynamic_channel_open_response,
+                                        int connection_count,
+                                        int dynamic_channel_scenario,
+                                        int send_license_new,
+                                        int clipboard_scenario)
+{
+    return start_handshake_server_full(port,
+                                       child_pid,
+                                       encrypted,
+                                       error_info,
+                                       extra_static_channel,
+                                       client_dynamic_channel_open_response,
+                                       connection_count,
+                                       dynamic_channel_scenario,
+                                       GDI_SCENARIO_NORMAL,
+                                       send_license_new,
+                                       clipboard_scenario);
 }
 
 static int start_handshake_server_ex(uint16_t* port,
@@ -3870,6 +3948,54 @@ static int test_dynamic_channel_data_before_create(void)
 }
 
 /*
+ * Coverage: validates that recognized but non-rendered GDI alternate
+ * secondary orders fail the runtime path instead of being silently accepted.
+ * This catches capability/runtime drift where parser-only GDI+ or window
+ * composition packets would otherwise look successfully rendered.
+ */
+static int test_gdi_unsupported_altsec_order(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_NORMAL,
+                                      GDI_SCENARIO_UNSUPPORTED_ALTSEC,
+                                      0,
+                                      CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 6u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that terminal licensing PDUs can appear before Demand
  * Active without being misclassified as malformed slow-path share traffic. It
  * catches licensing/lifecycle ordering regressions while keeping the fixture
@@ -3949,6 +4075,8 @@ int test_client_core(void)
     if (test_dynamic_channel_close_pending_fragment() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
+        return 1;
+    if (test_gdi_unsupported_altsec_order() != 0)
         return 1;
     if (test_licensing_new_before_activation() != 0)
         return 1;

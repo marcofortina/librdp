@@ -30724,11 +30724,11 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
-                          "rdp.gdi.secondary.ignored",
+                          "rdp.gdi.secondary.rejected",
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
-    return LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_UNSUPPORTED;
 }
 
 /*
@@ -30841,11 +30841,11 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
-                          "rdp.gdi.altsec.ignored",
+                          "rdp.gdi.altsec.rejected",
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
-    return LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_UNSUPPORTED;
 }
 
 static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session, const rdp_gdi_orders_update* update)
@@ -31197,7 +31197,6 @@ static librdp_status rdp_session_process_fastpath_packet(librdp_session* session
                                     "orders=%u payload_len=%u",
                                     orders.number_orders,
                                     (unsigned)orders.order_data_len);
-                    status = LIBRDP_STATUS_OK;
                 }
                 if (status != LIBRDP_STATUS_OK)
                     goto out;
@@ -34138,7 +34137,6 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                                             "orders=%u payload_len=%u",
                                             orders.number_orders,
                                             (unsigned)orders.order_data_len);
-                            status = LIBRDP_STATUS_OK;
                         }
                         if (status != LIBRDP_STATUS_OK)
                         {
