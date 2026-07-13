@@ -1725,21 +1725,23 @@ librdp_status rdp_graphics_progressive_parse_block(const void* data,
                                                    size_t length,
                                                    rdp_graphics_progressive_block* block)
 {
+    rdp_graphics_progressive_block parsed;
     rdp_stream stream;
 
     if (!data || !block || length < 6u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(block, 0, sizeof(*block));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &block->type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &block->length) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (block->length < 6u || (size_t)block->length > length)
+    if (parsed.length < 6u || (size_t)parsed.length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &block->payload, (size_t)block->length - 6u) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, (size_t)parsed.length - 6u) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    block->payload_len = (size_t)block->length - 6u;
+    parsed.payload_len = (size_t)parsed.length - 6u;
+    *block = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1765,6 +1767,7 @@ librdp_status rdp_graphics_progressive_parse_context(const void* data,
                                                      size_t length,
                                                      rdp_graphics_progressive_context* context)
 {
+    rdp_graphics_progressive_context parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
 
@@ -1774,14 +1777,15 @@ librdp_status rdp_graphics_progressive_parse_context(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_CONTEXT || block.length != 10u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(context, 0, sizeof(*context));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    if (rdp_stream_read_u8(&stream, &context->context_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &context->tile_size) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &context->flags) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&stream, &parsed.context_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.tile_size) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (context->tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE)
+    if (parsed.tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *context = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1814,6 +1818,7 @@ librdp_status rdp_graphics_progressive_parse_frame_begin(
     size_t length,
     rdp_graphics_progressive_frame_begin* frame_begin)
 {
+    rdp_graphics_progressive_frame_begin parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
 
@@ -1823,14 +1828,15 @@ librdp_status rdp_graphics_progressive_parse_frame_begin(
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_BEGIN || block.length != 12u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(frame_begin, 0, sizeof(*frame_begin));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    if (rdp_stream_read_u32_le(&stream, &frame_begin->frame_index) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &frame_begin->region_count) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.frame_index) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.region_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (frame_begin->region_count == 0 ||
-        (uint32_t)frame_begin->region_count > RDP_GRAPHICS_PROGRESSIVE_MAX_REGIONS)
+    if (parsed.region_count == 0 ||
+        (uint32_t)parsed.region_count > RDP_GRAPHICS_PROGRESSIVE_MAX_REGIONS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *frame_begin = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1890,6 +1896,7 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_region* region)
 {
+    rdp_graphics_progressive_region parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
     size_t rects_len = 0;
@@ -1903,46 +1910,47 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_REGION || block.length < 18u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(region, 0, sizeof(*region));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    if (rdp_stream_read_u8(&stream, &region->tile_size) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &region->rect_count) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &region->quant_count) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &region->progressive_quant_count) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &region->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &region->tile_count) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &region->tile_data_size) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&stream, &parsed.tile_size) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.rect_count) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.quant_count) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.progressive_quant_count) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.tile_count) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.tile_data_size) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (region->tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE ||
-        region->rect_count == 0 ||
-        region->quant_count == 0 ||
-        (uint32_t)region->rect_count > RDP_GRAPHICS_PROGRESSIVE_MAX_RECTS ||
-        (uint32_t)region->tile_count > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES)
+    if (parsed.tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE ||
+        parsed.rect_count == 0 ||
+        parsed.quant_count == 0 ||
+        (uint32_t)parsed.rect_count > RDP_GRAPHICS_PROGRESSIVE_MAX_RECTS ||
+        (uint32_t)parsed.tile_count > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if ((region->tile_count == 0 && region->tile_data_size != 0) ||
-        (region->tile_count != 0 && region->tile_data_size == 0))
+    if ((parsed.tile_count == 0 && parsed.tile_data_size != 0) ||
+        (parsed.tile_count != 0 && parsed.tile_data_size == 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rects_len = (size_t)region->rect_count * 8u;
-    quant_values_len = (size_t)region->quant_count * 5u;
-    progressive_quant_values_len = (size_t)region->progressive_quant_count * 16u;
+    rects_len = (size_t)parsed.rect_count * 8u;
+    quant_values_len = (size_t)parsed.quant_count * 5u;
+    progressive_quant_values_len = (size_t)parsed.progressive_quant_count * 16u;
     if (rdp_stream_remaining(&stream) < rects_len + quant_values_len + progressive_quant_values_len ||
-        (size_t)region->tile_data_size >
+        (size_t)parsed.tile_data_size >
             rdp_stream_remaining(&stream) - rects_len - quant_values_len - progressive_quant_values_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &region->rects, rects_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_bytes(&stream, &region->quant_values, quant_values_len) != LIBRDP_STATUS_OK ||
+    if (rdp_stream_read_bytes(&stream, &parsed.rects, rects_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_bytes(&stream, &parsed.quant_values, quant_values_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_bytes(&stream,
-                              &region->progressive_quant_values,
+                              &parsed.progressive_quant_values,
                               progressive_quant_values_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_bytes(&stream, &region->tiles, region->tile_data_size) != LIBRDP_STATUS_OK)
+        rdp_stream_read_bytes(&stream, &parsed.tiles, parsed.tile_data_size) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    region->rects_len = rects_len;
-    region->quant_values_len = quant_values_len;
-    region->progressive_quant_values_len = progressive_quant_values_len;
-    region->tiles_len = (size_t)region->tile_data_size;
+    parsed.rects_len = rects_len;
+    parsed.quant_values_len = quant_values_len;
+    parsed.progressive_quant_values_len = progressive_quant_values_len;
+    parsed.tiles_len = (size_t)parsed.tile_data_size;
+    *region = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2031,6 +2039,7 @@ librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
                                                          size_t length,
                                                          rdp_graphics_rect16* rect)
 {
+    rdp_graphics_rect16 parsed;
     rdp_stream stream;
     uint16_t x = 0;
     uint16_t y = 0;
@@ -2044,7 +2053,7 @@ librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
     if (length < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(rect, 0, sizeof(*rect));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u16_le(&stream, &x) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &y) != LIBRDP_STATUS_OK ||
@@ -2057,10 +2066,11 @@ librdp_status rdp_graphics_progressive_parse_region_rect(const void* data,
     if (right > UINT16_MAX || bottom > UINT16_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rect->left = x;
-    rect->top = y;
-    rect->right = (uint16_t)right;
-    rect->bottom = (uint16_t)bottom;
+    parsed.left = x;
+    parsed.top = y;
+    parsed.right = (uint16_t)right;
+    parsed.bottom = (uint16_t)bottom;
+    *rect = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2143,6 +2153,7 @@ librdp_status rdp_graphics_progressive_parse_tile_simple(
     size_t length,
     rdp_graphics_progressive_tile_simple* tile)
 {
+    rdp_graphics_progressive_tile_simple parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
     size_t payload_len = 0;
@@ -2154,29 +2165,30 @@ librdp_status rdp_graphics_progressive_parse_tile_simple(
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_SIMPLE || block.length < 22u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(tile, 0, sizeof(*tile));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    tile->block_type = block.type;
+    parsed.block_type = block.type;
     if (rdp_graphics_progressive_read_tile_prefix(&stream,
-                                                  &tile->quant_idx_y,
-                                                  &tile->quant_idx_cb,
-                                                  &tile->quant_idx_cr,
-                                                  &tile->x_idx,
-                                                  &tile->y_idx) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &tile->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->y_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cb_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cr_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->tail_len) != LIBRDP_STATUS_OK)
+                                                  &parsed.quant_idx_y,
+                                                  &parsed.quant_idx_cb,
+                                                  &parsed.quant_idx_cr,
+                                                  &parsed.x_idx,
+                                                  &parsed.y_idx) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.y_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cb_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cr_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.tail_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    payload_len = (size_t)tile->y_len + tile->cb_len + tile->cr_len + tile->tail_len;
+    payload_len = (size_t)parsed.y_len + parsed.cb_len + parsed.cr_len + parsed.tail_len;
     if (rdp_stream_remaining(&stream) != payload_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_graphics_progressive_read_tile_data(&stream, tile->y_len, &tile->y_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cb_len, &tile->cb_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cr_len, &tile->cr_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->tail_len, &tile->tail_data) != LIBRDP_STATUS_OK)
+    if (rdp_graphics_progressive_read_tile_data(&stream, parsed.y_len, &parsed.y_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cb_len, &parsed.cb_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cr_len, &parsed.cr_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.tail_len, &parsed.tail_data) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *tile = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2232,6 +2244,7 @@ librdp_status rdp_graphics_progressive_parse_tile_first(const void* data,
                                                        size_t length,
                                                        rdp_graphics_progressive_tile_first* tile)
 {
+    rdp_graphics_progressive_tile_first parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
     size_t payload_len = 0;
@@ -2243,30 +2256,31 @@ librdp_status rdp_graphics_progressive_parse_tile_first(const void* data,
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_FIRST || block.length < 23u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(tile, 0, sizeof(*tile));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    tile->block_type = block.type;
+    parsed.block_type = block.type;
     if (rdp_graphics_progressive_read_tile_prefix(&stream,
-                                                  &tile->quant_idx_y,
-                                                  &tile->quant_idx_cb,
-                                                  &tile->quant_idx_cr,
-                                                  &tile->x_idx,
-                                                  &tile->y_idx) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &tile->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &tile->progressive_quality) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->y_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cb_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cr_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->tail_len) != LIBRDP_STATUS_OK)
+                                                  &parsed.quant_idx_y,
+                                                  &parsed.quant_idx_cb,
+                                                  &parsed.quant_idx_cr,
+                                                  &parsed.x_idx,
+                                                  &parsed.y_idx) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.progressive_quality) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.y_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cb_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cr_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.tail_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    payload_len = (size_t)tile->y_len + tile->cb_len + tile->cr_len + tile->tail_len;
+    payload_len = (size_t)parsed.y_len + parsed.cb_len + parsed.cr_len + parsed.tail_len;
     if (rdp_stream_remaining(&stream) != payload_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_graphics_progressive_read_tile_data(&stream, tile->y_len, &tile->y_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cb_len, &tile->cb_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cr_len, &tile->cr_data) != LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->tail_len, &tile->tail_data) != LIBRDP_STATUS_OK)
+    if (rdp_graphics_progressive_read_tile_data(&stream, parsed.y_len, &parsed.y_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cb_len, &parsed.cb_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cr_len, &parsed.cr_data) != LIBRDP_STATUS_OK ||
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.tail_len, &parsed.tail_data) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *tile = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2325,6 +2339,7 @@ librdp_status rdp_graphics_progressive_parse_tile_upgrade(
     size_t length,
     rdp_graphics_progressive_tile_upgrade* tile)
 {
+    rdp_graphics_progressive_tile_upgrade parsed;
     rdp_graphics_progressive_block block;
     rdp_stream stream;
     size_t payload_len = 0;
@@ -2336,40 +2351,41 @@ librdp_status rdp_graphics_progressive_parse_tile_upgrade(
     if (block.type != RDP_GRAPHICS_PROGRESSIVE_BLOCK_TILE_UPGRADE || block.length < 26u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(tile, 0, sizeof(*tile));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, block.payload, block.payload_len);
-    tile->block_type = block.type;
+    parsed.block_type = block.type;
     if (rdp_graphics_progressive_read_tile_prefix(&stream,
-                                                  &tile->quant_idx_y,
-                                                  &tile->quant_idx_cb,
-                                                  &tile->quant_idx_cr,
-                                                  &tile->x_idx,
-                                                  &tile->y_idx) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &tile->progressive_quality) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->y_srl_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->y_raw_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cb_srl_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cb_raw_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cr_srl_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &tile->cr_raw_len) != LIBRDP_STATUS_OK)
+                                                  &parsed.quant_idx_y,
+                                                  &parsed.quant_idx_cb,
+                                                  &parsed.quant_idx_cr,
+                                                  &parsed.x_idx,
+                                                  &parsed.y_idx) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.progressive_quality) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.y_srl_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.y_raw_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cb_srl_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cb_raw_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cr_srl_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.cr_raw_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    payload_len = (size_t)tile->y_srl_len + tile->y_raw_len + tile->cb_srl_len +
-                  tile->cb_raw_len + tile->cr_srl_len + tile->cr_raw_len;
+    payload_len = (size_t)parsed.y_srl_len + parsed.y_raw_len + parsed.cb_srl_len +
+                  parsed.cb_raw_len + parsed.cr_srl_len + parsed.cr_raw_len;
     if (rdp_stream_remaining(&stream) != payload_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_graphics_progressive_read_tile_data(&stream, tile->y_srl_len, &tile->y_srl_data) !=
+    if (rdp_graphics_progressive_read_tile_data(&stream, parsed.y_srl_len, &parsed.y_srl_data) !=
             LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->y_raw_len, &tile->y_raw_data) !=
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.y_raw_len, &parsed.y_raw_data) !=
             LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cb_srl_len, &tile->cb_srl_data) !=
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cb_srl_len, &parsed.cb_srl_data) !=
             LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cb_raw_len, &tile->cb_raw_data) !=
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cb_raw_len, &parsed.cb_raw_data) !=
             LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cr_srl_len, &tile->cr_srl_data) !=
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cr_srl_len, &parsed.cr_srl_data) !=
             LIBRDP_STATUS_OK ||
-        rdp_graphics_progressive_read_tile_data(&stream, tile->cr_raw_len, &tile->cr_raw_data) !=
+        rdp_graphics_progressive_read_tile_data(&stream, parsed.cr_raw_len, &parsed.cr_raw_data) !=
             LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *tile = parsed;
     return LIBRDP_STATUS_OK;
 }
 
