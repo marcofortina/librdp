@@ -173,6 +173,13 @@ static librdp_status rdp_nscodec_plane_size(size_t width, size_t height, size_t*
     return LIBRDP_STATUS_OK;
 }
 
+static int rdp_nscodec_dimensions_valid(uint32_t width, uint32_t height)
+{
+    return width > 0 && height > 0 &&
+           width <= RDP_NSCODEC_MAX_DIMENSION &&
+           height <= RDP_NSCODEC_MAX_DIMENSION;
+}
+
 /*
  * Parse an NSCodec stream into planar decode parameters and payload slices.
  * Chroma, alpha, and color-loss flags are validated before the bitmap decoder
@@ -197,7 +204,8 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
 
     if (!data || !stream)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (width == 0 || height == 0 || length < RDP_NSCODEC_STREAM_HEADER_LENGTH)
+    if (!rdp_nscodec_dimensions_valid(width, height) ||
+        length < RDP_NSCODEC_STREAM_HEADER_LENGTH)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     memset(&parsed, 0, sizeof(parsed));
@@ -463,8 +471,8 @@ librdp_status rdp_nscodec_decode_region_bgra32(rdp_nscodec_context* context,
 
     if (!context || !data || !dest)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (width == 0 || height == 0 ||
-        dest_width == 0 || dest_height == 0 ||
+    if (!rdp_nscodec_dimensions_valid(width, height) ||
+        !rdp_nscodec_dimensions_valid(dest_width, dest_height) ||
         dest_x > dest_width ||
         dest_y > dest_height ||
         width > dest_width - dest_x ||
@@ -535,7 +543,7 @@ librdp_status rdp_nscodec_decode_bgra32(rdp_nscodec_context* context,
 
     if (!context || !data || !pixels || !stride)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (width == 0 || height == 0)
+    if (!rdp_nscodec_dimensions_valid(width, height))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if SIZE_MAX < UINT32_MAX
     if ((size_t)width > ((size_t)-1) / 4u)

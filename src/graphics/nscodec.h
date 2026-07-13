@@ -29,6 +29,7 @@
 #define RDP_NSCODEC_BITMAP_CODEC_ID 0x01u
 #define RDP_NSCODEC_STREAM_HEADER_LENGTH 20u
 #define RDP_NSCODEC_GUID_LENGTH 16u
+#define RDP_NSCODEC_MAX_DIMENSION 8192u
 #define RDP_NSCODEC_GUID_BYTES                                                                                         \
     {                                                                                                                   \
         0xb9, 0x1b, 0x8d, 0xca, 0x0f, 0x00, 0x4f, 0x15, 0x58, 0x9f, 0xae, 0x2d, 0x1a, 0x87, 0xe2, 0xd6                \

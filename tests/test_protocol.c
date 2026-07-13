@@ -5414,6 +5414,12 @@ static int test_path_security_license_channels(void)
                                         1,
                                         &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&nscodec_stream, &valid_nscodec_stream, sizeof(nscodec_stream)) == 0);
+        PCHECK(rdp_nscodec_parse_stream(nscodec_raw_argb,
+                                        sizeof(nscodec_raw_argb),
+                                        RDP_NSCODEC_MAX_DIMENSION + 1u,
+                                        1,
+                                        &nscodec_stream) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&nscodec_stream, &valid_nscodec_stream, sizeof(nscodec_stream)) == 0);
     }
     PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
                                      nscodec_raw_argb,
@@ -5446,6 +5452,17 @@ static int test_path_security_license_channels(void)
            nscodec_region_dest[22] == 90 &&
            nscodec_region_dest[23] == 0x7f &&
            nscodec_region_dest[24] == 0xee);
+    PCHECK(rdp_nscodec_decode_region_bgra32(&nscodec_context,
+                                            nscodec_raw_argb,
+                                            sizeof(nscodec_raw_argb),
+                                            1,
+                                            1,
+                                            nscodec_region_dest,
+                                            0,
+                                            0,
+                                            0,
+                                            RDP_NSCODEC_MAX_DIMENSION + 1u,
+                                            1) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_nscodec_decode_rle_plane(nscodec_rle_plane,
                                         sizeof(nscodec_rle_plane),
                                         nscodec_rle_decoded,
@@ -5502,6 +5519,14 @@ static int test_path_security_license_channels(void)
                                      nscodec_invalid_stream,
                                      sizeof(nscodec_invalid_stream),
                                      1,
+                                     1,
+                                     &nscodec_pixels,
+                                     &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(nscodec_pixels.length == 5 && decoded_stride == 77);
+    PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
+                                     nscodec_raw_argb,
+                                     sizeof(nscodec_raw_argb),
+                                     RDP_NSCODEC_MAX_DIMENSION + 1u,
                                      1,
                                      &nscodec_pixels,
                                      &decoded_stride) == LIBRDP_STATUS_PROTOCOL_ERROR);
