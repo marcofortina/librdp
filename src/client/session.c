@@ -33247,12 +33247,6 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                           "client.active.loop.start",
                           "timeout_ms=%d",
                           timeout_ms);
-    if (session->state == LIBRDP_SESSION_CONNECTED)
-    {
-        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVE);
-        rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
-    }
-
     if (session->pending_poll)
     {
         short wakeup_revents = session->pending_wakeup_revents;
@@ -34095,6 +34089,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     return rdp_session_fail(session, status);
                 }
             }
+            rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_ACTIVE);
+            rdp_session_set_state(session, LIBRDP_SESSION_ACTIVE);
         }
         else if (have_slow_header && status == LIBRDP_STATUS_OK &&
                  (slow_header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DATA)
@@ -34126,6 +34122,17 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 const uint8_t* slow_payload = data_pdu.payload;
                 size_t slow_payload_len = data_pdu.payload_len;
 
+                if (session->state != LIBRDP_SESSION_ACTIVE)
+                {
+                    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                    "rdp.slowpath.update.rejected",
+                                    "reason=before_activation type=%u payload_len=%u",
+                                    data_pdu.pdu_type2,
+                                    (unsigned)data_pdu.payload_len);
+                    rdp_buffer_free(&security_payload);
+                    rdp_buffer_free(&packet);
+                    return rdp_session_fail(session, LIBRDP_STATUS_PROTOCOL_ERROR);
+                }
                 if (data_pdu.compressed_type != 0)
                 {
                     size_t compressed_payload_len = 0;

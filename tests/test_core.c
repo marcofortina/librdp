@@ -75,6 +75,7 @@
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
+#define GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION 2
 
 #define CLIPBOARD_SCENARIO_NONE 0
 #define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
@@ -1865,7 +1866,8 @@ static int start_handshake_server_full(uint16_t* port,
     if (connection_count <= 0 || connection_count > 4)
         return 0;
     if (gdi_scenario != GDI_SCENARIO_NORMAL &&
-        gdi_scenario != GDI_SCENARIO_UNSUPPORTED_ALTSEC)
+        gdi_scenario != GDI_SCENARIO_UNSUPPORTED_ALTSEC &&
+        gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION)
         return 0;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -2002,6 +2004,13 @@ static int start_handshake_server_full(uint16_t* port,
             }
             else
             {
+                if (gdi_scenario == GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION)
+                {
+                    if (!build_bitmap_update_packet(&bitmap_update) ||
+                        !write_exact_fd(client, bitmap_update.data, bitmap_update.length))
+                        _exit(4);
+                    goto done_connection;
+                }
                 if (send_license_new &&
                     (!build_license_new_packet(&license_new) ||
                      !write_exact_fd(client, license_new.data, license_new.length)))
@@ -4752,6 +4761,52 @@ static int test_gdi_unsupported_altsec_order(void)
 }
 
 /*
+ * Coverage: validates that slow-path graphics updates are rejected until the
+ * Demand Active/Confirm Active activation exchange succeeds. It catches
+ * lifecycle regressions where run_once marks a session active before the
+ * protocol state machine has a negotiated share id.
+ */
+static int test_graphics_update_before_activation(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      1,
+                                      DVC_SCENARIO_NORMAL,
+                                      GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION,
+                                      0,
+                                      CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that terminal licensing PDUs can appear before Demand
  * Active without being misclassified as malformed slow-path share traffic. It
  * catches licensing/lifecycle ordering regressions while keeping the fixture
@@ -4845,6 +4900,8 @@ int test_client_core(void)
     if (test_webauthn_feature_status_channel_lifecycle() != 0)
         return 1;
     if (test_gdi_unsupported_altsec_order() != 0)
+        return 1;
+    if (test_graphics_update_before_activation() != 0)
         return 1;
     if (test_licensing_new_before_activation() != 0)
         return 1;
