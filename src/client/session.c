@@ -20533,7 +20533,7 @@ static librdp_status rdp_session_handle_mouse_cursor_message(librdp_session* ses
                             update.xor_bpp,
                             update.width,
                             update.height);
-            return LIBRDP_STATUS_OK;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         return status;
     }
