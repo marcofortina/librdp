@@ -15519,6 +15519,8 @@ static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channe
         *feature = LIBRDP_FEATURE_WEBAUTHN;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME))
         *feature = LIBRDP_FEATURE_USB;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_DISPLAY_CONTROL_NAME))
+        *feature = LIBRDP_FEATURE_DISPLAY_CONTROL;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_COMPOSITED_CHANNEL_NAME))
         *feature = LIBRDP_FEATURE_CR2;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) ||
@@ -19273,6 +19275,9 @@ static librdp_status rdp_session_request_display_control_layout(librdp_session* 
     if (width > session->limits.surface_max_dimension ||
         height > session->limits.surface_max_dimension)
         return rdp_session_limit_rejected(session);
+    status = librdp_settings_enable_feature(session->settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
 
     session->requested_desktop_width = width;
     session->requested_desktop_height = height;
@@ -35114,6 +35119,9 @@ librdp_status librdp_session_set_display_layout(librdp_session* session,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_display_control_write_monitor_layout(&validation, internal, monitor_count);
     rdp_buffer_free(&validation);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    status = librdp_settings_enable_feature(session->settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1);
     if (status != LIBRDP_STATUS_OK)
         return status;
 

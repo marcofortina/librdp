@@ -85,6 +85,7 @@
 #define DVC_SCENARIO_ECHO_LATE_RESPONSE 17
 #define DVC_SCENARIO_WEBAUTHN_CREATE_REJECT 18
 #define DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT 19
+#define DVC_SCENARIO_DISPLAY_CONTROL_CREATE_REJECT 20
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -3196,6 +3197,24 @@ static int start_handshake_server_full(uint16_t* port,
                         }
                         goto done_connection;
                     }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CREATE_REJECT)
+                    {
+                        uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
+
+                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
+                            !read_client_dynamic_create_response_status_fd(client,
+                                                                          input,
+                                                                          sizeof(input),
+                                                                          1004,
+                                                                          7,
+                                                                          &status_code) ||
+                            status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK)
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
+                    }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST)
                     {
                         if (!build_dynamic_channel_soft_sync_tunnel_request_packet(&dvc_soft_sync) ||
@@ -6199,6 +6218,82 @@ static int test_display_control_caps_reject_pending_layout(void)
 }
 
 /*
+ * Coverage: validates that Display Control remains opt-in. A server-created
+ * display-control DVC is rejected when the application did not call resize,
+ * set_display_layout, or enable the public feature explicitly.
+ */
+static int test_display_control_dvc_rejects_unrequested_feature(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+    int server_done = 0;
+    struct timespec poll_delay;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_DISPLAY_CONTROL_CREATE_REJECT,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && !server_done; i++)
+    {
+        librdp_status run_status = librdp_session_run_once(session, 1000);
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+        {
+            server_done = 1;
+            break;
+        }
+        CHECK(run_status == LIBRDP_STATUS_OK || run_status == LIBRDP_STATUS_TIMEOUT ||
+              run_status == LIBRDP_STATUS_CLOSED || run_status == LIBRDP_STATUS_STATE);
+    }
+    poll_delay.tv_sec = 0;
+    poll_delay.tv_nsec = 100000000;
+    for (i = 0; i < 20u && !server_done; i++)
+    {
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+            server_done = 1;
+        else
+            (void)nanosleep(&poll_delay, NULL);
+    }
+    CHECK(server_done);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_DISPLAY_CONTROL,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(!feature_status.requested);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_REQUESTED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates the positive display-control path. A pending two-monitor
  * layout is sent after server capabilities arrive, and a later public resize
  * sends an immediate single-monitor layout while channel metrics advance.
@@ -7012,6 +7107,8 @@ int test_client_core(void)
     if (test_echo_channel_client_late_response() != 0)
         return 1;
     if (test_display_control_caps_reject_pending_layout() != 0)
+        return 1;
+    if (test_display_control_dvc_rejects_unrequested_feature() != 0)
         return 1;
     if (test_display_control_accept_pending_and_resize() != 0)
         return 1;
