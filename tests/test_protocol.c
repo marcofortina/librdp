@@ -6086,6 +6086,8 @@ static int test_path_security_license_channels(void)
            test_read_u32_le(confirm_set->data) == RDP_GDI_NINEGRID_SUPPORT_SUPPORTED_REV2 &&
            test_read_u16_le(confirm_set->data + 4u) == 2560 &&
            test_read_u16_le(confirm_set->data + 6u) == 256);
+    confirm_set = rdp_capabilities_find(&confirm_caps, RDP_GDI_CAPSTYPE_DRAW_GDIPLUS);
+    PCHECK(confirm_set == NULL);
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_ACTIVATION);
     PCHECK(confirm_set != NULL);
     PCHECK(rdp_capability_parse_activation(confirm_set, &confirm_activation) == LIBRDP_STATUS_OK);
