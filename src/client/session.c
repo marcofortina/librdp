@@ -15535,12 +15535,20 @@ static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channe
     return 1;
 }
 
+static int rdp_session_dynamic_channel_requires_credssp(const rdp_dynamic_channel_create_request* request)
+{
+    return rdp_session_dynamic_channel_request_name_equals(request, RDP_SESSION_AUTH_REDIRECTION_NAME);
+}
+
 static uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
                                                           const rdp_dynamic_channel_create_request* request)
 {
     librdp_feature feature = (librdp_feature)0;
     librdp_feature_status feature_status;
 
+    if (rdp_session_dynamic_channel_requires_credssp(request) &&
+        (!session || !session->credssp_security_ready))
+        return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
     if (!rdp_session_dynamic_channel_optional_feature(request, &feature))
         return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     memset(&feature_status, 0, sizeof(feature_status));

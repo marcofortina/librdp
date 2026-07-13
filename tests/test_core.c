@@ -84,6 +84,7 @@
 #define DVC_SCENARIO_ECHO_TIMEOUT 16
 #define DVC_SCENARIO_ECHO_LATE_RESPONSE 17
 #define DVC_SCENARIO_WEBAUTHN_CREATE_REJECT 18
+#define DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT 19
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1706,6 +1707,11 @@ static int build_dynamic_channel_create_webauthn_packet(rdp_buffer* out)
     return build_dynamic_channel_create_named_packet(out, "WebAuthN_Channel");
 }
 
+static int build_dynamic_channel_create_auth_redirection_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_create_named_packet(out, "Microsoft::Windows::RDS::AuthRedirection");
+}
+
 static int build_dynamic_channel_create_display_control_packet(rdp_buffer* out)
 {
     return build_dynamic_channel_create_named_packet(out, "Microsoft::Windows::RDS::DisplayControl");
@@ -3159,6 +3165,24 @@ static int start_handshake_server_full(uint16_t* port,
                         uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
 
                         if (!build_dynamic_channel_create_webauthn_packet(&dvc_create) ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
+                            !read_client_dynamic_create_response_status_fd(client,
+                                                                          input,
+                                                                          sizeof(input),
+                                                                          1004,
+                                                                          7,
+                                                                          &status_code) ||
+                            status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK)
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT)
+                    {
+                        uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
+
+                        if (!build_dynamic_channel_create_auth_redirection_packet(&dvc_create) ||
                             !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
                             !read_client_dynamic_create_response_status_fd(client,
                                                                           input,
@@ -6551,6 +6575,76 @@ static int test_webauthn_dvc_rejects_unrequested_feature(void)
 }
 
 /*
+ * Coverage: authentication redirection carries sensitive credential material
+ * and is valid only after CredSSP security is established. A server-created
+ * AuthRedirection DVC in a standard-security session must be rejected before a
+ * channel entry or public event can appear.
+ */
+static int test_auth_redirection_dvc_requires_credssp(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+    int server_done = 0;
+    struct timespec poll_delay;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && !server_done; i++)
+    {
+        librdp_status run_status = librdp_session_run_once(session, 1000);
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+        {
+            server_done = 1;
+            break;
+        }
+        CHECK(run_status == LIBRDP_STATUS_OK || run_status == LIBRDP_STATUS_TIMEOUT ||
+              run_status == LIBRDP_STATUS_CLOSED || run_status == LIBRDP_STATUS_STATE);
+    }
+    poll_delay.tv_sec = 0;
+    poll_delay.tv_nsec = 100000000;
+    for (i = 0; i < 20u && !server_done; i++)
+    {
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+            server_done = 1;
+        else
+            (void)nanosleep(&poll_delay, NULL);
+    }
+    CHECK(server_done);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates printer redirection against a real file-backed spool
  * job. The mock server drives RDPDR negotiation and IRPs, while the client
  * creates, writes, reads, queries, flushes, closes, and rejects stale writes
@@ -6928,6 +7022,8 @@ int test_client_core(void)
     if (test_webauthn_feature_status_channel_lifecycle() != 0)
         return 1;
     if (test_webauthn_dvc_rejects_unrequested_feature() != 0)
+        return 1;
+    if (test_auth_redirection_dvc_requires_credssp() != 0)
         return 1;
     if (test_printer_file_backend_job_lifecycle() != 0)
         return 1;
