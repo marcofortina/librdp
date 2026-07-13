@@ -1783,7 +1783,8 @@ librdp_status rdp_graphics_progressive_parse_frame_begin(
     if (rdp_stream_read_u32_le(&stream, &frame_begin->frame_index) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &frame_begin->region_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (frame_begin->region_count == 0)
+    if (frame_begin->region_count == 0 ||
+        (uint32_t)frame_begin->region_count > RDP_GRAPHICS_PROGRESSIVE_MAX_REGIONS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
@@ -1795,7 +1796,8 @@ librdp_status rdp_graphics_progressive_write_frame_begin(
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || !frame_begin || frame_begin->region_count == 0)
+    if (!buffer || !frame_begin || frame_begin->region_count == 0 ||
+        (uint32_t)frame_begin->region_count > RDP_GRAPHICS_PROGRESSIVE_MAX_REGIONS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&payload);
@@ -1868,7 +1870,9 @@ librdp_status rdp_graphics_progressive_parse_region(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (region->tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE ||
         region->rect_count == 0 ||
-        region->quant_count == 0)
+        region->quant_count == 0 ||
+        (uint32_t)region->rect_count > RDP_GRAPHICS_PROGRESSIVE_MAX_RECTS ||
+        (uint32_t)region->tile_count > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((region->tile_count == 0 && region->tile_data_size != 0) ||
         (region->tile_count != 0 && region->tile_data_size == 0))
@@ -1916,6 +1920,8 @@ librdp_status rdp_graphics_progressive_write_region(rdp_buffer* buffer,
         region->tile_size != RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE ||
         region->rect_count == 0 ||
         region->quant_count == 0 ||
+        (uint32_t)region->rect_count > RDP_GRAPHICS_PROGRESSIVE_MAX_RECTS ||
+        (uint32_t)region->tile_count > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES ||
         (region->tile_count == 0 && region->tile_data_size != 0) ||
         (region->tile_count != 0 && region->tile_data_size == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -2475,16 +2481,29 @@ static librdp_status rdp_graphics_progressive_count_region_tiles(const rdp_graph
     }
     if (tiles_seen != region->tile_count)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (tiles_seen > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES ||
+        stream->tile_count > RDP_GRAPHICS_PROGRESSIVE_MAX_TILES - tiles_seen)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     stream->tile_count += tiles_seen;
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Validate a complete progressive graphics stream as a single frame. The state
+ * machine requires context, frame begin, the declared number of regions, and
+ * frame end in order; malformed sequencing leaves the caller-owned output
+ * unchanged and returns a protocol error before any renderer sees the stream.
+ */
 librdp_status rdp_graphics_progressive_parse_stream(const void* data,
                                                     size_t length,
                                                     rdp_graphics_progressive_stream* stream)
 {
     rdp_graphics_progressive_stream parsed;
     size_t offset = 0;
+    uint8_t frame_active = 0;
+    uint8_t frame_done = 0;
+    uint32_t regions_expected = 0;
+    uint32_t regions_seen = 0;
 
     if (!data || !stream || length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -2505,6 +2524,8 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
         {
             rdp_graphics_progressive_context context;
 
+            if (parsed.has_context || frame_active || frame_done)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (rdp_graphics_progressive_parse_context((const uint8_t*)data + offset,
                                                        length - offset,
                                                        &context) != LIBRDP_STATUS_OK)
@@ -2517,33 +2538,48 @@ librdp_status rdp_graphics_progressive_parse_stream(const void* data,
         {
             rdp_graphics_progressive_frame_begin frame_begin;
 
+            if (!parsed.has_context || parsed.has_frame_begin || frame_active || frame_done)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (rdp_graphics_progressive_parse_frame_begin((const uint8_t*)data + offset,
                                                            length - offset,
                                                            &frame_begin) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             parsed.has_frame_begin = 1;
             parsed.region_count += frame_begin.region_count;
+            regions_expected = frame_begin.region_count;
+            frame_active = 1;
         }
         else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_FRAME_END)
         {
+            if (!frame_active || regions_seen != regions_expected)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (rdp_graphics_progressive_parse_frame_end((const uint8_t*)data + offset,
                                                          length - offset) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             parsed.has_frame_end = 1;
+            frame_active = 0;
+            frame_done = 1;
         }
         else if (block.type == RDP_GRAPHICS_PROGRESSIVE_BLOCK_REGION)
         {
             rdp_graphics_progressive_region region;
 
+            if (!frame_active || regions_seen >= regions_expected)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (rdp_graphics_progressive_parse_region((const uint8_t*)data + offset,
                                                       length - offset,
                                                       &region) != LIBRDP_STATUS_OK ||
                 rdp_graphics_progressive_count_region_tiles(&region, &parsed) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
+            regions_seen++;
+        }
+        else
+        {
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         offset += block.length;
     }
-    if (offset != length)
+    if (offset != length || frame_active || !frame_done || regions_seen != regions_expected)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *stream = parsed;
     return LIBRDP_STATUS_OK;
