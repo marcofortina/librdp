@@ -134,6 +134,7 @@ jobs:
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build
         run: cmake --build build-core-all-off -j$(nproc)
@@ -183,6 +184,7 @@ jobs:
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build shared library and ABI probe
         run: cmake --build build-shared-export --target librdp test_abi_probe -j$(nproc)
@@ -233,6 +235,7 @@ jobs:
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build
         run: cmake --build build-sanitizers -j$(nproc)
@@ -285,6 +288,7 @@ jobs:
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build fuzz targets
         run: cmake --build build-fuzz-smoke -j$(nproc)

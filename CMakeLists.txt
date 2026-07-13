@@ -136,6 +136,7 @@ librdp_feature_option(LIBRDP_WITH_ARCHIVE "Use archive-backed print payload supp
 librdp_feature_option(LIBRDP_WITH_PIPEWIRE "Use PipeWire audio backend in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_JPEG "Use JPEG camera conversion backend in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_XSHM "Use MIT-SHM presentation path in the X11 viewer")
+librdp_feature_option(LIBRDP_WITH_XRANDR "Use XRandR monitor layout bridge in the X11 viewer")
 
 find_package(OpenSSL 3.0 REQUIRED)
 find_package(Iconv REQUIRED)
@@ -163,6 +164,7 @@ if(NOT "${LIBRDP_WITH_CUPS}" STREQUAL "OFF")
 endif()
 
 set(LIBRDP_XSHM_FOUND 0 CACHE INTERNAL "MIT-SHM support found for the X11 viewer" FORCE)
+set(LIBRDP_XRANDR_FOUND 0 CACHE INTERNAL "XRandR support found for the X11 viewer" FORCE)
 
 if(NOT LIBRDP_CUPS_FOUND AND NOT "${LIBRDP_WITH_CUPS}" STREQUAL "OFF")
     find_path(LIBRDP_CUPS_INCLUDE_DIR NAMES cups/cups.h PATHS
@@ -901,6 +903,14 @@ if(LIBRDP_BUILD_X11_VIEWER)
             message(FATAL_ERROR "LIBRDP_WITH_XSHM=ON requires Xext")
         endif()
     endif()
+    if(NOT "${LIBRDP_WITH_XRANDR}" STREQUAL "OFF")
+        find_package(X11 QUIET COMPONENTS Xrandr)
+        if(X11_Xrandr_FOUND OR X11_Xrandr_LIB)
+            set(LIBRDP_XRANDR_FOUND 1 CACHE INTERNAL "XRandR support found for the X11 viewer" FORCE)
+        elseif("${LIBRDP_WITH_XRANDR}" STREQUAL "ON")
+            message(FATAL_ERROR "LIBRDP_WITH_XRANDR=ON requires Xrandr")
+        endif()
+    endif()
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
@@ -911,6 +921,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11-viewer/main.c
         apps/x11-viewer/viewer_clipboard.c
         apps/x11-viewer/viewer_cli.c
+        apps/x11-viewer/viewer_display.c
         apps/x11-viewer/viewer_input.c
         apps/x11-viewer/viewer_lifecycle.c
         apps/x11-viewer/viewer_render.c
@@ -975,6 +986,14 @@ if(LIBRDP_BUILD_X11_VIEWER)
             target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xext_LIB})
         endif()
     endif()
+    if(LIBRDP_XRANDR_FOUND)
+        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_XRANDR=1)
+        if(TARGET X11::Xrandr)
+            target_link_libraries(librdp-x11-viewer PRIVATE X11::Xrandr)
+        else()
+            target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xrandr_LIB})
+        endif()
+    endif()
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_viewer_render
             tests/test_viewer_render.c
@@ -1002,6 +1021,33 @@ if(LIBRDP_BUILD_X11_VIEWER)
         librdp_apply_sanitizer_link_options(test_viewer_render)
         add_test(NAME viewer_render COMMAND test_viewer_render)
         set_tests_properties(viewer_render PROPERTIES TIMEOUT 30)
+        if(LIBRDP_XRANDR_FOUND)
+            add_executable(test_viewer_display
+                tests/test_viewer_display.c
+                apps/x11-viewer/viewer_display.c
+                apps/x11-viewer/viewer_trace.c
+            )
+            target_include_directories(test_viewer_display PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${X11_INCLUDE_DIR}
+            )
+            target_compile_definitions(test_viewer_display PRIVATE
+                _POSIX_C_SOURCE=200809L
+                LIBRDP_HAVE_XRANDR=1
+            )
+            target_link_libraries(test_viewer_display PRIVATE librdp ${X11_LIBRARIES})
+            if(TARGET X11::Xrandr)
+                target_link_libraries(test_viewer_display PRIVATE X11::Xrandr)
+            else()
+                target_link_libraries(test_viewer_display PRIVATE ${X11_Xrandr_LIB})
+            endif()
+            librdp_apply_warning_options(test_viewer_display)
+            librdp_apply_sanitizer_compile_options(test_viewer_display)
+            librdp_apply_sanitizer_link_options(test_viewer_display)
+            add_test(NAME viewer_display COMMAND test_viewer_display)
+            set_tests_properties(viewer_display PROPERTIES TIMEOUT 30)
+        endif()
     endif()
 endif()
 
@@ -1049,4 +1095,5 @@ librdp_summary_optional_backend(archive LIBRDP_WITH_ARCHIVE LIBRDP_ARCHIVE_FOUND
 librdp_summary_viewer_backend(pipewire LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE_FOUND)
 librdp_summary_viewer_backend(jpeg LIBRDP_WITH_JPEG LIBRDP_JPEG_FOUND)
 librdp_summary_viewer_backend(xshm LIBRDP_WITH_XSHM LIBRDP_XSHM_FOUND)
+librdp_summary_viewer_backend(xrandr LIBRDP_WITH_XRANDR LIBRDP_XRANDR_FOUND)
 message(STATUS "librdp feature summary end")

@@ -51,6 +51,7 @@ execute_process(
         -DLIBRDP_WITH_PIPEWIRE=OFF
         -DLIBRDP_WITH_JPEG=OFF
         -DLIBRDP_WITH_XSHM=OFF
+        -DLIBRDP_WITH_XRANDR=OFF
     RESULT_VARIABLE configure_result
 )
 if(NOT configure_result EQUAL 0)

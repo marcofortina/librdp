@@ -530,7 +530,8 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
         i++;
     }
 
-    return librdp_settings_set_desktop_size(settings, width, height) == LIBRDP_STATUS_OK &&
+    return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1) == LIBRDP_STATUS_OK &&
+           librdp_settings_set_desktop_size(settings, width, height) == LIBRDP_STATUS_OK &&
            librdp_settings_target(settings) != NULL;
 }
 
@@ -543,7 +544,7 @@ void x11_cli_trace_settings(const librdp_settings* settings)
 
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.viewer.features",
-                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u drives=%u printers=%u pnp_devices=%u",
+                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u display_control=%u drives=%u printers=%u pnp_devices=%u",
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u,
@@ -557,6 +558,7 @@ void x11_cli_trace_settings(const librdp_settings* settings)
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u,
+                    librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_DISPLAY_CONTROL) ? 1u : 0u,
                     librdp_settings_drive_count(settings),
                     librdp_settings_printer_count(settings),
                     librdp_settings_pnp_device_count(settings));

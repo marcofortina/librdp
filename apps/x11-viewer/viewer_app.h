@@ -73,6 +73,9 @@ typedef struct x11_app
     int xfixes_event_base;
     int xfixes_error_base;
     int xfixes_available;
+    int xrandr_event_base;
+    int xrandr_error_base;
+    int xrandr_available;
     Atom clipboard_selection;
     Atom clipboard_property;
     Atom atom_targets;

@@ -24,6 +24,7 @@
 #include "viewer_app.h"
 #include "viewer_clipboard.h"
 #include "viewer_cli.h"
+#include "viewer_display.h"
 #include "viewer_input.h"
 #include "viewer_lifecycle.h"
 #include "viewer_render.h"
@@ -754,6 +755,7 @@ int x11_viewer_run(int argc, char** argv)
     x11_input_allow_xwayland_keyboard_grab(&app);
     x11_clipboard_init(&app);
     (void)x11_render_init(&app);
+    (void)x11_display_init(&app);
     app.wm_delete = XInternAtom(app.display, "WM_DELETE_WINDOW", False);
     (void)XSetWMProtocols(app.display, app.window, &app.wm_delete, 1);
     app.im = XOpenIM(app.display, NULL, NULL, NULL);
@@ -953,6 +955,8 @@ int x11_viewer_run(int argc, char** argv)
                 app.running = 0;
             else if (app.xfixes_available && event.type == app.xfixes_event_base + XFixesSelectionNotify)
                 x11_clipboard_handle_owner_notify(&app, &event);
+            else if (x11_display_handle_event(&app, &event))
+                continue;
             else if (event.type == SelectionNotify)
                 x11_clipboard_handle_selection_notify(&app, &event.xselection);
             else if (event.type == SelectionRequest)
@@ -1027,7 +1031,7 @@ int x11_viewer_run(int argc, char** argv)
                                 configured_height);
                 app.window_width = configured_width;
                 app.window_height = configured_height;
-                (void)librdp_session_resize(app.session, configured_width, configured_height);
+                (void)x11_display_update_or_resize(&app, "configure");
                 XClearWindow(app.display, app.window);
                 x11_trace_event(X11_TRACE_CLIENT,
                                 "x11.window.clear",
