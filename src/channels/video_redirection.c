@@ -28,6 +28,8 @@ static int rdp_video_redirection_valid_stream_mask(uint32_t stream_mask)
            stream_mask == RDP_VIDEO_REDIRECTION_STREAM_ID_STUB;
 }
 
+static int rdp_video_redirection_geometry_info_valid(const rdp_video_redirection_geometry_info* info);
+
 static int rdp_video_redirection_valid_capability_type(uint32_t type)
 {
     return type == RDP_VIDEO_REDIRECTION_CAPABILITY_PROTOCOL_VERSION ||
@@ -500,7 +502,7 @@ librdp_status rdp_video_redirection_write_geometry_info(
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || !info)
+    if (!buffer || !info || !rdp_video_redirection_geometry_info_valid(info))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_video_redirection_append_u64_le(buffer, info->video_window_id);
     if (status != LIBRDP_STATUS_OK)
@@ -1447,6 +1449,40 @@ librdp_status rdp_video_redirection_parse_geometry_update(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Geometry records bind video samples to remote window regions. The parser
+ * accepts only known state bits and rejects rectangles whose dimensions would
+ * wrap the 32-bit coordinate space before session code can bind them to a
+ * presentation.
+ */
+static int rdp_video_redirection_geometry_info_valid(const rdp_video_redirection_geometry_info* info)
+{
+    const uint32_t known_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW |
+                                RDP_VIDEO_REDIRECTION_WINDOW_DELETED |
+                                RDP_VIDEO_REDIRECTION_WINDOW_VISRGN;
+    uint64_t right = 0;
+    uint64_t bottom = 0;
+
+    if (!info)
+        return 0;
+    if (info->window_state == 0 || (info->window_state & ~known_state) != 0)
+        return 0;
+    if ((info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_NEW) != 0 &&
+        (info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_DELETED) != 0)
+        return 0;
+    if (info->reserved != 0 || (info->has_padding && info->padding != 0))
+        return 0;
+    if ((info->window_state & RDP_VIDEO_REDIRECTION_WINDOW_DELETED) != 0)
+        return 1;
+    if (info->width == 0 || info->height == 0)
+        return 0;
+    right = (uint64_t)info->left + info->width;
+    bottom = (uint64_t)info->top + info->height;
+    if (right > UINT32_MAX || bottom > UINT32_MAX)
+        return 0;
+    return 1;
+}
+
 librdp_status rdp_video_redirection_parse_geometry_info(
     const void* data,
     size_t length,
@@ -1476,7 +1512,9 @@ librdp_status rdp_video_redirection_parse_geometry_info(
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         info->has_padding = 1u;
     }
-    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) != 0 || !rdp_video_redirection_geometry_info_valid(info))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_video_redirection_parse_rect(

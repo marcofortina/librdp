@@ -25587,14 +25587,19 @@ static librdp_status rdp_session_handle_video_redirection_message(librdp_session
                 return status;
             memset(&info, 0, sizeof(info));
             if (update.geometry_len > 0)
-                (void)rdp_video_redirection_parse_geometry_info(update.geometry, update.geometry_len, &info);
+            {
+                status = rdp_video_redirection_parse_geometry_info(update.geometry, update.geometry_len, &info);
+                if (status != LIBRDP_STATUS_OK)
+                    return status;
+            }
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.tsmf.geometry",
-                            "dvc_channel_id=%u message_id=%u geometry_len=%u visible_len=%u width=%u height=%u",
+                            "dvc_channel_id=%u message_id=%u geometry_len=%u visible_len=%u window_state=%u width=%u height=%u",
                             channel_id,
                             update.header.message_id,
                             update.geometry_len,
                             update.visible_rect_len,
+                            info.window_state,
                             info.width,
                             info.height);
             break;
