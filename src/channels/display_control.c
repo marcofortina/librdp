@@ -19,13 +19,15 @@
 
 #include "common/stream.h"
 
+#include <librdp/session.h>
+
 #include <string.h>
 
 #define RDP_DISPLAY_CONTROL_MIN_DIMENSION 200u
 #define RDP_DISPLAY_CONTROL_MAX_DIMENSION 8192u
 #define RDP_DISPLAY_CONTROL_MIN_PHYSICAL_MM 10u
 #define RDP_DISPLAY_CONTROL_MAX_PHYSICAL_MM 10000u
-#define RDP_DISPLAY_CONTROL_MAX_MONITORS 16u
+#define RDP_DISPLAY_CONTROL_MAX_MONITORS LIBRDP_DISPLAY_MAX_MONITORS
 
 static uint32_t rdp_display_control_clamp_dimension(uint32_t value, int even)
 {
