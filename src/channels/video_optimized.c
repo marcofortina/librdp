@@ -63,23 +63,25 @@ librdp_status rdp_video_optimized_parse_header(
     size_t length,
     rdp_video_optimized_header* header)
 {
+    rdp_video_optimized_header parsed;
     rdp_stream stream;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 8u || length > (size_t)UINT32_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &header->size) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &header->packet_type) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.size) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.packet_type) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->size != (uint32_t)length ||
-        !rdp_video_optimized_valid_packet_type(header->packet_type))
+    if (parsed.size != (uint32_t)length ||
+        !rdp_video_optimized_valid_packet_type(parsed.packet_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    header->payload_len = rdp_stream_remaining(&stream);
-    if (rdp_stream_read_bytes(&stream, &header->payload, header->payload_len) != LIBRDP_STATUS_OK)
+    parsed.payload_len = rdp_stream_remaining(&stream);
+    if (rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 

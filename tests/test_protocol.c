@@ -16309,6 +16309,19 @@ static int test_video_optimized_channel(void)
     PCHECK(header.packet_type == RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST &&
            header.size == 8u &&
            header.payload_len == 0);
+    {
+        rdp_video_optimized_header valid_header = header;
+
+        buffer.data[4] = 0xffu;
+        PCHECK(rdp_video_optimized_parse_header(buffer.data, buffer.length, &header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&header, &valid_header, sizeof(header)) == 0);
+        buffer.data[4] = RDP_VIDEO_OPTIMIZED_PACKET_PRESENTATION_REQUEST;
+        buffer.data[0] = 9u;
+        PCHECK(rdp_video_optimized_parse_header(buffer.data, buffer.length, &header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&header, &valid_header, sizeof(header)) == 0);
+    }
     buffer.length = 0;
     PCHECK(rdp_video_optimized_write_header(&buffer, 0xffffffffu, 8u) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
