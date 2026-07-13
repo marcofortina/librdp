@@ -27772,6 +27772,17 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             status = rdp_dynamic_channel_parse_soft_sync_request(channel_packet->payload,
                                                                  channel_packet->payload_len,
                                                                  &request);
+            if (status == LIBRDP_STATUS_OK &&
+                request.tunnel_count > 0 &&
+                (!RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED ||
+                 !session->multitransport_negotiated ||
+                 session->multitransport_flags == 0))
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.drdynvc.soft_sync.ignored",
+                                "tunnel_count=%u reason=multitransport_unavailable",
+                                request.tunnel_count);
+            }
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_dynamic_channel_write_soft_sync_response(&response, NULL, 0);
             if (status == LIBRDP_STATUS_OK)

@@ -33,6 +33,8 @@
 #include "protocol/mcs.h"
 #include "protocol/pointer.h"
 #include "protocol/slowpath.h"
+#include "protocol/tpkt.h"
+#include "protocol/x224.h"
 #include "security/security.h"
 
 #include <errno.h>
@@ -67,6 +69,7 @@
 #define DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE 6
 #define DVC_SCENARIO_EMPTY_COMPRESSED_FIRST 7
 #define DVC_SCENARIO_EMPTY_COMPRESSED_CONTINUATION 8
+#define DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST 9
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -759,6 +762,29 @@ static int append_per_length(rdp_buffer* buffer, size_t length)
     if (length > 0x7fu)
         return rdp_buffer_append_u16_be(buffer, (uint16_t)(length | 0x8000u)) == LIBRDP_STATUS_OK;
     return rdp_buffer_append_u8(buffer, (uint8_t)length) == LIBRDP_STATUS_OK;
+}
+
+static int read_per_length_from_stream(rdp_stream* stream, size_t* length)
+{
+    uint8_t first = 0;
+
+    if (!stream || !length)
+        return 0;
+    if (rdp_stream_read_u8(stream, &first) != LIBRDP_STATUS_OK)
+        return 0;
+    if ((first & 0x80u) == 0)
+    {
+        *length = first;
+        return 1;
+    }
+    {
+        uint8_t second = 0;
+
+        if (rdp_stream_read_u8(stream, &second) != LIBRDP_STATUS_OK)
+            return 0;
+        *length = (size_t)(((uint16_t)(first & 0x7fu) << 8) | second);
+        return 1;
+    }
 }
 
 static int append_gcc_block(rdp_buffer* buffer, uint16_t type, const rdp_buffer* payload)
@@ -1578,6 +1604,29 @@ static int build_dynamic_channel_close_packet(rdp_buffer* out)
     return ok;
 }
 
+static int build_dynamic_channel_soft_sync_tunnel_request_packet(rdp_buffer* out)
+{
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_buffer_append_u8(&payload,
+                              (uint8_t)(RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST << 4)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&payload, 0) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 22u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload,
+                                  RDP_DYNAMIC_CHANNEL_SOFT_SYNC_TCP_FLUSHED |
+                                      RDP_DYNAMIC_CHANNEL_SOFT_SYNC_CHANNEL_LIST_PRESENT) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 1u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 2u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 7u) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u32_le(&payload, 0x1234u) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1004);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int build_dynamic_channel_create_response_packet(rdp_buffer* out, uint32_t channel_id)
 {
     rdp_buffer payload;
@@ -1608,6 +1657,74 @@ static int read_tpkt_fd(int fd, uint8_t* data, size_t capacity, size_t* length)
         return 0;
     *length = total;
     return 1;
+}
+
+static int parse_client_dynamic_channel_payload(const uint8_t* input,
+                                                size_t input_len,
+                                                uint16_t expected_channel_id,
+                                                rdp_virtual_channel_packet* packet)
+{
+    rdp_tpkt tpkt;
+    rdp_stream stream;
+    const uint8_t* x224_payload = NULL;
+    const uint8_t* channel_payload = NULL;
+    size_t x224_payload_len = 0;
+    size_t channel_payload_len = 0;
+    uint8_t domain_choice = 0;
+    uint8_t data_priority = 0;
+    uint16_t user_delta = 0;
+    uint16_t channel_id = 0;
+
+    if (!input || !packet)
+        return 0;
+    if (rdp_tpkt_parse(input, input_len, &tpkt) != LIBRDP_STATUS_OK ||
+        rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_payload, &x224_payload_len) !=
+            LIBRDP_STATUS_OK)
+        return 0;
+
+    rdp_stream_init(&stream, x224_payload, x224_payload_len);
+    if (rdp_stream_read_u8(&stream, &domain_choice) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_be(&stream, &user_delta) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_be(&stream, &channel_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &data_priority) != LIBRDP_STATUS_OK ||
+        !read_per_length_from_stream(&stream, &channel_payload_len))
+    {
+        return 0;
+    }
+    if (domain_choice != (uint8_t)(25u << 2) ||
+        user_delta > UINT16_MAX - RDP_MCS_BASE_CHANNEL_ID ||
+        channel_id != expected_channel_id ||
+        data_priority != 0x70 ||
+        channel_payload_len != rdp_stream_remaining(&stream))
+    {
+        return 0;
+    }
+    if (rdp_stream_read_bytes(&stream, &channel_payload, channel_payload_len) != LIBRDP_STATUS_OK)
+        return 0;
+    return rdp_virtual_channel_parse_packet(channel_payload, channel_payload_len, packet) == LIBRDP_STATUS_OK;
+}
+
+static int read_soft_sync_response_fd(int fd, uint8_t* input, size_t capacity, uint16_t expected_channel_id)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_dynamic_channel_soft_sync_response soft_sync_response;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_channel_id,
+                                                  &response_packet))
+            continue;
+        if (rdp_dynamic_channel_parse_soft_sync_response(response_packet.payload,
+                                                        response_packet.payload_len,
+                                                        &soft_sync_response) == LIBRDP_STATUS_OK)
+            return soft_sync_response.tunnel_count == 0;
+    }
+    return 0;
 }
 
 static int reserve_closed_loopback_port(uint16_t* port)
@@ -1741,6 +1858,7 @@ static int start_handshake_server_full(uint16_t* port,
             rdp_buffer dvc_empty_data;
             rdp_buffer dvc_close;
             rdp_buffer dvc_create_response;
+            rdp_buffer dvc_soft_sync;
             rdp_buffer clipboard_data_response;
             rdp_buffer clipboard_file_response;
             rdp_buffer static_first;
@@ -1759,6 +1877,7 @@ static int start_handshake_server_full(uint16_t* port,
             rdp_buffer_init(&dvc_empty_data);
             rdp_buffer_init(&dvc_close);
             rdp_buffer_init(&dvc_create_response);
+            rdp_buffer_init(&dvc_soft_sync);
             rdp_buffer_init(&clipboard_data_response);
             rdp_buffer_init(&clipboard_file_response);
             rdp_buffer_init(&static_first);
@@ -1864,6 +1983,15 @@ static int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         }
                     }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST)
+                    {
+                        if (!build_dynamic_channel_soft_sync_tunnel_request_packet(&dvc_soft_sync) ||
+                            !write_exact_fd(client, dvc_soft_sync.data, dvc_soft_sync.length) ||
+                            !read_soft_sync_response_fd(client, input, sizeof(input), 1004))
+                        {
+                            _exit(5);
+                        }
+                    }
                     else if (!build_dynamic_channel_create_packet(&dvc_create) ||
                              !write_exact_fd(client, dvc_create.data, dvc_create.length))
                     {
@@ -1921,18 +2049,19 @@ static int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         }
                     }
-                    else if (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
-                             !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
-                             !build_dynamic_channel_data_packet(&dvc_data) ||
-                             !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
-                             !build_dynamic_channel_close_packet(&dvc_close) ||
-                             !write_exact_fd(client, dvc_close.data, dvc_close.length) ||
-                             (client_dynamic_channel_open_response &&
-                              (!read_tpkt_fd(client, input, sizeof(input), &input_len) ||
-                               !build_dynamic_channel_create_response_packet(&dvc_create_response, 1u) ||
-                               !write_exact_fd(client,
-                                               dvc_create_response.data,
-                                               dvc_create_response.length))))
+                    else if (dynamic_channel_scenario != DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST &&
+                             (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
+                              !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
+                              !build_dynamic_channel_data_packet(&dvc_data) ||
+                              !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                              !build_dynamic_channel_close_packet(&dvc_close) ||
+                              !write_exact_fd(client, dvc_close.data, dvc_close.length) ||
+                              (client_dynamic_channel_open_response &&
+                               (!read_tpkt_fd(client, input, sizeof(input), &input_len) ||
+                                !build_dynamic_channel_create_response_packet(&dvc_create_response, 1u) ||
+                                !write_exact_fd(client,
+                                                dvc_create_response.data,
+                                                dvc_create_response.length)))))
                     {
                         _exit(5);
                     }
@@ -1950,6 +2079,7 @@ done_connection:
             rdp_buffer_free(&clipboard_data_response);
             rdp_buffer_free(&dvc_close);
             rdp_buffer_free(&dvc_create_response);
+            rdp_buffer_free(&dvc_soft_sync);
             rdp_buffer_free(&dvc_empty_data);
             rdp_buffer_free(&dvc_data);
             rdp_buffer_free(&dvc_data_first);
@@ -4208,6 +4338,59 @@ static int test_dynamic_channel_empty_compressed_fragments(void)
 }
 
 /*
+ * Coverage: validates that a DVC soft-sync tunnel request falls back to TCP
+ * when the multitransport runtime is parser-only. It catches accidental
+ * negotiation of RDPEUDP/RDPEMT paths that cannot create a real side transport.
+ */
+static int test_dynamic_channel_soft_sync_runtime_fallback(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 4u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_MULTITRANSPORT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that dynamic channel data cannot arrive before the
  * channel create handshake. It catches out-of-order DVC sequencing that would
  * otherwise hide malformed server traffic and lose channel metrics.
@@ -4470,6 +4653,8 @@ int test_client_core(void)
     if (test_dynamic_channel_nested_data_first() != 0)
         return 1;
     if (test_dynamic_channel_empty_compressed_fragments() != 0)
+        return 1;
+    if (test_dynamic_channel_soft_sync_runtime_fallback() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
         return 1;
