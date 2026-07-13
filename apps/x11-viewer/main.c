@@ -25,6 +25,7 @@
 #include "viewer_clipboard.h"
 #include "viewer_cli.h"
 #include "viewer_trace.h"
+#include "viewer_window.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -124,63 +125,6 @@ typedef struct x11_scancode_map
     uint32_t flags;
 } x11_scancode_map;
 
-static volatile int x11_window_invalid = 0;
-static volatile int x11_trap_error = 0;
-
-static int handle_x_error(Display* display, XErrorEvent* error)
-{
-    if (display && error)
-    {
-        if (error->error_code == BadDrawable || error->error_code == BadWindow)
-            x11_window_invalid = 1;
-        x11_trace_event(X11_TRACE_CLIENT,
-                        "x11.error",
-                        "code=%u request=%u resource=%lu",
-                        (unsigned)error->error_code,
-                        (unsigned)error->request_code,
-                        error->resourceid);
-    }
-    return 0;
-}
-
-static int trap_x_error(Display* display, XErrorEvent* error)
-{
-    (void)display;
-
-    if (error)
-    {
-        x11_trap_error = 1;
-        if (error->error_code == BadDrawable || error->error_code == BadWindow)
-            x11_window_invalid = 1;
-    }
-    return 0;
-}
-
-static int window_is_live(x11_app* app)
-{
-    XWindowAttributes attributes;
-    XErrorHandler previous = NULL;
-    int result = 0;
-
-    if (!app || !app->display || !app->window || x11_window_invalid)
-        return 0;
-
-    XSync(app->display, False);
-    x11_trap_error = 0;
-    previous = XSetErrorHandler(trap_x_error);
-    result = XGetWindowAttributes(app->display, app->window, &attributes);
-    XSync(app->display, False);
-    XSetErrorHandler(previous);
-
-    if (!result || x11_trap_error)
-    {
-        x11_window_invalid = 1;
-        app->running = 0;
-        return 0;
-    }
-    return 1;
-}
-
 static void clear_viewer_cursor(x11_app* app)
 {
     if (!app || !app->display)
@@ -196,11 +140,11 @@ static void clear_viewer_cursor(x11_app* app)
 
 static void restore_cursor_after_local_mouse(x11_app* app)
 {
-    if (!app || !app->display || !app->window || x11_window_invalid)
+    if (!app || !app->display || !app->window || x11_window_is_invalid())
         return;
     if (app->cursor_mode != X11_CURSOR_HIDDEN || app->hidden_cursor_locally_visible)
         return;
-    if (!window_is_live(app))
+    if (!x11_window_is_live(app))
         return;
 
     XUndefineCursor(app->display, app->window);
@@ -266,9 +210,9 @@ static Cursor create_shape_cursor(x11_app* app, const librdp_pointer_event* poin
 
 static void apply_viewer_cursor(x11_app* app)
 {
-    if (!app || !app->display || !app->window || x11_window_invalid)
+    if (!app || !app->display || !app->window || x11_window_is_invalid())
         return;
-    if (!window_is_live(app))
+    if (!x11_window_is_live(app))
         return;
     if (app->cursor_mode == X11_CURSOR_DEFAULT)
         XUndefineCursor(app->display, app->window);
@@ -305,7 +249,7 @@ static void handle_pointer_event(x11_app* app, const librdp_pointer_event* point
     }
     else if (pointer->update_type == LIBRDP_POINTER_UPDATE_POSITION)
     {
-        if (window_is_live(app))
+        if (x11_window_is_live(app))
         {
             app->suppress_motion++;
             XWarpPointer(app->display, None, app->window, 0, 0, 0, 0, pointer->x, pointer->y);
@@ -430,7 +374,7 @@ static void maybe_grab_keyboard(x11_app* app, Time time)
         app->pending_ungrab = 0;
         return;
     }
-    if (!window_is_live(app))
+    if (!x11_window_is_live(app))
         return;
 
     allow_xwayland_keyboard_grab(app);
@@ -1546,7 +1490,7 @@ static void draw_surface(x11_app* app)
     uint64_t surface_hash = 0;
     int put_result = 0;
 
-    if (!app || !app->display || !app->session || x11_window_invalid)
+    if (!app || !app->display || !app->session || x11_window_is_invalid())
         return;
 
     surface = librdp_session_get_surface(app->session);
@@ -1820,7 +1764,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    XSetErrorHandler(handle_x_error);
+    XSetErrorHandler(x11_window_handle_error);
     app.screen = DefaultScreen(app.display);
     app.xkb = XkbGetKeyboard(app.display, XkbNamesMask, XkbUseCoreKbd);
     app.window = XCreateSimpleWindow(app.display,
@@ -1997,7 +1941,7 @@ int main(int argc, char** argv)
     {
         unsigned int events_processed = 0;
 
-        if (x11_window_invalid)
+        if (x11_window_is_invalid())
         {
             app.running = 0;
             break;
@@ -2039,8 +1983,7 @@ int main(int argc, char** argv)
                 x11_clipboard_handle_selection_clear(&app, &event.xselectionclear);
             else if (event.type == DestroyNotify)
             {
-                x11_window_invalid = 1;
-                app.running = 0;
+                x11_window_mark_invalid(&app);
             }
             else if (event.type == KeyPress)
                 handle_key_press(&app, &event.xkey);
@@ -2116,7 +2059,7 @@ int main(int argc, char** argv)
                 app.dirty = 1;
                 apply_viewer_cursor(&app);
             }
-            if (x11_window_invalid)
+            if (x11_window_is_invalid())
             {
                 app.running = 0;
                 break;
@@ -2148,7 +2091,7 @@ int main(int argc, char** argv)
     x11_clipboard_free(&app);
     clear_viewer_cursor(&app);
     XFreeGC(app.display, app.gc);
-    if (!x11_window_invalid)
+    if (!x11_window_is_invalid())
         XDestroyWindow(app.display, app.window);
     XCloseDisplay(app.display);
     return 0;

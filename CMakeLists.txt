@@ -901,6 +901,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11-viewer/viewer_clipboard.c
         apps/x11-viewer/viewer_cli.c
         apps/x11-viewer/viewer_trace.c
+        apps/x11-viewer/viewer_window.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
