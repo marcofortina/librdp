@@ -441,6 +441,51 @@ static int test_build_rfx_stream_multi_region(rdp_buffer* out)
     return ok;
 }
 
+static int test_build_rfx_stream_region_mismatch(rdp_buffer* out)
+{
+    rdp_buffer payload;
+    int ok = 0;
+
+    if (!out)
+        return 0;
+    rdp_buffer_init(&payload);
+
+    ok = rdp_buffer_append_u32_le(&payload, 0xCACCACCAu) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 0x0100u) == LIBRDP_STATUS_OK &&
+         test_append_rfx_block(out, 0xCCC0u, &payload);
+    payload.length = 0;
+    ok = ok &&
+         rdp_buffer_append_u8(&payload, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&payload, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 0x0100u) == LIBRDP_STATUS_OK &&
+         test_append_rfx_block(out, 0xCCC1u, &payload);
+    payload.length = 0;
+    ok = ok &&
+         rdp_buffer_append_u8(&payload, 1) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u8(&payload, 0) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 128) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 64) == LIBRDP_STATUS_OK &&
+         test_append_rfx_block(out, 0xCCC2u, &payload);
+    payload.length = 0;
+    ok = ok &&
+         rdp_buffer_append_u8(&payload, 0) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 64) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 0x0200u) == LIBRDP_STATUS_OK &&
+         test_append_rfx_channel_block(out, 0xCCC3u, 0xffu, &payload);
+    payload.length = 0;
+    ok = ok &&
+         rdp_buffer_append_u32_le(&payload, 10) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, 1) == LIBRDP_STATUS_OK &&
+         test_append_rfx_channel_block(out, 0xCCC4u, 0, &payload);
+
+    ok = ok && test_append_rfx_region_tileset(out, 0, 0, 64, 64, 1, 0);
+
+    payload.length = 0;
+    ok = ok && test_append_rfx_channel_block(out, 0xCCC5u, 0, &payload);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int test_build_rfx_stream_many_rects(rdp_buffer* out)
 {
     rdp_buffer payload;
@@ -5332,6 +5377,16 @@ static int test_path_security_license_channels(void)
            rfx_stream_summary.rect_count == 2 &&
            rfx_stream_summary.tile_count == 2 &&
            rfx_stream_capture.tiles == 2);
+    rdp_buffer_free(&rfx_bad_stream);
+    rdp_buffer_init(&rfx_bad_stream);
+    memset(&rfx_stream_capture, 0, sizeof(rfx_stream_capture));
+    PCHECK(test_build_rfx_stream_region_mismatch(&rfx_bad_stream));
+    PCHECK(rdp_rfx_stream_decode(rfx_bad_stream.data,
+                                 rfx_bad_stream.length,
+                                 test_rfx_stream_tile,
+                                 &rfx_stream_capture,
+                                 &rfx_stream_summary) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rfx_stream_capture.tiles == 0);
     rdp_buffer_free(&rfx_bad_stream);
     rdp_buffer_init(&rfx_bad_stream);
     dyn_response.length = 0;
