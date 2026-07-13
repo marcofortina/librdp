@@ -31,6 +31,8 @@ Supported security values are:
 
 `nla` selects the CredSSP-based network-level authentication path. `tls` selects TLS transport security without NLA. `rdp` selects legacy standard security. `auto` lets negotiation select the security path.
 
+TLS certificate verification is strict by default. `--tls-prompt-cert` shows the presented leaf certificate and asks before accepting it for the current connection. `--tls-accept-any-cert` accepts the presented certificate for the current connection without prompting and should be used only when the caller has explicitly chosen that trust policy.
+
 ## Options
 
 ```text
@@ -42,6 +44,8 @@ Supported security values are:
 --width px
 --height px
 --security auto|rdp|tls|nla
+--tls-prompt-cert
+--tls-accept-any-cert
 --drive name=path
 --serial name=path
 --parallel name=path

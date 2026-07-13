@@ -166,7 +166,8 @@ def markdown_files() -> list[str]:
 
 
 def viewer_source_options() -> set[str]:
-    return set(VIEWER_OPTION_RE.findall(read("apps/x11-viewer/main.c")))
+    source = read("apps/x11-viewer/main.c") + "\n" + read("apps/x11-viewer/viewer_cli.c")
+    return set(VIEWER_OPTION_RE.findall(source))
 
 
 def documented_options(path: str) -> set[str]:

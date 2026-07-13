@@ -39,6 +39,12 @@ Initial desktop height.
 .BI --security " auto|rdp|tls|nla"
 Security negotiation mode.
 .TP
+.B --tls-prompt-cert
+Show the presented TLS leaf certificate and ask whether to accept it for the current connection.
+.TP
+.B --tls-accept-any-cert
+Accept the presented TLS leaf certificate for the current connection without prompting. This is an explicit trust-policy override for controlled environments.
+.TP
 .BI --drive " name=path"
 Redirect a local directory as a remote drive.
 .TP
