@@ -37,6 +37,7 @@
 #include <iconv.h>
 #include <limits.h>
 #include <locale.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +117,7 @@ typedef struct x11_app
 #define X11_CURSOR_SHAPE 2
 #define X11_MAX_EVENTS_PER_TICK 128u
 #define X11_MAX_NETWORK_PUMP 64u
+#define X11_MAX_SESSION_POLL_FDS 8u
 #define X11_CLIPBOARD_MAX_BYTES (16u * 1024u * 1024u)
 #define X11_AUDIO_INPUT_BUFFER_BYTES 16384u
 
@@ -2171,36 +2173,99 @@ static void app_event(librdp_session* session, const librdp_event* event, void* 
     }
 }
 
-static void run_session_pump(x11_app* app)
+static int x11_handle_session_status(x11_app* app, librdp_status status)
+{
+    if (status == LIBRDP_STATUS_OK)
+        return 1;
+    fprintf(stderr, "error=%s\n", librdp_status_string(status));
+    if (app)
+        app->running = 0;
+    return 0;
+}
+
+static int x11_dispatch_session_ready(x11_app* app, struct pollfd* session_fds, size_t session_count)
 {
     librdp_status status = LIBRDP_STATUS_OK;
     unsigned int i = 0;
 
-    if (!app || !app->session || !app->running)
-        return;
-
-    status = librdp_session_run_once(app->session, 16);
-    if (status != LIBRDP_STATUS_OK)
-    {
-        fprintf(stderr, "error=%s\n", librdp_status_string(status));
-        app->running = 0;
-        return;
-    }
-
+    if (!app || !app->session || !app->running || !session_fds || session_count == 0)
+        return 1;
+    status = librdp_session_notify_poll(app->session, session_fds, session_count);
+    if (!x11_handle_session_status(app, status))
+        return 0;
     for (i = 0; app->running && i < X11_MAX_NETWORK_PUMP; i++)
     {
         uint64_t before = app->event_serial;
+        size_t count = 0;
 
-        status = librdp_session_run_once(app->session, 0);
-        if (status != LIBRDP_STATUS_OK)
-        {
-            fprintf(stderr, "error=%s\n", librdp_status_string(status));
-            app->running = 0;
-            return;
-        }
+        status = librdp_session_dispatch_pending(app->session);
+        if (!x11_handle_session_status(app, status))
+            return 0;
         if (!app->dirty && app->event_serial == before)
             break;
+        if (librdp_session_get_pollfds(app->session,
+                                       session_fds,
+                                       X11_MAX_SESSION_POLL_FDS,
+                                       &count) != LIBRDP_STATUS_OK ||
+            count == 0)
+            break;
+        if (poll(session_fds, (nfds_t)count, 0) <= 0)
+            break;
+        session_count = count;
+        status = librdp_session_notify_poll(app->session, session_fds, session_count);
+        if (!x11_handle_session_status(app, status))
+            return 0;
     }
+    return 1;
+}
+
+static int x11_wait_for_events(x11_app* app)
+{
+    struct pollfd poll_fds[1u + X11_MAX_SESSION_POLL_FDS];
+    struct pollfd* session_fds = &poll_fds[1];
+    size_t session_count = 0;
+    int timeout_ms = -1;
+    int rc = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!app || !app->display || !app->session || !app->running)
+        return 0;
+
+    memset(poll_fds, 0, sizeof(poll_fds));
+    poll_fds[0].fd = ConnectionNumber(app->display);
+    poll_fds[0].events = POLLIN;
+
+    status = librdp_session_get_pollfds(app->session, session_fds, X11_MAX_SESSION_POLL_FDS, &session_count);
+    if (!x11_handle_session_status(app, status))
+        return 0;
+    status = librdp_session_get_next_timeout(app->session, &timeout_ms);
+    if (!x11_handle_session_status(app, status))
+        return 0;
+    if (XPending(app->display) > 0)
+        timeout_ms = 0;
+    else if (app->audio_input_active && (timeout_ms < 0 || timeout_ms > 10))
+        timeout_ms = 10;
+
+    do
+    {
+        rc = poll(poll_fds, (nfds_t)(1u + session_count), timeout_ms);
+    } while (rc < 0 && errno == EINTR);
+    if (rc < 0)
+    {
+        fprintf(stderr, "error=poll errno=%d\n", errno);
+        app->running = 0;
+        return 0;
+    }
+    if ((poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+    {
+        app->running = 0;
+        return 0;
+    }
+    if (rc == 0)
+        return x11_handle_session_status(app, librdp_session_dispatch_pending(app->session));
+    if (session_count > 0 && x11_dispatch_session_ready(app, session_fds, session_count) == 0)
+        return 0;
+    return 1;
 }
 
 /*
@@ -2978,10 +3043,11 @@ int main(int argc, char** argv)
 
         if (!app.running)
             break;
-        run_session_pump(&app);
         x11_audio_input_pump(&app);
         if (app.running && app.dirty)
             draw_surface(&app);
+        if (app.running && !x11_wait_for_events(&app))
+            break;
     }
 
     release_all_remote_keys(&app);
