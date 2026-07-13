@@ -263,6 +263,28 @@ librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Apply a parsed server error alert to the client licensing state. The
+ * STATUS_VALID_CLIENT alert is a terminal success; all other error alerts are
+ * terminal failures, and neither path may be replayed after a terminal state.
+ */
+librdp_status rdp_license_client_state_step_error_alert(rdp_license_client_state* state,
+                                                        const rdp_license_error_alert* alert)
+{
+    if (!state || !alert || alert->message_type != RDP_LICENSE_MESSAGE_ERROR_ALERT)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (state->state == RDP_LICENSE_CLIENT_STATE_COMPLETED ||
+        state->state == RDP_LICENSE_CLIENT_STATE_FAILED)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    state->state = rdp_license_error_alert_is_terminal_success(alert) ?
+                       RDP_LICENSE_CLIENT_STATE_COMPLETED :
+                       RDP_LICENSE_CLIENT_STATE_FAILED;
+    state->last_message_type = RDP_LICENSE_MESSAGE_ERROR_ALERT;
+    state->last_direction = (uint8_t)RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble)
 {
     rdp_license_preamble parsed;

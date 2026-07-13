@@ -34296,18 +34296,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     license_status = rdp_license_parse_error_alert(indication_payload,
                                                                    indication_payload_len,
                                                                    &alert);
-                    if (license_status == LIBRDP_STATUS_OK &&
-                        rdp_license_error_alert_is_terminal_success(&alert))
-                    {
-                        session->license_state.state = RDP_LICENSE_CLIENT_STATE_COMPLETED;
-                        session->license_state.last_message_type = license_message_type;
-                        session->license_state.last_direction =
-                            (uint8_t)RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT;
-                    }
-                    else if (license_status == LIBRDP_STATUS_OK)
-                        license_status = rdp_license_client_state_step(&session->license_state,
-                                                                       RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,
-                                                                       license_message_type);
+                    if (license_status == LIBRDP_STATUS_OK)
+                        license_status = rdp_license_client_state_step_error_alert(&session->license_state,
+                                                                                   &alert);
                     if (license_status == LIBRDP_STATUS_OK)
                     {
                         rdp_trace_event(RDP_TRACE_PROTOCOL,

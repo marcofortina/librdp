@@ -6853,6 +6853,14 @@ static int test_path_security_license_channels(void)
                                          license_packet.length,
                                          &alert) == LIBRDP_STATUS_OK);
     PCHECK(rdp_license_error_alert_is_terminal_success(&alert));
+    rdp_license_client_state_init(&license_state);
+    PCHECK(rdp_license_client_state_step_error_alert(&license_state,
+                                                     &alert) == LIBRDP_STATUS_OK);
+    PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_COMPLETED &&
+           license_state.last_message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT &&
+           license_state.last_direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT);
+    PCHECK(rdp_license_client_state_step_error_alert(&license_state,
+                                                     &alert) == LIBRDP_STATUS_PROTOCOL_ERROR);
     license_packet.length = 0;
     PCHECK(rdp_license_write_binary_blob(&license_packet,
                                          RDP_LICENSE_BLOB_KEY_EXCHANGE_ALG,
@@ -7149,6 +7157,12 @@ static int test_path_security_license_channels(void)
                                          license_packet.length,
                                          &alert) == LIBRDP_STATUS_OK);
     PCHECK(alert.blob_type == RDP_LICENSE_BLOB_ERROR && alert.blob_length == 0);
+    rdp_license_client_state_init(&license_state);
+    PCHECK(rdp_license_client_state_step_error_alert(&license_state,
+                                                     &alert) == LIBRDP_STATUS_OK);
+    PCHECK(license_state.state == RDP_LICENSE_CLIENT_STATE_FAILED &&
+           license_state.last_message_type == RDP_LICENSE_MESSAGE_ERROR_ALERT &&
+           license_state.last_direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT);
     rdp_license_client_state_init(&license_state);
     PCHECK(rdp_license_client_state_step(&license_state,
                                          RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT,

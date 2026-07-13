@@ -251,6 +251,8 @@ librdp_status rdp_license_classify_message(const void* data, size_t length, uint
 librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
                                             rdp_license_direction direction,
                                             uint8_t message_type);
+librdp_status rdp_license_client_state_step_error_alert(rdp_license_client_state* state,
+                                                        const rdp_license_error_alert* alert);
 librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_license_preamble* preamble);
 librdp_status rdp_license_write_preamble(rdp_buffer* buffer,
                                          uint8_t message_type,

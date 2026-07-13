@@ -58,7 +58,11 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_license_parse_server_info(data, size, &server_info);
     (void)rdp_license_parse_hardware_id(data, size, &hardware_id);
     (void)rdp_license_parse_platform_challenge_response_data(data, size, &challenge_data);
-    (void)rdp_license_parse_error_alert(data, size, &alert);
+    if (rdp_license_parse_error_alert(data, size, &alert) == LIBRDP_STATUS_OK)
+    {
+        rdp_license_client_state_init(&state);
+        (void)rdp_license_client_state_step_error_alert(&state, &alert);
+    }
     (void)rdp_license_parse_client_new_license_request(data, size, &client_request);
     (void)rdp_license_parse_client_info(data, size, &client_info);
     (void)rdp_license_parse_platform_challenge_response(data, size, &challenge_response);
