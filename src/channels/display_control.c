@@ -264,6 +264,8 @@ librdp_status rdp_display_control_parse_monitor_layout_with_caps(const void* dat
 
     if (!data || !monitors || !monitor_count)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (monitor_capacity == 0 || monitor_capacity > RDP_DISPLAY_CONTROL_MAX_MONITORS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(monitors, 0, sizeof(*monitors) * monitor_capacity);
     *monitor_count = 0;
     if (length < 16u)

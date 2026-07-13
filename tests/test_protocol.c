@@ -72,6 +72,8 @@
 #include "transport/multitransport.h"
 #include "transport/udp_transport.h"
 
+#include <librdp/session.h>
+
 #include <openssl/evp.h>
 
 #include <stdio.h>
@@ -8851,6 +8853,17 @@ static int test_path_security_license_channels(void)
            display_monitors[0].flags == RDP_DISPLAY_CONTROL_MONITOR_PRIMARY &&
            display_monitors[0].width == 800 &&
            display_monitors[0].height == 200);
+    memset(display_monitors, 0xa5, sizeof(display_monitors));
+    display_monitor_count = 99;
+    PCHECK(rdp_display_control_parse_monitor_layout(dyn_response.data,
+                                                    dyn_response.length,
+                                                    display_monitors,
+                                                    LIBRDP_DISPLAY_MAX_MONITORS + 1u,
+                                                    &display_monitor_count) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(display_monitor_count == 99 &&
+           display_monitors[0].flags == 0xa5a5a5a5u &&
+           display_monitors[1].flags == 0xa5a5a5a5u);
     PCHECK(dyn_response.length <= sizeof(display_mutated));
     memcpy(display_mutated, dyn_response.data, dyn_response.length);
     display_mutated[36] = 9;
