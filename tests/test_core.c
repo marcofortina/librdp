@@ -1228,8 +1228,21 @@ static int build_gdi_update_packet_from_orders(rdp_buffer* out,
     return ok;
 }
 
+/*
+ * Fixture: emits a mixed GDI update with a secondary bitmap cache insert,
+ * immediate-mode orders, and cache-backed MEMBLT/MEM3BLT. It catches cache
+ * lifetime bugs, field-mask drift, bottom-up bitmap decode regressions, and
+ * missing surface invalidations in the runtime renderer.
+ */
 static int build_gdi_orders_update_packet(rdp_buffer* out)
 {
+    static const uint8_t cache_bitmap_payload[] = {
+        1u, 0u, 2u, 2u, 32u, 16u, 0u, 5u, 0u,
+        0x10u, 0x20u, 0x30u, 0xffu,
+        0x11u, 0x21u, 0x31u, 0xffu,
+        0x12u, 0x22u, 0x32u, 0xffu,
+        0x13u, 0x23u, 0x33u, 0xffu
+    };
     static const uint8_t render_opaque[] = {
         RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
         RDP_GDI_ORDER_OPAQUERECT,
@@ -1279,17 +1292,63 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
         0x01u,
         0x31u, 0x32u, 0x33u
     };
+    static const uint8_t render_memblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEMBLT,
+        0xffu, 0x01u,
+        0x01u, 0x00u,
+        0x20u, 0x00u,
+        0x08u, 0x00u,
+        0x02u, 0x00u,
+        0x02u, 0x00u,
+        0xccu,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x05u, 0x00u
+    };
+    static const uint8_t render_mem3blt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_MEM3BLT,
+        0xffu, 0xffu, 0x00u,
+        0x01u, 0x00u,
+        0x24u, 0x00u,
+        0x08u, 0x00u,
+        0x02u, 0x00u,
+        0x02u, 0x00u,
+        0xccu,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x00u,
+        0x00u,
+        0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+        0x05u, 0x00u
+    };
     rdp_buffer orders;
+    rdp_buffer cache_bitmap;
     int ok = 0;
 
     rdp_buffer_init(&orders);
+    rdp_buffer_init(&cache_bitmap);
 
-    ok = rdp_buffer_append(&orders, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK &&
+    ok = rdp_gdi_write_secondary_order(&cache_bitmap,
+                                       0,
+                                       RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                       cache_bitmap_payload,
+                                       sizeof(cache_bitmap_payload)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, cache_bitmap.data, cache_bitmap.length) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_scrblt, sizeof(render_scrblt)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_patblt, sizeof(render_patblt)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_lineto, sizeof(render_lineto)) == LIBRDP_STATUS_OK &&
-         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 4);
+         rdp_buffer_append(&orders, render_memblt, sizeof(render_memblt)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, render_mem3blt, sizeof(render_mem3blt)) == LIBRDP_STATUS_OK &&
+         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 7);
 
+    rdp_buffer_free(&cache_bitmap);
     rdp_buffer_free(&orders);
     return ok;
 }
@@ -3736,7 +3795,7 @@ static int test_settings_surface_input_session(void)
     out = librdp_surface_pixels(session_surface);
     CHECK(out[0] == 9 && out[1] == 10 && out[2] == 11 && out[3] == 12);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 6);
+    CHECK(counter.surfaces == 8);
     CHECK(domain_capture.graphics == counter.surfaces);
     CHECK(graphics_capture.pixel_rect == counter.surfaces);
     CHECK(graphics_capture.borrowed_pixels == graphics_capture.pixel_rect);
@@ -3759,6 +3818,22 @@ static int test_settings_surface_input_session(void)
     CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 1u] == 0x32u);
     CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 2u] == 0x33u);
     CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)32 * 4u) + 0u] == 0x12u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)32 * 4u) + 1u] == 0x22u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)32 * 4u) + 2u] == 0x32u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)32 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)33 * 4u) + 0u] == 0x11u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)33 * 4u) + 1u] == 0x21u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)33 * 4u) + 2u] == 0x31u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)33 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)36 * 4u) + 0u] == 0x12u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)36 * 4u) + 1u] == 0x22u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)36 * 4u) + 2u] == 0x32u);
+    CHECK(out[((size_t)8 * librdp_surface_stride(session_surface)) + ((size_t)36 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)37 * 4u) + 0u] == 0x11u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)37 * 4u) + 1u] == 0x21u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)37 * 4u) + 2u] == 0x31u);
+    CHECK(out[((size_t)9 * librdp_surface_stride(session_surface)) + ((size_t)37 * 4u) + 3u] == 0xffu);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.channel_open == 1);
     CHECK(domain_capture.channel == 1);
@@ -3867,7 +3942,7 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 6);
+    CHECK(counter.surfaces == 8);
     CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
