@@ -1079,6 +1079,33 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
         0x02u, 0x00u,
         0x03u, 0x00u
     };
+    static const uint8_t render_patblt[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_PATBLT,
+        0x7fu, 0x00u,
+        0x0cu, 0x00u,
+        0x04u, 0x00u,
+        0x03u, 0x00u,
+        0x02u, 0x00u,
+        0xf0u,
+        0x01u, 0x02u, 0x03u,
+        0x44u, 0x55u, 0x66u
+    };
+    static const uint8_t render_lineto[] = {
+        RDP_GDI_TS_STANDARD | RDP_GDI_TS_TYPE_CHANGE,
+        RDP_GDI_ORDER_LINETO,
+        0xffu, 0x03u,
+        0x00u, 0x00u,
+        0x10u, 0x00u,
+        0x06u, 0x00u,
+        0x14u, 0x00u,
+        0x06u, 0x00u,
+        0x00u, 0x00u, 0x00u,
+        13u,
+        0x00u,
+        0x01u,
+        0x31u, 0x32u, 0x33u
+    };
     rdp_buffer orders;
     rdp_buffer payload;
     rdp_buffer slow;
@@ -1093,8 +1120,10 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
 
     ok = rdp_buffer_append(&orders, render_opaque, sizeof(render_opaque)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&orders, render_scrblt, sizeof(render_scrblt)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, render_patblt, sizeof(render_patblt)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, render_lineto, sizeof(render_lineto)) == LIBRDP_STATUS_OK &&
          rdp_gdi_write_slow_orders_update_payload(&payload,
-                                                  2,
+                                                  4,
                                                   orders.data,
                                                   orders.length) == LIBRDP_STATUS_OK;
     total = payload.length + 18u;
@@ -3100,7 +3129,7 @@ static int test_settings_surface_input_session(void)
     out = librdp_surface_pixels(session_surface);
     CHECK(out[0] == 9 && out[1] == 10 && out[2] == 11 && out[3] == 12);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 4);
+    CHECK(counter.surfaces == 6);
     CHECK(domain_capture.graphics == counter.surfaces);
     CHECK(graphics_capture.pixel_rect == counter.surfaces);
     CHECK(graphics_capture.borrowed_pixels == graphics_capture.pixel_rect);
@@ -3115,6 +3144,14 @@ static int test_settings_surface_input_session(void)
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 1u] == 0x22u);
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 2u] == 0x33u);
     CHECK(out[((size_t)3 * librdp_surface_stride(session_surface)) + ((size_t)8 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)4 * librdp_surface_stride(session_surface)) + ((size_t)12 * 4u) + 0u] == 0x44u);
+    CHECK(out[((size_t)4 * librdp_surface_stride(session_surface)) + ((size_t)12 * 4u) + 1u] == 0x55u);
+    CHECK(out[((size_t)4 * librdp_surface_stride(session_surface)) + ((size_t)12 * 4u) + 2u] == 0x66u);
+    CHECK(out[((size_t)4 * librdp_surface_stride(session_surface)) + ((size_t)12 * 4u) + 3u] == 0xffu);
+    CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 0u] == 0x31u);
+    CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 1u] == 0x32u);
+    CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 2u] == 0x33u);
+    CHECK(out[((size_t)6 * librdp_surface_stride(session_surface)) + ((size_t)16 * 4u) + 3u] == 0xffu);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.channel_open == 1);
     CHECK(domain_capture.channel == 1);
@@ -3223,7 +3260,7 @@ static int test_settings_surface_input_session(void)
     CHECK(counter.keys == 1);
     CHECK(counter.mouse == 1);
     CHECK(librdp_session_resize(session, 80, 60) == LIBRDP_STATUS_OK);
-    CHECK(counter.surfaces == 4);
+    CHECK(counter.surfaces == 6);
     CHECK(counter.pointer >= 1);
     session_surface = librdp_session_get_surface(session);
     CHECK(session_surface != NULL);
