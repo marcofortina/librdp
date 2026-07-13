@@ -490,6 +490,7 @@ static int test_session_selection_and_echo(void)
 {
     const uint8_t text_utf16[] = {'T', 0, 'e', 0, 's', 0, 't', 0, 0, 0};
     const uint8_t echo_payload[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    static uint8_t oversized_echo_payload[RDP_ECHO_CHANNEL_MAX_PAYLOAD + 1u];
     uint8_t invalid_v1[] = {
         0x10, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00,
@@ -533,6 +534,13 @@ static int test_session_selection_and_echo(void)
     PCHECK(rdp_echo_channel_parse_response(buffer.data, buffer.length, &echo) == LIBRDP_STATUS_OK);
     PCHECK(echo.payload_len == sizeof(echo_payload));
     PCHECK(rdp_echo_channel_write_request(&buffer, NULL, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_echo_channel_parse_response(oversized_echo_payload,
+                                           sizeof(oversized_echo_payload),
+                                           &echo) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_echo_channel_write_request(&buffer,
+                                          oversized_echo_payload,
+                                          sizeof(oversized_echo_payload)) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     rdp_buffer_free(&buffer);
     return 0;

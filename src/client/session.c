@@ -28,6 +28,7 @@
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
@@ -166,6 +167,7 @@
 #define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
 #define RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX (4u * 1024u * 1024u)
 #define RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED 0
+#define RDP_SESSION_ECHO_CHANNEL_NAME "ECHO"
 #define RDP_SESSION_DISPLAY_CONTROL_NAME "Microsoft::Windows::RDS::DisplayControl"
 #define RDP_SESSION_CORE_INPUT_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_SESSION_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
@@ -15441,6 +15443,19 @@ static int rdp_session_dynamic_channel_is_internal(const rdp_session_dynamic_cha
     return entry && rdp_session_dynamic_channel_is_internal_name(entry->name);
 }
 
+static int rdp_session_echo_channel_active(const librdp_session* session)
+{
+    if (!session)
+        return 0;
+    for (uint32_t i = 0; i < session->limits.dynamic_channel_count; i++)
+    {
+        if (session->dynamic_channels[i].active &&
+            strcmp(session->dynamic_channels[i].name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static void rdp_session_emit_channel_open_data(librdp_session* session,
                                                librdp_channel_id channel_id,
                                                const char* name)
@@ -26902,6 +26917,22 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         status = rdp_session_handle_video_capture_data_message(session, channel_id, data, data_len);
     }
+    else if (strcmp(entry->name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0 &&
+             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
+    {
+        rdp_echo_channel_pdu response;
+
+        status = rdp_echo_channel_parse_response(data, data_len, &response);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.echo.reply",
+                            "dvc_channel_id=%u payload_len=%u",
+                            channel_id,
+                            (unsigned)response.payload_len);
+            rdp_session_emit_channel_data(session, entry, response.payload, response.payload_len);
+        }
+    }
     else
     {
         rdp_session_emit_channel_data(session, entry, data, data_len);
@@ -27246,6 +27277,14 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         }
         else if (entry)
         {
+            if (strcmp(entry->name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0 &&
+                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.echo.channel",
+                                "dvc_channel_id=%u enabled=1",
+                                request.channel_id);
+            }
             rdp_session_emit_channel_open(session, entry);
         }
         rdp_trace_event(RDP_TRACE_CLIENT,
@@ -35981,7 +36020,10 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
                                               0);
             break;
         case LIBRDP_FEATURE_ECHO:
-            rdp_session_finish_feature_status(status, 0, 0, 0);
+            rdp_session_finish_feature_status(status,
+                                              rdp_session_echo_channel_active(session),
+                                              rdp_session_echo_channel_active(session),
+                                              0);
             break;
         case LIBRDP_FEATURE_TELEMETRY:
             rdp_session_finish_feature_status(status, 0, 0, 1);

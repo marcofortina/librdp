@@ -3130,6 +3130,12 @@ static int test_settings_surface_input_session(void)
     CHECK(channel_info.active == 1);
     CHECK(channel_info.application_owned == 1);
     CHECK(channel_info.name_len == 4 && strcmp(channel_info.name, "ECHO") == 0);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_ECHO,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_channel_info_init(&channel_infos[0]) == LIBRDP_STATUS_OK);
     CHECK(librdp_channel_info_init(&channel_infos[1]) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_channel_list(session, channel_infos, 2, &channel_count) == LIBRDP_STATUS_OK);
@@ -3159,6 +3165,12 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_channel_close_handle(session, channel_handle) == LIBRDP_STATUS_STATE);
     CHECK(librdp_session_channel_list(session, NULL, 0, &channel_count) == LIBRDP_STATUS_OK);
     CHECK(channel_count == 0);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_ECHO,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_channel_open(NULL,
                                       "APPCHAN",
                                       LIBRDP_CHANNEL_PRIORITY_LOW,
