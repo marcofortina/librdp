@@ -27447,6 +27447,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         }
         if (entry->fragmenting)
         {
+            if (data_pdu.data_len == 0)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
             if (data_pdu.data_len > (size_t)entry->fragment_expected - entry->fragment.length)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             status = rdp_buffer_append(&entry->fragment, data_pdu.data, data_pdu.data_len);
