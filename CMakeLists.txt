@@ -193,6 +193,7 @@ endif()
 set(LIBRDP_SOURCES
     src/client/client.c
     src/client/error.c
+    src/client/printer_backend.c
     src/client/settings.c
     src/client/session.c
     src/client/smartcard_backend.c
