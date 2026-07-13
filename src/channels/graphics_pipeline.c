@@ -20,6 +20,8 @@
 
 #include "common/stream.h"
 
+#include <librdp/session.h>
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -829,7 +831,8 @@ librdp_status rdp_graphics_parse_reset(const void* data, size_t length, rdp_grap
         rdp_stream_read_u32_le(&stream, &parsed.monitor_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (parsed.width == 0 || parsed.height == 0 || parsed.width > 32766u || parsed.height > 32766u ||
-        parsed.monitor_count > 16u || parsed.monitor_count > rdp_stream_remaining(&stream) / 20u)
+        parsed.monitor_count > LIBRDP_DISPLAY_MAX_MONITORS ||
+        parsed.monitor_count > rdp_stream_remaining(&stream) / 20u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *reset = parsed;
     return LIBRDP_STATUS_OK;

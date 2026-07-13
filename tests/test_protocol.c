@@ -10658,6 +10658,14 @@ static int test_path_security_license_channels(void)
                                         graphics_reset_pdu.length - 1u,
                                         &graphics_reset) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&graphics_reset, &valid_reset, sizeof(graphics_reset)) == 0);
+        graphics_reset_pdu.data[16] = (uint8_t)((LIBRDP_DISPLAY_MAX_MONITORS + 1u) & 0xffu);
+        graphics_reset_pdu.data[17] = (uint8_t)(((LIBRDP_DISPLAY_MAX_MONITORS + 1u) >> 8u) & 0xffu);
+        graphics_reset_pdu.data[18] = 0;
+        graphics_reset_pdu.data[19] = 0;
+        PCHECK(rdp_graphics_parse_reset(graphics_reset_pdu.data,
+                                        graphics_reset_pdu.length,
+                                        &graphics_reset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&graphics_reset, &valid_reset, sizeof(graphics_reset)) == 0);
     }
     PCHECK(rdp_graphics_write_reset(&graphics_reset_pdu, 0, 768) == LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_clearcodec_parse_stream(clear_residual_bitmap,
