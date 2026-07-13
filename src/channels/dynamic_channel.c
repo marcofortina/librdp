@@ -546,6 +546,8 @@ librdp_status rdp_dynamic_channel_parse_data_first(const void* data,
             LIBRDP_STATUS_OK ||
         rdp_dynamic_channel_read_length(&stream, header.length_bytes, &parsed.total_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.total_length == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     parsed.channel_id_bytes = header.channel_id_bytes;
     parsed.data_len = rdp_stream_remaining(&stream);
@@ -587,7 +589,7 @@ librdp_status rdp_dynamic_channel_write_data_first_ex(rdp_buffer* buffer,
     librdp_status status = LIBRDP_STATUS_OK;
     size_t start = 0;
 
-    if (!buffer || (!data && data_len > 0) || data_len > total_length)
+    if (!buffer || (!data && data_len > 0) || total_length == 0 || data_len > total_length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_dynamic_channel_validate_priority(priority);
     if (status != LIBRDP_STATUS_OK)

@@ -7519,7 +7519,13 @@ static int test_path_security_license_channels(void)
                                                     sizeof(bad_dyn_data_first),
                                                     &dyn_first_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&dyn_first_pdu, &valid_dyn_first_pdu, sizeof(dyn_first_pdu)) == 0);
+        PCHECK(rdp_dynamic_channel_parse_data_first((const uint8_t[]){0x20, 0x07, 0x00},
+                                                    3,
+                                                    &dyn_first_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&dyn_first_pdu, &valid_dyn_first_pdu, sizeof(dyn_first_pdu)) == 0);
     }
+    PCHECK(rdp_dynamic_channel_write_data_first(&dyn_response, 7, 1, 0, NULL, 0) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_write_data_first(&dyn_response,
                                                 7,
                                                 1,
