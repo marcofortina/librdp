@@ -121,18 +121,20 @@ librdp_status rdp_mouse_cursor_write_caps_advertise(rdp_buffer* buffer)
 librdp_status rdp_mouse_cursor_parse_header(const void* data, size_t length, rdp_mouse_cursor_header* header)
 {
     rdp_stream stream;
+    rdp_mouse_cursor_header parsed;
 
     if (!data || !header)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u8(&stream, &header->pdu_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &header->update_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->reserved) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u8(&stream, &parsed.pdu_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.update_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.reserved) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -142,12 +144,13 @@ librdp_status rdp_mouse_cursor_parse_caps_confirm(const void* data,
 {
     rdp_stream stream;
     rdp_mouse_cursor_header header;
+    rdp_mouse_cursor_capset parsed;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !capset)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(capset, 0, sizeof(*capset));
+    memset(&parsed, 0, sizeof(parsed));
     status = rdp_mouse_cursor_parse_header(data, length, &header);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -157,11 +160,12 @@ librdp_status rdp_mouse_cursor_parse_caps_confirm(const void* data,
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_skip(&stream, 4) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    status = rdp_mouse_cursor_parse_capset(&stream, capset);
+    status = rdp_mouse_cursor_parse_capset(&stream, &parsed);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *capset = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -169,12 +173,13 @@ librdp_status rdp_mouse_cursor_parse_update(const void* data, size_t length, rdp
 {
     rdp_stream stream;
     rdp_mouse_cursor_header header;
+    rdp_pointer_update parsed;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(update, 0, sizeof(*update));
+    memset(&parsed, 0, sizeof(parsed));
     status = rdp_mouse_cursor_parse_header(data, length, &header);
     if (status != LIBRDP_STATUS_OK)
         return status;
@@ -189,36 +194,50 @@ librdp_status rdp_mouse_cursor_parse_update(const void* data, size_t length, rdp
     {
         if (rdp_stream_remaining(&stream) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        update->kind = RDP_POINTER_UPDATE_KIND_NULL;
+        parsed.kind = RDP_POINTER_UPDATE_KIND_NULL;
+        *update = parsed;
         return LIBRDP_STATUS_OK;
     }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_DEFAULT)
     {
         if (rdp_stream_remaining(&stream) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        update->kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+        parsed.kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+        *update = parsed;
         return LIBRDP_STATUS_OK;
     }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_POSITION)
     {
-        if (rdp_stream_read_u16_le(&stream, &update->x) != LIBRDP_STATUS_OK ||
-            rdp_stream_read_u16_le(&stream, &update->y) != LIBRDP_STATUS_OK ||
+        if (rdp_stream_read_u16_le(&stream, &parsed.x) != LIBRDP_STATUS_OK ||
+            rdp_stream_read_u16_le(&stream, &parsed.y) != LIBRDP_STATUS_OK ||
             rdp_stream_remaining(&stream) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        update->kind = RDP_POINTER_UPDATE_KIND_POSITION;
+        parsed.kind = RDP_POINTER_UPDATE_KIND_POSITION;
+        *update = parsed;
         return LIBRDP_STATUS_OK;
     }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_CACHED)
     {
-        if (rdp_stream_read_u16_le(&stream, &update->cache_index) != LIBRDP_STATUS_OK ||
+        if (rdp_stream_read_u16_le(&stream, &parsed.cache_index) != LIBRDP_STATUS_OK ||
             rdp_stream_remaining(&stream) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        update->kind = RDP_POINTER_UPDATE_KIND_CACHED;
+        parsed.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+        *update = parsed;
         return LIBRDP_STATUS_OK;
     }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_POINTER)
-        return rdp_mouse_cursor_parse_pointer_attributes(&stream, 0, update);
+    {
+        status = rdp_mouse_cursor_parse_pointer_attributes(&stream, 0, &parsed);
+        if (status == LIBRDP_STATUS_OK)
+            *update = parsed;
+        return status;
+    }
     if (header.update_type == RDP_MOUSE_CURSOR_UPDATE_LARGE_POINTER)
-        return rdp_mouse_cursor_parse_pointer_attributes(&stream, 1, update);
+    {
+        status = rdp_mouse_cursor_parse_pointer_attributes(&stream, 1, &parsed);
+        if (status == LIBRDP_STATUS_OK)
+            *update = parsed;
+        return status;
+    }
     return LIBRDP_STATUS_UNSUPPORTED;
 }

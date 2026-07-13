@@ -2759,6 +2759,7 @@ static int test_path_security_license_channels(void)
         0x03, 0x0a, 0x00, 0x00,
         0x05, 0x00
     };
+    const uint8_t mouse_cursor_unknown[] = {0x03, 0xff, 0x00, 0x00};
     const uint8_t mouse_cursor_shape_32[] = {
         0x03, 0x0b, 0x00, 0x00,
         0x20, 0x00,
@@ -7782,9 +7783,16 @@ static int test_path_security_license_channels(void)
     PCHECK(mouse_cursor_capset.signature == RDP_MOUSE_CURSOR_CAPSET_SIGNATURE &&
            mouse_cursor_capset.version == RDP_MOUSE_CURSOR_CAPSET_VERSION1 &&
            mouse_cursor_capset.size == RDP_MOUSE_CURSOR_CAPSET_SIZE_VERSION1);
-    PCHECK(rdp_mouse_cursor_parse_caps_confirm(mouse_cursor_caps_confirm,
-                                               sizeof(mouse_cursor_caps_confirm) - 1u,
-                                               &mouse_cursor_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_mouse_cursor_capset valid_mouse_cursor_capset = mouse_cursor_capset;
+
+        PCHECK(rdp_mouse_cursor_parse_caps_confirm(mouse_cursor_caps_confirm,
+                                                   sizeof(mouse_cursor_caps_confirm) - 1u,
+                                                   &mouse_cursor_capset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&mouse_cursor_capset,
+                      &valid_mouse_cursor_capset,
+                      sizeof(mouse_cursor_capset)) == 0);
+    }
     PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_hidden,
                                          sizeof(mouse_cursor_hidden),
                                          &pointer_update) == LIBRDP_STATUS_OK);
@@ -7824,9 +7832,22 @@ static int test_path_security_license_channels(void)
            pointer_update.width == 2 &&
            pointer_update.height == 2 &&
            pointer_update.xor_bpp == 32);
-    PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_32,
-                                         sizeof(mouse_cursor_shape_32) - 1u,
-                                         &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_pointer_update valid_mouse_cursor_update = pointer_update;
+
+        PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_32,
+                                             sizeof(mouse_cursor_shape_32) - 1u,
+                                             &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&pointer_update,
+                      &valid_mouse_cursor_update,
+                      sizeof(pointer_update)) == 0);
+        PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_unknown,
+                                             sizeof(mouse_cursor_unknown),
+                                             &pointer_update) == LIBRDP_STATUS_UNSUPPORTED);
+        PCHECK(memcmp(&pointer_update,
+                      &valid_mouse_cursor_update,
+                      sizeof(pointer_update)) == 0);
+    }
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_core_input_write_init_request(&dyn_response) == LIBRDP_STATUS_OK);
