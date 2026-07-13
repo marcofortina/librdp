@@ -25,6 +25,7 @@ librdp_status rdp_session_selection_parse_pdu(const void* data,
                                               size_t length,
                                               rdp_session_selection_pdu* pdu)
 {
+    rdp_session_selection_pdu parsed;
     rdp_stream stream;
     uint32_t expected = 0;
 
@@ -33,36 +34,38 @@ librdp_status rdp_session_selection_parse_pdu(const void* data,
     if (length < RDP_SESSION_SELECTION_V1_LENGTH || length > UINT32_MAX)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(pdu, 0, sizeof(*pdu));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &pdu->cb_size) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &pdu->flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &pdu->version) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &pdu->id) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.cb_size) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.version) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    if (pdu->cb_size != length)
+    if (parsed.cb_size != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (pdu->cb_size == RDP_SESSION_SELECTION_V1_LENGTH)
+    if (parsed.cb_size == RDP_SESSION_SELECTION_V1_LENGTH)
     {
-        if (pdu->version != RDP_SESSION_SELECTION_VERSION1 || rdp_stream_remaining(&stream) != 0)
+        if (parsed.version != RDP_SESSION_SELECTION_VERSION1 || rdp_stream_remaining(&stream) != 0)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        *pdu = parsed;
         return LIBRDP_STATUS_OK;
     }
 
-    if (pdu->cb_size < RDP_SESSION_SELECTION_V2_HEADER_LENGTH ||
-        pdu->version != RDP_SESSION_SELECTION_VERSION2 ||
-        rdp_stream_read_u16_le(&stream, &pdu->text_chars) != LIBRDP_STATUS_OK ||
-        pdu->text_chars > RDP_SESSION_SELECTION_MAX_TEXT_CHARS)
+    if (parsed.cb_size < RDP_SESSION_SELECTION_V2_HEADER_LENGTH ||
+        parsed.version != RDP_SESSION_SELECTION_VERSION2 ||
+        rdp_stream_read_u16_le(&stream, &parsed.text_chars) != LIBRDP_STATUS_OK ||
+        parsed.text_chars > RDP_SESSION_SELECTION_MAX_TEXT_CHARS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    expected = RDP_SESSION_SELECTION_V2_HEADER_LENGTH + ((uint32_t)pdu->text_chars * 2u);
-    if (pdu->cb_size != expected)
+    expected = RDP_SESSION_SELECTION_V2_HEADER_LENGTH + ((uint32_t)parsed.text_chars * 2u);
+    if (parsed.cb_size != expected)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &pdu->text_utf16le, (size_t)pdu->text_chars * 2u) !=
+    if (rdp_stream_read_bytes(&stream, &parsed.text_utf16le, (size_t)parsed.text_chars * 2u) !=
             LIBRDP_STATUS_OK ||
         rdp_stream_remaining(&stream) != 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *pdu = parsed;
     return LIBRDP_STATUS_OK;
 }
 

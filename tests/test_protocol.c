@@ -566,11 +566,17 @@ static int test_session_selection_and_echo(void)
     PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) == LIBRDP_STATUS_OK);
     PCHECK(selection.version == RDP_SESSION_SELECTION_VERSION1 && selection.id == 0xeec699ebu);
     PCHECK(selection.text_chars == 0 && selection.text_utf16le == NULL);
-    buffer.data[0] = 0x0fu;
-    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_session_selection_parse_pdu(invalid_v1, sizeof(invalid_v1), &selection) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_session_selection_pdu valid_selection = selection;
+
+        buffer.data[0] = 0x0fu;
+        PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&selection, &valid_selection, sizeof(selection)) == 0);
+        PCHECK(rdp_session_selection_parse_pdu(invalid_v1, sizeof(invalid_v1), &selection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&selection, &valid_selection, sizeof(selection)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
@@ -579,9 +585,18 @@ static int test_session_selection_and_echo(void)
     PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) == LIBRDP_STATUS_OK);
     PCHECK(selection.version == RDP_SESSION_SELECTION_VERSION2 && selection.text_chars == 5);
     PCHECK(memcmp(selection.text_utf16le, text_utf16, sizeof(text_utf16)) == 0);
-    buffer.data[16] = 6;
-    PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_session_selection_pdu valid_selection = selection;
+
+        buffer.data[16] = 6;
+        PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length, &selection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&selection, &valid_selection, sizeof(selection)) == 0);
+        buffer.data[16] = 5;
+        PCHECK(rdp_session_selection_parse_pdu(buffer.data, buffer.length - 1u, &selection) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&selection, &valid_selection, sizeof(selection)) == 0);
+    }
     rdp_buffer_free(&buffer);
     rdp_buffer_init(&buffer);
 
