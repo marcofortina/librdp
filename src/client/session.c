@@ -19528,7 +19528,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                         channel_id,
                         (unsigned)data_len);
         rdp_buffer_free(&decoded);
-        return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
     if (status != LIBRDP_STATUS_OK)
     {
@@ -19668,7 +19668,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                         wire.codec_id,
                                         wire.bitmap_data_length,
                                         (int)status);
-                        status = LIBRDP_STATUS_OK;
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
                     }
                     if (status != LIBRDP_STATUS_OK)
                         break;
@@ -19751,7 +19751,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                         wire.codec_id,
                                         wire.bitmap_data_length,
                                         (int)status);
-                        status = LIBRDP_STATUS_OK;
+                        status = LIBRDP_STATUS_PROTOCOL_ERROR;
                     }
                     if (status == LIBRDP_STATUS_OK && avc_rendered)
                         rendered = 1;
@@ -19781,6 +19781,8 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                 wire.surface_id,
                                 wire.codec_id,
                                 wire.bitmap_data_length);
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
             }
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_WIRE_TO_SURFACE_2)
@@ -19844,7 +19846,8 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                     wire.codec_context_id,
                                     wire.bitmap_data_length,
                                     (int)status);
-                    status = LIBRDP_STATUS_OK;
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                    break;
                 }
             }
             else if (wire.codec_id == RDP_GRAPHICS_CODECID_CAVIDEO)
@@ -19861,10 +19864,10 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                                                 wire.bitmap_data,
                                                                 wire.bitmap_data_length,
                                                                 wire.pixel_format);
-                    if (status == LIBRDP_STATUS_UNSUPPORTED)
-                    {
-                        rdp_trace_event(RDP_TRACE_CLIENT,
-                                        "client.graphics.codec.rejected",
+                if (status == LIBRDP_STATUS_UNSUPPORTED)
+                {
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.graphics.codec.rejected",
                                     "dvc_channel_id=%u surface_id=%u codec_id=%u context_id=%u payload_len=%u decoder_status=%d",
                                     channel_id,
                                     wire.surface_id,
@@ -19872,7 +19875,7 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                     wire.codec_context_id,
                                     wire.bitmap_data_length,
                                     (int)status);
-                    status = LIBRDP_STATUS_OK;
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
                 }
                 if (status != LIBRDP_STATUS_OK)
                     break;
@@ -19887,6 +19890,8 @@ static librdp_status rdp_session_handle_graphics_message(librdp_session* session
                                 wire.codec_id,
                                 wire.codec_context_id,
                                 wire.bitmap_data_length);
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                break;
             }
         }
         else if (header.cmd_id == RDP_GRAPHICS_CMDID_DELETE_ENCODING_CONTEXT)
