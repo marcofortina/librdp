@@ -196,7 +196,6 @@ set(LIBRDP_SOURCES
     src/client/settings.c
     src/client/session.c
     src/client/smartcard_backend.c
-    src/client/usb_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c
@@ -266,6 +265,7 @@ set(LIBRDP_SOURCES
 
 set(LIBRDP_BACKEND_SOURCES
     src/client/printer_backend.c
+    src/client/usb_backend.c
     src/client/webauthn_backend.c
 )
 
@@ -415,7 +415,9 @@ if(LIBRDP_PCSC_FOUND)
 endif()
 if(LIBRDP_LIBUSB_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_LIBUSB=1)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_LIBUSB=1)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
     librdp_link_library_targets(PkgConfig::LIBRDP_LIBUSB)
 endif()
 if(LIBRDP_FIDO2_FOUND)

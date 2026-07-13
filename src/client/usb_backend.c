@@ -96,6 +96,128 @@ uint32_t rdp_usb_backend_transfer_status(enum libusb_transfer_status status)
     }
 }
 
+void rdp_usb_backend_release_device(rdp_usb_backend_device* device)
+{
+    if (!device)
+        return;
+    if (device->handle)
+    {
+        for (size_t i = 0; i < sizeof(device->claimed_interfaces); i++)
+        {
+            if (device->claimed_interfaces[i])
+                (void)libusb_release_interface(device->handle, (int)i);
+        }
+        libusb_close(device->handle);
+    }
+    memset(device, 0, sizeof(*device));
+}
+
+void rdp_usb_backend_release_devices(rdp_usb_backend_device* devices, size_t count)
+{
+    if (!devices)
+        return;
+    for (size_t i = 0; i < count; i++)
+        rdp_usb_backend_release_device(&devices[i]);
+}
+
+void rdp_usb_backend_context_exit(libusb_context** context)
+{
+    if (!context || !*context)
+        return;
+    libusb_exit(*context);
+    *context = NULL;
+}
+
+uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device)
+{
+    int rc = 0;
+
+    if (!device || !device->handle)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    rc = libusb_reset_device(device->handle);
+    return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+                                  rdp_usb_backend_libusb_status(rc);
+}
+
+uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
+                                        uint8_t endpoint,
+                                        uint8_t* transfer_type)
+{
+    libusb_device* usb_device = NULL;
+    struct libusb_config_descriptor* config = NULL;
+    int found = 0;
+    int interface_number = -1;
+    int type = LIBUSB_TRANSFER_TYPE_BULK;
+    int rc = 0;
+
+    if (!device || !device->handle || !transfer_type)
+        return RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE;
+    usb_device = libusb_get_device(device->handle);
+    rc = libusb_get_active_config_descriptor(usb_device, &config);
+    if (rc != LIBUSB_SUCCESS)
+        return rdp_usb_backend_libusb_status(rc);
+    for (uint8_t i = 0; i < config->bNumInterfaces && !found; i++)
+    {
+        const struct libusb_interface* iface = &config->interface[i];
+
+        for (int j = 0; j < iface->num_altsetting && !found; j++)
+        {
+            const struct libusb_interface_descriptor* alt = &iface->altsetting[j];
+
+            for (uint8_t k = 0; k < alt->bNumEndpoints; k++)
+            {
+                const struct libusb_endpoint_descriptor* ep = &alt->endpoint[k];
+
+                if (ep->bEndpointAddress == endpoint)
+                {
+                    interface_number = alt->bInterfaceNumber;
+                    type = ep->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK;
+                    found = 1;
+                    break;
+                }
+            }
+        }
+    }
+    libusb_free_config_descriptor(config);
+    if (!found || interface_number < 0 || interface_number >= (int)sizeof(device->claimed_interfaces))
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (!device->claimed_interfaces[interface_number])
+    {
+        if (libusb_kernel_driver_active(device->handle, interface_number) == 1)
+            (void)libusb_detach_kernel_driver(device->handle, interface_number);
+        rc = libusb_claim_interface(device->handle, interface_number);
+        if (rc != LIBUSB_SUCCESS)
+            return rdp_usb_backend_libusb_status(rc);
+        device->claimed_interfaces[interface_number] = 1;
+    }
+    *transfer_type = (uint8_t)type;
+    return RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
+}
+
+uint32_t rdp_usb_backend_select_interface(rdp_usb_backend_device* device,
+                                          uint8_t interface_number,
+                                          uint8_t alternate_setting)
+{
+    int rc = 0;
+
+    if (!device || !device->handle || interface_number >= sizeof(device->claimed_interfaces))
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    if (!device->claimed_interfaces[interface_number])
+    {
+        if (libusb_kernel_driver_active(device->handle, interface_number) == 1)
+            (void)libusb_detach_kernel_driver(device->handle, interface_number);
+        rc = libusb_claim_interface(device->handle, interface_number);
+        if (rc != LIBUSB_SUCCESS)
+            return rdp_usb_backend_libusb_status(rc);
+        device->claimed_interfaces[interface_number] = 1;
+    }
+    rc = libusb_set_interface_alt_setting(device->handle,
+                                          interface_number,
+                                          alternate_setting);
+    return rc == LIBUSB_SUCCESS ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+                                  rdp_usb_backend_libusb_status(rc);
+}
+
 /*
  * Pump a submitted libusb transfer until callback completion or timeout.
  * Timeout cancellation is followed by event handling until libusb reports the

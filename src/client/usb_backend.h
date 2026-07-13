@@ -17,6 +17,7 @@
 #ifndef RDP_CLIENT_USB_BACKEND_H
 #define RDP_CLIENT_USB_BACKEND_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef RDP_HAVE_LIBUSB
@@ -25,6 +26,17 @@
 uint32_t rdp_usb_backend_libusb_status(int rc);
 uint32_t rdp_usb_backend_transfer_status(enum libusb_transfer_status status);
 
+typedef struct rdp_usb_backend_device
+{
+    uint8_t active;
+    uint32_t interface_id;
+    libusb_device_handle* handle;
+    struct libusb_device_descriptor descriptor;
+    uint8_t bus_number;
+    uint8_t device_address;
+    uint8_t claimed_interfaces[32];
+} rdp_usb_backend_device;
+
 typedef struct rdp_usb_backend_iso_packet
 {
     uint32_t length;
@@ -32,6 +44,16 @@ typedef struct rdp_usb_backend_iso_packet
     uint32_t status;
 } rdp_usb_backend_iso_packet;
 
+void rdp_usb_backend_release_device(rdp_usb_backend_device* device);
+void rdp_usb_backend_release_devices(rdp_usb_backend_device* devices, size_t count);
+void rdp_usb_backend_context_exit(libusb_context** context);
+uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device);
+uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
+                                        uint8_t endpoint,
+                                        uint8_t* transfer_type);
+uint32_t rdp_usb_backend_select_interface(rdp_usb_backend_device* device,
+                                          uint8_t interface_number,
+                                          uint8_t alternate_setting);
 uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
                                           libusb_device_handle* handle,
                                           uint8_t request_type,

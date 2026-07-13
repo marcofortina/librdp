@@ -689,10 +689,29 @@ static int test_usb_backend_boundary(void)
 {
 #ifdef RDP_HAVE_LIBUSB
     rdp_usb_backend_iso_packet packet;
+    rdp_usb_backend_device device;
+    libusb_context* context = NULL;
+    uint8_t transfer_type = 0;
     uint32_t actual = 0;
 
+    memset(&device, 0, sizeof(device));
     memset(&packet, 0, sizeof(packet));
     packet.length = 1;
+    rdp_usb_backend_release_device(NULL);
+    rdp_usb_backend_release_devices(NULL, 1);
+    rdp_usb_backend_context_exit(NULL);
+    rdp_usb_backend_context_exit(&context);
+    rdp_usb_backend_release_device(&device);
+    CHECK(rdp_usb_backend_reset_device(NULL) == RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_reset_device(&device) == RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_claim_endpoint(NULL, 0, &transfer_type) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_claim_endpoint(&device, 0, &transfer_type) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(rdp_usb_backend_select_interface(NULL, 0, 0) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    CHECK(rdp_usb_backend_select_interface(&device, 0, 0) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
     CHECK(rdp_usb_backend_libusb_status(LIBUSB_SUCCESS) ==
           RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS);
     CHECK(rdp_usb_backend_libusb_status(LIBUSB_ERROR_TIMEOUT) ==
