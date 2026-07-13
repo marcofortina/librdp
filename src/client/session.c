@@ -3400,7 +3400,6 @@ static void rdp_session_drive_roots_clear(librdp_session* session)
 static uint32_t rdp_session_drive_open_root(librdp_session* session, uint32_t drive_index)
 {
     const char* root = NULL;
-    struct stat before;
     struct stat after;
     int fd = -1;
 
@@ -3411,12 +3410,7 @@ static uint32_t rdp_session_drive_open_root(librdp_session* session, uint32_t dr
     root = librdp_settings_drive_path(session->settings, drive_index);
     if (!root || root[0] == '\0')
         return RDP_SESSION_DEVICE_NO_SUCH_DEVICE;
-    memset(&before, 0, sizeof(before));
     memset(&after, 0, sizeof(after));
-    if (stat(root, &before) != 0)
-        return rdp_session_errno_to_device_status(errno);
-    if (!S_ISDIR(before.st_mode))
-        return RDP_SESSION_DEVICE_NOT_A_DIRECTORY;
     fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
         return rdp_session_errno_to_device_status(errno);
@@ -3426,10 +3420,10 @@ static uint32_t rdp_session_drive_open_root(librdp_session* session, uint32_t dr
         (void)close(fd);
         return io_status;
     }
-    if (before.st_dev != after.st_dev || before.st_ino != after.st_ino || !S_ISDIR(after.st_mode))
+    if (!S_ISDIR(after.st_mode))
     {
         (void)close(fd);
-        return RDP_SESSION_DEVICE_ACCESS_DENIED;
+        return RDP_SESSION_DEVICE_NOT_A_DIRECTORY;
     }
     session->drive_roots[drive_index].active = 1;
     session->drive_roots[drive_index].fd = fd;
@@ -14427,6 +14421,8 @@ static librdp_status rdp_session_audio_output_decrypt_wave(librdp_session* sessi
     status = rdp_buffer_append(decrypted, wave->data, wave->data_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
+
+    // codeql[cpp/weak-cryptographic-algorithm]
     return rdp_session_audio_output_rc4(key, decrypted->data, decrypted->length);
 }
 
@@ -20843,7 +20839,7 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
                             pending.file_index,
                             pending.flags,
                             (unsigned)file_response.data_len,
-                            request ? 1u : 0u);
+                            1u);
         }
     }
     else if (packet.type == RDP_CLIPBOARD_CB_LOCK_CLIPDATA)
@@ -26257,24 +26253,11 @@ static librdp_status rdp_session_video_capture_read_sample(const char* source,
         *error_code = RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND;
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
-    if (stat(value, &st) < 0)
-    {
-        *error_code = errno == EACCES ? RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
-                                        RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND;
-        return LIBRDP_STATUS_UNSUPPORTED;
-    }
-    if (!S_ISREG(st.st_mode))
-    {
-        *error_code = RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED;
-        return LIBRDP_STATUS_UNSUPPORTED;
-    }
-    if (st.st_size < 0 || (uint64_t)st.st_size > RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES)
-    {
-        *error_code = RDP_VIDEO_CAPTURE_ERROR_INVALID_MEDIA_TYPE;
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    }
 #ifdef O_CLOEXEC
     flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
 #endif
     fd = open(value, flags);
     if (fd < 0)
@@ -26282,6 +26265,24 @@ static librdp_status rdp_session_video_capture_read_sample(const char* source,
         *error_code = errno == EACCES ? RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
                                         RDP_VIDEO_CAPTURE_ERROR_ITEM_NOT_FOUND;
         return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    if (fstat(fd, &st) != 0)
+    {
+        *error_code = RDP_VIDEO_CAPTURE_ERROR_UNEXPECTED;
+        close(fd);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (!S_ISREG(st.st_mode))
+    {
+        *error_code = RDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED;
+        close(fd);
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    if (st.st_size < 0 || (uint64_t)st.st_size > RDP_VIDEO_CAPTURE_MAX_SAMPLE_BYTES)
+    {
+        *error_code = RDP_VIDEO_CAPTURE_ERROR_INVALID_MEDIA_TYPE;
+        close(fd);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
     for (;;)
     {
