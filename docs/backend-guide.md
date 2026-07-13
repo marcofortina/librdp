@@ -323,13 +323,13 @@ Operational requirements:
 - keep compositor tree ownership in the graphics/composition path;
 - keep echo responses bounded by the channel payload limits;
 - keep telemetry metadata free of private content when a telemetry runtime is registered;
-- treat multitransport as a negotiated transport extension with independent error handling.
+- keep multitransport capability negotiation disabled unless a side-transport runtime is registered.
 
 Failure handling:
 
 - remote application failures should surface as application lifecycle events;
 - compositor object loss should invalidate dependent visual state;
-- multitransport failure should not corrupt the primary transport state.
+- side-transport runtime failures should not corrupt the primary transport state.
 
 Useful trace families:
 

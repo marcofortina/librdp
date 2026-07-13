@@ -135,6 +135,10 @@ build/librdp-x11-viewer --target host --multitransport
 feature as parser-only unless an application supplies a privacy-safe runtime
 path.
 
+`--multitransport` requests multitransport packet support status. The core
+does not negotiate a side transport unless a runtime transport provider is
+available.
+
 These flags configure the public settings object and route packet behavior through the corresponding channel modules.
 
 ## Backend failure reporting
