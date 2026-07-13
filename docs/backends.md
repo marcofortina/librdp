@@ -131,6 +131,10 @@ build/librdp-x11-viewer --target host --telemetry
 build/librdp-x11-viewer --target host --multitransport
 ```
 
+`--telemetry` requests telemetry packet support status. The core reports the
+feature as parser-only unless an application supplies a privacy-safe runtime
+path.
+
 These flags configure the public settings object and route packet behavior through the corresponding channel modules.
 
 ## Backend failure reporting

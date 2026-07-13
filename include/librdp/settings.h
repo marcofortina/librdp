@@ -311,7 +311,7 @@ typedef enum librdp_feature
     LIBRDP_FEATURE_RAIL = 0x00000100u,           /**< Enable remote application integration. */
     LIBRDP_FEATURE_CR2 = 0x00000200u,            /**< Enable composited remoting. */
     LIBRDP_FEATURE_ECHO = 0x00000400u,           /**< Enable echo diagnostics channel. */
-    LIBRDP_FEATURE_TELEMETRY = 0x00000800u,      /**< Enable telemetry channel. */
+    LIBRDP_FEATURE_TELEMETRY = 0x00000800u,      /**< Query telemetry packet support. */
     LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u, /**< Enable multitransport negotiation. */
     LIBRDP_FEATURE_DESKTOP_COMPOSITION = 0x00002000u /**< Query desktop composition channel availability. */
 } librdp_feature;

@@ -322,7 +322,7 @@ Operational requirements:
 - keep application lifecycle events serialized with session processing;
 - keep compositor tree ownership in the graphics/composition path;
 - keep echo responses bounded by the channel payload limits;
-- keep telemetry metadata free of private content;
+- keep telemetry metadata free of private content when a telemetry runtime is registered;
 - treat multitransport as a negotiated transport extension with independent error handling.
 
 Failure handling:
