@@ -682,9 +682,6 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
         case LIBRDP_FEATURE_RAIL:
             return settings->rail_app_count > 0;
         case LIBRDP_FEATURE_CR2:
-        case LIBRDP_FEATURE_TELEMETRY:
-        case LIBRDP_FEATURE_MULTITRANSPORT:
-        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
             return 1;
         case LIBRDP_FEATURE_ECHO:
             return 1;
