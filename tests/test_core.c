@@ -5044,9 +5044,9 @@ static int test_settings_surface_input_session(void)
     CHECK(channel_infos[0].handle == channel_handle);
     CHECK(librdp_channel_send_options_init(&channel_send_options) == LIBRDP_STATUS_OK);
     channel_send_options.handle = channel_handle;
-    channel_send_options.priority = LIBRDP_CHANNEL_PRIORITY_HIGH;
+    channel_send_options.priority = LIBRDP_CHANNEL_PRIORITY_REALTIME;
     CHECK(librdp_session_channel_send_ex(session, &channel_send_options, "ping", 4) == LIBRDP_STATUS_OK);
-    channel_send_options.priority = (librdp_channel_priority)3;
+    channel_send_options.priority = (librdp_channel_priority)4;
     CHECK(librdp_session_channel_send_ex(session, &channel_send_options, "ping", 4) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     channel_send_options.priority = LIBRDP_CHANNEL_PRIORITY_LOW;
@@ -5086,18 +5086,18 @@ static int test_settings_surface_input_session(void)
                                       &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_channel_open(session,
                                       "APPCHAN",
-                                      (librdp_channel_priority)3,
+                                      (librdp_channel_priority)4,
                                       &client_channel_handle) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_session_channel_open(session,
                                       "APPCHAN",
-                                      LIBRDP_CHANNEL_PRIORITY_HIGH,
+                                      LIBRDP_CHANNEL_PRIORITY_REALTIME,
                                       &client_channel_handle) == LIBRDP_STATUS_OK);
     CHECK(client_channel_handle != 0);
     CHECK(librdp_channel_info_init(&channel_info) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_channel_get_info(session, client_channel_handle, &channel_info) == LIBRDP_STATUS_OK);
     CHECK(channel_info.handle == client_channel_handle);
     CHECK(channel_info.channel_id == 1);
-    CHECK(channel_info.priority == LIBRDP_CHANNEL_PRIORITY_HIGH);
+    CHECK(channel_info.priority == LIBRDP_CHANNEL_PRIORITY_REALTIME);
     CHECK(channel_info.active == 0);
     CHECK(channel_info.application_owned == 1);
     CHECK(channel_info.name_len == 7 && strcmp(channel_info.name, "APPCHAN") == 0);

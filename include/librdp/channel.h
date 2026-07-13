@@ -75,15 +75,16 @@ typedef uint64_t librdp_channel_handle;
  * @brief Dynamic virtual channel priority for outbound data.
  *
  * The values map to the two-bit protocol priority field used by dynamic
- * channel data PDUs. The reserved wire value is intentionally not exposed.
+ * channel data PDUs.
  *
  * @since 0.1.0
  */
 typedef enum librdp_channel_priority
 {
-    LIBRDP_CHANNEL_PRIORITY_LOW = 0,    /**< Normal priority. */
-    LIBRDP_CHANNEL_PRIORITY_MEDIUM = 1, /**< Medium priority. */
-    LIBRDP_CHANNEL_PRIORITY_HIGH = 2    /**< High priority. */
+    LIBRDP_CHANNEL_PRIORITY_LOW = 0,      /**< Normal priority. */
+    LIBRDP_CHANNEL_PRIORITY_MEDIUM = 1,   /**< Medium priority. */
+    LIBRDP_CHANNEL_PRIORITY_HIGH = 2,     /**< High priority. */
+    LIBRDP_CHANNEL_PRIORITY_REALTIME = 3  /**< Highest protocol priority for latency-sensitive data. */
 } librdp_channel_priority;
 
 /**

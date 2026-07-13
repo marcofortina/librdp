@@ -35468,7 +35468,7 @@ librdp_status librdp_session_channel_open(librdp_session* session,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *handle = 0;
     if (!session || !rdp_session_dynamic_channel_name_public_valid(name, &name_len) ||
-        priority > LIBRDP_CHANNEL_PRIORITY_HIGH || rdp_session_dynamic_channel_is_internal_name(name))
+        priority > LIBRDP_CHANNEL_PRIORITY_REALTIME || rdp_session_dynamic_channel_is_internal_name(name))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_session_require_owner(session, "client.channel.open.owner");
     if (status != LIBRDP_STATUS_OK)
@@ -35605,7 +35605,7 @@ librdp_status librdp_session_channel_send_ex(librdp_session* session,
     if (!session || !options || (!data && data_len > 0) ||
         options->version != LIBRDP_CHANNEL_SEND_OPTIONS_VERSION ||
         options->size < offsetof(librdp_channel_send_options, priority) + sizeof(options->priority) ||
-        options->priority > LIBRDP_CHANNEL_PRIORITY_HIGH)
+        options->priority > LIBRDP_CHANNEL_PRIORITY_REALTIME)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_session_require_owner(session, "client.channel.send_ex.owner");
     if (status != LIBRDP_STATUS_OK)
