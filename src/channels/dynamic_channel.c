@@ -825,6 +825,35 @@ static librdp_status rdp_dynamic_channel_validate_soft_sync_lists(const uint8_t*
     return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+static librdp_status rdp_dynamic_channel_validate_soft_sync_tunnels(const uint8_t* data,
+                                                                    size_t length,
+                                                                    uint32_t tunnel_count)
+{
+    rdp_stream stream;
+    uint32_t i = 0;
+
+    if (!data && length > 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+#if SIZE_MAX < UINT32_MAX
+    if (tunnel_count > SIZE_MAX / 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+#endif
+    if (length != (size_t)tunnel_count * 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, length);
+    for (i = 0; i < tunnel_count; i++)
+    {
+        uint32_t tunnel_type = 0;
+
+        if (rdp_stream_read_u32_le(&stream, &tunnel_type) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+            tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return rdp_stream_remaining(&stream) == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
 librdp_status rdp_dynamic_channel_parse_soft_sync_request(
     const void* data,
     size_t length,
@@ -905,6 +934,11 @@ librdp_status rdp_dynamic_channel_soft_sync_request_get_list(
             rdp_stream_read_u16_le(&stream, &channel_count) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         ids_len = (size_t)channel_count * 4u;
+        if ((tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+             tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY) ||
+            channel_count == 0 ||
+            ids_len / 4u != channel_count)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_read_bytes(&stream, &ids, ids_len) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (i == index)
@@ -991,10 +1025,19 @@ librdp_status rdp_dynamic_channel_parse_soft_sync_response(
         rdp_stream_read_u8(&stream, &pad) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &parsed.tunnel_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (pad != 0 || rdp_stream_remaining(&stream) != (size_t)parsed.tunnel_count * 4u)
+#if SIZE_MAX < UINT32_MAX
+    if (parsed.tunnel_count > SIZE_MAX / 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+#endif
+    if (pad != 0 ||
+        rdp_stream_remaining(&stream) != (size_t)parsed.tunnel_count * 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.tunnel_types_len = rdp_stream_remaining(&stream);
     if (rdp_stream_read_bytes(&stream, &parsed.tunnel_types, parsed.tunnel_types_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_dynamic_channel_validate_soft_sync_tunnels(parsed.tunnel_types,
+                                                       parsed.tunnel_types_len,
+                                                       parsed.tunnel_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *response = parsed;
     return LIBRDP_STATUS_OK;

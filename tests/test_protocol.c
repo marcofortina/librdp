@@ -7370,9 +7370,22 @@ static int test_path_security_license_channels(void)
     PCHECK(dyn_soft_sync_list.tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
            dyn_soft_sync_list.channel_count == 2);
     {
+        uint8_t bad_list[14];
+        rdp_dynamic_channel_soft_sync_request bad_soft_sync = dyn_soft_sync;
         rdp_dynamic_channel_soft_sync_channel_list valid_dyn_soft_sync_list =
             dyn_soft_sync_list;
 
+        PCHECK(dyn_soft_sync.lists_len == sizeof(bad_list));
+        memcpy(bad_list, dyn_soft_sync.lists, sizeof(bad_list));
+        bad_list[0] = 0xffu;
+        bad_soft_sync.lists = bad_list;
+        PCHECK(rdp_dynamic_channel_soft_sync_request_get_list(&bad_soft_sync,
+                                                              0,
+                                                              &dyn_soft_sync_list) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&dyn_soft_sync_list,
+                      &valid_dyn_soft_sync_list,
+                      sizeof(dyn_soft_sync_list)) == 0);
         PCHECK(rdp_dynamic_channel_soft_sync_request_get_list(&dyn_soft_sync,
                                                               1,
                                                               &dyn_soft_sync_list) ==
@@ -7416,13 +7429,22 @@ static int test_path_security_license_channels(void)
     PCHECK(error_info == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY);
     {
         uint32_t valid_error_info = error_info;
+        rdp_dynamic_channel_soft_sync_response valid_response = dyn_soft_sync_response;
 
         dyn_response.data[6] = 0xffu;
+        PCHECK(rdp_dynamic_channel_parse_soft_sync_response(dyn_response.data,
+                                                            dyn_response.length,
+                                                            &dyn_soft_sync_response) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&dyn_soft_sync_response,
+                      &valid_response,
+                      sizeof(dyn_soft_sync_response)) == 0);
         PCHECK(rdp_dynamic_channel_soft_sync_response_get_tunnel(&dyn_soft_sync_response,
                                                                  0,
                                                                  &error_info) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(error_info == valid_error_info);
+        dyn_response.data[6] = RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY;
     }
     {
         uint32_t invalid_tunnel = 0x12345678u;
