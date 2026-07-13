@@ -33490,6 +33490,28 @@ static void rdp_session_fill_pollfds(const librdp_session* session, struct pollf
 }
 
 /*
+ * Checks whether transport input is already queued before local timers consume
+ * pending protocol state. This preserves ordering for late replies that arrived
+ * while the application was outside the dispatch loop.
+ */
+static int rdp_session_transport_input_ready_now(const librdp_session* session)
+{
+    struct pollfd pfd;
+    int rc = 0;
+
+    if (!session || session->transport.fd < 0)
+        return 0;
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = session->transport.fd;
+    pfd.events = POLLIN;
+    do
+    {
+        rc = poll(&pfd, 1u, 0);
+    } while (rc < 0 && errno == EINTR);
+    return rc > 0 && (pfd.revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0;
+}
+
+/*
  * Run one iteration of the active session loop. Transport readiness, PDU
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
  * are processed without re-entering callbacks concurrently.
@@ -33507,7 +33529,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         return status;
     if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
         return rdp_session_finish_cancel(session);
-    rdp_session_echo_check_timeout(session);
+    if (!rdp_session_transport_input_ready_now(session))
+        rdp_session_echo_check_timeout(session);
     {
         int echo_timeout_ms = rdp_session_echo_next_timeout_ms(session);
 

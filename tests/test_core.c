@@ -82,6 +82,7 @@
 #define DVC_SCENARIO_ECHO_PING 14
 #define DVC_SCENARIO_RDPDR_PRINTER_JOB 15
 #define DVC_SCENARIO_ECHO_TIMEOUT 16
+#define DVC_SCENARIO_ECHO_LATE_RESPONSE 17
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -3141,7 +3142,8 @@ static int start_handshake_server_full(uint16_t* port,
                     }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_VALIDATE ||
                              dynamic_channel_scenario == DVC_SCENARIO_ECHO_PING ||
-                             dynamic_channel_scenario == DVC_SCENARIO_ECHO_TIMEOUT)
+                             dynamic_channel_scenario == DVC_SCENARIO_ECHO_TIMEOUT ||
+                             dynamic_channel_scenario == DVC_SCENARIO_ECHO_LATE_RESPONSE)
                     {
                         if (!build_dynamic_channel_create_named_packet(&dvc_create, "ECHO") ||
                             !write_exact_fd(client, dvc_create.data, dvc_create.length))
@@ -3291,6 +3293,29 @@ static int start_handshake_server_full(uint16_t* port,
                                                    7,
                                                    echo_ping,
                                                    sizeof(echo_ping)))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_LATE_RESPONSE)
+                    {
+                        static const uint8_t echo_ping[] = {'l', 'a', 't', 'e'};
+
+                        if (!read_echo_response_fd(client,
+                                                   input,
+                                                   sizeof(input),
+                                                   1004,
+                                                   7,
+                                                   echo_ping,
+                                                   sizeof(echo_ping)))
+                        {
+                            _exit(5);
+                        }
+                        test_sleep_ms(80u);
+                        if (!build_dynamic_channel_data_payload_packet(&dvc_data,
+                                                                       echo_ping,
+                                                                       sizeof(echo_ping)) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length))
                         {
                             _exit(5);
                         }
@@ -5952,6 +5977,90 @@ static int test_echo_channel_client_timeout(void)
 }
 
 /*
+ * Coverage: verifies that a delayed Echo response is correlated with the
+ * original request but still reported as timed out. This catches races where a
+ * late diagnostic reply could resurrect a cleared request or skew RTT metrics.
+ */
+static int test_echo_channel_client_late_response(void)
+{
+    static const uint8_t ping[] = {'l', 'a', 't', 'e'};
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    librdp_echo_stats echo_stats;
+    event_counter counter;
+    uint16_t test_port = 0;
+    uint64_t sequence = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+    int saw_active = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_ECHO_LATE_RESPONSE,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && status == LIBRDP_STATUS_OK && !saw_active; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            CHECK(librdp_session_get_feature_status(session,
+                                                    LIBRDP_FEATURE_ECHO,
+                                                    &feature_status) == LIBRDP_STATUS_OK);
+            saw_active = feature_status.active ? 1 : 0;
+        }
+    }
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(saw_active);
+    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 20, &sequence) ==
+          LIBRDP_STATUS_OK);
+    CHECK(sequence != 0);
+    test_sleep_ms(100u);
+    for (i = 0; i < 16u && status == LIBRDP_STATUS_OK && counter.echo_result == 0; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(counter.echo_result == 1);
+    CHECK(counter.echo_ok == 0 && counter.echo_timed_out == 1);
+    CHECK(counter.echo_sequence == sequence);
+    CHECK(counter.echo_rtt_us == 0);
+    CHECK(librdp_echo_stats_init(&echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_echo_stats(session, &echo_stats) == LIBRDP_STATUS_OK);
+    CHECK(echo_stats.pings_sent == 1);
+    CHECK(echo_stats.ping_responses == 0);
+    CHECK(echo_stats.timeouts == 0);
+    CHECK(echo_stats.late_responses == 1);
+    CHECK(echo_stats.pending_sequence == 0);
+    CHECK(echo_stats.pending_payload_len == 0);
+    CHECK(echo_stats.last_sequence == sequence);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that Display Control capability rejection of a pending
  * local monitor layout does not fail the RDP session. It catches resize paths
  * that treat server capability limits as fatal protocol errors.
@@ -6678,6 +6787,8 @@ int test_client_core(void)
     if (test_echo_channel_client_ping() != 0)
         return 1;
     if (test_echo_channel_client_timeout() != 0)
+        return 1;
+    if (test_echo_channel_client_late_response() != 0)
         return 1;
     if (test_display_control_caps_reject_pending_layout() != 0)
         return 1;
