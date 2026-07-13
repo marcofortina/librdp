@@ -16176,6 +16176,7 @@ static int test_video_redirection_channel(void)
     PCHECK(geometry_info.width == 640 && geometry_info.client_top == 22);
     {
         rdp_video_redirection_geometry_info bad_geometry = geometry_info;
+        rdp_video_redirection_geometry_info valid_geometry = geometry_info;
 
         bad_geometry.window_state = 0x80000000u;
         PCHECK(rdp_video_redirection_write_geometry_info(&payload, &bad_geometry) ==
@@ -16189,23 +16190,34 @@ static int test_video_redirection_channel(void)
         bad_geometry.width = 2;
         PCHECK(rdp_video_redirection_write_geometry_info(&payload, &bad_geometry) ==
                LIBRDP_STATUS_INVALID_ARGUMENT);
+        bad_geometry = valid_geometry;
         ((uint8_t*)nested.data)[8] = 0x80u;
         PCHECK(rdp_video_redirection_parse_geometry_info(nested.data,
                                                          nested.length,
                                                          &bad_geometry) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&bad_geometry, &valid_geometry, sizeof(bad_geometry)) == 0);
+        bad_geometry = valid_geometry;
         ((uint8_t*)nested.data)[8] = (uint8_t)RDP_VIDEO_REDIRECTION_WINDOW_NEW;
         ((uint8_t*)nested.data)[28] = 0x01u;
         PCHECK(rdp_video_redirection_parse_geometry_info(nested.data,
                                                          nested.length,
                                                          &bad_geometry) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&bad_geometry, &valid_geometry, sizeof(bad_geometry)) == 0);
         nested.data[28] = 0x00u;
     }
     PCHECK(rdp_video_redirection_write_rect(&payload, 1, 2, 3, 4) == LIBRDP_STATUS_OK);
     PCHECK(rdp_video_redirection_parse_rect(payload.data, payload.length, &rect) ==
            LIBRDP_STATUS_OK);
     PCHECK(rect.top == 1 && rect.right == 4);
+    {
+        rdp_video_redirection_rect valid_rect = rect;
+
+        PCHECK(rdp_video_redirection_parse_rect(payload.data, payload.length - 1u, &rect) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&rect, &valid_rect, sizeof(rect)) == 0);
+    }
     PCHECK(rdp_video_redirection_write_geometry_update(&buffer,
                                                        15,
                                                        guid,
@@ -16218,6 +16230,14 @@ static int test_video_redirection_channel(void)
                                                        &geometry_update) == LIBRDP_STATUS_OK);
     PCHECK(geometry_update.geometry_len == nested.length &&
            geometry_update.visible_rect_len == payload.length);
+    {
+        rdp_video_redirection_geometry_update valid_update = geometry_update;
+
+        PCHECK(rdp_video_redirection_parse_geometry_update(buffer.data,
+                                                           buffer.length - 1u,
+                                                           &geometry_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&geometry_update, &valid_update, sizeof(geometry_update)) == 0);
+    }
     PCHECK(rdp_video_redirection_write_geometry_update(&payload,
                                                        15,
                                                        guid,

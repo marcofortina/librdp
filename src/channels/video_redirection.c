@@ -1427,27 +1427,29 @@ librdp_status rdp_video_redirection_parse_geometry_update(
     size_t length,
     rdp_video_redirection_geometry_update* update)
 {
+    rdp_video_redirection_geometry_update parsed;
     rdp_stream stream;
 
     if (!data || !update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memset(update, 0, sizeof(*update));
-    if (rdp_video_redirection_parse_header(data, length, 1, &update->header) != LIBRDP_STATUS_OK ||
-        !rdp_video_redirection_header_matches(&update->header,
+    memset(&parsed, 0, sizeof(parsed));
+    if (rdp_video_redirection_parse_header(data, length, 1, &parsed.header) != LIBRDP_STATUS_OK ||
+        !rdp_video_redirection_header_matches(&parsed.header,
                                               RDP_VIDEO_REDIRECTION_INTERFACE_DEFAULT,
                                               RDP_VIDEO_REDIRECTION_STREAM_ID_PROXY,
                                               RDP_VIDEO_REDIRECTION_FUNC_UPDATE_GEOMETRY_INFO) ||
-        update->header.payload_len < 24u ||
-        rdp_video_redirection_parse_payload_guid(&update->header,
-                                                 update->presentation_id,
+        parsed.header.payload_len < 24u ||
+        rdp_video_redirection_parse_payload_guid(&parsed.header,
+                                                 parsed.presentation_id,
                                                  &stream) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &update->geometry_len) != LIBRDP_STATUS_OK ||
-        update->geometry_len > rdp_stream_remaining(&stream) ||
-        rdp_stream_read_bytes(&stream, &update->geometry, update->geometry_len) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &update->visible_rect_len) != LIBRDP_STATUS_OK ||
-        update->visible_rect_len != rdp_stream_remaining(&stream) ||
-        rdp_stream_read_bytes(&stream, &update->visible_rect, update->visible_rect_len) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u32_le(&stream, &parsed.geometry_len) != LIBRDP_STATUS_OK ||
+        parsed.geometry_len > rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &parsed.geometry, parsed.geometry_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.visible_rect_len) != LIBRDP_STATUS_OK ||
+        parsed.visible_rect_len != rdp_stream_remaining(&stream) ||
+        rdp_stream_read_bytes(&stream, &parsed.visible_rect, parsed.visible_rect_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *update = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1490,32 +1492,34 @@ librdp_status rdp_video_redirection_parse_geometry_info(
     size_t length,
     rdp_video_redirection_geometry_info* info)
 {
+    rdp_video_redirection_geometry_info parsed;
     rdp_stream stream;
 
     if (!data || !info)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 44u && length != 48u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(info, 0, sizeof(*info));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_video_redirection_read_u64_le(&stream, &info->video_window_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->window_state) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->width) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->height) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->left) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->top) != LIBRDP_STATUS_OK ||
-        rdp_video_redirection_read_u64_le(&stream, &info->reserved) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->client_left) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &info->client_top) != LIBRDP_STATUS_OK)
+    if (rdp_video_redirection_read_u64_le(&stream, &parsed.video_window_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.window_state) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.width) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.height) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.top) != LIBRDP_STATUS_OK ||
+        rdp_video_redirection_read_u64_le(&stream, &parsed.reserved) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.client_left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.client_top) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) == 4u)
     {
-        if (rdp_stream_read_u32_le(&stream, &info->padding) != LIBRDP_STATUS_OK)
+        if (rdp_stream_read_u32_le(&stream, &parsed.padding) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        info->has_padding = 1u;
+        parsed.has_padding = 1u;
     }
-    if (rdp_stream_remaining(&stream) != 0 || !rdp_video_redirection_geometry_info_valid(info))
+    if (rdp_stream_remaining(&stream) != 0 || !rdp_video_redirection_geometry_info_valid(&parsed))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *info = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1524,19 +1528,21 @@ librdp_status rdp_video_redirection_parse_rect(
     size_t length,
     rdp_video_redirection_rect* rect)
 {
+    rdp_video_redirection_rect parsed;
     rdp_stream stream;
 
     if (!data || !rect)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 16u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    memset(rect, 0, sizeof(*rect));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &rect->top) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &rect->left) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &rect->bottom) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &rect->right) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.top) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.left) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.bottom) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.right) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *rect = parsed;
     return LIBRDP_STATUS_OK;
 }
 
