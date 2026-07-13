@@ -59,10 +59,104 @@ struct x11_camera_capture
     uint32_t height;
     uint32_t fourcc;
     uint8_t output_format;
+    uint64_t frames;
+    uint64_t bytes;
+    uint64_t errors;
+    uint64_t oversize_frames;
 #else
     int unused;
 #endif
 };
+
+static const char* x11_camera_source_path(const char* source)
+{
+    if (!source)
+        return NULL;
+    if (strncmp(source, "device=", 7u) == 0 && source[7] != '\0')
+        return source + 7u;
+    return source;
+}
+
+int x11_camera_source_allowed(const char* source)
+{
+    const char* path = x11_camera_source_path(source);
+    size_t i = 0;
+
+    if (!path || strncmp(path, "/dev/video", 10u) != 0 || path[10] == '\0')
+        return 0;
+    for (i = 10u; path[i] != '\0'; i++)
+    {
+        if (path[i] < '0' || path[i] > '9')
+            return 0;
+    }
+    return 1;
+}
+
+static int x11_camera_format_sample_cap(uint8_t format,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        size_t* max_sample_bytes)
+{
+    size_t pixels = 0;
+    size_t bytes = 0;
+
+    if (width == 0 || height == 0 || width > SIZE_MAX / height)
+        return 0;
+    pixels = (size_t)width * (size_t)height;
+    switch (format)
+    {
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_H264:
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_MJPG:
+            bytes = X11_CAMERA_MAX_SAMPLE_BYTES;
+            break;
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_YUY2:
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_NV12:
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_I420:
+            if (pixels > SIZE_MAX / 2u)
+                return 0;
+            bytes = pixels * 2u;
+            break;
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_RGB24:
+            if (pixels > SIZE_MAX / 3u)
+                return 0;
+            bytes = pixels * 3u;
+            break;
+        case LIBRDP_VIDEO_CAPTURE_MEDIA_RGB32:
+            if (pixels > SIZE_MAX / 4u)
+                return 0;
+            bytes = pixels * 4u;
+            break;
+        default:
+            return 0;
+    }
+    if (bytes == 0 || bytes > X11_CAMERA_MAX_SAMPLE_BYTES)
+        return 0;
+    if (max_sample_bytes)
+        *max_sample_bytes = bytes;
+    return 1;
+}
+
+int x11_camera_media_supported(const librdp_video_capture_media* media, size_t* max_sample_bytes)
+{
+    uint64_t fps = 0;
+
+    if (max_sample_bytes)
+        *max_sample_bytes = 0;
+    if (!media || media->width == 0 || media->height == 0 ||
+        media->width > X11_CAMERA_MAX_WIDTH || media->height > X11_CAMERA_MAX_HEIGHT ||
+        (media->flags & ~(LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_DECODING_REQUIRED |
+                          LIBRDP_VIDEO_CAPTURE_MEDIA_FLAG_BOTTOM_UP)) != 0)
+        return 0;
+    if (media->frame_rate_numerator != 0)
+    {
+        const uint32_t denominator = media->frame_rate_denominator ? media->frame_rate_denominator : 1u;
+
+        fps = ((uint64_t)media->frame_rate_numerator + denominator - 1u) / denominator;
+        if (fps > X11_CAMERA_MAX_FPS)
+            return 0;
+    }
+    return x11_camera_format_sample_cap(media->format, media->width, media->height, max_sample_bytes);
+}
 
 #ifdef __linux__
 #ifdef LIBRDP_HAVE_JPEG
@@ -114,23 +208,12 @@ static int x11_camera_ioctl(int fd, unsigned long request, void* arg)
     return rc;
 }
 
-static const char* x11_camera_source_path(const char* source)
-{
-    if (!source)
-        return NULL;
-    if (strncmp(source, "device=", 7u) == 0 && source[7] != '\0')
-        return source + 7u;
-    if (strncmp(source, "file=", 5u) == 0 && source[5] != '\0')
-        return source + 5u;
-    return source;
-}
-
 static int x11_camera_open_source(const char* source)
 {
     const char* path = x11_camera_source_path(source);
     int flags = O_RDWR | O_NONBLOCK;
 
-    if (!path || strncmp(path, "/dev/video", 10u) != 0)
+    if (!x11_camera_source_allowed(source))
         return -1;
 #ifdef O_CLOEXEC
     flags |= O_CLOEXEC;
@@ -430,13 +513,36 @@ int x11_camera_capture_start(x11_camera_capture* capture,
 #ifdef __linux__
     struct v4l2_capability capability;
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    size_t max_sample_bytes = 0;
 
     if (!capture || !source || !media)
         return 0;
     x11_camera_capture_stop(capture);
+    capture->frames = 0;
+    capture->bytes = 0;
+    capture->errors = 0;
+    capture->oversize_frames = 0;
+    if (!x11_camera_source_allowed(source))
+    {
+        capture->errors++;
+        x11_trace_event(X11_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=source_policy");
+        return 0;
+    }
+    if (!x11_camera_media_supported(media, &max_sample_bytes))
+    {
+        capture->errors++;
+        x11_trace_event(X11_TRACE_CLIENT,
+                        "x11.camera.start.failed",
+                        "backend=v4l2 reason=media_policy format=%u width=%u height=%u",
+                        media->format,
+                        media->width,
+                        media->height);
+        return 0;
+    }
     capture->fd = x11_camera_open_source(source);
     if (capture->fd < 0)
     {
+        capture->errors++;
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.start.failed",
                         "backend=v4l2 reason=open errno=%d",
@@ -448,6 +554,7 @@ int x11_camera_capture_start(x11_camera_capture* capture,
         (capability.capabilities & V4L2_CAP_VIDEO_CAPTURE) == 0 ||
         (capability.capabilities & V4L2_CAP_STREAMING) == 0)
     {
+        capture->errors++;
         x11_trace_event(X11_TRACE_CLIENT, "x11.camera.start.failed", "backend=v4l2 reason=capability");
         x11_camera_capture_stop(capture);
         return 0;
@@ -455,6 +562,7 @@ int x11_camera_capture_start(x11_camera_capture* capture,
     if (!x11_camera_apply_format(capture, media) || !x11_camera_prepare_buffers(capture) ||
         x11_camera_ioctl(capture->fd, VIDIOC_STREAMON, &type) < 0)
     {
+        capture->errors++;
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.camera.start.failed",
                         "backend=v4l2 reason=stream format=%u width=%u height=%u",
@@ -467,12 +575,13 @@ int x11_camera_capture_start(x11_camera_capture* capture,
     capture->streaming = 1;
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.camera.start",
-                    "backend=v4l2 width=%u height=%u fourcc=%u output_format=%u buffers=%u",
+                    "backend=v4l2 width=%u height=%u fourcc=%u output_format=%u buffers=%u max_sample=%u",
                     capture->width,
                     capture->height,
                     capture->fourcc,
                     capture->output_format,
-                    capture->buffer_count);
+                    capture->buffer_count,
+                    (unsigned)max_sample_bytes);
     return 1;
 #else
     (void)capture;
@@ -495,6 +604,7 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
     struct v4l2_buffer buffer;
     uint8_t* copy = NULL;
     int rc = 0;
+    size_t max_sample_bytes = 0;
 
     if (!capture || !data || !data_len || capture->fd < 0 || !capture->streaming)
         return -1;
@@ -507,16 +617,38 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
     if (rc == 0)
         return 0;
     if (rc < 0)
-        return errno == EINTR ? 0 : -1;
+    {
+        if (errno == EINTR)
+            return 0;
+        capture->errors++;
+        return -1;
+    }
     memset(&buffer, 0, sizeof(buffer));
     buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buffer.memory = V4L2_MEMORY_MMAP;
     if (x11_camera_ioctl(capture->fd, VIDIOC_DQBUF, &buffer) < 0)
-        return errno == EAGAIN ? 0 : -1;
+    {
+        if (errno == EAGAIN)
+            return 0;
+        capture->errors++;
+        return -1;
+    }
     if (buffer.index >= capture->buffer_count || !capture->buffers[buffer.index].data ||
         buffer.bytesused > capture->buffers[buffer.index].length)
     {
         (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+        capture->errors++;
+        return -1;
+    }
+    if (!x11_camera_format_sample_cap(capture->output_format,
+                                      capture->width,
+                                      capture->height,
+                                      &max_sample_bytes) ||
+        buffer.bytesused > max_sample_bytes)
+    {
+        (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+        capture->errors++;
+        capture->oversize_frames++;
         return -1;
     }
 #ifdef LIBRDP_HAVE_JPEG
@@ -531,6 +663,17 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
                                          data_len))
         {
             (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+            capture->errors++;
+            return -1;
+        }
+        if (*data_len > max_sample_bytes)
+        {
+            free(copy);
+            copy = NULL;
+            *data_len = 0;
+            (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+            capture->errors++;
+            capture->oversize_frames++;
             return -1;
         }
     }
@@ -541,6 +684,7 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
         if (!copy)
         {
             (void)x11_camera_ioctl(capture->fd, VIDIOC_QBUF, &buffer);
+            capture->errors++;
             return -1;
         }
         if (buffer.bytesused > 0)
@@ -553,8 +697,11 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
         free(copy);
         *data = NULL;
         *data_len = 0;
+        capture->errors++;
         return -1;
     }
+    capture->frames++;
+    capture->bytes += *data_len;
     x11_trace_event_level(X11_TRACE_CLIENT,
                           X11_TRACE_LEVEL_TRACE,
                           "x11.camera.sample",
@@ -570,3 +717,128 @@ int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, 
     return -1;
 #endif
 }
+
+void x11_camera_capture_get_stats(const x11_camera_capture* capture, x11_camera_capture_stats* stats)
+{
+    if (!stats)
+        return;
+    memset(stats, 0, sizeof(*stats));
+    if (!capture)
+        return;
+#ifdef __linux__
+    stats->frames = capture->frames;
+    stats->bytes = capture->bytes;
+    stats->errors = capture->errors;
+    stats->oversize_frames = capture->oversize_frames;
+    stats->streaming = capture->streaming ? 1 : 0;
+#else
+    (void)capture;
+#endif
+}
+
+#ifdef LIBRDP_X11_CAMERA_TESTING
+struct x11_camera_mock
+{
+    int permission_denied;
+    int unplugged;
+    int started;
+    size_t frame_len;
+    librdp_video_capture_media media;
+    x11_camera_capture_stats stats;
+};
+
+x11_camera_mock* x11_camera_mock_new(int permission_denied, int unplugged, size_t frame_len)
+{
+    x11_camera_mock* mock = (x11_camera_mock*)calloc(1, sizeof(*mock));
+
+    if (!mock)
+        return NULL;
+    mock->permission_denied = permission_denied ? 1 : 0;
+    mock->unplugged = unplugged ? 1 : 0;
+    mock->frame_len = frame_len;
+    return mock;
+}
+
+void x11_camera_mock_free(x11_camera_mock* mock)
+{
+    free(mock);
+}
+
+int x11_camera_mock_start(x11_camera_mock* mock, const librdp_video_capture_media* media)
+{
+    size_t max_sample_bytes = 0;
+
+    if (!mock || !media)
+        return 0;
+    mock->started = 0;
+    memset(&mock->stats, 0, sizeof(mock->stats));
+    if (mock->permission_denied)
+    {
+        mock->stats.errors++;
+        return 0;
+    }
+    if (!x11_camera_media_supported(media, &max_sample_bytes))
+    {
+        mock->stats.errors++;
+        return 0;
+    }
+    (void)max_sample_bytes;
+    mock->media = *media;
+    mock->started = 1;
+    mock->stats.streaming = 1;
+    return 1;
+}
+
+/*
+ * Purpose: emulate one camera sample request with the same failure policy as
+ * the V4L2 path. Invariant: returned data is caller-owned and oversized frames
+ * are rejected before allocation. Failure policy: unplug and oversize update
+ * metrics and return -1 without producing a payload.
+ */
+int x11_camera_mock_read_sample(x11_camera_mock* mock, uint8_t** data, size_t* data_len)
+{
+    size_t max_sample_bytes = 0;
+    uint8_t* sample = NULL;
+
+    if (!mock || !data || !data_len || !mock->started)
+        return -1;
+    *data = NULL;
+    *data_len = 0;
+    if (mock->unplugged)
+    {
+        mock->started = 0;
+        mock->stats.streaming = 0;
+        mock->stats.errors++;
+        return -1;
+    }
+    if (!x11_camera_media_supported(&mock->media, &max_sample_bytes) ||
+        mock->frame_len > max_sample_bytes)
+    {
+        mock->stats.errors++;
+        mock->stats.oversize_frames++;
+        return -1;
+    }
+    sample = (uint8_t*)malloc(mock->frame_len ? mock->frame_len : 1u);
+    if (!sample)
+    {
+        mock->stats.errors++;
+        return -1;
+    }
+    if (mock->frame_len > 0)
+        memset(sample, 0x5a, mock->frame_len);
+    *data = sample;
+    *data_len = mock->frame_len;
+    mock->stats.frames++;
+    mock->stats.bytes += mock->frame_len;
+    return 1;
+}
+
+void x11_camera_mock_get_stats(const x11_camera_mock* mock, x11_camera_capture_stats* stats)
+{
+    if (!stats)
+        return;
+    memset(stats, 0, sizeof(*stats));
+    if (mock)
+        *stats = mock->stats;
+}
+#endif

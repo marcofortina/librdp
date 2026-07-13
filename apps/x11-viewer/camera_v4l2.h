@@ -24,6 +24,19 @@
 #include <librdp/video.h>
 
 typedef struct x11_camera_capture x11_camera_capture;
+typedef struct x11_camera_capture_stats
+{
+    uint64_t frames;
+    uint64_t bytes;
+    uint64_t errors;
+    uint64_t oversize_frames;
+    int streaming;
+} x11_camera_capture_stats;
+
+#define X11_CAMERA_MAX_WIDTH 7680u
+#define X11_CAMERA_MAX_HEIGHT 4320u
+#define X11_CAMERA_MAX_FPS 120u
+#define X11_CAMERA_MAX_SAMPLE_BYTES (64u * 1024u * 1024u)
 
 x11_camera_capture* x11_camera_capture_new(void);
 void x11_camera_capture_free(x11_camera_capture* capture);
@@ -32,5 +45,18 @@ int x11_camera_capture_start(x11_camera_capture* capture,
                              const librdp_video_capture_media* media);
 void x11_camera_capture_stop(x11_camera_capture* capture);
 int x11_camera_capture_read_sample(x11_camera_capture* capture, uint8_t** data, size_t* data_len);
+void x11_camera_capture_get_stats(const x11_camera_capture* capture, x11_camera_capture_stats* stats);
+int x11_camera_source_allowed(const char* source);
+int x11_camera_media_supported(const librdp_video_capture_media* media, size_t* max_sample_bytes);
+
+#ifdef LIBRDP_X11_CAMERA_TESTING
+typedef struct x11_camera_mock x11_camera_mock;
+
+x11_camera_mock* x11_camera_mock_new(int permission_denied, int unplugged, size_t frame_len);
+void x11_camera_mock_free(x11_camera_mock* mock);
+int x11_camera_mock_start(x11_camera_mock* mock, const librdp_video_capture_media* media);
+int x11_camera_mock_read_sample(x11_camera_mock* mock, uint8_t** data, size_t* data_len);
+void x11_camera_mock_get_stats(const x11_camera_mock* mock, x11_camera_capture_stats* stats);
+#endif
 
 #endif

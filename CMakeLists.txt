@@ -1040,6 +1040,28 @@ if(LIBRDP_BUILD_X11_VIEWER)
         librdp_apply_sanitizer_link_options(test_viewer_audio)
         add_test(NAME viewer_audio COMMAND test_viewer_audio)
         set_tests_properties(viewer_audio PROPERTIES TIMEOUT 30)
+        add_executable(test_viewer_camera
+            tests/test_viewer_camera.c
+            apps/x11-viewer/camera_v4l2.c
+            apps/x11-viewer/viewer_trace.c
+        )
+        target_include_directories(test_viewer_camera PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_compile_definitions(test_viewer_camera PRIVATE
+            _POSIX_C_SOURCE=200809L
+            LIBRDP_X11_CAMERA_TESTING=1
+        )
+        if(LIBRDP_JPEG_FOUND)
+            target_compile_definitions(test_viewer_camera PRIVATE LIBRDP_HAVE_JPEG=1)
+            target_link_libraries(test_viewer_camera PRIVATE PkgConfig::LIBRDP_JPEG)
+        endif()
+        librdp_apply_warning_options(test_viewer_camera)
+        librdp_apply_sanitizer_compile_options(test_viewer_camera)
+        librdp_apply_sanitizer_link_options(test_viewer_camera)
+        add_test(NAME viewer_camera COMMAND test_viewer_camera)
+        set_tests_properties(viewer_camera PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_keyboard
             tests/test_viewer_keyboard.c
             apps/x11-viewer/viewer_keyboard.c
