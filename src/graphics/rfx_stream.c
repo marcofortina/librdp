@@ -523,8 +523,6 @@ librdp_status rdp_rfx_stream_decode(const void* data,
     memset(&state, 0, sizeof(state));
     memset(&pending, 0, sizeof(pending));
     state.summary.mode = RDP_RFX_RLGR1;
-    if (summary)
-        memset(summary, 0, sizeof(*summary));
     if (length == 0)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 

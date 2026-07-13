@@ -327,6 +327,7 @@ librdp_status rdp_rfx_parse_component_quant(const void* data,
                                             rdp_rfx_component_quant* quant)
 {
     const uint8_t* bytes = (const uint8_t*)data;
+    rdp_rfx_component_quant parsed;
     uint8_t values[10];
     size_t i = 0;
 
@@ -335,13 +336,14 @@ librdp_status rdp_rfx_parse_component_quant(const void* data,
     if (length < 5u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(quant, 0, sizeof(*quant));
+    memset(&parsed, 0, sizeof(parsed));
     for (i = 0; i < 5u; i++)
     {
         values[i * 2u] = (uint8_t)(bytes[i] & 0x0fu);
         values[(i * 2u) + 1u] = (uint8_t)(bytes[i] >> 4);
     }
-    rdp_rfx_component_quant_from_values(quant, values);
+    rdp_rfx_component_quant_from_values(&parsed, values);
+    *quant = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -373,23 +375,25 @@ librdp_status rdp_rfx_parse_progressive_quant(const void* data,
                                               rdp_rfx_progressive_quant* quant)
 {
     const uint8_t* bytes = (const uint8_t*)data;
+    rdp_rfx_progressive_quant parsed;
 
     if (!data || !quant)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 16u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(quant, 0, sizeof(*quant));
-    quant->quality = bytes[0];
-    if (rdp_rfx_parse_component_quant(bytes + 1u, 5u, &quant->y) != LIBRDP_STATUS_OK ||
-        rdp_rfx_parse_component_quant(bytes + 6u, 5u, &quant->cb) != LIBRDP_STATUS_OK ||
-        rdp_rfx_parse_component_quant(bytes + 11u, 5u, &quant->cr) != LIBRDP_STATUS_OK)
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.quality = bytes[0];
+    if (rdp_rfx_parse_component_quant(bytes + 1u, 5u, &parsed.y) != LIBRDP_STATUS_OK ||
+        rdp_rfx_parse_component_quant(bytes + 6u, 5u, &parsed.cb) != LIBRDP_STATUS_OK ||
+        rdp_rfx_parse_component_quant(bytes + 11u, 5u, &parsed.cr) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (quant->quality > 100u ||
-        !rdp_rfx_component_quant_in_range(&quant->y, 8) ||
-        !rdp_rfx_component_quant_in_range(&quant->cb, 8) ||
-        !rdp_rfx_component_quant_in_range(&quant->cr, 8))
+    if (parsed.quality > 100u ||
+        !rdp_rfx_component_quant_in_range(&parsed.y, 8) ||
+        !rdp_rfx_component_quant_in_range(&parsed.cb, 8) ||
+        !rdp_rfx_component_quant_in_range(&parsed.cr, 8))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *quant = parsed;
     return LIBRDP_STATUS_OK;
 }
 
