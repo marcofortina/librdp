@@ -35,7 +35,11 @@
      (uint32_t)LIBRDP_FEATURE_ECHO | (uint32_t)LIBRDP_FEATURE_TELEMETRY | \
      (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT | \
      (uint32_t)LIBRDP_FEATURE_DESKTOP_COMPOSITION | \
-     (uint32_t)LIBRDP_FEATURE_DISPLAY_CONTROL)
+     (uint32_t)LIBRDP_FEATURE_DISPLAY_CONTROL | \
+     (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT | \
+     (uint32_t)LIBRDP_FEATURE_UDP2_TRANSPORT | \
+     (uint32_t)LIBRDP_FEATURE_GEOMETRY_TRACKING | \
+     (uint32_t)LIBRDP_FEATURE_MULTIPARTY)
 
 typedef struct rdp_settings_drive
 {
@@ -699,7 +703,11 @@ static int rdp_settings_feature_parser_only(librdp_feature feature)
 {
     return feature == LIBRDP_FEATURE_TELEMETRY ||
            feature == LIBRDP_FEATURE_MULTITRANSPORT ||
-           feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION;
+           feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION ||
+           feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
+           feature == LIBRDP_FEATURE_UDP2_TRANSPORT ||
+           feature == LIBRDP_FEATURE_GEOMETRY_TRACKING ||
+           feature == LIBRDP_FEATURE_MULTIPARTY;
 }
 
 librdp_settings* librdp_settings_new(void)

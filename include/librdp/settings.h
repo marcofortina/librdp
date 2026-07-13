@@ -314,7 +314,11 @@ typedef enum librdp_feature
     LIBRDP_FEATURE_TELEMETRY = 0x00000800u,      /**< Query telemetry packet support. */
     LIBRDP_FEATURE_MULTITRANSPORT = 0x00001000u, /**< Query multitransport side-transport readiness. */
     LIBRDP_FEATURE_DESKTOP_COMPOSITION = 0x00002000u, /**< Query desktop composition channel availability. */
-    LIBRDP_FEATURE_DISPLAY_CONTROL = 0x00004000u /**< Query display-control monitor layout availability. */
+    LIBRDP_FEATURE_DISPLAY_CONTROL = 0x00004000u, /**< Query display-control monitor layout availability. */
+    LIBRDP_FEATURE_UDP_TRANSPORT = 0x00008000u, /**< Query UDP transport path availability. */
+    LIBRDP_FEATURE_UDP2_TRANSPORT = 0x00010000u, /**< Query UDP2 transport path availability. */
+    LIBRDP_FEATURE_GEOMETRY_TRACKING = 0x00020000u, /**< Query geometry tracking channel availability. */
+    LIBRDP_FEATURE_MULTIPARTY = 0x00040000u /**< Query multiparty channel availability. */
 } librdp_feature;
 
 /**
