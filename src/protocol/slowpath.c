@@ -29,18 +29,20 @@ librdp_status rdp_slowpath_parse_share_control_header(const void* data,
                                                       rdp_slowpath_share_control_header* header)
 {
     rdp_stream stream;
+    rdp_slowpath_share_control_header parsed;
 
     if (!data || !header || length < 6)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &header->total_length) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->pdu_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &header->channel_id) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.total_length) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.pdu_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.channel_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (header->total_length < 6 || header->total_length > length)
+    if (parsed.total_length < 6 || parsed.total_length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -128,6 +130,7 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
                                                rdp_slowpath_demand_active* demand)
 {
     rdp_stream stream;
+    rdp_slowpath_demand_active parsed;
     const uint8_t* capabilities = NULL;
     uint16_t capabilities_len = 0;
     uint16_t source_len = 0;
@@ -137,16 +140,16 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
     if (!data || !demand)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(demand, 0, sizeof(*demand));
-    status = rdp_slowpath_parse_share_control_header(data, length, &demand->header);
+    memset(&parsed, 0, sizeof(parsed));
+    status = rdp_slowpath_parse_share_control_header(data, length, &parsed.header);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (rdp_slowpath_base_type(demand->header.pdu_type) != RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)
+    if (rdp_slowpath_base_type(parsed.header.pdu_type) != RDP_SLOWPATH_PDU_TYPE_DEMAND_ACTIVE)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rdp_stream_init(&stream, data, demand->header.total_length);
+    rdp_stream_init(&stream, data, parsed.header.total_length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &demand->share_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.share_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &source_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &capabilities_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -154,15 +157,16 @@ librdp_status rdp_slowpath_parse_demand_active(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(&stream) < (size_t)source_len + capabilities_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_bytes(&stream, &demand->source_descriptor, source_len) != LIBRDP_STATUS_OK ||
+    if (rdp_stream_read_bytes(&stream, &parsed.source_descriptor, source_len) != LIBRDP_STATUS_OK ||
         rdp_stream_read_bytes(&stream, &capabilities, capabilities_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    demand->source_descriptor_len = source_len;
-    status = rdp_capabilities_parse(capabilities, capabilities_len, &demand->capabilities);
+    parsed.source_descriptor_len = source_len;
+    status = rdp_capabilities_parse(capabilities, capabilities_len, &parsed.capabilities);
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (rdp_stream_remaining(&stream) >= 4)
         (void)rdp_stream_read_u16_le(&stream, &pad);
+    *demand = parsed;
     (void)pad;
     return LIBRDP_STATUS_OK;
 }
@@ -901,74 +905,81 @@ librdp_status rdp_slowpath_write_client_suppress_output(rdp_buffer* buffer,
 librdp_status rdp_slowpath_parse_data_pdu(const void* data, size_t length, rdp_slowpath_data_pdu* pdu)
 {
     rdp_stream stream;
+    rdp_slowpath_data_pdu parsed;
     uint8_t pad = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!data || !pdu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(pdu, 0, sizeof(*pdu));
-    status = rdp_slowpath_parse_share_control_header(data, length, &pdu->header);
+    memset(&parsed, 0, sizeof(parsed));
+    status = rdp_slowpath_parse_share_control_header(data, length, &parsed.header);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (rdp_slowpath_base_type(pdu->header.pdu_type) != RDP_SLOWPATH_PDU_TYPE_DATA)
+    if (rdp_slowpath_base_type(parsed.header.pdu_type) != RDP_SLOWPATH_PDU_TYPE_DATA)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (pdu->header.total_length < 18)
+    if (parsed.header.total_length < 18)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    rdp_stream_init(&stream, data, pdu->header.total_length);
+    rdp_stream_init(&stream, data, parsed.header.total_length);
     if (rdp_stream_skip(&stream, 6) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &pdu->share_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.share_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u8(&stream, &pad) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &pdu->stream_id) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &pdu->uncompressed_length) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &pdu->pdu_type2) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u8(&stream, &pdu->compressed_type) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &pdu->compressed_length) != LIBRDP_STATUS_OK)
+        rdp_stream_read_u8(&stream, &parsed.stream_id) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.uncompressed_length) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.pdu_type2) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &parsed.compressed_type) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.compressed_length) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (pad != 0 || pdu->stream_id == 0 ||
-        (pdu->compressed_type == 0 && pdu->compressed_length != 0) ||
-        (pdu->compressed_type != 0 && pdu->compressed_length == 0))
+    if (pad != 0 || parsed.stream_id == 0 ||
+        (parsed.compressed_type == 0 && parsed.compressed_length != 0) ||
+        (parsed.compressed_type != 0 && parsed.compressed_length == 0))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    pdu->payload_len = rdp_stream_remaining(&stream);
-    if (pdu->payload_len > 0 &&
-        rdp_stream_read_bytes(&stream, &pdu->payload, pdu->payload_len) != LIBRDP_STATUS_OK)
+    parsed.payload_len = rdp_stream_remaining(&stream);
+    if (parsed.payload_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.payload, parsed.payload_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *pdu = parsed;
     return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_slowpath_parse_font_map(const void* data, size_t length, rdp_slowpath_font_map* font_map)
 {
     rdp_stream stream;
+    rdp_slowpath_font_map parsed;
 
     if (!data || !font_map)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 8)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(font_map, 0, sizeof(*font_map));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u16_le(&stream, &font_map->number_entries) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &font_map->total_entries) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &font_map->map_flags) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &font_map->entry_size) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u16_le(&stream, &parsed.number_entries) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.total_entries) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.map_flags) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u16_le(&stream, &parsed.entry_size) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *font_map = parsed;
     return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_slowpath_parse_set_error_info(const void* data, size_t length, uint32_t* error_info)
 {
     rdp_stream stream;
+    uint32_t parsed = 0;
 
     if (!data || !error_info)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length != 4)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    *error_info = 0;
     rdp_stream_init(&stream, data, length);
-    return rdp_stream_read_u32_le(&stream, error_info);
+    if (rdp_stream_read_u32_le(&stream, &parsed) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *error_info = parsed;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_slowpath_parse_save_session_info(const void* data,
@@ -976,19 +987,21 @@ librdp_status rdp_slowpath_parse_save_session_info(const void* data,
                                                    rdp_slowpath_save_session_info* info)
 {
     rdp_stream stream;
+    rdp_slowpath_save_session_info parsed;
 
     if (!data || !info)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length < 4)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(info, 0, sizeof(*info));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
-    if (rdp_stream_read_u32_le(&stream, &info->info_type) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.info_type) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    info->data_len = rdp_stream_remaining(&stream);
-    if (info->data_len > 0 &&
-        rdp_stream_read_bytes(&stream, &info->data, info->data_len) != LIBRDP_STATUS_OK)
+    parsed.data_len = rdp_stream_remaining(&stream);
+    if (parsed.data_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.data, parsed.data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *info = parsed;
     return LIBRDP_STATUS_OK;
 }

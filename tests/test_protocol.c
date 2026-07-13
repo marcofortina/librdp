@@ -3934,7 +3934,12 @@ static int test_path_security_license_channels(void)
     PCHECK(fast.length == 6 && fast.header_length == 2 && !fast.long_length);
     PCHECK(rdp_fastpath_parse_header(fast_long, sizeof(fast_long), &fast) == LIBRDP_STATUS_OK);
     PCHECK(fast.length == 8 && fast.header_length == 3 && fast.long_length);
-    PCHECK(rdp_fastpath_parse_header(fast_long, 2, &fast) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_fastpath_header valid_fast_header = fast;
+
+        PCHECK(rdp_fastpath_parse_header(fast_long, 2, &fast) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&fast, &valid_fast_header, sizeof(fast)) == 0);
+    }
     PCHECK(rdp_fastpath_write_header(&decoded_fastpath,
                                      RDP_FASTPATH_OUTPUT_ACTION_FASTPATH,
                                      0,
@@ -4187,15 +4192,25 @@ static int test_path_security_license_channels(void)
                                             fast_updates.updates[0].data_len,
                                             &bitmap_update) == LIBRDP_STATUS_OK);
     PCHECK(bitmap_update.count == 1 && bitmap_update.rects[0].data_len == 16);
-    PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update, sizeof(fast_bitmap_update) - 1u, &fast_updates) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_fastpath_parse_updates(fast_bad_update_compression,
-                                      sizeof(fast_bad_update_compression),
-                                      &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) == LIBRDP_STATUS_STATE);
-    PCHECK(rdp_fastpath_parse_updates_payload(fast_long + 3u,
-                                              sizeof(fast_long) - 3u,
-                                              &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_fastpath_update_list valid_fast_updates = fast_updates;
+
+        PCHECK(rdp_fastpath_parse_updates(fast_bitmap_update,
+                                          sizeof(fast_bitmap_update) - 1u,
+                                          &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&fast_updates, &valid_fast_updates, sizeof(fast_updates)) == 0);
+        PCHECK(rdp_fastpath_parse_updates(fast_bad_update_compression,
+                                          sizeof(fast_bad_update_compression),
+                                          &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&fast_updates, &valid_fast_updates, sizeof(fast_updates)) == 0);
+        PCHECK(rdp_fastpath_parse_updates(fast_long, sizeof(fast_long), &fast_updates) ==
+               LIBRDP_STATUS_STATE);
+        PCHECK(memcmp(&fast_updates, &valid_fast_updates, sizeof(fast_updates)) == 0);
+        PCHECK(rdp_fastpath_parse_updates_payload(fast_long + 3u,
+                                                  sizeof(fast_long) - 3u,
+                                                  &fast_updates) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&fast_updates, &valid_fast_updates, sizeof(fast_updates)) == 0);
+    }
     PCHECK(rdp_surface_commands_parse(surface_command_payload,
                                       sizeof(surface_command_payload),
                                       &surface_commands) == LIBRDP_STATUS_OK);
@@ -4384,6 +4399,13 @@ static int test_path_security_license_channels(void)
 
     PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow), &slow_header) == LIBRDP_STATUS_OK);
     PCHECK(slow_header.total_length == 6 && slow_header.pdu_type == 0x13);
+    {
+        const rdp_slowpath_share_control_header valid_slow_header = slow_header;
+
+        PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow) - 1u, &slow_header) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&slow_header, &valid_slow_header, sizeof(slow_header)) == 0);
+    }
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_init(&client_refresh_rect);
     PCHECK(rdp_slowpath_write_share_control_header(&client_refresh_rect,
@@ -4407,29 +4429,41 @@ static int test_path_security_license_channels(void)
     PCHECK(demand.capabilities.count == 1 && demand.capabilities.sets[0].type == 1);
     PCHECK(rdp_capabilities_find(&demand.capabilities, RDP_CAPABILITY_TYPE_GENERAL) == &demand.capabilities.sets[0]);
     PCHECK(rdp_capabilities_find(&demand.capabilities, RDP_CAPABILITY_TYPE_BITMAP) == NULL);
-    PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active) - 1u, &demand) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_slowpath_demand_active valid_demand = demand;
+
+        PCHECK(rdp_slowpath_parse_demand_active(demand_active, sizeof(demand_active) - 1u, &demand) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&demand, &valid_demand, sizeof(demand)) == 0);
+    }
     PCHECK(rdp_capabilities_parse(capability_list_trailing,
                                   sizeof(capability_list_trailing),
                                   &confirm_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     PCHECK(data_pdu.share_id == 0x12345678u && data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
     PCHECK(data_pdu.payload_len == 40);
-    memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
-    malformed_slowpath[10] = 1;
-    PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
-                                       sizeof(malformed_slowpath),
-                                       &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
-    malformed_slowpath[11] = 0;
-    PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
-                                       sizeof(malformed_slowpath),
-                                       &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
-    malformed_slowpath[15] = 0x20;
-    PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
-                                       sizeof(malformed_slowpath),
-                                       &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_slowpath_data_pdu valid_data_pdu = data_pdu;
+
+        memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
+        malformed_slowpath[10] = 1;
+        PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
+                                           sizeof(malformed_slowpath),
+                                           &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&data_pdu, &valid_data_pdu, sizeof(data_pdu)) == 0);
+        memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
+        malformed_slowpath[11] = 0;
+        PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
+                                           sizeof(malformed_slowpath),
+                                           &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&data_pdu, &valid_data_pdu, sizeof(data_pdu)) == 0);
+        memcpy(malformed_slowpath, bitmap_data_pdu, sizeof(malformed_slowpath));
+        malformed_slowpath[15] = 0x20;
+        PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
+                                           sizeof(malformed_slowpath),
+                                           &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&data_pdu, &valid_data_pdu, sizeof(data_pdu)) == 0);
+    }
     PCHECK(rdp_slowpath_parse_data_pdu(bitmap_data_pdu, sizeof(bitmap_data_pdu), &data_pdu) == LIBRDP_STATUS_OK);
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_init(&client_refresh_rect);
@@ -6111,22 +6145,37 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload), &font_map) == LIBRDP_STATUS_OK);
     PCHECK(font_map.number_entries == 1 && font_map.total_entries == 2 && font_map.map_flags == 3 &&
            font_map.entry_size == 4);
-    PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload) - 1u, &font_map) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_slowpath_font_map valid_font_map = font_map;
+
+        PCHECK(rdp_slowpath_parse_font_map(font_map_payload, sizeof(font_map_payload) - 1u, &font_map) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&font_map, &valid_font_map, sizeof(font_map)) == 0);
+    }
     PCHECK(rdp_slowpath_parse_set_error_info(set_error_info_payload,
                                              sizeof(set_error_info_payload),
                                              &error_info) == LIBRDP_STATUS_OK);
     PCHECK(error_info == 0x1234u);
-    PCHECK(rdp_slowpath_parse_set_error_info(set_error_info_payload,
-                                             sizeof(set_error_info_payload) - 1u,
-                                             &error_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const uint32_t valid_error_info = error_info;
+
+        PCHECK(rdp_slowpath_parse_set_error_info(set_error_info_payload,
+                                                 sizeof(set_error_info_payload) - 1u,
+                                                 &error_info) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(error_info == valid_error_info);
+    }
     PCHECK(rdp_slowpath_parse_save_session_info(save_session_info_payload,
                                                 sizeof(save_session_info_payload),
                                                 &save_info) == LIBRDP_STATUS_OK);
     PCHECK(save_info.info_type == 1 && save_info.data_len == 2 && save_info.data[0] == 0xaa &&
            save_info.data[1] == 0x55);
-    PCHECK(rdp_slowpath_parse_save_session_info(save_session_info_payload, 3, &save_info) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_slowpath_save_session_info valid_save_info = save_info;
+
+        PCHECK(rdp_slowpath_parse_save_session_info(save_session_info_payload, 3, &save_info) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&save_info, &valid_save_info, sizeof(save_info)) == 0);
+    }
 
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_STANDARD) == RDP_X224_PROTOCOL_STANDARD);
     PCHECK(rdp_security_protocol_mask(LIBRDP_SECURITY_TLS) == RDP_X224_PROTOCOL_TLS);

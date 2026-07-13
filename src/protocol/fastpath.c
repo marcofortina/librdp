@@ -49,15 +49,16 @@ static int rdp_fastpath_valid_update_code(uint8_t update_code)
 librdp_status rdp_fastpath_parse_header(const void* data, size_t length, rdp_fastpath_header* header)
 {
     const uint8_t* p = (const uint8_t*)data;
+    rdp_fastpath_header parsed;
     uint16_t packet_length = 0;
 
     if (!data || !header || length < 2)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(header, 0, sizeof(*header));
-    header->action = (uint8_t)(p[0] & 0x03u);
-    header->security_flags = (uint8_t)((p[0] >> 6) & 0x03u);
-    if (!rdp_fastpath_valid_action(header->action))
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.action = (uint8_t)(p[0] & 0x03u);
+    parsed.security_flags = (uint8_t)((p[0] >> 6) & 0x03u);
+    if (!rdp_fastpath_valid_action(parsed.action))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
     if ((p[1] & 0x80u) != 0)
@@ -65,19 +66,20 @@ librdp_status rdp_fastpath_parse_header(const void* data, size_t length, rdp_fas
         if (length < 3)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         packet_length = (uint16_t)(((uint16_t)(p[1] & 0x7fu) << 8) | p[2]);
-        header->header_length = 3;
-        header->long_length = true;
+        parsed.header_length = 3;
+        parsed.long_length = true;
     }
     else
     {
         packet_length = p[1];
-        header->header_length = 2;
+        parsed.header_length = 2;
     }
 
-    if (packet_length < header->header_length || packet_length > length)
+    if (packet_length < parsed.header_length || packet_length > length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    header->length = packet_length;
+    parsed.length = packet_length;
+    *header = parsed;
     return LIBRDP_STATUS_OK;
 }
 
@@ -279,11 +281,12 @@ librdp_status rdp_fastpath_parse_updates_payload(const void* data,
                                                  rdp_fastpath_update_list* updates)
 {
     rdp_stream stream;
+    rdp_fastpath_update_list parsed;
 
     if (!data || !updates)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    memset(updates, 0, sizeof(*updates));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
 
     while (rdp_stream_remaining(&stream) > 0)
@@ -292,9 +295,9 @@ librdp_status rdp_fastpath_parse_updates_payload(const void* data,
         uint8_t update_header = 0;
         uint16_t size = 0;
 
-        if (updates->count >= RDP_FASTPATH_MAX_UPDATES)
+        if (parsed.count >= RDP_FASTPATH_MAX_UPDATES)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        update = &updates->updates[updates->count];
+        update = &parsed.updates[parsed.count];
 
         if (rdp_stream_read_u8(&stream, &update_header) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -320,9 +323,10 @@ librdp_status rdp_fastpath_parse_updates_payload(const void* data,
         update->data_len = size;
         if (size > 0 && rdp_stream_read_bytes(&stream, &update->data, size) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        updates->count++;
+        parsed.count++;
     }
 
+    *updates = parsed;
     return LIBRDP_STATUS_OK;
 }
 
