@@ -31,7 +31,7 @@ Rows describe behavior ownership, not release status. A protocol appears here wh
 | MS-RDPECLIP | Clipboard formats, data requests, file contents, and local clipboard publication | `src/clipboard/clipboard.c`, `src/client/session.c` | `include/librdp/clipboard.h`, `fuzz/clipboard_fuzzer.c` |
 | MS-RDPEECO | Echo diagnostics channel behavior | `src/channels/echo_channel.c` | `LIBRDP_FEATURE_ECHO`, `fuzz/echo_channel_fuzzer.c` |
 | MS-RDPET | Telemetry packet parsing and serialization | `src/channels/telemetry.c` | `LIBRDP_FEATURE_TELEMETRY`, `fuzz/telemetry_fuzzer.c` |
-| MS-RDPEMC | Multiparty channel behavior | `src/channels/multiparty.c` | `fuzz/multiparty_fuzzer.c` |
+| MS-RDPEMC | Multiparty packet parsing and serialization | `src/channels/multiparty.c` | `fuzz/multiparty_fuzzer.c` |
 
 ## Public behavior map
 
