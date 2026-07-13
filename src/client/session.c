@@ -19068,6 +19068,13 @@ static librdp_status rdp_session_request_display_control_layout(librdp_session* 
     return status;
 }
 
+static int rdp_session_display_control_local_rejection(librdp_status status)
+{
+    return status == LIBRDP_STATUS_INVALID_ARGUMENT ||
+           status == LIBRDP_STATUS_LIMIT_EXCEEDED ||
+           status == LIBRDP_STATUS_UNSUPPORTED;
+}
+
 static librdp_status rdp_session_send_core_input_init(librdp_session* session)
 {
     rdp_buffer request;
@@ -26862,6 +26869,15 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                                                         librdp_surface_width(session->surface),
                 session->requested_desktop_height != 0 ? session->requested_desktop_height :
                                                          librdp_surface_height(session->surface));
+        if (rdp_session_display_control_local_rejection(status))
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.display_control.layout.rejected",
+                            "dvc_channel_id=%u status=%u reason=server_caps",
+                            channel_id,
+                            (unsigned)status);
+            status = LIBRDP_STATUS_OK;
+        }
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
