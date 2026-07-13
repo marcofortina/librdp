@@ -94,7 +94,6 @@ typedef struct x11_app
     char* audio_output_device;
     char* audio_input_device;
     char* camera_source;
-    char* echo_payload;
     FILE* video_output_file;
     int audio_output_requested;
     int audio_input_requested;
@@ -1432,11 +1431,9 @@ static int add_rail_arg(librdp_settings* settings, const char* text)
 
 static int set_echo_arg(librdp_settings* settings, const char* text)
 {
-    const char* value = text && text[0] != '\0' ? text : "probe";
-
+    (void)text;
     return settings &&
-           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK &&
-           librdp_settings_set_echo_payload(settings, value) == LIBRDP_STATUS_OK;
+           librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK;
 }
 
 static int require_value(int argc, int* index)
@@ -1583,7 +1580,6 @@ static void x11_audio_free(x11_app* app)
 
 static int x11_runtime_features_configure(x11_app* app, const librdp_settings* settings)
 {
-    const char* echo_payload = NULL;
     const char* video_path = NULL;
     const char* camera_source = NULL;
 
@@ -1596,13 +1592,6 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
                                     librdp_settings_camera_count(settings) > 0 ?
                                 1 :
                                 0;
-    if (app->echo_requested)
-    {
-        echo_payload = librdp_settings_echo_payload(settings);
-        app->echo_payload = x11_strdup_text(echo_payload ? echo_payload : "probe");
-        if (!app->echo_payload)
-            return 0;
-    }
     if (app->video_requested)
     {
         video_path = librdp_settings_video_output_path(settings);
@@ -1649,8 +1638,6 @@ static void x11_runtime_features_free(x11_app* app)
 {
     if (!app)
         return;
-    free(app->echo_payload);
-    app->echo_payload = NULL;
     if (app->video_output_file)
         fclose(app->video_output_file);
     app->video_output_file = NULL;
@@ -1793,10 +1780,9 @@ static int x11_channel_name_print_len(size_t name_len)
 
 static void x11_handle_channel_open(x11_app* app, librdp_session* session, const librdp_channel_open_event* event)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
-
     if (!app || !session || !event)
         return;
+    (void)session;
     rdp_trace_event(RDP_TRACE_CLIENT,
                     "x11.channel.open",
                     "id=%u name=\"%.*s\" echo=%u telemetry=%u video=%u",
@@ -1806,29 +1792,15 @@ static void x11_handle_channel_open(x11_app* app, librdp_session* session, const
                     app->echo_requested ? 1u : 0u,
                     app->telemetry_requested ? 1u : 0u,
                     app->video_requested ? 1u : 0u);
-    if (app->echo_requested && app->echo_payload &&
-        x11_channel_name_contains(event->name, event->name_len, "echo"))
-    {
-        status = librdp_session_channel_send(session,
-                                             event->channel_id,
-                                             app->echo_payload,
-                                             strlen(app->echo_payload));
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "x11.echo.send",
-                        "id=%u bytes=%u status=%s",
-                        event->channel_id,
-                        (unsigned)strlen(app->echo_payload),
-                        librdp_status_string(status));
-    }
 }
 
 static void x11_handle_channel_data(x11_app* app, librdp_session* session, const librdp_channel_data_event* event)
 {
-    librdp_status status = LIBRDP_STATUS_OK;
     size_t video_written = 0;
 
     if (!app || !session || !event)
         return;
+    (void)session;
     if (app->video_output_file &&
         (x11_channel_name_contains(event->name, event->name_len, "video") ||
          x11_channel_name_contains(event->name, event->name_len, "tsmf")) &&
@@ -1846,26 +1818,6 @@ static void x11_handle_channel_data(x11_app* app, librdp_session* session, const
                           event->name ? event->name : "",
                           (unsigned)event->data_len,
                           (unsigned)video_written);
-    if (app->echo_requested && x11_channel_name_contains(event->name, event->name_len, "echo"))
-    {
-        const void* payload = event->data;
-        size_t payload_len = event->data_len;
-
-        if (payload_len == 0 && app->echo_payload)
-        {
-            payload = app->echo_payload;
-            payload_len = strlen(app->echo_payload);
-        }
-        if (payload_len > 65536u)
-            payload_len = 65536u;
-        status = librdp_session_channel_send(session, event->channel_id, payload, payload_len);
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "x11.echo.reply",
-                        "id=%u bytes=%u status=%s",
-                        event->channel_id,
-                        (unsigned)payload_len,
-                        librdp_status_string(status));
-    }
 }
 
 static void x11_handle_channel_close(x11_app* app, const librdp_channel_close_event* event)
@@ -2541,9 +2493,7 @@ static int configure_settings(librdp_settings* settings, x11_app* app, int argc,
         }
         else if (strcmp(argv[i], "--echo") == 0)
         {
-            const char* value = optional_value(argc, &i, argv);
-
-            if (!set_echo_arg(settings, value))
+            if (!set_echo_arg(settings, NULL))
                 return 0;
         }
         else if (strcmp(argv[i], "--telemetry") == 0)
@@ -2593,7 +2543,7 @@ int main(int argc, char** argv)
     if (!configure_settings(settings, &app, argc, argv))
     {
         fprintf(stderr,
-                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo [payload]] [--telemetry] [--multitransport]\n",
+                "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n",
                 argv[0]);
         x11_clipboard_free(&app);
         librdp_settings_free(settings);

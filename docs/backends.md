@@ -126,7 +126,7 @@ The viewer exposes feature flags for channel paths that do not require a complex
 ```sh
 build/librdp-x11-viewer --target host --rail app=/path/to/app
 build/librdp-x11-viewer --target host --cr2
-build/librdp-x11-viewer --target host --echo payload
+build/librdp-x11-viewer --target host --echo
 build/librdp-x11-viewer --target host --telemetry
 build/librdp-x11-viewer --target host --multitransport
 ```

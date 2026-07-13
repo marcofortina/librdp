@@ -26,6 +26,7 @@
 #include "clipboard/clipboard.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
+#include "channels/echo_channel.h"
 #include "channels/usb_redirection.h"
 #include "channels/virtual_channel.h"
 #include "graphics/gdi_orders.h"
@@ -72,6 +73,7 @@
 #define DVC_SCENARIO_EMPTY_COMPRESSED_CONTINUATION 8
 #define DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST 9
 #define DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT 10
+#define DVC_SCENARIO_ECHO_VALIDATE 11
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1566,7 +1568,7 @@ static int build_dynamic_channel_create_named_packet(rdp_buffer* out, const char
 
 static int build_dynamic_channel_create_packet(rdp_buffer* out)
 {
-    return build_dynamic_channel_create_named_packet(out, "ECHO");
+    return build_dynamic_channel_create_named_packet(out, "APPDVC");
 }
 
 static int build_dynamic_channel_create_webauthn_packet(rdp_buffer* out)
@@ -1810,6 +1812,42 @@ static int read_soft_sync_response_fd(int fd, uint8_t* input, size_t capacity, u
                                                         response_packet.payload_len,
                                                         &soft_sync_response) == LIBRDP_STATUS_OK)
             return soft_sync_response.tunnel_count == 0;
+    }
+    return 0;
+}
+
+static int read_echo_response_fd(int fd,
+                                 uint8_t* input,
+                                 size_t capacity,
+                                 uint16_t expected_static_channel_id,
+                                 uint32_t expected_dynamic_channel_id,
+                                 const uint8_t* expected,
+                                 size_t expected_len)
+{
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_dynamic_channel_data_pdu data_pdu;
+        rdp_echo_channel_pdu echo;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &response_packet))
+            continue;
+        if (rdp_dynamic_channel_parse_data(response_packet.payload,
+                                           response_packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK)
+            continue;
+        if (data_pdu.channel_id != expected_dynamic_channel_id)
+            continue;
+        if (rdp_echo_channel_parse_response(data_pdu.data, data_pdu.data_len, &echo) != LIBRDP_STATUS_OK)
+            return 0;
+        return echo.payload_len == expected_len &&
+               (expected_len == 0 || memcmp(echo.payload, expected, expected_len) == 0);
     }
     return 0;
 }
@@ -2095,6 +2133,14 @@ static int start_handshake_server_full(uint16_t* port,
                             _exit(5);
                         }
                     }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_VALIDATE)
+                    {
+                        if (!build_dynamic_channel_create_named_packet(&dvc_create, "ECHO") ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
+                        {
+                            _exit(5);
+                        }
+                    }
                     else if (!build_dynamic_channel_create_packet(&dvc_create) ||
                              !write_exact_fd(client, dvc_create.data, dvc_create.length))
                     {
@@ -2156,6 +2202,25 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         if (!build_dynamic_channel_display_control_caps_packet(&dvc_data) ||
                             !write_exact_fd(client, dvc_data.data, dvc_data.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_VALIDATE)
+                    {
+                        static const uint8_t echo_request[] = {'e', 'f', 'g', 'h'};
+
+                        if (!build_dynamic_channel_data_packet(&dvc_data) ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !read_echo_response_fd(client,
+                                                   input,
+                                                   sizeof(input),
+                                                   1004,
+                                                   7,
+                                                   echo_request,
+                                                   sizeof(echo_request)) ||
+                            !build_dynamic_channel_close_packet(&dvc_close) ||
+                            !write_exact_fd(client, dvc_close.data, dvc_close.length))
                         {
                             _exit(5);
                         }
@@ -3846,9 +3911,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(counter.channel_open == 1);
     CHECK(domain_capture.channel == 1);
-    CHECK(counter.last_channel_id == 7);
-    CHECK(librdp_session_channel_handle_for_id(session, counter.last_channel_id, &channel_handle) ==
-          LIBRDP_STATUS_OK);
+    CHECK(librdp_session_channel_handle_for_id(session, 7, &channel_handle) == LIBRDP_STATUS_OK);
     CHECK(channel_handle != 0);
     CHECK(librdp_channel_info_init(&channel_info) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_channel_get_info(session, channel_handle, &channel_info) == LIBRDP_STATUS_OK);
@@ -3857,13 +3920,13 @@ static int test_settings_surface_input_session(void)
     CHECK(channel_info.priority == LIBRDP_CHANNEL_PRIORITY_MEDIUM);
     CHECK(channel_info.active == 1);
     CHECK(channel_info.application_owned == 1);
-    CHECK(channel_info.name_len == 4 && strcmp(channel_info.name, "ECHO") == 0);
+    CHECK(channel_info.name_len == 6 && strcmp(channel_info.name, "APPDVC") == 0);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_ECHO,
                                             &feature_status) == LIBRDP_STATUS_OK);
     CHECK(feature_status.requested && feature_status.backend_ready);
-    CHECK(feature_status.negotiated && feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_channel_info_init(&channel_infos[0]) == LIBRDP_STATUS_OK);
     CHECK(librdp_channel_info_init(&channel_infos[1]) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_channel_list(session, channel_infos, 2, &channel_count) == LIBRDP_STATUS_OK);
@@ -4518,6 +4581,80 @@ static int test_dynamic_channel_soft_sync_runtime_fallback(void)
 }
 
 /*
+ * Coverage: validates the MS-RDPEECO client behavior on an internal ECHO DVC.
+ * The mock server sends an echo request and verifies that the client core,
+ * not the viewer callback, returns the identical payload without exposing the
+ * internal request as an application channel event.
+ */
+static int test_echo_channel_auto_response(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+    int saw_active = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_ECHO_VALIDATE,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && status == LIBRDP_STATUS_OK; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            CHECK(librdp_session_get_feature_status(session,
+                                                    LIBRDP_FEATURE_ECHO,
+                                                    &feature_status) == LIBRDP_STATUS_OK);
+            if (feature_status.active)
+                saw_active = 1;
+            if (saw_active && !feature_status.active)
+                break;
+        }
+    }
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(saw_active);
+    CHECK(counter.channel_open == 0);
+    CHECK(counter.channel_data == 0);
+    CHECK(counter.channel_close == 0);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_ECHO,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that Display Control capability rejection of a pending
  * local monitor layout does not fail the RDP session. It catches resize paths
  * that treat server capability limits as fatal protocol errors.
@@ -4892,6 +5029,8 @@ int test_client_core(void)
     if (test_dynamic_channel_empty_compressed_fragments() != 0)
         return 1;
     if (test_dynamic_channel_soft_sync_runtime_fallback() != 0)
+        return 1;
+    if (test_echo_channel_auto_response() != 0)
         return 1;
     if (test_display_control_caps_reject_pending_layout() != 0)
         return 1;

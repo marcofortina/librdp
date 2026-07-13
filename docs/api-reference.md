@@ -47,7 +47,7 @@ Settings functions configure:
 - desktop width and height;
 - security mode;
 - feature flags;
-- drives, serial ports, parallel ports, printers, cameras, smartcards, USB devices, PNP devices, WebAuthn providers, RAIL applications, audio devices, video output, and echo payload.
+- drives, serial ports, parallel ports, printers, cameras, smartcards, USB devices, PNP devices, WebAuthn providers, RAIL applications, audio devices, video output, and echo diagnostics.
 
 Settings getters return borrowed pointers owned by the settings object. They become invalid when the setting is changed or the settings object is freed.
 

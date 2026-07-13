@@ -57,7 +57,7 @@ Supported security values are:
 --webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]
 --rail app=path
 --cr2
---echo [payload]
+--echo
 --telemetry
 --multitransport
 ```

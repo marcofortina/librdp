@@ -15451,7 +15451,8 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
 {
     if (!name)
         return 0;
-    return strcmp(name, RDP_SESSION_DISPLAY_CONTROL_NAME) == 0 ||
+    return strcmp(name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_SESSION_DISPLAY_CONTROL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_CORE_INPUT_NAME) == 0 ||
            strcmp(name, RDP_SESSION_INPUT_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_GRAPHICS_PIPELINE_NAME) == 0 ||
@@ -15476,6 +15477,8 @@ static int rdp_session_dynamic_channel_is_internal(const rdp_session_dynamic_cha
 static int rdp_session_echo_channel_active(const librdp_session* session)
 {
     if (!session)
+        return 0;
+    if (!librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
         return 0;
     for (uint32_t i = 0; i < session->limits.dynamic_channel_count; i++)
     {
@@ -27033,18 +27036,38 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     else if (strcmp(entry->name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0 &&
              librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
     {
-        rdp_echo_channel_pdu response;
+        rdp_echo_channel_pdu request;
+        rdp_buffer response;
 
-        status = rdp_echo_channel_parse_response(data, data_len, &response);
+        rdp_buffer_init(&response);
+        status = rdp_echo_channel_parse_request(data, data_len, &request);
         if (status == LIBRDP_STATUS_OK)
         {
             rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.echo.reply",
+                            "client.echo.request",
                             "dvc_channel_id=%u payload_len=%u",
                             channel_id,
-                            (unsigned)response.payload_len);
-            rdp_session_emit_channel_data(session, entry, response.payload, response.payload_len);
+                            (unsigned)request.payload_len);
+            status = rdp_echo_channel_write_response(&response, request.payload, request.payload_len);
         }
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = rdp_session_send_dynamic_channel_data(session,
+                                                           entry->channel_id,
+                                                           entry->channel_id_bytes,
+                                                           response.data,
+                                                           response.length,
+                                                           "client.echo.response");
+        }
+        if (status == LIBRDP_STATUS_OK)
+        {
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.echo.response",
+                            "dvc_channel_id=%u payload_len=%u",
+                            channel_id,
+                            (unsigned)response.length);
+        }
+        rdp_buffer_free(&response);
     }
     else
     {
@@ -27393,15 +27416,18 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         }
         else if (entry)
         {
-            if (strcmp(entry->name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0 &&
-                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
+            if (strcmp(entry->name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0)
             {
                 rdp_trace_event(RDP_TRACE_CLIENT,
                                 "client.echo.channel",
-                                "dvc_channel_id=%u enabled=1",
-                                request.channel_id);
+                                "dvc_channel_id=%u enabled=%u",
+                                request.channel_id,
+                                librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO) ? 1u : 0u);
             }
-            rdp_session_emit_channel_open(session, entry);
+            else
+            {
+                rdp_session_emit_channel_open(session, entry);
+            }
         }
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.drdynvc.create",

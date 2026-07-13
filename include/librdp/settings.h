@@ -1203,10 +1203,12 @@ LIBRDP_API librdp_status librdp_settings_set_webauthn_provider(librdp_settings* 
 LIBRDP_API librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app);
 
 /**
- * @brief Set or clear the echo channel payload.
+ * @brief Set or clear the legacy echo payload string.
  *
  * Non-NULL payloads must be non-empty and within the implementation text length
- * limit. The payload is copied during the call; passing NULL clears it.
+ * limit. The payload is copied during the call; passing NULL clears it. The
+ * MS-RDPEECO client implementation echoes server-provided bytes and does not
+ * transmit this string as a client-originated probe.
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
  * @param[in] payload Payload to copy, or NULL to clear.
@@ -1665,7 +1667,7 @@ LIBRDP_API uint32_t librdp_settings_rail_app_count(const librdp_settings* settin
 LIBRDP_API const char* librdp_settings_rail_app(const librdp_settings* settings, uint32_t index);
 
 /**
- * @brief Return the configured echo channel payload.
+ * @brief Return the configured legacy echo payload string.
  *
  * @param[in] settings Settings object to query, or NULL.
  *

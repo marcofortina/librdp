@@ -687,7 +687,7 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
             return 1;
         case LIBRDP_FEATURE_ECHO:
-            return settings->echo_payload != NULL;
+            return 1;
         default:
             return 0;
     }

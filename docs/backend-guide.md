@@ -313,7 +313,7 @@ Settings and viewer options:
 - `LIBRDP_FEATURE_MULTITRANSPORT`;
 - `--rail app=path`;
 - `--cr2`;
-- `--echo [payload]`;
+- `--echo`;
 - `--telemetry`;
 - `--multitransport`.
 
@@ -321,7 +321,7 @@ Operational requirements:
 
 - keep application lifecycle events serialized with session processing;
 - keep compositor tree ownership in the graphics/composition path;
-- bound echo payloads;
+- keep echo responses bounded by the channel payload limits;
 - keep telemetry metadata free of private content;
 - treat multitransport as a negotiated transport extension with independent error handling.
 

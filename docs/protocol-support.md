@@ -29,7 +29,7 @@ Rows describe behavior ownership, not release status. A protocol appears here wh
 | --- | --- | --- | --- |
 | MS-RDPEDYC | Dynamic virtual channel transport and channel lifecycle | `src/channels/dynamic_channel.c`, `src/channels/virtual_channel.c` | `include/librdp/channel.h`, `fuzz/dynamic_channel_fuzzer.c`, `fuzz/virtual_channel_fuzzer.c` |
 | MS-RDPECLIP | Clipboard formats, data requests, file contents, and local clipboard publication | `src/clipboard/clipboard.c`, `src/client/session.c` | `include/librdp/clipboard.h`, `fuzz/clipboard_fuzzer.c` |
-| MS-RDPEECO | Echo diagnostics channel behavior | `src/channels/echo_channel.c` | `librdp_settings_set_echo_payload()`, `fuzz/echo_channel_fuzzer.c` |
+| MS-RDPEECO | Echo diagnostics channel behavior | `src/channels/echo_channel.c` | `LIBRDP_FEATURE_ECHO`, `fuzz/echo_channel_fuzzer.c` |
 | MS-RDPET | Telemetry channel behavior | `src/channels/telemetry.c` | `LIBRDP_FEATURE_TELEMETRY`, `fuzz/telemetry_fuzzer.c` |
 | MS-RDPEMC | Multiparty channel behavior | `src/channels/multiparty.c` | `fuzz/multiparty_fuzzer.c` |
 

@@ -250,15 +250,7 @@ static librdp_status interop_enable_feature(librdp_settings* settings, const cha
     if (strcmp(feature, "cr2") == 0)
         return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CR2, 1);
     if (strcmp(feature, "echo") == 0)
-    {
-        const char* payload = interop_getenv_nonempty("LIBRDP_INTEROP_ECHO_PAYLOAD");
-
-        if (!payload)
-            payload = "interop";
-        if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_INVALID_ARGUMENT;
-        return librdp_settings_set_echo_payload(settings, payload);
-    }
+        return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1);
     if (strcmp(feature, "telemetry") == 0)
         return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1);
     if (strcmp(feature, "multitransport") == 0)
