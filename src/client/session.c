@@ -20408,6 +20408,17 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
         status = rdp_clipboard_parse_format_data_response(&packet, &data_response);
         if (status == LIBRDP_STATUS_OK)
         {
+            if (session->clipboard_pending_request_format_id == 0)
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.clipboard.format_data_response.late",
+                                "channel_id=%u ok=%u data_len=%u",
+                                session->clipboard_channel_id,
+                                data_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1u : 0u,
+                                (unsigned)data_response.data_len);
+                rdp_buffer_free(&response);
+                return LIBRDP_STATUS_OK;
+            }
             memset(&event, 0, sizeof(event));
             event.type = LIBRDP_EVENT_CLIPBOARD_DATA;
             event.data.clipboard_data.format_id = session->clipboard_pending_request_format_id;
@@ -20471,6 +20482,18 @@ static librdp_status rdp_session_handle_clipboard_message(librdp_session* sessio
             {
                 pending = *request;
                 memset(request, 0, sizeof(*request));
+            }
+            else
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.clipboard.filecontents_response.late",
+                                "channel_id=%u ok=%u stream_id=%u data_len=%u",
+                                session->clipboard_channel_id,
+                                file_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK ? 1u : 0u,
+                                file_response.stream_id,
+                                (unsigned)file_response.data_len);
+                rdp_buffer_free(&response);
+                return LIBRDP_STATUS_OK;
             }
             memset(&event, 0, sizeof(event));
             event.type = LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS;

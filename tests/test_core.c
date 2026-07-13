@@ -23,6 +23,7 @@
 #include "client/settings_internal.h"
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
+#include "clipboard/clipboard.h"
 #include "channels/dynamic_channel.h"
 #include "channels/usb_redirection.h"
 #include "channels/virtual_channel.h"
@@ -61,6 +62,9 @@
 #define DVC_SCENARIO_DUPLICATE_CREATE 1
 #define DVC_SCENARIO_CLOSE_PENDING_FRAGMENT 2
 #define DVC_SCENARIO_DATA_BEFORE_CREATE 3
+
+#define CLIPBOARD_SCENARIO_NONE 0
+#define CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES 1
 
 typedef struct event_counter
 {
@@ -1317,6 +1321,37 @@ static int build_static_channel_packet(rdp_buffer* out, const rdp_buffer* payloa
                                                 channel_id);
 }
 
+static int build_clipboard_unmatched_response_packets(rdp_buffer* data_response_out,
+                                                      rdp_buffer* file_response_out)
+{
+    static const uint8_t data_payload[] = {'l', 'a', 't', 'e'};
+    rdp_buffer clipboard;
+    int ok = 0;
+
+    if (!data_response_out || !file_response_out)
+        return 0;
+
+    rdp_buffer_init(&clipboard);
+    ok = rdp_clipboard_write_format_data_response(&clipboard,
+                                                  1,
+                                                  data_payload,
+                                                  sizeof(data_payload)) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(data_response_out, &clipboard, 1005);
+    rdp_buffer_free(&clipboard);
+    if (!ok)
+        return 0;
+
+    rdp_buffer_init(&clipboard);
+    ok = rdp_clipboard_write_file_contents_response(&clipboard,
+                                                    1,
+                                                    0x11223344u,
+                                                    data_payload,
+                                                    sizeof(data_payload)) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(file_response_out, &clipboard, 1005);
+    rdp_buffer_free(&clipboard);
+    return ok;
+}
+
 static int build_application_static_channel_first_packet(rdp_buffer* out)
 {
     static const uint8_t data[] = {'s', 't', 'a', 't'};
@@ -1469,7 +1504,8 @@ static int start_handshake_server_multi(uint16_t* port,
                                         int client_dynamic_channel_open_response,
                                         int connection_count,
                                         int dynamic_channel_scenario,
-                                        int send_license_new)
+                                        int send_license_new,
+                                        int clipboard_scenario)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1555,6 +1591,8 @@ static int start_handshake_server_multi(uint16_t* port,
             rdp_buffer dvc_data;
             rdp_buffer dvc_close;
             rdp_buffer dvc_create_response;
+            rdp_buffer clipboard_data_response;
+            rdp_buffer clipboard_file_response;
             rdp_buffer static_first;
             rdp_buffer static_last;
             rdp_buffer error_update;
@@ -1570,6 +1608,8 @@ static int start_handshake_server_multi(uint16_t* port,
             rdp_buffer_init(&dvc_data);
             rdp_buffer_init(&dvc_close);
             rdp_buffer_init(&dvc_create_response);
+            rdp_buffer_init(&clipboard_data_response);
+            rdp_buffer_init(&clipboard_file_response);
             rdp_buffer_init(&static_first);
             rdp_buffer_init(&static_last);
             rdp_buffer_init(&error_update);
@@ -1635,6 +1675,21 @@ static int start_handshake_server_multi(uint16_t* port,
                     {
                         _exit(5);
                     }
+                    if (clipboard_scenario == CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES)
+                    {
+                        if (!extra_static_channel ||
+                            !build_clipboard_unmatched_response_packets(&clipboard_data_response,
+                                                                        &clipboard_file_response) ||
+                            !write_exact_fd(client,
+                                            clipboard_data_response.data,
+                                            clipboard_data_response.length) ||
+                            !write_exact_fd(client,
+                                            clipboard_file_response.data,
+                                            clipboard_file_response.length))
+                        {
+                            _exit(5);
+                        }
+                    }
                     if (dynamic_channel_scenario == DVC_SCENARIO_DATA_BEFORE_CREATE)
                     {
                         if (!build_dynamic_channel_data_packet(&dvc_data) ||
@@ -1687,6 +1742,8 @@ static int start_handshake_server_multi(uint16_t* port,
             rdp_buffer_free(&error_update);
             rdp_buffer_free(&static_last);
             rdp_buffer_free(&static_first);
+            rdp_buffer_free(&clipboard_file_response);
+            rdp_buffer_free(&clipboard_data_response);
             rdp_buffer_free(&dvc_close);
             rdp_buffer_free(&dvc_create_response);
             rdp_buffer_free(&dvc_data);
@@ -1721,7 +1778,8 @@ static int start_handshake_server_ex(uint16_t* port,
                                         client_dynamic_channel_open_response,
                                         1,
                                         DVC_SCENARIO_NORMAL,
-                                        0);
+                                        0,
+                                        CLIPBOARD_SCENARIO_NONE);
 }
 
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
@@ -1826,6 +1884,56 @@ static int test_static_channels(void)
         CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     }
     librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Coverage: validates clipboard request correlation. A server may deliver
+ * syntactically valid response PDUs after a local cancel or without a matching
+ * request; those bytes must not become public clipboard events with zeroed
+ * metadata.
+ */
+static int test_clipboard_unmatched_responses(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_add_static_channel(settings, "STAT", 0) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       1,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_NORMAL,
+                                       0,
+                                       CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 10u; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(counter.clipboard_data == 0);
+    CHECK(counter.clipboard_file_contents == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 
@@ -3572,7 +3680,8 @@ static int test_reconnect_success(void)
                                        0,
                                        2,
                                        DVC_SCENARIO_NORMAL,
-                                       0));
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3630,7 +3739,8 @@ static int test_dynamic_channel_duplicate_create(void)
                                        0,
                                        1,
                                        DVC_SCENARIO_DUPLICATE_CREATE,
-                                       0));
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3679,7 +3789,8 @@ static int test_dynamic_channel_close_pending_fragment(void)
                                        0,
                                        1,
                                        DVC_SCENARIO_CLOSE_PENDING_FRAGMENT,
-                                       0));
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3731,7 +3842,8 @@ static int test_dynamic_channel_data_before_create(void)
                                        0,
                                        1,
                                        DVC_SCENARIO_DATA_BEFORE_CREATE,
-                                       0));
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3779,7 +3891,8 @@ static int test_licensing_new_before_activation(void)
                                        0,
                                        1,
                                        DVC_SCENARIO_NORMAL,
-                                       1));
+                                       1,
+                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3819,6 +3932,8 @@ int test_client_core(void)
     if (test_usb_backend_boundary() != 0)
         return 1;
     if (test_static_channels() != 0)
+        return 1;
+    if (test_clipboard_unmatched_responses() != 0)
         return 1;
     if (test_reconnect_policy() != 0)
         return 1;
