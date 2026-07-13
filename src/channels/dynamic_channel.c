@@ -180,8 +180,8 @@ uint16_t rdp_dynamic_channel_select_version(uint16_t server_version)
 {
     if (server_version == 0)
         return 0;
-    if (server_version > 2u)
-        return 2;
+    if (server_version > 3u)
+        return 3;
     return server_version;
 }
 

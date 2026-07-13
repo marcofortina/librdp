@@ -7315,8 +7315,8 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_dynamic_channel_select_version(0) == 0 &&
            rdp_dynamic_channel_select_version(1) == 1 &&
            rdp_dynamic_channel_select_version(2) == 2 &&
-           rdp_dynamic_channel_select_version(3) == 2 &&
-           rdp_dynamic_channel_select_version(4) == 2);
+           rdp_dynamic_channel_select_version(3) == 3 &&
+           rdp_dynamic_channel_select_version(4) == 3);
     PCHECK(rdp_dynamic_channel_select_channel_id_bytes(0xffu) == 1 &&
            rdp_dynamic_channel_select_channel_id_bytes(0x100u) == 2 &&
            rdp_dynamic_channel_select_channel_id_bytes(0x10000u) == 4);
@@ -7332,6 +7332,12 @@ static int test_path_security_license_channels(void)
     dyn_response.length = 0;
     PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 2) == LIBRDP_STATUS_OK);
     PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 2);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 3) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 4 && dyn_response.data[0] == 0x50 && dyn_response.data[2] == 3);
+    dyn_response.length = 0;
+    PCHECK(rdp_dynamic_channel_write_capabilities_response(&dyn_response, 4) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_init(&dyn_response);
     PCHECK(rdp_dynamic_channel_parse_create_request(dyn_create,
