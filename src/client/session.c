@@ -36035,6 +36035,9 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
                                               0,
                                               RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED == 0);
             break;
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
+            rdp_session_finish_feature_status(status, 0, 0, 1);
+            break;
         default:
             return LIBRDP_STATUS_INVALID_ARGUMENT;
     }

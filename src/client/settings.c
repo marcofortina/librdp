@@ -33,7 +33,8 @@
      (uint32_t)LIBRDP_FEATURE_PNP | (uint32_t)LIBRDP_FEATURE_WEBAUTHN | \
      (uint32_t)LIBRDP_FEATURE_RAIL | (uint32_t)LIBRDP_FEATURE_CR2 | \
      (uint32_t)LIBRDP_FEATURE_ECHO | (uint32_t)LIBRDP_FEATURE_TELEMETRY | \
-     (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT)
+     (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT | \
+     (uint32_t)LIBRDP_FEATURE_DESKTOP_COMPOSITION)
 
 typedef struct rdp_settings_drive
 {
@@ -683,6 +684,7 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
         case LIBRDP_FEATURE_CR2:
         case LIBRDP_FEATURE_TELEMETRY:
         case LIBRDP_FEATURE_MULTITRANSPORT:
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
             return 1;
         case LIBRDP_FEATURE_ECHO:
             return settings->echo_payload != NULL;

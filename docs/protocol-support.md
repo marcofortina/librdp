@@ -76,7 +76,7 @@ Rows describe behavior ownership, not release status. A protocol appears here wh
 | MS-RDPEAR | Authentication redirection behavior | `src/channels/auth_redirection.c` | `fuzz/auth_redirection_fuzzer.c` |
 | MS-RDPESC | Smartcard redirection with PC/SC backend integration path | `src/channels/smartcard_redirection.c` | `librdp_settings_add_smartcard()`, PC/SC or controlled virtual source, `fuzz/smartcard_redirection_fuzzer.c` |
 | MS-RDPCR2 | Composited remoting and render tree behavior | `src/channels/composited_remoting.c` | `LIBRDP_FEATURE_CR2`, `fuzz/composited_remoting_fuzzer.c` |
-| MS-RDPEDC | Desktop composition channel behavior | `src/channels/desktop_composition.c` | Composition channel dispatch, `fuzz/desktop_composition_fuzzer.c` |
+| MS-RDPEDC | Desktop composition channel behavior | `src/channels/desktop_composition.c` | `LIBRDP_FEATURE_DESKTOP_COMPOSITION`, `fuzz/desktop_composition_fuzzer.c` |
 | MS-RDPEPS | Protocol selection and session selection behavior | `src/protocol/session_selection.c` | Connection negotiation path, `fuzz/session_selection_fuzzer.c` |
 | MS-RDPEWA | WebAuthn redirection behavior | `src/channels/webauthn_channel.c` | `librdp_settings_set_webauthn_provider()`, libfido2 or controlled mock provider, `fuzz/webauthn_channel_fuzzer.c` |
 
