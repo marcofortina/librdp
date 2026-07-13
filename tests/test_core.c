@@ -64,6 +64,7 @@
 #define DVC_SCENARIO_DATA_BEFORE_CREATE 3
 #define DVC_SCENARIO_EMPTY_CONTINUATION 4
 #define DVC_SCENARIO_NESTED_DATA_FIRST 5
+#define DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE 6
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1450,21 +1451,37 @@ static int build_application_static_channel_last_packet(rdp_buffer* out)
                                                 1006);
 }
 
-static int build_dynamic_channel_create_packet(rdp_buffer* out)
+static int build_dynamic_channel_create_named_packet(rdp_buffer* out, const char* name)
 {
-    static const uint8_t name[] = {'E', 'C', 'H', 'O', 0};
     rdp_buffer payload;
+    size_t name_len = 0;
     int ok = 0;
+
+    if (!out || !name)
+        return 0;
+    name_len = strlen(name);
+    if (name_len == 0)
+        return 0;
 
     rdp_buffer_init(&payload);
     ok = rdp_buffer_append_u8(&payload,
                               (uint8_t)((RDP_DYNAMIC_CHANNEL_CMD_CREATE << 4) |
                                         (LIBRDP_CHANNEL_PRIORITY_MEDIUM << 2))) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u8(&payload, 7) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append(&payload, name, sizeof(name)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&payload, name, name_len + 1u) == LIBRDP_STATUS_OK &&
          build_static_channel_packet(out, &payload, 1004);
     rdp_buffer_free(&payload);
     return ok;
+}
+
+static int build_dynamic_channel_create_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_create_named_packet(out, "ECHO");
+}
+
+static int build_dynamic_channel_create_webauthn_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_create_named_packet(out, "WebAuthN_Channel");
 }
 
 static int build_dynamic_channel_data_first_packet(rdp_buffer* out)
@@ -1789,6 +1806,16 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         if (!build_dynamic_channel_data_packet(&dvc_data) ||
                             !write_exact_fd(client, dvc_data.data, dvc_data.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE)
+                    {
+                        if (!build_dynamic_channel_create_webauthn_packet(&dvc_create) ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
+                            !build_dynamic_channel_close_packet(&dvc_close) ||
+                            !write_exact_fd(client, dvc_close.data, dvc_close.length))
                         {
                             _exit(5);
                         }
@@ -4112,6 +4139,86 @@ static int test_dynamic_channel_data_before_create(void)
 }
 
 /*
+ * Coverage: WebAuthn is an internal DVC and must drive the public feature
+ * status from its own channel lifecycle, not from auth-redirection state or
+ * public application-channel events.
+ */
+static int test_webauthn_feature_status_channel_lifecycle(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+    int saw_active = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "mock=/tmp/librdp-webauthn-test.cbor") ==
+          LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_WEBAUTHN,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+
+    for (i = 0; i < 8u && !saw_active; i++)
+    {
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_WEBAUTHN,
+                                                &feature_status) == LIBRDP_STATUS_OK);
+        if (feature_status.active)
+            saw_active = 1;
+    }
+    CHECK(saw_active);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(counter.channel_open == 0);
+
+    for (; i < 10u && feature_status.negotiated; i++)
+    {
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_feature_status(session,
+                                                LIBRDP_FEATURE_WEBAUTHN,
+                                                &feature_status) == LIBRDP_STATUS_OK);
+    }
+    CHECK(!feature_status.negotiated && !feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    CHECK(counter.channel_close == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that recognized but non-rendered GDI alternate
  * secondary orders fail the runtime path instead of being silently accepted.
  * This catches capability/runtime drift where parser-only GDI+ or window
@@ -4243,6 +4350,8 @@ int test_client_core(void)
     if (test_dynamic_channel_nested_data_first() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
+        return 1;
+    if (test_webauthn_feature_status_channel_lifecycle() != 0)
         return 1;
     if (test_gdi_unsupported_altsec_order() != 0)
         return 1;

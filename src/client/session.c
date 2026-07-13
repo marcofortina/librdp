@@ -754,6 +754,9 @@ struct librdp_session
     uint32_t auth_redirection_channel_id;
     uint8_t auth_redirection_channel_id_bytes;
     uint8_t auth_redirection_ready;
+    uint32_t webauthn_channel_id;
+    uint8_t webauthn_channel_id_bytes;
+    uint8_t webauthn_ready;
     uint8_t credssp_security_ready;
     rdp_ntlm_security_context credssp_security;
     uint32_t composited_channel_id;
@@ -1680,6 +1683,15 @@ static void rdp_session_auth_redirection_channel_reset(librdp_session* session)
     session->auth_redirection_channel_id = 0;
     session->auth_redirection_channel_id_bytes = 0;
     session->auth_redirection_ready = 0;
+}
+
+static void rdp_session_webauthn_channel_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    session->webauthn_channel_id = 0;
+    session->webauthn_channel_id_bytes = 0;
+    session->webauthn_ready = 0;
 }
 
 static void rdp_session_credssp_security_reset(librdp_session* session)
@@ -27201,6 +27213,9 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
         else if (request.name_len == sizeof(RDP_SESSION_WEBAUTHN_CHANNEL_NAME) - 1u &&
                  memcmp(request.name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME, request.name_len) == 0)
         {
+            session->webauthn_channel_id = request.channel_id;
+            session->webauthn_channel_id_bytes = request.channel_id_bytes;
+            session->webauthn_ready = 1;
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.webauthn.channel",
                             "dvc_channel_id=%u enabled=%u",
@@ -27702,6 +27717,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             }
             if (entry->channel_id == session->auth_redirection_channel_id)
                 rdp_session_auth_redirection_channel_reset(session);
+            if (entry->channel_id == session->webauthn_channel_id)
+                rdp_session_webauthn_channel_reset(session);
             if (entry->channel_id == session->mouse_cursor_channel_id)
             {
                 session->mouse_cursor_channel_id = 0;
@@ -31441,6 +31458,7 @@ void librdp_session_free(librdp_session* session)
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
     rdp_session_auth_redirection_channel_reset(session);
+    rdp_session_webauthn_channel_reset(session);
     rdp_session_credssp_security_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
@@ -31869,6 +31887,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->standard_security_active = 0;
     rdp_session_credssp_security_reset(session);
     rdp_session_auth_redirection_channel_reset(session);
+    rdp_session_webauthn_channel_reset(session);
     session->share_id = 0;
     session->dynamic_channel_id = 0;
     session->clipboard_channel_id = 0;
@@ -31976,6 +31995,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
+    rdp_session_webauthn_channel_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_graphics_decompressor_reset(&session->bulk_rdp8_decompressor);
@@ -32943,6 +32963,7 @@ fail:
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
+    rdp_session_webauthn_channel_reset(session);
     rdp_buffer_free(&session->audio_output_fragment);
     rdp_buffer_init(&session->audio_output_fragment);
     rdp_buffer_free(&session->audio_output_pending_data);
@@ -34487,6 +34508,7 @@ static librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_video_redirection_reset(session);
     rdp_session_video_optimized_reset(session);
     rdp_session_video_capture_reset(session);
+    rdp_session_webauthn_channel_reset(session);
     rdp_session_usb_redirection_reset(session);
     rdp_graphics_decompressor_reset(&session->graphics_decompressor);
     rdp_graphics_decompressor_reset(&session->bulk_rdp8_decompressor);
@@ -36125,8 +36147,8 @@ librdp_status librdp_session_get_feature_status(const librdp_session* session,
             break;
         case LIBRDP_FEATURE_WEBAUTHN:
             rdp_session_finish_feature_status(status,
-                                              session->auth_redirection_channel_id != 0,
-                                              session->auth_redirection_ready != 0,
+                                              session->webauthn_channel_id != 0,
+                                              session->webauthn_ready != 0,
                                               0);
             break;
         case LIBRDP_FEATURE_RAIL:
