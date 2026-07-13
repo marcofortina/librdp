@@ -63,6 +63,7 @@
 #define DVC_SCENARIO_CLOSE_PENDING_FRAGMENT 2
 #define DVC_SCENARIO_DATA_BEFORE_CREATE 3
 #define DVC_SCENARIO_EMPTY_CONTINUATION 4
+#define DVC_SCENARIO_NESTED_DATA_FIRST 5
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1818,6 +1819,15 @@ static int start_handshake_server_full(uint16_t* port,
                             !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
                             !build_dynamic_channel_empty_data_packet(&dvc_empty_data) ||
                             !write_exact_fd(client, dvc_empty_data.data, dvc_empty_data.length))
+                        {
+                            _exit(5);
+                        }
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_NESTED_DATA_FIRST)
+                    {
+                        if (!build_dynamic_channel_data_first_packet(&dvc_data_first) ||
+                            !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length) ||
+                            !write_exact_fd(client, dvc_data_first.data, dvc_data_first.length))
                         {
                             _exit(5);
                         }
@@ -4000,6 +4010,57 @@ static int test_dynamic_channel_empty_continuation(void)
 }
 
 /*
+ * Coverage: rejects a new DVC DATA_FIRST while a previous fragmented message
+ * is incomplete. It prevents out-of-order traffic from silently replacing the
+ * pending payload and corrupting channel message boundaries.
+ */
+static int test_dynamic_channel_nested_data_first(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    event_counter counter;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t i = 0;
+
+    memset(&counter, 0, sizeof(counter));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_NESTED_DATA_FIRST,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    librdp_session_set_event_callback(session, on_event, &counter);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 7u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 1000);
+    CHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(counter.channel_open == 1);
+    CHECK(counter.channel_data == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that dynamic channel data cannot arrive before the
  * channel create handshake. It catches out-of-order DVC sequencing that would
  * otherwise hide malformed server traffic and lose channel metrics.
@@ -4178,6 +4239,8 @@ int test_client_core(void)
     if (test_dynamic_channel_close_pending_fragment() != 0)
         return 1;
     if (test_dynamic_channel_empty_continuation() != 0)
+        return 1;
+    if (test_dynamic_channel_nested_data_first() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
         return 1;
