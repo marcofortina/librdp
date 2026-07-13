@@ -900,6 +900,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11-viewer/main.c
         apps/x11-viewer/viewer_clipboard.c
         apps/x11-viewer/viewer_cli.c
+        apps/x11-viewer/viewer_input.c
         apps/x11-viewer/viewer_render.c
         apps/x11-viewer/viewer_trace.c
         apps/x11-viewer/viewer_window.c
