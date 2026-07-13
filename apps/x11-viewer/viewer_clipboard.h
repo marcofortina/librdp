@@ -27,6 +27,17 @@ void x11_clipboard_handle_owner_notify(x11_app* app, XEvent* event);
 void x11_clipboard_handle_selection_notify(x11_app* app, XSelectionEvent* selection);
 void x11_clipboard_handle_selection_request(x11_app* app, XSelectionRequestEvent* request);
 void x11_clipboard_handle_selection_clear(x11_app* app, const XSelectionClearEvent* event);
+void x11_clipboard_handle_property_notify(x11_app* app, const XPropertyEvent* event);
+void x11_clipboard_check_timeouts(x11_app* app);
+int x11_clipboard_next_timeout_ms(const x11_app* app, int* timeout_ms);
 void x11_clipboard_set_remote_utf16le(x11_app* app, const uint8_t* data, size_t length);
+int x11_clipboard_accumulate_incr_chunk(uint8_t** buffer,
+                                        size_t* length,
+                                        size_t* capacity,
+                                        const uint8_t* chunk,
+                                        size_t chunk_len,
+                                        size_t limit);
+size_t x11_clipboard_next_incr_chunk_size(size_t total, size_t offset, size_t chunk_limit);
+int x11_clipboard_incr_timed_out(uint64_t now_ms, uint64_t deadline_ms);
 
 #endif

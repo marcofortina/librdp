@@ -1045,6 +1045,28 @@ if(LIBRDP_BUILD_X11_VIEWER)
         librdp_apply_sanitizer_link_options(test_viewer_keyboard)
         add_test(NAME viewer_keyboard COMMAND test_viewer_keyboard)
         set_tests_properties(viewer_keyboard PROPERTIES TIMEOUT 30)
+        add_executable(test_viewer_clipboard
+            tests/test_viewer_clipboard.c
+            apps/x11-viewer/viewer_clipboard.c
+            apps/x11-viewer/viewer_trace.c
+        )
+        target_include_directories(test_viewer_clipboard PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${X11_INCLUDE_DIR}
+        )
+        target_compile_definitions(test_viewer_clipboard PRIVATE _POSIX_C_SOURCE=200809L)
+        target_link_libraries(test_viewer_clipboard PRIVATE
+            librdp
+            Iconv::Iconv
+            ${X11_LIBRARIES}
+            X11::Xfixes
+        )
+        librdp_apply_warning_options(test_viewer_clipboard)
+        librdp_apply_sanitizer_compile_options(test_viewer_clipboard)
+        librdp_apply_sanitizer_link_options(test_viewer_clipboard)
+        add_test(NAME viewer_clipboard COMMAND test_viewer_clipboard)
+        set_tests_properties(viewer_clipboard PROPERTIES TIMEOUT 30)
         if(LIBRDP_XRANDR_FOUND)
             add_executable(test_viewer_display
                 tests/test_viewer_display.c

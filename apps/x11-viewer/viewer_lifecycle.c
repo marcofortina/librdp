@@ -647,6 +647,7 @@ static int x11_wait_for_events(x11_app* app)
     struct pollfd* session_fds = &poll_fds[1];
     size_t session_count = 0;
     int timeout_ms = -1;
+    int clipboard_timeout_ms = -1;
     int rc = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -667,6 +668,9 @@ static int x11_wait_for_events(x11_app* app)
         timeout_ms = 0;
     else if (app->audio_input_active && (timeout_ms < 0 || timeout_ms > 10))
         timeout_ms = 10;
+    if (x11_clipboard_next_timeout_ms(app, &clipboard_timeout_ms) &&
+        (timeout_ms < 0 || clipboard_timeout_ms < timeout_ms))
+        timeout_ms = clipboard_timeout_ms;
 
     do
     {
@@ -684,7 +688,10 @@ static int x11_wait_for_events(x11_app* app)
         return 0;
     }
     if (rc == 0)
+    {
+        x11_clipboard_check_timeouts(app);
         return x11_handle_session_status(app, librdp_session_dispatch_pending(app->session));
+    }
     if (session_count > 0 && x11_dispatch_session_ready(app, session_fds, session_count) == 0)
         return 0;
     return 1;
@@ -774,7 +781,8 @@ int x11_viewer_run(int argc, char** argv)
     XSelectInput(app.display,
                  app.window,
                  ExposureMask | KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-                     PointerMotionMask | StructureNotifyMask | FocusChangeMask | EnterWindowMask | LeaveWindowMask);
+                     PointerMotionMask | StructureNotifyMask | FocusChangeMask | EnterWindowMask | LeaveWindowMask |
+                     PropertyChangeMask);
     XMapWindow(app.display, app.window);
 
     x11_cli_trace_settings(settings);
@@ -964,6 +972,8 @@ int x11_viewer_run(int argc, char** argv)
                 x11_clipboard_handle_selection_request(&app, &event.xselectionrequest);
             else if (event.type == SelectionClear && event.xselectionclear.selection == app.clipboard_selection)
                 x11_clipboard_handle_selection_clear(&app, &event.xselectionclear);
+            else if (event.type == PropertyNotify)
+                x11_clipboard_handle_property_notify(&app, &event.xproperty);
             else if (event.type == DestroyNotify)
             {
                 x11_window_mark_invalid(&app);
@@ -1051,6 +1061,7 @@ int x11_viewer_run(int argc, char** argv)
 
         if (!app.running)
             break;
+        x11_clipboard_check_timeouts(&app);
         x11_audio_input_pump(&app);
         if (app.running && app.dirty)
             x11_render_draw_surface(&app);
