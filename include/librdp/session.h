@@ -88,6 +88,7 @@ typedef enum librdp_session_lifecycle
 } librdp_session_lifecycle;
 
 #define LIBRDP_METRICS_VERSION 1u /**< Current librdp_metrics version. */
+#define LIBRDP_ECHO_STATS_VERSION 1u /**< Current librdp_echo_stats version. */
 #define LIBRDP_GRAPHICS_UPDATE_VERSION 1u /**< Current librdp_graphics_update version. */
 #define LIBRDP_RECONNECT_POLICY_VERSION 1u /**< Current librdp_reconnect_policy version. */
 
@@ -162,6 +163,38 @@ typedef struct librdp_metrics
     uint64_t reconnects;              /**< Coordinated reconnect attempts started by public reconnect APIs. */
     uint64_t limits_rejected;         /**< Operations rejected because a configured limit was exceeded. */
 } librdp_metrics;
+
+/**
+ * @brief Versioned Echo diagnostic statistics snapshot.
+ *
+ * Echo diagnostics are available only when LIBRDP_FEATURE_ECHO is requested
+ * and the server has opened the internal ECHO dynamic virtual channel. The
+ * counters are monotonic for the lifetime of the session. Overflow is
+ * saturated at UINT64_MAX.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_echo_stats
+{
+    uint32_t version;          /**< Struct version, LIBRDP_ECHO_STATS_VERSION. */
+    uint32_t size;             /**< Size of this struct in bytes. */
+    uint64_t requests_received; /**< Server-originated Echo requests accepted by the client. */
+    uint64_t responses_sent;   /**< Echo responses sent for server-originated requests. */
+    uint64_t pings_sent;       /**< Client-originated diagnostic pings queued on the Echo channel. */
+    uint64_t ping_responses;   /**< Matching diagnostic ping responses received before timeout. */
+    uint64_t timeouts;         /**< Diagnostic pings that expired before a matching response. */
+    uint64_t malformed_packets; /**< Echo packets rejected by parser, state, or size validation. */
+    uint64_t late_responses;   /**< Matching Echo responses received after the configured timeout. */
+    uint64_t bytes_received;   /**< Echo payload bytes received. */
+    uint64_t bytes_sent;       /**< Echo payload bytes sent. */
+    uint64_t last_sequence;    /**< Last diagnostic sequence allocated by librdp_session_echo_send(). */
+    uint64_t pending_sequence; /**< Pending diagnostic sequence, or 0 when none is pending. */
+    size_t pending_payload_len; /**< Pending diagnostic payload length in bytes. */
+    uint64_t last_rtt_us;      /**< Last successful diagnostic round-trip time in microseconds. */
+    uint64_t min_rtt_us;       /**< Minimum successful round-trip time, or 0 before the first response. */
+    uint64_t max_rtt_us;       /**< Maximum successful round-trip time, or 0 before the first response. */
+    uint64_t jitter_us;        /**< Absolute delta between the last two successful RTT samples. */
+} librdp_echo_stats;
 
 /**
  * @brief Versioned blocking reconnect policy.
@@ -439,6 +472,19 @@ LIBRDP_API librdp_status librdp_trace_policy_init(librdp_trace_policy* policy);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_metrics_init(librdp_metrics* metrics);
+
+/**
+ * @brief Initialize an Echo statistics descriptor.
+ *
+ * @param[out] stats Echo statistics object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * stats is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_echo_stats_init(librdp_echo_stats* stats);
 
 /**
  * @brief Initialize a reconnect policy with safe defaults.
@@ -1169,6 +1215,62 @@ LIBRDP_API librdp_status librdp_session_get_metrics(const librdp_session* sessio
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_session_reset_metrics(librdp_session* session);
+
+/**
+ * @brief Send a client-originated Echo diagnostic ping.
+ *
+ * The Echo feature must be enabled in settings and the internal ECHO dynamic
+ * channel must be active. The payload is copied during the call and is not
+ * retained by pointer. Only one diagnostic ping may be pending at a time
+ * because the Echo wire format has no request identifier; responses are
+ * correlated by exact payload match.
+ *
+ * @param[in,out] session Active session; must not be NULL.
+ * @param[in] data Diagnostic payload bytes. NULL is allowed only when
+ * data_len is 0.
+ * @param[in] data_len Payload length in bytes; must not exceed the Echo
+ * implementation limit.
+ * @param[in] timeout_ms Timeout in milliseconds; must be greater than zero.
+ * @param[out] sequence Optional destination for the local diagnostic sequence;
+ * may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when the ping was queued; LIBRDP_STATUS_INVALID_ARGUMENT
+ * for NULL, size, or timeout errors; LIBRDP_STATUS_UNSUPPORTED when the Echo
+ * dynamic channel is not available; LIBRDP_STATUS_STATE when another diagnostic
+ * ping is already pending; allocation or transport errors propagated from the
+ * dynamic-channel send path.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @warning Diagnostic payloads may contain application data. They are not
+ * included in trace output unless unsafe payload tracing is explicitly enabled.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_echo_send(librdp_session* session,
+                                                 const void* data,
+                                                 size_t data_len,
+                                                 uint32_t timeout_ms,
+                                                 uint64_t* sequence);
+
+/**
+ * @brief Copy current Echo diagnostic statistics.
+ *
+ * stats must be initialized with librdp_echo_stats_init() or contain
+ * LIBRDP_ECHO_STATS_VERSION and a size large enough for librdp_echo_stats.
+ * The function writes a complete snapshot on success and does not retain
+ * caller storage.
+ *
+ * @param[in] session Session to query; must not be NULL.
+ * @param[out] stats Destination statistics object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid stats metadata; LIBRDP_STATUS_STATE when called outside
+ * the session owner thread.
+ *
+ * @note Thread-safety: call from the serialized session-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_get_echo_stats(const librdp_session* session,
+                                                       librdp_echo_stats* stats);
 
 /**
  * @brief Return the opaque last-error object owned by a session.

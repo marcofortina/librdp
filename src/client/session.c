@@ -129,6 +129,7 @@
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SESSION_DYNAMIC_CHANNEL_NAME_MAX 96u
 #define RDP_SESSION_MAX_DYNAMIC_MESSAGE (64u * 1024u * 1024u)
+#define RDP_SESSION_ECHO_MAX_TIMEOUT_MS 600000u
 #define RDP_SESSION_RECONNECT_MAX_ATTEMPTS 64u
 #define RDP_SESSION_MAX_FASTPATH_FRAGMENT (16u * 1024u * 1024u)
 #define RDP_SESSION_MAX_GRAPHICS_SURFACES 64u
@@ -860,6 +861,13 @@ struct librdp_session
     rdp_session_gdi_stream_bitmap gdi_stream_bitmap;
     uint32_t graphics_current_frame_id;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
+    librdp_echo_stats echo_stats;
+    rdp_buffer echo_pending_payload;
+    uint64_t echo_next_sequence;
+    uint64_t echo_pending_sequence;
+    uint64_t echo_pending_sent_ns;
+    uint32_t echo_pending_timeout_ms;
+    uint8_t echo_pending;
     uint32_t next_dynamic_channel_id;
     uint32_t static_channel_count;
     rdp_session_static_channel static_channels[LIBRDP_SETTINGS_MAX_STATIC_CHANNELS];
@@ -1061,6 +1069,10 @@ static void rdp_session_event_payload(const librdp_event* event, const void** pa
             *payload = &event->data.video_capture_close;
             *payload_size = sizeof(event->data.video_capture_close);
             break;
+        case LIBRDP_EVENT_ECHO_RESULT:
+            *payload = &event->data.echo_result;
+            *payload_size = sizeof(event->data.echo_result);
+            break;
         case LIBRDP_EVENT_NONE:
         case LIBRDP_EVENT_DISCONNECTED:
         default:
@@ -1100,6 +1112,7 @@ static void rdp_session_emit_domain(librdp_session* session, const librdp_event_
         case LIBRDP_EVENT_CHANNEL_OPEN:
         case LIBRDP_EVENT_CHANNEL_DATA:
         case LIBRDP_EVENT_CHANNEL_CLOSE:
+        case LIBRDP_EVENT_ECHO_RESULT:
             callback = session->channel_callback;
             user_data = session->channel_callback_data;
             break;
@@ -15480,19 +15493,150 @@ static int rdp_session_dynamic_channel_is_internal(const rdp_session_dynamic_cha
     return entry && rdp_session_dynamic_channel_is_internal_name(entry->name);
 }
 
-static int rdp_session_echo_channel_active(const librdp_session* session)
+static rdp_session_dynamic_channel* rdp_session_echo_channel_entry(const librdp_session* session)
 {
     if (!session)
-        return 0;
+        return NULL;
     if (!librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_ECHO))
-        return 0;
+        return NULL;
     for (uint32_t i = 0; i < session->limits.dynamic_channel_count; i++)
     {
         if (session->dynamic_channels[i].active &&
             strcmp(session->dynamic_channels[i].name, RDP_SESSION_ECHO_CHANNEL_NAME) == 0)
-            return 1;
+            return &((librdp_session*)session)->dynamic_channels[i];
     }
-    return 0;
+    return NULL;
+}
+
+static int rdp_session_echo_channel_active(const librdp_session* session)
+{
+    return rdp_session_echo_channel_entry(session) != NULL;
+}
+
+static uint64_t rdp_session_monotonic_ns(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return ((uint64_t)ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec;
+}
+
+static void rdp_session_echo_clear_pending(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_buffer_free(&session->echo_pending_payload);
+    rdp_buffer_init(&session->echo_pending_payload);
+    session->echo_pending = 0;
+    session->echo_pending_sequence = 0;
+    session->echo_pending_sent_ns = 0;
+    session->echo_pending_timeout_ms = 0;
+    session->echo_stats.pending_sequence = 0;
+    session->echo_stats.pending_payload_len = 0;
+}
+
+static void rdp_session_echo_emit_result(librdp_session* session,
+                                         uint64_t sequence,
+                                         const uint8_t* data,
+                                         size_t data_len,
+                                         uint64_t rtt_us,
+                                         int ok,
+                                         int timed_out)
+{
+    librdp_event event;
+
+    if (!session)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.type = LIBRDP_EVENT_ECHO_RESULT;
+    event.data.echo_result.sequence = sequence;
+    event.data.echo_result.rtt_us = rtt_us;
+    event.data.echo_result.data = data;
+    event.data.echo_result.data_len = data_len;
+    event.data.echo_result.ok = ok ? 1 : 0;
+    event.data.echo_result.timed_out = timed_out ? 1 : 0;
+    rdp_session_emit(session, &event);
+}
+
+static void rdp_session_echo_record_rtt(librdp_session* session, uint64_t rtt_us)
+{
+    uint64_t previous = 0;
+
+    if (!session)
+        return;
+    previous = session->echo_stats.last_rtt_us;
+    session->echo_stats.last_rtt_us = rtt_us;
+    if (session->echo_stats.min_rtt_us == 0 || rtt_us < session->echo_stats.min_rtt_us)
+        session->echo_stats.min_rtt_us = rtt_us;
+    if (rtt_us > session->echo_stats.max_rtt_us)
+        session->echo_stats.max_rtt_us = rtt_us;
+    if (previous != 0)
+        session->echo_stats.jitter_us = previous > rtt_us ? previous - rtt_us : rtt_us - previous;
+}
+
+static int rdp_session_echo_pending_expired(const librdp_session* session, uint64_t now_ns, uint64_t* elapsed_us)
+{
+    uint64_t elapsed_ns = 0;
+    uint64_t timeout_ns = 0;
+
+    if (elapsed_us)
+        *elapsed_us = 0;
+    if (!session || !session->echo_pending || session->echo_pending_timeout_ms == 0 ||
+        session->echo_pending_sent_ns == 0 || now_ns < session->echo_pending_sent_ns)
+        return 0;
+    elapsed_ns = now_ns - session->echo_pending_sent_ns;
+    if (elapsed_us)
+        *elapsed_us = elapsed_ns / 1000u;
+    timeout_ns = (uint64_t)session->echo_pending_timeout_ms * 1000000ull;
+    return elapsed_ns >= timeout_ns;
+}
+
+static void rdp_session_echo_check_timeout(librdp_session* session)
+{
+    uint64_t elapsed_us = 0;
+
+    if (!session || !session->echo_pending)
+        return;
+    if (!rdp_session_echo_pending_expired(session, rdp_session_monotonic_ns(), &elapsed_us))
+        return;
+    rdp_session_metric_add(&session->echo_stats.timeouts, 1);
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.echo.timeout",
+                    "sequence=%llu payload_len=%u timeout_ms=%u elapsed_us=%llu",
+                    (unsigned long long)session->echo_pending_sequence,
+                    (unsigned)session->echo_pending_payload.length,
+                    session->echo_pending_timeout_ms,
+                    (unsigned long long)elapsed_us);
+    rdp_session_echo_emit_result(session,
+                                 session->echo_pending_sequence,
+                                 session->echo_pending_payload.data,
+                                 session->echo_pending_payload.length,
+                                 0,
+                                 0,
+                                 1);
+    rdp_session_echo_clear_pending(session);
+}
+
+static int rdp_session_echo_next_timeout_ms(const librdp_session* session)
+{
+    uint64_t now_ns = 0;
+    uint64_t elapsed_ns = 0;
+    uint64_t timeout_ns = 0;
+    uint64_t remaining_ns = 0;
+
+    if (!session || !session->echo_pending || session->echo_pending_timeout_ms == 0 ||
+        session->echo_pending_sent_ns == 0)
+        return -1;
+    now_ns = rdp_session_monotonic_ns();
+    if (now_ns <= session->echo_pending_sent_ns)
+        return (int)session->echo_pending_timeout_ms;
+    elapsed_ns = now_ns - session->echo_pending_sent_ns;
+    timeout_ns = (uint64_t)session->echo_pending_timeout_ms * 1000000ull;
+    if (elapsed_ns >= timeout_ns)
+        return 0;
+    remaining_ns = timeout_ns - elapsed_ns;
+    return (int)((remaining_ns + 999999ull) / 1000000ull);
 }
 
 static void rdp_session_emit_channel_open_data(librdp_session* session,
@@ -27044,19 +27188,81 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
     {
         rdp_echo_channel_pdu request;
         rdp_buffer response;
+        uint64_t now_ns = 0;
+        uint64_t rtt_us = 0;
+        int matches_pending = 0;
+        int expired = 0;
 
         rdp_buffer_init(&response);
         status = rdp_echo_channel_parse_request(data, data_len, &request);
+        if (status != LIBRDP_STATUS_OK)
+            rdp_session_metric_add(&session->echo_stats.malformed_packets, 1);
         if (status == LIBRDP_STATUS_OK)
         {
+            rdp_session_metric_add(&session->echo_stats.bytes_received, request.payload_len);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.echo.request",
                             "dvc_channel_id=%u payload_len=%u",
                             channel_id,
                             (unsigned)request.payload_len);
+            matches_pending = session->echo_pending &&
+                              request.payload_len == session->echo_pending_payload.length &&
+                              (request.payload_len == 0 ||
+                               memcmp(request.payload,
+                                      session->echo_pending_payload.data,
+                                      request.payload_len) == 0);
+            if (matches_pending)
+            {
+                now_ns = rdp_session_monotonic_ns();
+                expired = rdp_session_echo_pending_expired(session, now_ns, &rtt_us);
+                if (expired)
+                {
+                    rdp_session_metric_add(&session->echo_stats.late_responses, 1);
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.echo.response.late",
+                                    "dvc_channel_id=%u sequence=%llu payload_len=%u rtt_us=%llu timeout_ms=%u",
+                                    channel_id,
+                                    (unsigned long long)session->echo_pending_sequence,
+                                    (unsigned)request.payload_len,
+                                    (unsigned long long)rtt_us,
+                                    session->echo_pending_timeout_ms);
+                    rdp_session_echo_emit_result(session,
+                                                 session->echo_pending_sequence,
+                                                 session->echo_pending_payload.data,
+                                                 session->echo_pending_payload.length,
+                                                 0,
+                                                 0,
+                                                 1);
+                    rdp_session_echo_clear_pending(session);
+                }
+                else
+                {
+                    rdp_session_metric_add(&session->echo_stats.ping_responses, 1);
+                    rdp_session_echo_record_rtt(session, rtt_us);
+                    rdp_trace_event(RDP_TRACE_CLIENT,
+                                    "client.echo.response.matched",
+                                    "dvc_channel_id=%u sequence=%llu payload_len=%u rtt_us=%llu",
+                                    channel_id,
+                                    (unsigned long long)session->echo_pending_sequence,
+                                    (unsigned)request.payload_len,
+                                    (unsigned long long)rtt_us);
+                    rdp_session_echo_emit_result(session,
+                                                 session->echo_pending_sequence,
+                                                 session->echo_pending_payload.data,
+                                                 session->echo_pending_payload.length,
+                                                 rtt_us,
+                                                 1,
+                                                 0);
+                    rdp_session_echo_clear_pending(session);
+                }
+            }
+        }
+        if (status == LIBRDP_STATUS_OK && !matches_pending)
+        {
+            rdp_session_metric_add(&session->echo_stats.requests_received, 1);
             status = rdp_echo_channel_write_response(&response, request.payload, request.payload_len);
         }
-        if (status == LIBRDP_STATUS_OK)
+        if (status == LIBRDP_STATUS_OK && !matches_pending)
         {
             status = rdp_session_send_dynamic_channel_data(session,
                                                            entry->channel_id,
@@ -27065,8 +27271,10 @@ static librdp_status rdp_session_handle_dynamic_channel_message(librdp_session* 
                                                            response.length,
                                                            "client.echo.response");
         }
-        if (status == LIBRDP_STATUS_OK)
+        if (status == LIBRDP_STATUS_OK && !matches_pending)
         {
+            rdp_session_metric_add(&session->echo_stats.responses_sent, 1);
+            rdp_session_metric_add(&session->echo_stats.bytes_sent, response.length);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.echo.response",
                             "dvc_channel_id=%u payload_len=%u",
@@ -31416,7 +31624,8 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
         return NULL;
     }
     limits = rdp_settings_limits_internal(session->settings);
-    if (!limits || librdp_metrics_init(&session->metrics) != LIBRDP_STATUS_OK)
+    if (!limits || librdp_metrics_init(&session->metrics) != LIBRDP_STATUS_OK ||
+        librdp_echo_stats_init(&session->echo_stats) != LIBRDP_STATUS_OK)
     {
         librdp_settings_free(session->settings);
         free(session);
@@ -31470,6 +31679,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_buffer_init(&session->audio_output_udp_data);
     rdp_buffer_init(&session->device_redirection_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    rdp_buffer_init(&session->echo_pending_payload);
     rdp_buffer_init(&session->fastpath_fragment);
     rdp_buffer_init(&session->fastpath_decompressed);
     rdp_buffer_init(&session->slowpath_decompressed);
@@ -31537,6 +31747,7 @@ void librdp_session_free(librdp_session* session)
     rdp_buffer_free(&session->pnp_redirection_fragment);
     rdp_buffer_free(&session->pnp_redirection_storage);
     rdp_buffer_free(&session->remote_programs_fragment);
+    rdp_buffer_free(&session->echo_pending_payload);
     rdp_buffer_free(&session->fastpath_fragment);
     rdp_buffer_free(&session->fastpath_decompressed);
     rdp_buffer_free(&session->slowpath_decompressed);
@@ -31704,6 +31915,16 @@ librdp_status librdp_metrics_init(librdp_metrics* metrics)
     memset(metrics, 0, sizeof(*metrics));
     metrics->version = LIBRDP_METRICS_VERSION;
     metrics->size = (uint32_t)sizeof(*metrics);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_echo_stats_init(librdp_echo_stats* stats)
+{
+    if (!stats)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(stats, 0, sizeof(*stats));
+    stats->version = LIBRDP_ECHO_STATS_VERSION;
+    stats->size = (uint32_t)sizeof(*stats);
     return LIBRDP_STATUS_OK;
 }
 
@@ -32015,6 +32236,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     session->remote_programs_fragment_expected = 0;
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    rdp_session_echo_clear_pending(session);
     session->fastpath_fragmenting = 0;
     session->fastpath_fragment_update_code = 0;
     rdp_buffer_free(&session->fastpath_fragment);
@@ -33275,6 +33497,13 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         return status;
     if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
         return rdp_session_finish_cancel(session);
+    rdp_session_echo_check_timeout(session);
+    {
+        int echo_timeout_ms = rdp_session_echo_next_timeout_ms(session);
+
+        if (echo_timeout_ms >= 0 && echo_timeout_ms < timeout_ms)
+            timeout_ms = echo_timeout_ms;
+    }
 
     rdp_buffer_init(&packet);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
@@ -33387,6 +33616,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     }
     if (status == LIBRDP_STATUS_TIMEOUT)
     {
+        rdp_session_echo_check_timeout(session);
         rdp_trace_event_level(RDP_TRACE_CLIENT,
                               RDP_TRACE_LEVEL_DEBUG,
                               "client.active.loop.done",
@@ -34497,7 +34727,11 @@ librdp_status librdp_session_dispatch_pending(librdp_session* session)
         return status;
     if (!session->pending_poll &&
         atomic_load_explicit(&session->cancel_requested, memory_order_acquire) == 0u)
+    {
+        if (rdp_session_echo_next_timeout_ms(session) == 0)
+            rdp_session_echo_check_timeout(session);
         return LIBRDP_STATUS_OK;
+    }
     return librdp_session_run_once(session, 0);
 }
 
@@ -34517,6 +34751,13 @@ librdp_status librdp_session_get_next_timeout(const librdp_session* session, int
                    atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
                       ? 0
                       : -1;
+    {
+        int echo_timeout_ms = rdp_session_echo_next_timeout_ms(session);
+
+        if (echo_timeout_ms >= 0 &&
+            (*timeout_ms < 0 || echo_timeout_ms < *timeout_ms))
+            *timeout_ms = echo_timeout_ms;
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -34605,6 +34846,7 @@ static librdp_status rdp_session_disconnect_inner(librdp_session* session)
     session->remote_programs_fragment_expected = 0;
     rdp_buffer_free(&session->remote_programs_fragment);
     rdp_buffer_init(&session->remote_programs_fragment);
+    rdp_session_echo_clear_pending(session);
     session->core_input_channel_id = 0;
     session->core_input_channel_id_bytes = 0;
     session->core_input_ready = 0;
@@ -36161,6 +36403,90 @@ librdp_status librdp_session_reset_metrics(librdp_session* session)
             return status;
     }
     return librdp_metrics_init(&session->metrics);
+}
+
+librdp_status librdp_session_echo_send(librdp_session* session,
+                                       const void* data,
+                                       size_t data_len,
+                                       uint32_t timeout_ms,
+                                       uint64_t* sequence)
+{
+    rdp_session_dynamic_channel* entry = NULL;
+    rdp_buffer request;
+    rdp_buffer pending;
+    uint64_t next_sequence = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || (!data && data_len > 0) || data_len > RDP_ECHO_CHANNEL_MAX_PAYLOAD ||
+        timeout_ms == 0 || timeout_ms > RDP_SESSION_ECHO_MAX_TIMEOUT_MS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner(session, "client.echo.send.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (session->echo_pending)
+        return LIBRDP_STATUS_STATE;
+    entry = rdp_session_echo_channel_entry(session);
+    if (!entry)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&pending);
+    status = rdp_buffer_append(&pending, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_echo_channel_write_request(&request, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_send_dynamic_channel_data(session,
+                                                       entry->channel_id,
+                                                       entry->channel_id_bytes,
+                                                       request.data,
+                                                       request.length,
+                                                       "client.echo.ping");
+    if (status == LIBRDP_STATUS_OK)
+    {
+        next_sequence = session->echo_next_sequence + 1u;
+        if (next_sequence == 0)
+            next_sequence = 1u;
+        session->echo_next_sequence = next_sequence;
+        session->echo_pending_payload = pending;
+        rdp_buffer_init(&pending);
+        session->echo_pending = 1;
+        session->echo_pending_sequence = next_sequence;
+        session->echo_pending_sent_ns = rdp_session_monotonic_ns();
+        session->echo_pending_timeout_ms = timeout_ms;
+        session->echo_stats.last_sequence = next_sequence;
+        session->echo_stats.pending_sequence = next_sequence;
+        session->echo_stats.pending_payload_len = data_len;
+        rdp_session_metric_add(&session->echo_stats.pings_sent, 1);
+        rdp_session_metric_add(&session->echo_stats.bytes_sent, data_len);
+        if (sequence)
+            *sequence = next_sequence;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.echo.ping",
+                        "dvc_channel_id=%u sequence=%llu payload_len=%u timeout_ms=%u",
+                        entry->channel_id,
+                        (unsigned long long)next_sequence,
+                        (unsigned)data_len,
+                        timeout_ms);
+    }
+    rdp_buffer_free(&pending);
+    rdp_buffer_free(&request);
+    return status;
+}
+
+librdp_status librdp_session_get_echo_stats(const librdp_session* session, librdp_echo_stats* stats)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !stats || stats->version != LIBRDP_ECHO_STATS_VERSION ||
+        stats->size < sizeof(*stats))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_require_owner_const(session, "client.echo.stats.owner");
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *stats = session->echo_stats;
+    stats->version = LIBRDP_ECHO_STATS_VERSION;
+    stats->size = (uint32_t)sizeof(*stats);
+    return LIBRDP_STATUS_OK;
 }
 
 const librdp_error* librdp_session_last_error(const librdp_session* session)

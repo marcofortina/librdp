@@ -63,6 +63,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_session_state", librdp_session_state, ",");
     ABI_TYPE_ENTRY("librdp_session_lifecycle", librdp_session_lifecycle, ",");
     ABI_TYPE_ENTRY("librdp_metrics", librdp_metrics, ",");
+    ABI_TYPE_ENTRY("librdp_echo_stats", librdp_echo_stats, ",");
     ABI_TYPE_ENTRY("librdp_reconnect_policy", librdp_reconnect_policy, ",");
     ABI_TYPE_ENTRY("librdp_graphics_update_type", librdp_graphics_update_type, ",");
     ABI_TYPE_ENTRY("librdp_graphics_update", librdp_graphics_update, ",");
@@ -111,6 +112,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_video_capture_open_event", librdp_video_capture_open_event, ",");
     ABI_TYPE_ENTRY("librdp_video_capture_sample_request_event", librdp_video_capture_sample_request_event, ",");
     ABI_TYPE_ENTRY("librdp_video_capture_close_event", librdp_video_capture_close_event, ",");
+    ABI_TYPE_ENTRY("librdp_echo_result_event", librdp_echo_result_event, ",");
     ABI_TYPE_ENTRY("librdp_event", librdp_event, "");
     printf("  ]\n");
     printf("}\n");

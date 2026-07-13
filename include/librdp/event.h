@@ -59,7 +59,8 @@ typedef enum librdp_event_type
     LIBRDP_EVENT_VIDEO_CAPTURE_OPEN = 19,          /**< data.video_capture_open asks the app to open a camera stream. */
     LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST = 20, /**< data.video_capture_sample_request asks for one sample. */
     LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE = 21,         /**< data.video_capture_close asks the app to close a stream. */
-    LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS = 22      /**< data.clipboard_file_contents reports file-transfer bytes. */
+    LIBRDP_EVENT_CLIPBOARD_FILE_CONTENTS = 22,     /**< data.clipboard_file_contents reports file-transfer bytes. */
+    LIBRDP_EVENT_ECHO_RESULT = 23                  /**< data.echo_result reports an Echo diagnostic response. */
 } librdp_event_type;
 
 #define LIBRDP_EVENT_ENVELOPE_VERSION 1u /**< Current librdp_event_envelope version. */
@@ -330,6 +331,25 @@ typedef struct librdp_video_capture_close_event
 } librdp_video_capture_close_event;
 
 /**
+ * @brief Echo diagnostic result event payload.
+ *
+ * data is borrowed and valid only until the callback returns. It is the exact
+ * payload associated with the completed or timed-out diagnostic ping and is
+ * never retained by the event object.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_echo_result_event
+{
+    uint64_t sequence;   /**< Local diagnostic sequence assigned by librdp_session_echo_send(). */
+    uint64_t rtt_us;     /**< Round-trip time in microseconds, or 0 when timed_out is non-zero. */
+    const uint8_t* data; /**< Borrowed diagnostic payload; may be NULL when data_len is 0. */
+    size_t data_len;     /**< Length in bytes of data. */
+    int ok;              /**< Non-zero when a matching response arrived before timeout. */
+    int timed_out;       /**< Non-zero when the pending diagnostic request timed out. */
+} librdp_echo_result_event;
+
+/**
  * @brief Event object delivered through librdp_event_callback.
  *
  * The active union member is selected by type. The object and any borrowed
@@ -369,6 +389,7 @@ typedef struct librdp_event
         librdp_video_capture_open_event video_capture_open; /**< Payload for camera open requests. */
         librdp_video_capture_sample_request_event video_capture_sample_request; /**< Payload for camera sample requests. */
         librdp_video_capture_close_event video_capture_close; /**< Payload for camera close requests. */
+        librdp_echo_result_event echo_result; /**< Payload for LIBRDP_EVENT_ECHO_RESULT. */
     } data; /**< Event payload union selected by type. */
 } librdp_event;
 
