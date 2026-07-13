@@ -16017,6 +16017,19 @@ static int test_video_redirection_channel(void)
     PCHECK(data_sample.sample_start_time == 0x37u &&
            data_sample.data_len == sizeof(sample_data) &&
            data_sample.data[0] == 1);
+    payload.data[8] = 0x36u;
+    PCHECK(rdp_video_redirection_parse_data_sample(payload.data, payload.length, &data_sample) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    payload.data[8] = 0x38u;
+    PCHECK(rdp_video_redirection_write_data_sample(&payload,
+                                                   0x38u,
+                                                   0x37u,
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   sample_data,
+                                                   sizeof(sample_data)) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     rdp_buffer_free(&payload);
     rdp_buffer_init(&payload);
     PCHECK(rdp_video_redirection_write_sample_message(&buffer,

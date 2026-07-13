@@ -1049,6 +1049,8 @@ librdp_status rdp_video_redirection_parse_data_sample(
         sample->data_len != rdp_stream_remaining(&stream) ||
         rdp_stream_read_bytes(&stream, &sample->data, sample->data_len) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (sample->sample_end_time < sample->sample_start_time)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1064,7 +1066,7 @@ librdp_status rdp_video_redirection_write_data_sample(
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || (!data && data_len > 0))
+    if (!buffer || (!data && data_len > 0) || sample_end_time < sample_start_time)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = rdp_video_redirection_append_u64_le(buffer, sample_start_time);
     if (status != LIBRDP_STATUS_OK)

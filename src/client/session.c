@@ -1629,6 +1629,24 @@ static rdp_session_video_optimized_presentation* rdp_session_video_optimized_ups
     return NULL;
 }
 
+static int rdp_session_video_optimized_sample_sequence_valid(
+    const rdp_session_video_optimized_presentation* presentation,
+    const rdp_video_optimized_video_data* video)
+{
+    if (!presentation || !video)
+        return 0;
+    if (presentation->last_sample_number == 0)
+        return video->current_packet_index == 1u;
+    if (video->sample_number < presentation->last_sample_number)
+        return 0;
+    if (video->sample_number == presentation->last_sample_number)
+    {
+        return video->packets_in_sample == presentation->last_packets_in_sample &&
+               video->current_packet_index > presentation->last_packet_index;
+    }
+    return video->current_packet_index == 1u;
+}
+
 static void rdp_session_video_optimized_remove(librdp_session* session, uint8_t presentation_id)
 {
     rdp_session_video_optimized_presentation* entry = rdp_session_video_optimized_find(session, presentation_id);
@@ -25136,9 +25154,30 @@ static librdp_status rdp_session_handle_video_optimized_data_message(librdp_sess
         return status;
     }
 
-    presentation = rdp_session_video_optimized_upsert(session, video.presentation_id);
+    presentation = rdp_session_video_optimized_find(session, video.presentation_id);
     if (!presentation)
-        return LIBRDP_STATUS_NO_MEMORY;
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.sample.rejected",
+                        "dvc_channel_id=%u presentation_id=%u reason=unknown_presentation sample_number=%u",
+                        channel_id,
+                        video.presentation_id,
+                        video.sample_number);
+        return LIBRDP_STATUS_STATE;
+    }
+    if (!rdp_session_video_optimized_sample_sequence_valid(presentation, &video))
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.video_optimized.sample.rejected",
+                        "dvc_channel_id=%u presentation_id=%u reason=sequence sample_number=%u packet=%u last_sample_number=%u last_packet=%u",
+                        channel_id,
+                        video.presentation_id,
+                        video.sample_number,
+                        video.current_packet_index,
+                        presentation->last_sample_number,
+                        presentation->last_packet_index);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
     presentation->sample_count++;
     presentation->sample_bytes += video.sample_len;
     presentation->last_timestamp = video.timestamp;
@@ -25368,12 +25407,30 @@ static librdp_status rdp_session_handle_video_redirection_message(librdp_session
                 status = rdp_video_redirection_parse_data_sample(stream.data, stream.data_len, &sample);
             if (status != LIBRDP_STATUS_OK)
                 return status;
-            entry = rdp_session_video_stream_upsert(session, stream.presentation_id, stream.stream_id);
+            entry = rdp_session_video_stream_find(session, stream.presentation_id, stream.stream_id);
             if (!entry)
-                return LIBRDP_STATUS_NO_MEMORY;
-            duration = sample.sample_end_time > sample.sample_start_time ?
-                           sample.sample_end_time - sample.sample_start_time :
-                           0;
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.tsmf.sample.rejected",
+                                "dvc_channel_id=%u message_id=%u stream_id=%u reason=unknown_stream",
+                                channel_id,
+                                stream.header.message_id,
+                                stream.stream_id);
+                return LIBRDP_STATUS_STATE;
+            }
+            if (entry->sample_count > 0 && sample.sample_start_time <= entry->last_sample_start)
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.tsmf.sample.rejected",
+                                "dvc_channel_id=%u message_id=%u stream_id=%u reason=sequence sample_start=%llu last_sample_start=%llu",
+                                channel_id,
+                                stream.header.message_id,
+                                stream.stream_id,
+                                (unsigned long long)sample.sample_start_time,
+                                (unsigned long long)entry->last_sample_start);
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            }
+            duration = sample.sample_end_time - sample.sample_start_time;
             entry->sample_count++;
             entry->sample_bytes += sample.data_len;
             entry->last_sample_start = sample.sample_start_time;
