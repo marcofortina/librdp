@@ -639,6 +639,21 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_optional_backend_probe tests/optional_backend_probe.c)
     librdp_configure_test_executable(test_optional_backend_probe)
 
+    add_executable(test_viewer_backends
+        tests/test_viewer_backends.c
+        apps/x11-viewer/device_backends.c
+        apps/x11-viewer/viewer_trace.c
+    )
+    target_include_directories(test_viewer_backends PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_definitions(test_viewer_backends PRIVATE _POSIX_C_SOURCE=200809L)
+    target_link_libraries(test_viewer_backends PRIVATE librdp)
+    librdp_apply_warning_options(test_viewer_backends)
+    librdp_apply_sanitizer_compile_options(test_viewer_backends)
+    librdp_apply_sanitizer_link_options(test_viewer_backends)
+
     add_executable(test_abi_probe tests/abi_probe.c)
     target_include_directories(test_abi_probe PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -648,7 +663,7 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_optional_backend_probe test_abi_probe
+        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_optional_backend_probe test_viewer_backends test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
@@ -656,8 +671,10 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME transport COMMAND test_transport)
     add_test(NAME interop_smoke COMMAND test_interop_smoke)
+    add_test(NAME viewer_backends COMMAND test_viewer_backends)
     set_tests_properties(common core transport PROPERTIES TIMEOUT 30)
     set_tests_properties(protocol PROPERTIES TIMEOUT 90)
+    set_tests_properties(viewer_backends PROPERTIES TIMEOUT 30)
     set_tests_properties(interop_smoke PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
     add_test(NAME core_optional_backends_off
         COMMAND ${CMAKE_COMMAND}

@@ -136,6 +136,7 @@ Settings and viewer options:
 Operational requirements:
 
 - validate selectors before advertisement;
+- never auto-announce local host devices from viewer-side discovery;
 - claim only explicitly configured devices;
 - map transfer completion to the matching outstanding request;
 - handle detach while requests are pending;

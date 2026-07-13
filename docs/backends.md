@@ -81,7 +81,7 @@ build/librdp-x11-viewer --target host --usb 1234:5678
 build/librdp-x11-viewer --target host --usb 001:004
 ```
 
-PNP device descriptors are configured through public settings and advertised through the device redirection path. The viewer `--pnp` flag enables the feature path for practical runs.
+PNP device descriptors are configured through public settings and advertised through the device redirection path. The viewer `--pnp` flag enables the feature path, but it does not scan or auto-announce local host devices.
 
 ## Filesystem, serial, parallel, and printer
 
