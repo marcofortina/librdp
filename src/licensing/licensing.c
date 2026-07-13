@@ -219,6 +219,11 @@ librdp_status rdp_license_client_state_step(rdp_license_client_state* state,
         next_state = RDP_LICENSE_CLIENT_STATE_FAILED;
     else if (state->state == RDP_LICENSE_CLIENT_STATE_INITIAL &&
              direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
+             (message_type == RDP_LICENSE_MESSAGE_NEW_LICENSE ||
+              message_type == RDP_LICENSE_MESSAGE_UPGRADE_LICENSE))
+        next_state = RDP_LICENSE_CLIENT_STATE_COMPLETED;
+    else if (state->state == RDP_LICENSE_CLIENT_STATE_INITIAL &&
+             direction == RDP_LICENSE_DIRECTION_SERVER_TO_CLIENT &&
              message_type == RDP_LICENSE_MESSAGE_REQUEST)
         next_state = RDP_LICENSE_CLIENT_STATE_SERVER_REQUEST_RECEIVED;
     else if (state->state == RDP_LICENSE_CLIENT_STATE_INITIAL &&
