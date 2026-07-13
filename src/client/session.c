@@ -14295,7 +14295,7 @@ static librdp_status rdp_session_audio_output_decrypt_wave(librdp_session* sessi
     if (status != LIBRDP_STATUS_OK)
         return status;
 
-    /* CodeQL false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
+    /* CodeQL cpp/weak-cryptographic-algorithm false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
     return rdp_session_audio_output_rc4(key, decrypted->data, decrypted->length);
 }
 
