@@ -26,6 +26,7 @@
 #include "viewer_cli.h"
 #include "viewer_display.h"
 #include "viewer_input.h"
+#include "viewer_keyboard.h"
 #include "viewer_lifecycle.h"
 #include "viewer_render.h"
 #include "viewer_trace.h"
@@ -752,7 +753,7 @@ int x11_viewer_run(int argc, char** argv)
     app.window_width = width;
     app.window_height = height;
     set_window_identity(&app);
-    x11_input_allow_xwayland_keyboard_grab(&app);
+    x11_keyboard_allow_xwayland_grab(&app);
     x11_clipboard_init(&app);
     (void)x11_render_init(&app);
     (void)x11_display_init(&app);
@@ -968,9 +969,9 @@ int x11_viewer_run(int argc, char** argv)
                 x11_window_mark_invalid(&app);
             }
             else if (event.type == KeyPress)
-                x11_input_handle_key_press(&app, &event.xkey);
+                x11_keyboard_handle_key_press(&app, &event.xkey);
             else if (event.type == KeyRelease)
-                x11_input_handle_key_release(&app, &event.xkey);
+                x11_keyboard_handle_key_release(&app, &event.xkey);
             else if (event.type == ButtonPress)
                 x11_input_handle_button(&app, &event.xbutton, LIBRDP_MOUSE_PRESSED);
             else if (event.type == ButtonRelease)
@@ -988,12 +989,12 @@ int x11_viewer_run(int argc, char** argv)
             {
                 app.pointer_inside = 1;
                 x11_input_restore_cursor_after_local_mouse(&app);
-                x11_input_maybe_grab_keyboard(&app, event.xcrossing.time);
+                x11_keyboard_maybe_grab(&app, event.xcrossing.time);
             }
             else if (event.type == LeaveNotify)
             {
                 app.pointer_inside = 0;
-                x11_input_ungrab_keyboard(&app, event.xcrossing.time, 0);
+                x11_keyboard_ungrab(&app, event.xcrossing.time, 0);
             }
             else if (event.type == FocusIn)
             {
@@ -1002,7 +1003,7 @@ int x11_viewer_run(int argc, char** argv)
                     XSetICFocus(app.ic);
                 x11_input_apply_cursor(&app);
                 x11_input_restore_cursor_after_local_mouse(&app);
-                x11_input_maybe_grab_keyboard(&app, CurrentTime);
+                x11_keyboard_maybe_grab(&app, CurrentTime);
             }
             else if (event.type == FocusOut)
             {
@@ -1011,8 +1012,8 @@ int x11_viewer_run(int argc, char** argv)
                     app.focused = 0;
                     if (app.ic)
                         XUnsetICFocus(app.ic);
-                    x11_input_release_all_remote_keys(&app);
-                    x11_input_ungrab_keyboard(&app, CurrentTime, 1);
+                    x11_keyboard_release_all_remote_keys(&app);
+                    x11_keyboard_ungrab(&app, CurrentTime, 1);
                 }
             }
             else if (event.type == ConfigureNotify && event.xconfigure.width > 0 && event.xconfigure.height > 0)
@@ -1057,8 +1058,8 @@ int x11_viewer_run(int argc, char** argv)
             break;
     }
 
-    x11_input_release_all_remote_keys(&app);
-    x11_input_ungrab_keyboard(&app, CurrentTime, 1);
+    x11_keyboard_release_all_remote_keys(&app);
+    x11_keyboard_ungrab(&app, CurrentTime, 1);
     (void)librdp_session_disconnect(app.session);
     librdp_session_free(app.session);
     x11_cli_options_free(&cli_options);
