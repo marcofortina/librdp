@@ -5686,6 +5686,13 @@ static int test_path_security_license_channels(void)
            nscodec_rle_decoded[4] == 0x65 &&
            nscodec_rle_decoded[5] == 0x65 &&
            nscodec_rle_decoded[6] == 0x65);
+    memset(nscodec_rle_decoded, 0x5a, sizeof(nscodec_rle_decoded));
+    PCHECK(rdp_nscodec_decode_rle_plane(nscodec_rle_plane,
+                                        sizeof(nscodec_rle_plane) - 1u,
+                                        nscodec_rle_decoded,
+                                        7) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(nscodec_rle_decoded[0] == 0x5a &&
+           nscodec_rle_decoded[6] == 0x5a);
     nscodec_pixels.length = 0;
     PCHECK(rdp_nscodec_decode_bgra32(&nscodec_context,
                                      nscodec_subsampled_rle,

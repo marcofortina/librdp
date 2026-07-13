@@ -285,10 +285,10 @@ librdp_status rdp_nscodec_parse_stream(const void* data,
     return LIBRDP_STATUS_OK;
 }
 
-librdp_status rdp_nscodec_decode_rle_plane(const uint8_t* input,
-                                           size_t input_len,
-                                           uint8_t* output,
-                                           size_t output_len)
+static librdp_status rdp_nscodec_decode_rle_plane_into(const uint8_t* input,
+                                                       size_t input_len,
+                                                       uint8_t* output,
+                                                       size_t output_len)
 {
     size_t in_offset = 0;
     size_t out_offset = 0;
@@ -360,6 +360,34 @@ librdp_status rdp_nscodec_decode_rle_plane(const uint8_t* input,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status rdp_nscodec_decode_rle_plane(const uint8_t* input,
+                                           size_t input_len,
+                                           uint8_t* output,
+                                           size_t output_len)
+{
+    uint8_t* scratch = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!input || !output || output_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (output_len <= 4u)
+    {
+        if (input_len != output_len)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        memcpy(output, input, output_len);
+        return LIBRDP_STATUS_OK;
+    }
+
+    scratch = (uint8_t*)malloc(output_len);
+    if (!scratch)
+        return LIBRDP_STATUS_NO_MEMORY;
+    status = rdp_nscodec_decode_rle_plane_into(input, input_len, scratch, output_len);
+    if (status == LIBRDP_STATUS_OK)
+        memcpy(output, scratch, output_len);
+    free(scratch);
+    return status;
+}
+
 static librdp_status rdp_nscodec_decode_plane(const uint8_t* encoded,
                                               size_t encoded_len,
                                               size_t expected_len,
@@ -374,7 +402,7 @@ static librdp_status rdp_nscodec_decode_plane(const uint8_t* encoded,
     }
     if (encoded_len > expected_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    return rdp_nscodec_decode_rle_plane(encoded, encoded_len, decoded, expected_len);
+    return rdp_nscodec_decode_rle_plane_into(encoded, encoded_len, decoded, expected_len);
 }
 
 static librdp_status rdp_nscodec_decode_planes(rdp_nscodec_context* context,
