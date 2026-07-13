@@ -2813,6 +2813,40 @@ static int test_path_security_license_channels(void)
         0x40, 0x00,
         0x00, 0x00
     };
+    const uint8_t mouse_cursor_shape_bad_width[] = {
+        0x03, 0x0b, 0x00, 0x00,
+        0x20, 0x00,
+        0x05, 0x00,
+        0x01, 0x00,
+        0x00, 0x00,
+        0x01, 0x02,
+        0x02, 0x00,
+        0x04, 0x00,
+        0x10, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
+    const uint8_t mouse_cursor_shape_bad_hotspot[] = {
+        0x03, 0x0b, 0x00, 0x00,
+        0x20, 0x00,
+        0x05, 0x00,
+        0x02, 0x00,
+        0x00, 0x00,
+        0x02, 0x00,
+        0x02, 0x00,
+        0x04, 0x00,
+        0x10, 0x00,
+        0xff, 0x00, 0x00, 0xff,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0xff, 0x00, 0xff,
+        0x40, 0x00,
+        0x00, 0x00
+    };
     const uint8_t mouse_cursor_large_32[] = {
         0x03, 0x0c, 0x00, 0x00,
         0x20, 0x00,
@@ -7867,6 +7901,18 @@ static int test_path_security_license_channels(void)
 
         PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_32,
                                              sizeof(mouse_cursor_shape_32) - 1u,
+                                             &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&pointer_update,
+                      &valid_mouse_cursor_update,
+                      sizeof(pointer_update)) == 0);
+        PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_bad_width,
+                                             sizeof(mouse_cursor_shape_bad_width),
+                                             &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&pointer_update,
+                      &valid_mouse_cursor_update,
+                      sizeof(pointer_update)) == 0);
+        PCHECK(rdp_mouse_cursor_parse_update(mouse_cursor_shape_bad_hotspot,
+                                             sizeof(mouse_cursor_shape_bad_hotspot),
                                              &pointer_update) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&pointer_update,
                       &valid_mouse_cursor_update,
