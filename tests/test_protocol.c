@@ -1740,9 +1740,15 @@ static int test_mcs_gcc_capabilities(void)
     PCHECK(list.count == 2);
     PCHECK(list.sets[0].type == 1 && list.sets[0].data_len == 4);
     PCHECK(list.sets[1].type == 2 && list.sets[1].data_len == 0);
-    PCHECK(rdp_capabilities_parse(caps, 5, &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_capabilities_parse(duplicate_caps, sizeof(duplicate_caps), &list) ==
-           LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_capability_list valid_list = list;
+
+        PCHECK(rdp_capabilities_parse(caps, 5, &list) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&list, &valid_list, sizeof(list)) == 0);
+        PCHECK(rdp_capabilities_parse(duplicate_caps, sizeof(duplicate_caps), &list) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&list, &valid_list, sizeof(list)) == 0);
+    }
 
     memset(&config, 0, sizeof(config));
     config.desktop_width = 1024;
@@ -5729,7 +5735,22 @@ static int test_path_security_license_channels(void)
            confirm_bitmap.desktop_resize_flag == 1 &&
            confirm_bitmap.bitmap_compression_flag == 1 &&
            confirm_bitmap.multiple_rectangle_support == 1);
-    PCHECK(rdp_capability_parse_bitmap(confirm_caps.sets, &confirm_bitmap) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_capability_bitmap valid_bitmap = confirm_bitmap;
+        rdp_capability_set invalid_bitmap_set = *confirm_bitmap_set;
+        uint8_t invalid_bitmap_data[24];
+
+        PCHECK(rdp_capability_parse_bitmap(confirm_caps.sets, &confirm_bitmap) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&confirm_bitmap, &valid_bitmap, sizeof(confirm_bitmap)) == 0);
+        memcpy(invalid_bitmap_data, confirm_bitmap_set->data, sizeof(invalid_bitmap_data));
+        invalid_bitmap_data[0] = 0;
+        invalid_bitmap_data[1] = 0;
+        invalid_bitmap_set.data = invalid_bitmap_data;
+        PCHECK(rdp_capability_parse_bitmap(&invalid_bitmap_set, &confirm_bitmap) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&confirm_bitmap, &valid_bitmap, sizeof(confirm_bitmap)) == 0);
+    }
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_GENERAL);
     PCHECK(confirm_set != NULL);
     PCHECK(rdp_capability_parse_general(confirm_set, &confirm_general) == LIBRDP_STATUS_OK);
@@ -5808,6 +5829,18 @@ static int test_path_security_license_channels(void)
            confirm_input.keyboard_type == 4 &&
            confirm_input.keyboard_subtype == 0 &&
            confirm_input.keyboard_function_key == 12);
+    {
+        const rdp_capability_input valid_input = confirm_input;
+        rdp_capability_set invalid_input_set = *confirm_set;
+        uint8_t invalid_input_data[84];
+
+        memcpy(invalid_input_data, confirm_set->data, sizeof(invalid_input_data));
+        memset(invalid_input_data + 8u, 0, 4u);
+        invalid_input_set.data = invalid_input_data;
+        PCHECK(rdp_capability_parse_input(&invalid_input_set, &confirm_input) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&confirm_input, &valid_input, sizeof(confirm_input)) == 0);
+    }
     confirm_set = rdp_capabilities_find(&confirm_caps, RDP_CAPABILITY_TYPE_BRUSH);
     PCHECK(confirm_set != NULL);
     PCHECK(rdp_capability_parse_brush(confirm_set, &confirm_brush) == LIBRDP_STATUS_OK);
@@ -5876,13 +5909,29 @@ static int test_path_security_license_channels(void)
            confirm_bitmap_codecs.codecs[0].codec_id == RDP_NSCODEC_BITMAP_CODEC_ID &&
            confirm_bitmap_codecs.codecs[0].properties_len == RDP_NSCODEC_CAPABILITY_LENGTH &&
            memcmp(confirm_bitmap_codecs.codecs[0].guid, nscodec_guid, sizeof(nscodec_guid)) == 0);
+    {
+        const rdp_capability_bitmap_codecs valid_codecs = confirm_bitmap_codecs;
+        rdp_capability_set invalid_codecs_set = *confirm_set;
+
+        invalid_codecs_set.data_len--;
+        invalid_codecs_set.length--;
+        PCHECK(rdp_capability_parse_bitmap_codecs(&invalid_codecs_set, &confirm_bitmap_codecs) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&confirm_bitmap_codecs, &valid_codecs, sizeof(confirm_bitmap_codecs)) == 0);
+    }
     PCHECK(rdp_nscodec_parse_capability(confirm_bitmap_codecs.codecs[0].properties,
                                         confirm_bitmap_codecs.codecs[0].properties_len,
                                         &confirm_nscodec) == LIBRDP_STATUS_OK);
     PCHECK(confirm_nscodec.allow_dynamic_fidelity == 1 &&
            confirm_nscodec.allow_subsampling == 1 &&
            confirm_nscodec.color_loss_level == 7);
-    PCHECK(rdp_capability_parse_general(confirm_bitmap_set, &confirm_general) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        const rdp_capability_general valid_general = confirm_general;
+
+        PCHECK(rdp_capability_parse_general(confirm_bitmap_set, &confirm_general) ==
+               LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&confirm_general, &valid_general, sizeof(confirm_general)) == 0);
+    }
     PCHECK(confirm_caps.sets[0].data[0] == 1 && confirm_caps.sets[0].data[2] == 3 &&
            confirm_caps.sets[0].data[4] == 0x00 && confirm_caps.sets[0].data[5] == 0x02);
     PCHECK(confirm_caps.sets[1].data[0] == 32 && confirm_caps.sets[1].data[8] == 0x20 &&
