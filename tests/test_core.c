@@ -4457,6 +4457,21 @@ static int test_settings_surface_input_session(void)
     CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
     CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_VIDEO,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_CAMERA,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_WEBAUTHN,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    CHECK(librdp_settings_get_feature_status(settings,
                                              (librdp_feature)(LIBRDP_FEATURE_AUDIO_OUTPUT |
                                                              LIBRDP_FEATURE_VIDEO),
                                              &feature_status) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -4518,6 +4533,21 @@ static int test_settings_surface_input_session(void)
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_RAIL,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_VIDEO,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_CAMERA,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_WEBAUTHN,
                                              &feature_status) == LIBRDP_STATUS_OK);
     CHECK(feature_status.requested && feature_status.backend_ready);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
