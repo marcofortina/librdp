@@ -8327,25 +8327,33 @@ static int test_path_security_license_channels(void)
     PCHECK(display_parsed_caps.max_num_monitors == 16 &&
            display_parsed_caps.max_monitor_area_factor_a == 8192 &&
            display_parsed_caps.max_monitor_area_factor_b == 8192);
-    memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
-    display_bad_caps[8] = 0;
-    PCHECK(rdp_display_control_parse_caps(display_bad_caps,
-                                          sizeof(display_bad_caps),
-                                          &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
-    display_bad_caps[8] = 17;
-    PCHECK(rdp_display_control_parse_caps(display_bad_caps,
-                                          sizeof(display_bad_caps),
-                                          &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
-    display_bad_caps[12] = 0;
-    display_bad_caps[13] = 0;
-    PCHECK(rdp_display_control_parse_caps(display_bad_caps,
-                                          sizeof(display_bad_caps),
-                                          &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
-    PCHECK(rdp_display_control_parse_caps(display_caps,
-                                          sizeof(display_caps) - 1u,
-                                          &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    {
+        rdp_display_control_caps valid_caps = display_parsed_caps;
+
+        memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
+        display_bad_caps[8] = 0;
+        PCHECK(rdp_display_control_parse_caps(display_bad_caps,
+                                              sizeof(display_bad_caps),
+                                              &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&display_parsed_caps, &valid_caps, sizeof(display_parsed_caps)) == 0);
+        memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
+        display_bad_caps[8] = 17;
+        PCHECK(rdp_display_control_parse_caps(display_bad_caps,
+                                              sizeof(display_bad_caps),
+                                              &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&display_parsed_caps, &valid_caps, sizeof(display_parsed_caps)) == 0);
+        memcpy(display_bad_caps, display_caps, sizeof(display_bad_caps));
+        display_bad_caps[12] = 0;
+        display_bad_caps[13] = 0;
+        PCHECK(rdp_display_control_parse_caps(display_bad_caps,
+                                              sizeof(display_bad_caps),
+                                              &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&display_parsed_caps, &valid_caps, sizeof(display_parsed_caps)) == 0);
+        PCHECK(rdp_display_control_parse_caps(display_caps,
+                                              sizeof(display_caps) - 1u,
+                                              &display_parsed_caps) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&display_parsed_caps, &valid_caps, sizeof(display_parsed_caps)) == 0);
+    }
     PCHECK(rdp_display_control_parse_caps(display_caps,
                                           sizeof(display_caps),
                                           &display_parsed_caps) == LIBRDP_STATUS_OK);
@@ -8437,7 +8445,29 @@ static int test_path_security_license_channels(void)
                                                               &display_monitor_count,
                                                               &display_parsed_caps) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    memcpy(display_mutated, dyn_response.data, dyn_response.length);
+    display_mutated[60] = 0xf0u;
+    display_mutated[61] = 0xffu;
+    display_mutated[62] = 0xffu;
+    display_mutated[63] = 0x7fu;
+    memset(display_monitors, 0xa5, sizeof(display_monitors));
+    display_monitor_count = 99;
+    PCHECK(rdp_display_control_parse_monitor_layout_with_caps(display_mutated,
+                                                              dyn_response.length,
+                                                              display_monitors,
+                                                              2,
+                                                              &display_monitor_count,
+                                                              &display_parsed_caps) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(display_monitor_count == 0 &&
+           display_monitors[0].flags == 0 &&
+           display_monitors[1].width == 0);
     display_monitors[1].left = 700;
+    dyn_response.length = 0;
+    PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, display_monitors, 2) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    display_monitors[1].left = 800;
+    display_monitors[1].left = INT32_MAX - 100;
     dyn_response.length = 0;
     PCHECK(rdp_display_control_write_monitor_layout(&dyn_response, display_monitors, 2) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);

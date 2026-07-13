@@ -95,6 +95,18 @@ static int rdp_display_control_monitors_overlap(const rdp_display_control_monito
     return a_left < b_right && b_left < a_right && a_top < b_bottom && b_top < a_bottom;
 }
 
+static int rdp_display_control_monitor_rect_valid(const rdp_display_control_monitor* monitor)
+{
+    int64_t right = 0;
+    int64_t bottom = 0;
+
+    if (!monitor)
+        return 0;
+    right = (int64_t)monitor->left + (int64_t)monitor->width;
+    bottom = (int64_t)monitor->top + (int64_t)monitor->height;
+    return right <= INT32_MAX && bottom <= INT32_MAX;
+}
+
 /*
  * Validate a display-control monitor layout before it is sent or accepted.
  * The function enforces primary-monitor, overlap, scale, orientation, and
@@ -138,6 +150,7 @@ static librdp_status rdp_display_control_validate_layout(const rdp_display_contr
             monitors[i].height < RDP_DISPLAY_CONTROL_MIN_DIMENSION ||
             monitors[i].height > RDP_DISPLAY_CONTROL_MAX_DIMENSION ||
             (monitors[i].width & 1u) != 0 ||
+            !rdp_display_control_monitor_rect_valid(&monitors[i]) ||
             !rdp_display_control_valid_physical_size(monitors[i].physical_width) ||
             !rdp_display_control_valid_physical_size(monitors[i].physical_height) ||
             !rdp_display_control_valid_orientation(monitors[i].orientation) ||
@@ -166,6 +179,7 @@ librdp_status rdp_display_control_parse_caps(const void* data,
                                              size_t length,
                                              rdp_display_control_caps* caps)
 {
+    rdp_display_control_caps parsed;
     rdp_stream stream;
     uint32_t pdu_type = 0;
     uint32_t pdu_length = 0;
@@ -175,7 +189,7 @@ librdp_status rdp_display_control_parse_caps(const void* data,
     if (length < 20u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 
-    memset(caps, 0, sizeof(*caps));
+    memset(&parsed, 0, sizeof(parsed));
     rdp_stream_init(&stream, data, length);
     if (rdp_stream_read_u32_le(&stream, &pdu_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u32_le(&stream, &pdu_length) != LIBRDP_STATUS_OK)
@@ -184,12 +198,13 @@ librdp_status rdp_display_control_parse_caps(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (pdu_length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (rdp_stream_read_u32_le(&stream, &caps->max_num_monitors) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &caps->max_monitor_area_factor_a) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u32_le(&stream, &caps->max_monitor_area_factor_b) != LIBRDP_STATUS_OK)
+    if (rdp_stream_read_u32_le(&stream, &parsed.max_num_monitors) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.max_monitor_area_factor_a) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u32_le(&stream, &parsed.max_monitor_area_factor_b) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (!rdp_display_control_caps_valid(caps))
+    if (!rdp_display_control_caps_valid(&parsed))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *caps = parsed;
     return LIBRDP_STATUS_OK;
 }
 
