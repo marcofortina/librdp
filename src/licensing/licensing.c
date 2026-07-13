@@ -280,7 +280,7 @@ librdp_status rdp_license_parse_preamble(const void* data, size_t length, rdp_li
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (!rdp_license_valid_message_type(parsed.message_type) ||
         !rdp_license_valid_version(parsed.version) ||
-        parsed.length < 4u || parsed.length > length)
+        parsed.length < 4u || parsed.length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.payload = (const uint8_t*)data + 4u;
     parsed.payload_len = (size_t)parsed.length - 4u;

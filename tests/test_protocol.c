@@ -6682,8 +6682,15 @@ static int test_path_security_license_channels(void)
            alert.blob_type == RDP_LICENSE_BLOB_DATA && alert.blob_length == 2);
     {
         rdp_license_error_alert valid_alert = alert;
+        rdp_license_preamble valid_license_preamble = license_preamble;
 
         PCHECK(rdp_buffer_append_u8(&license_packet, 0x7f) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_license_parse_preamble(license_packet.data,
+                                          license_packet.length,
+                                          &license_preamble) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&license_preamble,
+                      &valid_license_preamble,
+                      sizeof(license_preamble)) == 0);
         license_packet.data[2] = (uint8_t)license_packet.length;
         license_packet.data[3] = 0;
         PCHECK(rdp_license_parse_error_alert(license_packet.data,
