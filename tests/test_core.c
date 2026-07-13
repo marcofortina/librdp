@@ -6880,9 +6880,10 @@ static int test_printer_file_backend_job_lifecycle(void)
 
 /*
  * Coverage: validates that recognized but non-rendered GDI alternate
- * secondary orders fail the runtime path instead of being silently accepted.
- * This catches capability/runtime drift where parser-only GDI+ or window
- * composition packets would otherwise look successfully rendered.
+ * secondary orders are treated as protocol errors at session runtime instead
+ * of being silently accepted. This catches capability/runtime drift where
+ * parser-only GDI+ or window composition packets would otherwise look
+ * successfully rendered.
  */
 static int test_gdi_unsupported_altsec_order(void)
 {
@@ -6916,7 +6917,7 @@ static int test_gdi_unsupported_altsec_order(void)
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
     for (i = 0; i < 6u && status == LIBRDP_STATUS_OK; i++)
         status = librdp_session_run_once(session, 1000);
-    CHECK(status == LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
 
     librdp_session_free(session);

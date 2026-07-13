@@ -31152,7 +31152,7 @@ static librdp_status rdp_session_apply_gdi_secondary_order(librdp_session* sessi
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
-    return LIBRDP_STATUS_UNSUPPORTED;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 /*
@@ -31269,7 +31269,7 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                           "order_type=%u payload_len=%u",
                           header->order_type,
                           (unsigned)header->payload_len);
-    return LIBRDP_STATUS_UNSUPPORTED;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
 static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session, const rdp_gdi_orders_update* update)
@@ -31328,7 +31328,7 @@ static librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session
                             "index=%u remaining=%u",
                             i,
                             (unsigned)(update->order_data_len - offset));
-            return status;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         if (status != LIBRDP_STATUS_OK || consumed == 0 || consumed > update->order_data_len - offset)
             return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_PROTOCOL_ERROR : status;
