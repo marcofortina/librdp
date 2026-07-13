@@ -76,11 +76,72 @@ static int test_pnp_probe_preserves_explicit_devices(void)
     return 0;
 }
 
+/*
+ * A default viewer startup must not discover or announce sensitive host
+ * devices. With no explicit command-line selector, the probe is a no-op and
+ * leaves all host-device lists empty.
+ */
+static int test_default_probe_does_not_autoregister_sensitive_devices(void)
+{
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(x11_device_backends_probe(settings) == 1);
+    CHECK(librdp_settings_smartcard_count(settings) == 0);
+    CHECK(librdp_settings_usb_device_count(settings) == 0);
+    CHECK(librdp_settings_pnp_device_count(settings) == 0);
+    CHECK(librdp_settings_webauthn_provider(settings) == NULL);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * The viewer must not turn an enabled smartcard bit into implicit PC/SC
+ * discovery. Only an explicit source such as the CLI's "pcsc" or
+ * "vsmartcard=..." selector authorizes probing a host token backend.
+ */
+static int test_smartcard_probe_requires_explicit_source(void)
+{
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_SMARTCARD, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_smartcard_count(settings) == 0);
+    CHECK(x11_device_backends_probe(settings) == 0);
+    CHECK(librdp_settings_smartcard_count(settings) == 0);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * WebAuthn follows the same consent boundary as physical devices: a mock or
+ * FIDO2 provider is valid only after the application has selected it
+ * explicitly. A bare feature bit cannot authorize authenticator discovery.
+ */
+static int test_webauthn_probe_requires_explicit_provider(void)
+{
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_webauthn_provider(settings) == NULL);
+    CHECK(x11_device_backends_probe(settings) == 0);
+    CHECK(librdp_settings_webauthn_provider(settings) == NULL);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
     if (test_pnp_probe_does_not_autoregister() != 0)
         return 1;
     if (test_pnp_probe_preserves_explicit_devices() != 0)
+        return 1;
+    if (test_default_probe_does_not_autoregister_sensitive_devices() != 0)
+        return 1;
+    if (test_smartcard_probe_requires_explicit_source() != 0)
+        return 1;
+    if (test_webauthn_probe_requires_explicit_provider() != 0)
         return 1;
     return 0;
 }

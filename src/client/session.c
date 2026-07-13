@@ -13542,10 +13542,7 @@ static librdp_status rdp_session_handle_device_redirection_message(librdp_sessio
                     0u;
         if (status == LIBRDP_STATUS_OK)
             config.include_smartcard =
-                librdp_settings_smartcard_count(session->settings) > 0 ||
-                        librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ?
-                    1u :
-                    0u;
+                librdp_settings_smartcard_count(session->settings) > 0 ? 1u : 0u;
         if (status == LIBRDP_STATUS_OK)
             status = rdp_device_redirection_write_client_capability_response(&response, &config);
         if (status == LIBRDP_STATUS_OK)
@@ -32722,9 +32719,11 @@ librdp_status librdp_session_connect(librdp_session* session)
             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u;
         config.enable_device_redirection =
             (librdp_settings_drive_count(session->settings) > 0 ||
+             librdp_settings_serial_port_count(session->settings) > 0 ||
+             librdp_settings_parallel_port_count(session->settings) > 0 ||
              librdp_settings_printer_count(session->settings) > 0 ||
-             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ||
-             librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB)) ?
+             librdp_settings_smartcard_count(session->settings) > 0 ||
+             librdp_settings_usb_device_count(session->settings) > 0) ?
                 1u :
                 0u;
         config.enable_pnp_redirection =
@@ -32867,9 +32866,11 @@ librdp_status librdp_session_connect(librdp_session* session)
                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u;
             uint8_t device_redirection_enabled =
                 (librdp_settings_drive_count(session->settings) > 0 ||
+                 librdp_settings_serial_port_count(session->settings) > 0 ||
+                 librdp_settings_parallel_port_count(session->settings) > 0 ||
                  librdp_settings_printer_count(session->settings) > 0 ||
-                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_SMARTCARD) ||
-                 librdp_settings_feature_enabled(session->settings, LIBRDP_FEATURE_USB)) ?
+                 librdp_settings_smartcard_count(session->settings) > 0 ||
+                 librdp_settings_usb_device_count(session->settings) > 0) ?
                     1u :
                     0u;
             uint8_t pnp_redirection_enabled =

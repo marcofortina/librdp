@@ -413,7 +413,14 @@ static int x11_probe_webauthn(const char* provider)
     const char* mock_path = x11_text_after(provider, "mock=");
     const char* fido2_path = x11_text_after(provider, "fido2=");
 
-    if (!provider || strcmp(provider, "mock") == 0)
+    if (!provider)
+    {
+        x11_trace_event(X11_TRACE_CLIENT,
+                        "x11.webauthn.probe",
+                        "ok=0 reason=missing_explicit_provider");
+        return 0;
+    }
+    if (strcmp(provider, "mock") == 0)
     {
         x11_trace_event(X11_TRACE_CLIENT, "x11.webauthn.mock.probe", "ok=1 provider=mock");
         return 1;
@@ -522,8 +529,10 @@ int x11_device_backends_probe(librdp_settings* settings)
     {
         if (librdp_settings_smartcard_count(settings) == 0)
         {
-            if (!x11_probe_smartcard("pcsc"))
-                return 0;
+            x11_trace_event(X11_TRACE_CLIENT,
+                            "x11.smartcard.probe",
+                            "ok=0 reason=missing_explicit_source");
+            return 0;
         }
         for (i = 0; i < librdp_settings_smartcard_count(settings); i++)
         {

@@ -669,7 +669,9 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
             return settings->pnp_device_count > 0;
         case LIBRDP_FEATURE_WEBAUTHN:
             provider = settings->webauthn_provider;
-            if (!provider || strcmp(provider, "mock") == 0 || strncmp(provider, "mock=", 5u) == 0)
+            if (!provider)
+                return 0;
+            if (strcmp(provider, "mock") == 0 || strncmp(provider, "mock=", 5u) == 0)
                 return 1;
             if (strcmp(provider, "fido2") == 0 || strncmp(provider, "fido2=", 6u) == 0)
             {
