@@ -28,6 +28,7 @@
 #include "channels/virtual_channel.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
+#include "licensing/licensing.h"
 #include "protocol/mcs.h"
 #include "protocol/pointer.h"
 #include "protocol/slowpath.h"
@@ -970,6 +971,48 @@ static int build_demand_active_packet(rdp_buffer* out)
     return ok;
 }
 
+static int build_license_new_packet(rdp_buffer* out)
+{
+    static const uint8_t license_data[] = {0x11, 0x22, 0x33, 0x44};
+    static const uint8_t license_mac[16] = {0};
+    rdp_buffer license;
+    rdp_buffer mcs;
+    size_t total = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&license);
+    rdp_buffer_init(&mcs);
+    ok = rdp_license_write_preamble(&license,
+                                    RDP_LICENSE_MESSAGE_NEW_LICENSE,
+                                    RDP_LICENSE_VERSION_3,
+                                    (uint16_t)(4u + sizeof(license_data) + sizeof(license_mac))) == LIBRDP_STATUS_OK &&
+         rdp_license_write_binary_blob(&license,
+                                       RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                       license_data,
+                                       (uint16_t)sizeof(license_data)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&license, license_mac, sizeof(license_mac)) == LIBRDP_STATUS_OK;
+    if (ok)
+        ok = rdp_buffer_append_u8(&mcs, 0x68) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, 3) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(&mcs, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(&mcs, 0x70) == LIBRDP_STATUS_OK &&
+             append_per_length(&mcs, license.length) &&
+             rdp_buffer_append(&mcs, license.data, license.length) == LIBRDP_STATUS_OK;
+    total = mcs.length + 7u;
+    if (ok)
+        ok = rdp_buffer_append_u8(out, 0x03) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x00) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u16_be(out, (uint16_t)total) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x02) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0xf0) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append_u8(out, 0x80) == LIBRDP_STATUS_OK &&
+             rdp_buffer_append(out, mcs.data, mcs.length) == LIBRDP_STATUS_OK;
+
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&license);
+    return ok;
+}
+
 static int validate_confirm_active(const uint8_t* input, size_t input_len)
 {
     const uint8_t* payload = NULL;
@@ -1425,7 +1468,8 @@ static int start_handshake_server_multi(uint16_t* port,
                                         int extra_static_channel,
                                         int client_dynamic_channel_open_response,
                                         int connection_count,
-                                        int dynamic_channel_scenario)
+                                        int dynamic_channel_scenario,
+                                        int send_license_new)
 {
     int fd = -1;
     struct sockaddr_in addr;
@@ -1502,6 +1546,7 @@ static int start_handshake_server_multi(uint16_t* port,
             uint8_t input[4096];
             size_t input_len = 0;
             rdp_buffer mcs_response;
+            rdp_buffer license_new;
             rdp_buffer demand_active;
             rdp_buffer bitmap_update;
             rdp_buffer gdi_orders_update;
@@ -1516,6 +1561,7 @@ static int start_handshake_server_multi(uint16_t* port,
             int client = accept(fd, NULL, NULL);
 
             rdp_buffer_init(&mcs_response);
+            rdp_buffer_init(&license_new);
             rdp_buffer_init(&demand_active);
             rdp_buffer_init(&bitmap_update);
             rdp_buffer_init(&gdi_orders_update);
@@ -1560,6 +1606,10 @@ static int start_handshake_server_multi(uint16_t* port,
             }
             else
             {
+                if (send_license_new &&
+                    (!build_license_new_packet(&license_new) ||
+                     !write_exact_fd(client, license_new.data, license_new.length)))
+                    _exit(4);
                 if (!build_demand_active_packet(&demand_active) ||
                     !write_exact_fd(client, demand_active.data, demand_active.length) ||
                     !read_tpkt_fd(client, input, sizeof(input), &input_len) ||
@@ -1645,6 +1695,7 @@ static int start_handshake_server_multi(uint16_t* port,
             rdp_buffer_free(&gdi_orders_update);
             rdp_buffer_free(&bitmap_update);
             rdp_buffer_free(&demand_active);
+            rdp_buffer_free(&license_new);
             rdp_buffer_free(&mcs_response);
         }
         close(fd);
@@ -1669,7 +1720,8 @@ static int start_handshake_server_ex(uint16_t* port,
                                         extra_static_channel,
                                         client_dynamic_channel_open_response,
                                         1,
-                                        DVC_SCENARIO_NORMAL);
+                                        DVC_SCENARIO_NORMAL,
+                                        0);
 }
 
 static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypted, uint32_t error_info)
@@ -3519,7 +3571,8 @@ static int test_reconnect_success(void)
                                        0,
                                        0,
                                        2,
-                                       DVC_SCENARIO_NORMAL));
+                                       DVC_SCENARIO_NORMAL,
+                                       0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3576,7 +3629,8 @@ static int test_dynamic_channel_duplicate_create(void)
                                        0,
                                        0,
                                        1,
-                                       DVC_SCENARIO_DUPLICATE_CREATE));
+                                       DVC_SCENARIO_DUPLICATE_CREATE,
+                                       0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3624,7 +3678,8 @@ static int test_dynamic_channel_close_pending_fragment(void)
                                        0,
                                        0,
                                        1,
-                                       DVC_SCENARIO_CLOSE_PENDING_FRAGMENT));
+                                       DVC_SCENARIO_CLOSE_PENDING_FRAGMENT,
+                                       0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3675,7 +3730,8 @@ static int test_dynamic_channel_data_before_create(void)
                                        0,
                                        0,
                                        1,
-                                       DVC_SCENARIO_DATA_BEFORE_CREATE));
+                                       DVC_SCENARIO_DATA_BEFORE_CREATE,
+                                       0));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
     session = librdp_session_new(settings);
     CHECK(session != NULL);
@@ -3688,6 +3744,53 @@ static int test_dynamic_channel_data_before_create(void)
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
     CHECK(counter.channel_open == 0);
     CHECK(counter.channel_data == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: validates that terminal licensing PDUs can appear before Demand
+ * Active without being misclassified as malformed slow-path share traffic. It
+ * catches licensing/lifecycle ordering regressions while keeping the fixture
+ * deterministic and credential-free.
+ */
+static int test_licensing_new_before_activation(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_NORMAL,
+                                       1));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
+    for (i = 0; i < 6u; i++)
+        CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -3726,6 +3829,8 @@ int test_client_core(void)
     if (test_dynamic_channel_close_pending_fragment() != 0)
         return 1;
     if (test_dynamic_channel_data_before_create() != 0)
+        return 1;
+    if (test_licensing_new_before_activation() != 0)
         return 1;
     return test_settings_surface_input_session();
 }
