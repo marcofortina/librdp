@@ -40,7 +40,7 @@ librdp_status rdp_slowpath_parse_share_control_header(const void* data,
         rdp_stream_read_u16_le(&stream, &parsed.pdu_type) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(&stream, &parsed.channel_id) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (parsed.total_length < 6 || parsed.total_length > length)
+    if (parsed.total_length < 6 || parsed.total_length != length)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     *header = parsed;
     return LIBRDP_STATUS_OK;

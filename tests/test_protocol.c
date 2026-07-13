@@ -2448,6 +2448,7 @@ static int test_path_security_license_channels(void)
     const uint8_t fast_long[] = {0x40, 0x80, 0x08, 1, 2, 3, 4, 5};
     const uint8_t fast_bad_update_compression[] = {0x00, 0x05, 0x40, 0x00, 0x00};
     const uint8_t slow[] = {0x06, 0x00, 0x13, 0x00, 0xea, 0x03};
+    const uint8_t slow_trailing[] = {0x06, 0x00, 0x13, 0x00, 0xea, 0x03, 0xff};
     const uint8_t demand_active[] = {
         0x21, 0x00, 0x11, 0x00, 0xea, 0x03, 0x78, 0x56, 0x34, 0x12,
         0x03, 0x00, 0x0c, 0x00, 's',  'r',  'v',  0x01, 0x00, 0x00,
@@ -3693,6 +3694,7 @@ static int test_path_security_license_channels(void)
     uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t fast_payload[130] = {0};
     uint8_t malformed_slowpath[sizeof(bitmap_data_pdu)];
+    uint8_t trailing_slowpath[sizeof(bitmap_data_pdu) + 1u];
     rdp_fastpath_header fast;
     rdp_fastpath_update_list fast_updates;
     int fastpath_used_decoded = 0;
@@ -4551,6 +4553,10 @@ static int test_path_security_license_channels(void)
         PCHECK(rdp_slowpath_parse_share_control_header(slow, sizeof(slow) - 1u, &slow_header) ==
                LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&slow_header, &valid_slow_header, sizeof(slow_header)) == 0);
+        PCHECK(rdp_slowpath_parse_share_control_header(slow_trailing,
+                                                       sizeof(slow_trailing),
+                                                       &slow_header) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&slow_header, &valid_slow_header, sizeof(slow_header)) == 0);
     }
     rdp_buffer_free(&client_refresh_rect);
     rdp_buffer_init(&client_refresh_rect);
@@ -4612,6 +4618,12 @@ static int test_path_security_license_channels(void)
         malformed_slowpath[15] = 0x20;
         PCHECK(rdp_slowpath_parse_data_pdu(malformed_slowpath,
                                            sizeof(malformed_slowpath),
+                                           &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(memcmp(&data_pdu, &valid_data_pdu, sizeof(data_pdu)) == 0);
+        memcpy(trailing_slowpath, bitmap_data_pdu, sizeof(bitmap_data_pdu));
+        trailing_slowpath[sizeof(bitmap_data_pdu)] = 0xffu;
+        PCHECK(rdp_slowpath_parse_data_pdu(trailing_slowpath,
+                                           sizeof(trailing_slowpath),
                                            &data_pdu) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(memcmp(&data_pdu, &valid_data_pdu, sizeof(data_pdu)) == 0);
     }
