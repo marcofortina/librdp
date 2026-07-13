@@ -1022,6 +1022,24 @@ if(LIBRDP_BUILD_X11_VIEWER)
         librdp_apply_sanitizer_link_options(test_viewer_render)
         add_test(NAME viewer_render COMMAND test_viewer_render)
         set_tests_properties(viewer_render PROPERTIES TIMEOUT 30)
+        add_executable(test_viewer_audio
+            tests/test_viewer_audio.c
+            apps/x11-viewer/audio_pipewire.c
+            apps/x11-viewer/viewer_trace.c
+        )
+        target_include_directories(test_viewer_audio PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_compile_definitions(test_viewer_audio PRIVATE
+            _POSIX_C_SOURCE=200809L
+            LIBRDP_X11_AUDIO_TESTING=1
+        )
+        librdp_apply_warning_options(test_viewer_audio)
+        librdp_apply_sanitizer_compile_options(test_viewer_audio)
+        librdp_apply_sanitizer_link_options(test_viewer_audio)
+        add_test(NAME viewer_audio COMMAND test_viewer_audio)
+        set_tests_properties(viewer_audio PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_keyboard
             tests/test_viewer_keyboard.c
             apps/x11-viewer/viewer_keyboard.c

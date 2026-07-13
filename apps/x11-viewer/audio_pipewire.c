@@ -63,6 +63,10 @@ struct x11_pipewire_audio
     uint16_t input_channels;
     uint16_t output_bits;
     uint16_t input_bits;
+    uint64_t output_written_bytes;
+    uint64_t output_dropped_bytes;
+    uint64_t input_captured_bytes;
+    uint64_t input_dropped_bytes;
     int ready;
 #else
     int unused;
@@ -71,7 +75,6 @@ struct x11_pipewire_audio
 
 #define X11_PIPEWIRE_RING_BYTES (4u * 1024u * 1024u)
 
-#ifdef LIBRDP_HAVE_PIPEWIRE
 static void x11_audio_ring_free(x11_audio_ring* ring)
 {
     if (!ring)
@@ -149,6 +152,89 @@ static size_t x11_audio_ring_read(x11_audio_ring* ring, uint8_t* data, size_t le
     ring->read_pos = (ring->read_pos + length) % ring->capacity;
     ring->size -= length;
     return length;
+}
+
+static uint32_t x11_audio_latency_ms(size_t queued_bytes, size_t frame_size, uint32_t rate)
+{
+    uint64_t frames = 0;
+    uint64_t ms = 0;
+
+    if (frame_size == 0 || rate == 0)
+        return 0;
+    frames = (uint64_t)(queued_bytes / frame_size);
+    ms = (frames * 1000u) / rate;
+    return ms > UINT32_MAX ? UINT32_MAX : (uint32_t)ms;
+}
+
+#ifdef LIBRDP_X11_AUDIO_TESTING
+struct x11_audio_memory_sink
+{
+    x11_audio_ring ring;
+    size_t frame_size;
+    uint32_t rate;
+    uint64_t written_bytes;
+    uint64_t dropped_bytes;
+};
+
+x11_audio_memory_sink* x11_audio_memory_sink_new(size_t capacity, size_t frame_size, uint32_t rate)
+{
+    x11_audio_memory_sink* sink = NULL;
+
+    if (capacity == 0 || frame_size == 0 || rate == 0)
+        return NULL;
+    sink = (x11_audio_memory_sink*)calloc(1, sizeof(*sink));
+    if (!sink)
+        return NULL;
+    if (!x11_audio_ring_init(&sink->ring, capacity))
+    {
+        free(sink);
+        return NULL;
+    }
+    sink->frame_size = frame_size;
+    sink->rate = rate;
+    return sink;
+}
+
+void x11_audio_memory_sink_free(x11_audio_memory_sink* sink)
+{
+    if (!sink)
+        return;
+    x11_audio_ring_free(&sink->ring);
+    free(sink);
+}
+
+int x11_audio_memory_sink_write(x11_audio_memory_sink* sink, const void* data, size_t data_len)
+{
+    size_t dropped = 0;
+
+    if (!sink || (!data && data_len > 0))
+        return 0;
+    if (data_len == 0)
+        return 1;
+    dropped = x11_audio_ring_write(&sink->ring, (const uint8_t*)data, data_len);
+    sink->written_bytes += data_len;
+    sink->dropped_bytes += dropped;
+    return 1;
+}
+
+size_t x11_audio_memory_sink_read(x11_audio_memory_sink* sink, void* data, size_t data_len)
+{
+    if (!sink || !data || data_len == 0)
+        return 0;
+    return x11_audio_ring_read(&sink->ring, (uint8_t*)data, data_len);
+}
+
+void x11_audio_memory_sink_get_stats(const x11_audio_memory_sink* sink, x11_audio_backend_stats* stats)
+{
+    if (!stats)
+        return;
+    memset(stats, 0, sizeof(*stats));
+    if (!sink)
+        return;
+    stats->output_written_bytes = sink->written_bytes;
+    stats->output_dropped_bytes = sink->dropped_bytes;
+    stats->output_queued_bytes = sink->ring.size;
+    stats->output_latency_ms = x11_audio_latency_ms(sink->ring.size, sink->frame_size, sink->rate);
 }
 #endif
 
@@ -336,12 +422,14 @@ static void x11_pipewire_input_process(void* data)
 
                 pthread_mutex_lock(&audio->lock);
                 dropped = x11_audio_ring_write(&audio->input_ring, input, spa_data->chunk->size);
+                audio->input_captured_bytes += spa_data->chunk->size;
+                audio->input_dropped_bytes += dropped;
                 pthread_mutex_unlock(&audio->lock);
                 if (dropped > 0)
                     x11_trace_event_level(X11_TRACE_CLIENT,
                                           X11_TRACE_LEVEL_DEBUG,
                                           "x11.audio.input.overflow",
-                                          "dropped=%u",
+                                          "dropped=%u policy=drop_oldest",
                                           (unsigned)dropped);
             }
         }
@@ -582,12 +670,14 @@ int x11_pipewire_audio_write_output(x11_pipewire_audio* audio, const void* data,
         return 1;
     pthread_mutex_lock(&audio->lock);
     dropped = x11_audio_ring_write(&audio->output_ring, (const uint8_t*)data, data_len);
+    audio->output_written_bytes += data_len;
+    audio->output_dropped_bytes += dropped;
     pthread_mutex_unlock(&audio->lock);
     if (dropped > 0)
         x11_trace_event_level(X11_TRACE_CLIENT,
                               X11_TRACE_LEVEL_DEBUG,
                               "x11.audio.output.overflow",
-                              "dropped=%u",
+                              "dropped=%u policy=drop_oldest",
                               (unsigned)dropped);
     return 1;
 }
@@ -602,6 +692,29 @@ size_t x11_pipewire_audio_read_input(x11_pipewire_audio* audio, void* data, size
     read = x11_audio_ring_read(&audio->input_ring, (uint8_t*)data, data_len);
     pthread_mutex_unlock(&audio->lock);
     return read;
+}
+
+void x11_pipewire_audio_get_stats(x11_pipewire_audio* audio, x11_audio_backend_stats* stats)
+{
+    if (!stats)
+        return;
+    memset(stats, 0, sizeof(*stats));
+    if (!audio)
+        return;
+    pthread_mutex_lock(&audio->lock);
+    stats->output_written_bytes = audio->output_written_bytes;
+    stats->output_dropped_bytes = audio->output_dropped_bytes;
+    stats->output_queued_bytes = audio->output_ring.size;
+    stats->output_latency_ms = x11_audio_latency_ms(audio->output_ring.size,
+                                                    audio->output_frame_size,
+                                                    audio->output_rate);
+    stats->input_captured_bytes = audio->input_captured_bytes;
+    stats->input_dropped_bytes = audio->input_dropped_bytes;
+    stats->input_queued_bytes = audio->input_ring.size;
+    stats->input_latency_ms = x11_audio_latency_ms(audio->input_ring.size,
+                                                   audio->input_frame_size,
+                                                   audio->input_rate);
+    pthread_mutex_unlock(&audio->lock);
 }
 #else
 x11_pipewire_audio* x11_pipewire_audio_new(void)
@@ -660,5 +773,12 @@ size_t x11_pipewire_audio_read_input(x11_pipewire_audio* audio, void* data, size
     (void)data;
     (void)data_len;
     return 0;
+}
+
+void x11_pipewire_audio_get_stats(x11_pipewire_audio* audio, x11_audio_backend_stats* stats)
+{
+    (void)audio;
+    if (stats)
+        memset(stats, 0, sizeof(*stats));
 }
 #endif
