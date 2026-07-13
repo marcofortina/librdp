@@ -246,7 +246,7 @@ static librdp_status rdp_rfx_stream_parse_frame_begin(rdp_rfx_stream_state* stat
     if (rdp_stream_read_u32_le(stream, &state->summary.frame_id) != LIBRDP_STATUS_OK ||
         rdp_stream_read_u16_le(stream, &region_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (region_count == 0)
+    if (region_count == 0 || (uint32_t)region_count > RDP_RFX_STREAM_MAX_REGIONS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->summary.region_count = region_count;
     state->summary.rect_count = 0;
@@ -281,7 +281,7 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
         rdp_stream_read_u16_le(stream, &rect_count) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     (void)flags;
-    if (rect_count == 0)
+    if (rect_count == 0 || (uint32_t)rect_count > RDP_RFX_STREAM_MAX_RECTS)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (rdp_stream_remaining(stream) < (size_t)rect_count * 8u + 4u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -303,7 +303,7 @@ static librdp_status rdp_rfx_stream_parse_region(rdp_rfx_stream_state* state, rd
             height > (uint16_t)(state->summary.height - y))
             return LIBRDP_STATUS_PROTOCOL_ERROR;
     }
-    if (rect_count > UINT16_MAX - state->summary.rect_count)
+    if ((uint32_t)rect_count > RDP_RFX_STREAM_MAX_RECTS - state->summary.rect_count)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     state->summary.rect_count = (uint16_t)(state->summary.rect_count + rect_count);
     if (rdp_stream_read_u16_le(stream, &region_type) != LIBRDP_STATUS_OK ||

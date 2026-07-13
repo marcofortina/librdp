@@ -26,6 +26,8 @@
 #include "graphics/rfx_codec.h"
 
 #define RDP_RFX_STREAM_MAX_QUANTS 64u
+#define RDP_RFX_STREAM_MAX_REGIONS 4096u
+#define RDP_RFX_STREAM_MAX_RECTS 4096u
 #define RDP_RFX_STREAM_MAX_TILES 4096u
 #define RDP_RFX_STREAM_TILE_SIZE 64u
 
