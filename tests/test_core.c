@@ -24,9 +24,12 @@
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
 #include "clipboard/clipboard.h"
+#include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
+#include "channels/filesystem_redirection.h"
+#include "channels/printer_redirection.h"
 #include "channels/usb_redirection.h"
 #include "channels/virtual_channel.h"
 #include "graphics/gdi_orders.h"
@@ -77,6 +80,7 @@
 #define DVC_SCENARIO_CLIENT_FRAGMENT_SEND 12
 #define DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT 13
 #define DVC_SCENARIO_ECHO_PING 14
+#define DVC_SCENARIO_RDPDR_PRINTER_JOB 15
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -2192,6 +2196,602 @@ static int read_client_display_control_layout_fd(int fd,
     return 0;
 }
 
+/*
+ * Fixture: reads one client device-redirection PDU from a static virtual
+ * channel and copies it out of the stack-backed TPKT buffer. It lets RDPDR
+ * tests validate replies precisely while tolerating unrelated client traffic
+ * that can be emitted by other negotiated channels.
+ */
+static int read_client_device_packet_fd(int fd,
+                                        uint8_t* input,
+                                        size_t capacity,
+                                        uint16_t expected_static_channel_id,
+                                        uint16_t expected_packet_id,
+                                        rdp_buffer* payload)
+{
+    for (size_t attempt = 0; attempt < 16u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_device_redirection_header header;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &response_packet))
+            continue;
+        if (rdp_device_redirection_parse_header(response_packet.payload,
+                                                response_packet.payload_len,
+                                                &header) != LIBRDP_STATUS_OK)
+            continue;
+        if (header.packet_id != expected_packet_id)
+            continue;
+        payload->length = 0;
+        return rdp_buffer_append(payload,
+                                 response_packet.payload,
+                                 response_packet.payload_len) == LIBRDP_STATUS_OK;
+    }
+    return 0;
+}
+
+static int build_device_redirection_server_capabilities(rdp_buffer* out)
+{
+    rdp_device_redirection_capability_config config;
+    rdp_buffer general;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!out)
+        return 0;
+    rdp_buffer_init(&general);
+    status = rdp_device_redirection_make_default_capability_config(&config);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_device_redirection_write_general_capability(&general, &config.general);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_device_redirection_write_header(out,
+                                                     RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
+                                                     RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(out, 2u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(out, 0u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(out, general.data, general.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(out, RDP_DEVICE_REDIRECTION_CAP_PRINTER);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(out, 8u);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(out, RDP_DEVICE_REDIRECTION_CAP_VERSION_1);
+    rdp_buffer_free(&general);
+    return status == LIBRDP_STATUS_OK;
+}
+
+static int write_device_static_packet_fd(int fd, const rdp_buffer* payload, uint16_t channel_id)
+{
+    rdp_buffer packet;
+    int ok = 0;
+
+    if (!payload)
+        return 0;
+    rdp_buffer_init(&packet);
+    ok = build_static_channel_packet(&packet, payload, channel_id) &&
+         write_exact_fd(fd, packet.data, packet.length);
+    rdp_buffer_free(&packet);
+    return ok;
+}
+
+static int read_client_device_announce_fd(int fd, uint8_t* input, size_t capacity, uint16_t channel_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_announce confirm;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM,
+                                      &payload) &&
+         rdp_device_redirection_parse_client_id_confirm(payload.data,
+                                                        payload.length,
+                                                        &confirm) == LIBRDP_STATUS_OK &&
+         confirm.version_major == RDP_DEVICE_REDIRECTION_VERSION_MAJOR &&
+         confirm.version_minor == RDP_DEVICE_REDIRECTION_VERSION_MINOR_13;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_device_name_fd(int fd, uint8_t* input, size_t capacity, uint16_t channel_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_client_name name;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_NAME,
+                                      &payload) &&
+         rdp_device_redirection_parse_client_name(payload.data,
+                                                  payload.length,
+                                                  &name) == LIBRDP_STATUS_OK &&
+         name.unicode == 1u &&
+         name.name_len >= 2u &&
+         name.name[name.name_len - 2u] == 0 &&
+         name.name[name.name_len - 1u] == 0;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_device_capabilities_fd(int fd, uint8_t* input, size_t capacity, uint16_t channel_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_capability_list caps;
+    int saw_printer = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    if (read_client_device_packet_fd(fd,
+                                     input,
+                                     capacity,
+                                     channel_id,
+                                     RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+                                     &payload) &&
+        rdp_device_redirection_parse_capability_list(payload.data,
+                                                     payload.length,
+                                                     RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+                                                     &caps) == LIBRDP_STATUS_OK)
+    {
+        for (uint16_t i = 0; i < caps.count; i++)
+        {
+            if (caps.capabilities[i].type == RDP_DEVICE_REDIRECTION_CAP_PRINTER)
+                saw_printer = 1;
+        }
+        ok = saw_printer;
+    }
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_device_id_fd(int fd,
+                                            uint8_t* input,
+                                            size_t capacity,
+                                            uint16_t channel_id,
+                                            uint32_t* device_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_device_list list;
+    int ok = 0;
+
+    if (!device_id)
+        return 0;
+    *device_id = 0;
+    rdp_buffer_init(&payload);
+    if (read_client_device_packet_fd(fd,
+                                     input,
+                                     capacity,
+                                     channel_id,
+                                     RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE,
+                                     &payload) &&
+        rdp_device_redirection_parse_device_list_announce(payload.data,
+                                                          payload.length,
+                                                          &list) == LIBRDP_STATUS_OK)
+    {
+        for (uint32_t i = 0; i < list.count; i++)
+        {
+            if (list.devices[i].device_type == RDP_DEVICE_REDIRECTION_TYPE_PRINTER)
+            {
+                *device_id = list.devices[i].device_id;
+                ok = 1;
+                break;
+            }
+        }
+    }
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_create_response_fd(int fd,
+                                                  uint8_t* input,
+                                                  size_t capacity,
+                                                  uint16_t channel_id,
+                                                  uint32_t expected_device_id,
+                                                  uint32_t expected_completion_id,
+                                                  uint32_t* file_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    int ok = 0;
+
+    if (!file_id)
+        return 0;
+    *file_id = 0;
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_printer_redirection_parse_create_response(payload.data,
+                                                       payload.length,
+                                                       &completion,
+                                                       file_id) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+         *file_id != 0;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_write_response_fd(int fd,
+                                                 uint8_t* input,
+                                                 size_t capacity,
+                                                 uint16_t channel_id,
+                                                 uint32_t expected_device_id,
+                                                 uint32_t expected_completion_id,
+                                                 uint32_t expected_written,
+                                                 int expect_success)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    uint32_t written = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_printer_redirection_parse_write_response(payload.data,
+                                                      payload.length,
+                                                      &completion,
+                                                      &written) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         ((expect_success &&
+           completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+           written == expected_written) ||
+          (!expect_success &&
+           completion.io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS));
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_read_response_fd(int fd,
+                                                uint8_t* input,
+                                                size_t capacity,
+                                                uint16_t channel_id,
+                                                uint32_t expected_device_id,
+                                                uint32_t expected_completion_id,
+                                                const uint8_t* expected,
+                                                uint32_t expected_len)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    const uint8_t* returned = NULL;
+    uint32_t returned_len = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_printer_redirection_parse_read_response(payload.data,
+                                                     payload.length,
+                                                     &completion,
+                                                     &returned,
+                                                     &returned_len) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+         returned_len == expected_len &&
+         (expected_len == 0 || memcmp(returned, expected, expected_len) == 0);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_query_response_fd(int fd,
+                                                 uint8_t* input,
+                                                 size_t capacity,
+                                                 uint16_t channel_id,
+                                                 uint32_t expected_device_id,
+                                                 uint32_t expected_completion_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    const uint8_t* returned = NULL;
+    uint32_t returned_len = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_printer_redirection_parse_buffer_response(payload.data,
+                                                       payload.length,
+                                                       &completion,
+                                                       &returned,
+                                                       &returned_len) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
+         returned != NULL &&
+         returned_len > 0;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_device_completion_fd(int fd,
+                                            uint8_t* input,
+                                            size_t capacity,
+                                            uint16_t channel_id,
+                                            uint32_t expected_device_id,
+                                            uint32_t expected_completion_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_device_redirection_parse_io_completion(payload.data,
+                                                    payload.length,
+                                                    &completion) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int read_client_printer_close_response_fd(int fd,
+                                                 uint8_t* input,
+                                                 size_t capacity,
+                                                 uint16_t channel_id,
+                                                 uint32_t expected_device_id,
+                                                 uint32_t expected_completion_id)
+{
+    rdp_buffer payload;
+    rdp_device_redirection_io_completion completion;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = read_client_device_packet_fd(fd,
+                                      input,
+                                      capacity,
+                                      channel_id,
+                                      RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION,
+                                      &payload) &&
+         rdp_printer_redirection_parse_close_response(payload.data,
+                                                      payload.length,
+                                                      &completion) == LIBRDP_STATUS_OK &&
+         completion.device_id == expected_device_id &&
+         completion.completion_id == expected_completion_id &&
+         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
+/*
+ * Fixture: drives a printer file-backend job over RDPDR using the same parser
+ * and writer functions as protocol tests. It covers create/write/read/query,
+ * flush, close, and a post-close write rejection without requiring a print
+ * system daemon.
+ */
+static int run_printer_job_server_scenario(int fd, uint8_t* input, size_t capacity)
+{
+    static const uint8_t create_path[] = {0, 0};
+    static const uint8_t document[] = {'p', 'r', 'i', 'n', 't', '-', 'j', 'o', 'b', '\n'};
+    static const uint8_t query_buffer[64] = {0};
+    enum
+    {
+        device_channel_id = 1006,
+        completion_create = 0x100u,
+        completion_write = 0x101u,
+        completion_read = 0x102u,
+        completion_query = 0x103u,
+        completion_flush = 0x104u,
+        completion_close = 0x105u,
+        completion_write_after_close = 0x106u,
+        file_standard_information = 5u
+    };
+    rdp_buffer server_announce;
+    rdp_buffer server_caps;
+    rdp_buffer user_loggedon;
+    rdp_buffer request;
+    rdp_buffer device_reply;
+    uint32_t device_id = 0;
+    uint32_t file_id = 0;
+    int ok = 0;
+
+    rdp_buffer_init(&server_announce);
+    rdp_buffer_init(&server_caps);
+    rdp_buffer_init(&user_loggedon);
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&device_reply);
+
+    ok = rdp_device_redirection_write_server_announce(&server_announce,
+                                                      RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
+                                                      0x11223344u) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &server_announce, device_channel_id) &&
+         read_client_device_announce_fd(fd, input, capacity, device_channel_id) &&
+         read_client_device_name_fd(fd, input, capacity, device_channel_id) &&
+         build_device_redirection_server_capabilities(&server_caps) &&
+         write_device_static_packet_fd(fd, &server_caps, device_channel_id) &&
+         read_client_device_capabilities_fd(fd, input, capacity, device_channel_id) &&
+         rdp_device_redirection_write_user_loggedon(&user_loggedon) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &user_loggedon, device_channel_id) &&
+         read_client_printer_device_id_fd(fd, input, capacity, device_channel_id, &device_id) &&
+         rdp_device_redirection_write_device_reply(&device_reply,
+                                                   device_id,
+                                                   RDP_DEVICE_REDIRECTION_STATUS_SUCCESS) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &device_reply, device_channel_id);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_create_request(&request,
+                                                         device_id,
+                                                         0,
+                                                         completion_create,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         1,
+                                                         0,
+                                                         create_path,
+                                                         (uint32_t)sizeof(create_path)) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_create_response_fd(fd,
+                                                input,
+                                                capacity,
+                                                device_channel_id,
+                                                device_id,
+                                                completion_create,
+                                                &file_id);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_write_request(&request,
+                                                        device_id,
+                                                        file_id,
+                                                        completion_write,
+                                                        0,
+                                                        document,
+                                                        (uint32_t)sizeof(document)) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_write_response_fd(fd,
+                                               input,
+                                               capacity,
+                                               device_channel_id,
+                                               device_id,
+                                               completion_write,
+                                               (uint32_t)sizeof(document),
+                                               1);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_read_request(&request,
+                                                       device_id,
+                                                       file_id,
+                                                       completion_read,
+                                                       (uint32_t)sizeof(document),
+                                                       0) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_read_response_fd(fd,
+                                              input,
+                                              capacity,
+                                              device_channel_id,
+                                              device_id,
+                                              completion_read,
+                                              document,
+                                              (uint32_t)sizeof(document));
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_information_request(&request,
+                                                              device_id,
+                                                              file_id,
+                                                              completion_query,
+                                                              RDP_DEVICE_REDIRECTION_IRP_QUERY_INFORMATION,
+                                                              file_standard_information,
+                                                              query_buffer,
+                                                              (uint32_t)sizeof(query_buffer)) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_query_response_fd(fd,
+                                               input,
+                                               capacity,
+                                               device_channel_id,
+                                               device_id,
+                                               completion_query);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_device_redirection_write_io_request(&request,
+                                                 device_id,
+                                                 file_id,
+                                                 completion_flush,
+                                                 RDP_DEVICE_REDIRECTION_IRP_FLUSH_BUFFERS,
+                                                 0,
+                                                 NULL,
+                                                 0) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_device_completion_fd(fd,
+                                          input,
+                                          capacity,
+                                          device_channel_id,
+                                          device_id,
+                                          completion_flush);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_close_request(&request,
+                                                        device_id,
+                                                        file_id,
+                                                        completion_close) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_close_response_fd(fd,
+                                               input,
+                                               capacity,
+                                               device_channel_id,
+                                               device_id,
+                                               completion_close);
+    if (!ok)
+        goto done;
+
+    request.length = 0;
+    ok = rdp_filesystem_redirection_write_write_request(&request,
+                                                        device_id,
+                                                        file_id,
+                                                        completion_write_after_close,
+                                                        0,
+                                                        document,
+                                                        (uint32_t)sizeof(document)) == LIBRDP_STATUS_OK &&
+         write_device_static_packet_fd(fd, &request, device_channel_id) &&
+         read_client_printer_write_response_fd(fd,
+                                               input,
+                                               capacity,
+                                               device_channel_id,
+                                               device_id,
+                                               completion_write_after_close,
+                                               0,
+                                               0);
+
+done:
+    rdp_buffer_free(&device_reply);
+    rdp_buffer_free(&request);
+    rdp_buffer_free(&user_loggedon);
+    rdp_buffer_free(&server_caps);
+    rdp_buffer_free(&server_announce);
+    return ok;
+}
+
 static int reserve_closed_loopback_port(uint16_t* port)
 {
     int fd = -1;
@@ -2423,6 +3023,7 @@ static int start_handshake_server_full(uint16_t* port,
                         !write_exact_fd(client, gdi_orders_update.data, gdi_orders_update.length) ||
                         (gdi_scenario == GDI_SCENARIO_NORMAL &&
                          extra_static_channel &&
+                         dynamic_channel_scenario != DVC_SCENARIO_RDPDR_PRINTER_JOB &&
                          (!build_application_static_channel_first_packet(&static_first) ||
                           !write_exact_fd(client, static_first.data, static_first.length) ||
                           !build_application_static_channel_last_packet(&static_last) ||
@@ -2446,6 +3047,15 @@ static int start_handshake_server_full(uint16_t* port,
                         {
                             _exit(5);
                         }
+                    }
+                    if (dynamic_channel_scenario == DVC_SCENARIO_RDPDR_PRINTER_JOB)
+                    {
+                        if (!extra_static_channel ||
+                            !run_printer_job_server_scenario(client, input, sizeof(input)))
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
                     }
                     if (dynamic_channel_scenario == DVC_SCENARIO_DATA_BEFORE_CREATE)
                     {
@@ -5516,6 +6126,95 @@ static int test_webauthn_feature_status_channel_lifecycle(void)
 }
 
 /*
+ * Coverage: validates printer redirection against a real file-backed spool
+ * job. The mock server drives RDPDR negotiation and IRPs, while the client
+ * creates, writes, reads, queries, flushes, closes, and rejects stale writes
+ * for a redirected printer without relying on CUPS.
+ */
+static int test_printer_file_backend_job_lifecycle(void)
+{
+    static const uint8_t expected[] = {'p', 'r', 'i', 'n', 't', '-', 'j', 'o', 'b', '\n'};
+    char output_dir[] = "/tmp/librdp-printer-XXXXXX";
+    char output_path[512];
+    uint8_t actual[sizeof(expected)];
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    int output_fd = -1;
+    int needed = 0;
+    char extra = 0;
+    pid_t wait_rc = 0;
+
+    CHECK(mkdtemp(output_dir) != NULL);
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_printer(settings, "Print", "Generic", output_dir) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       1,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_RDPDR_PRINTER_JOB,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (size_t i = 0; i < 32u && server_pid > 0; i++)
+    {
+        librdp_status status = librdp_session_run_once(session, 1000);
+
+        wait_rc = waitpid(server_pid, &child_status, WNOHANG);
+        if (wait_rc == server_pid)
+        {
+            CHECK(i >= 13u);
+            server_pid = -1;
+            break;
+        }
+        CHECK(wait_rc == 0);
+        if (status != LIBRDP_STATUS_OK &&
+            i >= 13u &&
+            librdp_session_get_state(session) != LIBRDP_SESSION_FAILED)
+        {
+            break;
+        }
+        CHECK(status == LIBRDP_STATUS_OK);
+    }
+
+    librdp_session_free(session);
+    session = NULL;
+    librdp_settings_free(settings);
+    settings = NULL;
+    if (server_pid > 0)
+    {
+        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+        server_pid = -1;
+    }
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+
+    needed = snprintf(output_path, sizeof(output_path), "%s/Print-%08x.prn", output_dir, 1u);
+    CHECK(needed > 0 && (size_t)needed < sizeof(output_path));
+    output_fd = open(output_path, O_RDONLY);
+    CHECK(output_fd >= 0);
+    CHECK(read_exact_fd(output_fd, actual, sizeof(actual)));
+    CHECK(read(output_fd, &extra, sizeof(extra)) == 0);
+    CHECK(close(output_fd) == 0);
+    output_fd = -1;
+    CHECK(memcmp(actual, expected, sizeof(expected)) == 0);
+    CHECK(unlink(output_path) == 0);
+    CHECK(rmdir(output_dir) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that recognized but non-rendered GDI alternate
  * secondary orders fail the runtime path instead of being silently accepted.
  * This catches capability/runtime drift where parser-only GDI+ or window
@@ -5751,6 +6450,8 @@ int test_client_core(void)
     if (test_dynamic_channel_public_fragment_send() != 0)
         return 1;
     if (test_webauthn_feature_status_channel_lifecycle() != 0)
+        return 1;
+    if (test_printer_file_backend_job_lifecycle() != 0)
         return 1;
     if (test_gdi_unsupported_altsec_order() != 0)
         return 1;
