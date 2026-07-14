@@ -5,10 +5,11 @@
 /*
  * Module: X11 viewer CLI parser regression tests.
  * Coverage: startup-only argument validation for security-sensitive feature
- * policy. These tests avoid X11 and network I/O so parser failures are
- * deterministic.
+ * policy, without X11 or network I/O.
  * Bug classes: malformed argument acceptance, missing WebAuthn RP allowlist
  * propagation, and accidental credential or device discovery during parsing.
+ * Determinism: tests use in-memory settings only and never inspect host
+ * devices, environment state, or remote endpoints.
  */
 
 #include "viewer_cli.h"
