@@ -196,6 +196,80 @@ LIBRDP_API librdp_status librdp_client_reconnect(librdp_client* client,
 LIBRDP_API librdp_status librdp_client_dispatch(librdp_client* client, int timeout_ms);
 
 /**
+ * @brief Return the poll descriptors needed by the client's session loop.
+ *
+ * This is a compatibility wrapper around librdp_session_get_pollfds(). The
+ * descriptors are borrowed from the owned session and remain valid only until
+ * disconnect, reconnect, or the next session transport mutation.
+ *
+ * @param[in,out] client Client to query; must not be NULL.
+ * @param[out] fds Destination pollfd array; may be NULL only when capacity is 0.
+ * @param[in] capacity Number of entries available in fds.
+ * @param[out] count Required descriptor count; must not be NULL.
+ *
+ * @return Status returned by librdp_session_get_pollfds(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: call from the serialized client-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_get_pollfds(librdp_client* client,
+                                                   struct pollfd* fds,
+                                                   size_t capacity,
+                                                   size_t* count);
+
+/**
+ * @brief Notify the client's session about poll results.
+ *
+ * This is a compatibility wrapper around librdp_session_notify_poll().
+ *
+ * @param[in,out] client Client to notify; must not be NULL.
+ * @param[in] fds Poll descriptors with revents set; must not be NULL when
+ * count is non-zero.
+ * @param[in] count Number of entries in fds.
+ *
+ * @return Status returned by librdp_session_notify_poll(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: call from the serialized client-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_notify_poll(librdp_client* client,
+                                                  const struct pollfd* fds,
+                                                  size_t count);
+
+/**
+ * @brief Dispatch work made ready through librdp_client_notify_poll().
+ *
+ * This is a compatibility wrapper around librdp_session_dispatch_pending().
+ *
+ * @param[in,out] client Client to dispatch; must not be NULL.
+ *
+ * @return Status returned by librdp_session_dispatch_pending(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: call from the serialized client-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_dispatch_pending(librdp_client* client);
+
+/**
+ * @brief Return the next timeout for an application-owned event loop.
+ *
+ * This is a compatibility wrapper around librdp_session_get_next_timeout().
+ *
+ * @param[in] client Client to query; must not be NULL.
+ * @param[out] timeout_ms Receives the timeout in milliseconds; must not be NULL.
+ *
+ * @return Status returned by librdp_session_get_next_timeout(), or
+ * LIBRDP_STATUS_INVALID_ARGUMENT when client is NULL.
+ *
+ * @note Thread-safety: call from the serialized client-driving context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_client_get_next_timeout(const librdp_client* client, int* timeout_ms);
+
+/**
  * @brief Request cancellation of the client's active session loop.
  *
  * This is a compatibility wrapper around librdp_session_cancel(). It can be

@@ -13,6 +13,10 @@ LIBRDP_0.1 {
         librdp_client_connect;
         librdp_client_reconnect;
         librdp_client_dispatch;
+        librdp_client_get_pollfds;
+        librdp_client_notify_poll;
+        librdp_client_dispatch_pending;
+        librdp_client_get_next_timeout;
         librdp_client_cancel;
         librdp_client_disconnect;
         librdp_client_state;

@@ -4310,6 +4310,14 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_client_state(client) == LIBRDP_SESSION_IDLE);
     CHECK(librdp_client_lifecycle(client) == LIBRDP_LIFECYCLE_NEW);
     CHECK(librdp_client_dispatch(client, 0) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_get_pollfds(NULL, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_get_pollfds(client, NULL, 0, &session_pfd_count) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_notify_poll(NULL, session_pfds, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_notify_poll(client, session_pfds, 1) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_dispatch_pending(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_dispatch_pending(client) == LIBRDP_STATUS_STATE);
+    CHECK(librdp_client_get_next_timeout(NULL, &next_timeout) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_client_get_next_timeout(client, &next_timeout) == LIBRDP_STATUS_STATE);
     CHECK(librdp_client_cancel(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_reconnect(NULL, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_client_reconnect(client, NULL) == LIBRDP_STATUS_STATE);

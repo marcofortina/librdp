@@ -134,6 +134,32 @@ librdp_status librdp_client_dispatch(librdp_client* client, int timeout_ms)
     return client ? librdp_session_run_once(client->session, timeout_ms) : LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
+librdp_status librdp_client_get_pollfds(librdp_client* client,
+                                        struct pollfd* fds,
+                                        size_t capacity,
+                                        size_t* count)
+{
+    return client ? librdp_session_get_pollfds(client->session, fds, capacity, count) :
+                    LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
+librdp_status librdp_client_notify_poll(librdp_client* client, const struct pollfd* fds, size_t count)
+{
+    return client ? librdp_session_notify_poll(client->session, fds, count) :
+                    LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
+librdp_status librdp_client_dispatch_pending(librdp_client* client)
+{
+    return client ? librdp_session_dispatch_pending(client->session) : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
+librdp_status librdp_client_get_next_timeout(const librdp_client* client, int* timeout_ms)
+{
+    return client ? librdp_session_get_next_timeout(client->session, timeout_ms) :
+                    LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 librdp_status librdp_client_cancel(librdp_client* client)
 {
     return client ? librdp_session_cancel(client->session) : LIBRDP_STATUS_INVALID_ARGUMENT;
