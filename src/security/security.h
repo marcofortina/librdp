@@ -26,6 +26,7 @@
 #include <librdp/settings.h>
 
 #include "common/buffer.h"
+#include "security/certificate.h"
 
 #include <openssl/types.h>
 
@@ -35,7 +36,6 @@
 #define RDP_SEC_LICENSE_PKT 0x0080u
 #define RDP_SEC_LICENSE_ENCRYPT_SC 0x0200u
 #define RDP_SEC_SECURE_CHECKSUM 0x0800u
-#define RDP_SECURITY_CLIENT_RANDOM_LEN 32u
 #define RDP_SECURITY_PREMASTER_SECRET_LEN 48u
 #define RDP_SECURITY_LICENSE_KEY_LEN 16u
 #define RDP_SECURITY_METHOD_40BIT 0x00000001u
@@ -63,15 +63,6 @@ typedef struct rdp_standard_security_context
     rdp_rc4_context encrypt_rc4;
     rdp_rc4_context decrypt_rc4;
 } rdp_standard_security_context;
-
-typedef struct rdp_security_public_key
-{
-    uint32_t exponent;
-    const uint8_t* modulus_le;
-    uint8_t* owned_modulus_le;
-    size_t modulus_len;
-    uint32_t bit_len;
-} rdp_security_public_key;
 
 typedef struct rdp_client_info
 {
@@ -110,18 +101,6 @@ librdp_status rdp_security_write_send_data_request(rdp_buffer* buffer,
                                                    uint16_t channel_id,
                                                    const void* payload,
                                                    size_t payload_len);
-librdp_status rdp_security_parse_server_certificate(const void* data,
-                                                    size_t length,
-                                                    rdp_security_public_key* public_key);
-void rdp_security_public_key_clear(rdp_security_public_key* public_key);
-librdp_status rdp_security_generate_client_random(uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN]);
-librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* public_key,
-                                                 const uint8_t random[RDP_SECURITY_CLIENT_RANDOM_LEN],
-                                                 rdp_buffer* encrypted);
-librdp_status rdp_security_encrypt_public_secret(const rdp_security_public_key* public_key,
-                                                 const uint8_t* secret,
-                                                 size_t secret_len,
-                                                 rdp_buffer* encrypted);
 librdp_status rdp_security_standard_client_init(rdp_standard_security_context* context,
                                                 uint32_t method,
                                                 const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
