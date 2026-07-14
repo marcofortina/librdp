@@ -904,6 +904,7 @@ uint32_t rdp_session_serial_port_index_from_device_id(const librdp_session* sess
 uint32_t rdp_session_parallel_port_index_from_device_id(const librdp_session* session, uint32_t device_id);
 char* rdp_session_strdup_range(const char* data, size_t length);
 uint32_t rdp_session_filesystem_error_from_status(librdp_status status);
+uint32_t rdp_session_read_u32_le_unaligned(const uint8_t* data);
 librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
                                                  uint32_t information_class,
                                                  const struct stat* st,
@@ -962,6 +963,7 @@ librdp_status rdp_session_handle_printer_io_request(librdp_session* session,
 librdp_status rdp_session_handle_smartcard_io_request(librdp_session* session,
                                                       const uint8_t* data,
                                                       size_t data_len);
+void rdp_session_smartcard_reset(librdp_session* session);
 uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
                                                const rdp_printer_redirection_cache_event* event);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
