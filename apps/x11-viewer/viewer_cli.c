@@ -285,6 +285,12 @@ static int add_webauthn_arg(librdp_settings* settings, const char* text)
            librdp_settings_set_webauthn_provider(settings, value) == LIBRDP_STATUS_OK;
 }
 
+static int add_webauthn_rp_id_arg(librdp_settings* settings, const char* text)
+{
+    return settings && text && text[0] != '\0' &&
+           librdp_settings_add_webauthn_rp_id(settings, text) == LIBRDP_STATUS_OK;
+}
+
 static int add_rail_arg(librdp_settings* settings, const char* text)
 {
     const char* value = NULL;
@@ -325,7 +331,7 @@ static const char* optional_value(int argc, int* index, char** argv)
 
 const char* x11_cli_usage(void)
 {
-    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
+    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video [file=path]] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--webauthn-rp-id id] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
 }
 
 void x11_cli_options_free(x11_cli_options* options)
@@ -498,6 +504,11 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
             if (!add_webauthn_arg(settings, value))
                 return 0;
         }
+        else if (strcmp(argv[i], "--webauthn-rp-id") == 0)
+        {
+            if (!require_value(argc, &i) || !add_webauthn_rp_id_arg(settings, argv[i]))
+                return 0;
+        }
         else if (strcmp(argv[i], "--rail") == 0)
         {
             if (!require_value(argc, &i) || !add_rail_arg(settings, argv[i]))
@@ -598,8 +609,9 @@ void x11_cli_trace_settings(const librdp_settings* settings)
     if (librdp_settings_webauthn_provider(settings))
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.webauthn.config",
-                        "provider=\"%s\"",
-                        librdp_settings_webauthn_provider(settings));
+                        "provider=\"%s\" rp_id_count=%u",
+                        librdp_settings_webauthn_provider(settings),
+                        librdp_settings_webauthn_rp_id_count(settings));
     for (i = 0; i < librdp_settings_rail_app_count(settings); i++)
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.rail.config",
