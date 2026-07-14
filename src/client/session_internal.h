@@ -842,13 +842,40 @@ struct librdp_session
 
 librdp_status rdp_session_require_owner(librdp_session* session, const char* phase);
 librdp_status rdp_session_require_owner_const(const librdp_session* session, const char* phase);
+librdp_status rdp_session_bind_owner(librdp_session* session, const char* phase);
 void rdp_session_emit(librdp_session* session, const librdp_event* event);
+void rdp_session_emit_graphics_update(librdp_session* session,
+                                      librdp_graphics_update_type type,
+                                      uint32_t surface_id,
+                                      uint32_t frame_id,
+                                      const librdp_rect* rect,
+                                      librdp_pixel_format format,
+                                      const uint8_t* pixels,
+                                      size_t stride);
+void rdp_session_emit_graphics_frame(librdp_session* session, librdp_graphics_update_type type, uint32_t frame_id);
 void rdp_session_emit_graphics_pixel_rect(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void rdp_session_metric_add(uint64_t* counter, uint64_t value);
 librdp_status rdp_session_limit_rejected(librdp_session* session);
 librdp_status rdp_session_utf8_to_utf16le(const char* text, rdp_buffer* out, uint8_t append_null);
+int rdp_session_multitransport_runtime_supported(void);
+void rdp_session_wakeup_close(librdp_session* session);
+librdp_status rdp_session_wakeup_init(librdp_session* session);
+void rdp_session_wakeup_drain(librdp_session* session);
+librdp_status rdp_session_wakeup_signal(librdp_session* session);
+void rdp_session_trace_policy_clear(librdp_session* session);
 void rdp_session_trace_scope_begin(librdp_session* session, rdp_trace_session_scope* scope);
 void rdp_session_trace_scope_end(const librdp_session* session);
+void rdp_session_set_state(librdp_session* session, librdp_session_state state);
+void rdp_session_set_lifecycle(librdp_session* session, librdp_session_lifecycle lifecycle);
+void rdp_session_set_last_error(librdp_session* session,
+                                librdp_status status,
+                                int system_error,
+                                librdp_error_component component,
+                                const char* phase,
+                                const char* message);
+librdp_status rdp_session_fail(librdp_session* session, librdp_status status);
+librdp_status rdp_session_finish_cancel(librdp_session* session);
+librdp_status rdp_session_disconnect_inner(librdp_session* session);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
                                              const rdp_buffer* pdu,
                                              const char* event);

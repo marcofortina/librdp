@@ -199,6 +199,7 @@ set(LIBRDP_SOURCES
     src/client/session_clipboard.c
     src/client/session_graphics.c
     src/client/session_input.c
+    src/client/session_runtime.c
     src/client/smartcard_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c
