@@ -62,6 +62,7 @@
 #include "protocol/bulk.h"
 #include "protocol/gcc.h"
 #include "protocol/pointer.h"
+#include "protocol/slowpath.h"
 #include "security/security.h"
 #include "transport/transport.h"
 #include <dirent.h>
@@ -1048,6 +1049,8 @@ librdp_status rdp_session_decompress_bulk_payload(librdp_session* session,
                                                   size_t data_len,
                                                   rdp_buffer* decoded);
 librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet);
+librdp_status rdp_session_trace_slowpath_data_pdu(librdp_session* session, const rdp_slowpath_data_pdu* data_pdu);
+librdp_status rdp_session_handle_demand_active(librdp_session* session, const uint8_t* payload, size_t payload_len);
 rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_session* session, uint32_t channel_id);
 rdp_session_dynamic_channel* rdp_session_dynamic_channel_find_opening(librdp_session* session, uint32_t channel_id);
 void rdp_session_dynamic_channel_clear_entry(rdp_session_dynamic_channel* entry);
