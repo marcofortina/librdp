@@ -902,6 +902,43 @@ uint32_t rdp_session_printer_index_from_device_id(const librdp_session* session,
 uint32_t rdp_session_smartcard_index_from_device_id(const librdp_session* session, uint32_t device_id);
 uint32_t rdp_session_serial_port_index_from_device_id(const librdp_session* session, uint32_t device_id);
 uint32_t rdp_session_parallel_port_index_from_device_id(const librdp_session* session, uint32_t device_id);
+char* rdp_session_strdup_range(const char* data, size_t length);
+uint32_t rdp_session_filesystem_error_from_status(librdp_status status);
+librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
+                                                 uint32_t information_class,
+                                                 const struct stat* st,
+                                                 const rdp_session_redirected_file* file);
+int rdp_session_seek_fd(int fd, uint64_t offset);
+librdp_status rdp_session_utf16le_path_to_utf8(const uint8_t* data, uint32_t data_len, char** out);
+uint32_t rdp_session_apply_basic_information(rdp_session_redirected_file* file,
+                                             const uint8_t* data,
+                                             uint32_t data_len);
+uint32_t rdp_session_apply_size_information(rdp_session_redirected_file* file,
+                                            const uint8_t* data,
+                                            uint32_t data_len);
+uint32_t rdp_session_apply_valid_data_length_information(rdp_session_redirected_file* file,
+                                                         const uint8_t* data,
+                                                         uint32_t data_len);
+uint32_t rdp_session_apply_position_information(rdp_session_redirected_file* file,
+                                                const uint8_t* data,
+                                                uint32_t data_len);
+uint32_t rdp_session_apply_mode_information(rdp_session_redirected_file* file,
+                                            const uint8_t* data,
+                                            uint32_t data_len);
+uint32_t rdp_session_apply_case_sensitive_information(const uint8_t* data, uint32_t data_len);
+uint32_t rdp_session_apply_disposition_information(rdp_session_redirected_file* file,
+                                                   const uint8_t* data,
+                                                   uint32_t data_len);
+uint32_t rdp_session_apply_disposition_information_ex(rdp_session_redirected_file* file,
+                                                      const uint8_t* data,
+                                                      uint32_t data_len);
+uint32_t rdp_session_apply_file_locks(librdp_session* session,
+                                      rdp_session_redirected_file* file,
+                                      const rdp_filesystem_redirection_lock_request* request);
+librdp_status rdp_session_send_remote_programs_startup(librdp_session* session);
+librdp_status rdp_session_handle_remote_programs_message(librdp_session* session,
+                                                         const uint8_t* data,
+                                                         size_t data_len);
 librdp_status rdp_session_handle_device_redirection_message(librdp_session* session,
                                                             const uint8_t* data,
                                                             size_t data_len);
