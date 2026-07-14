@@ -4702,6 +4702,11 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_pnp_device_caps(settings, 1) == 0);
     CHECK(strcmp(librdp_settings_webauthn_provider(settings), "mock=/tmp/auth.json") == 0);
     CHECK(librdp_settings_webauthn_rp_id_count(settings) == 0);
+    CHECK(librdp_settings_get_feature_status(settings,
+                                             LIBRDP_FEATURE_WEBAUTHN,
+                                             &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
     CHECK(librdp_settings_add_webauthn_rp_id(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_webauthn_rp_id(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_webauthn_rp_id(settings, "example.com") == LIBRDP_STATUS_OK);
@@ -6825,6 +6830,7 @@ static int test_webauthn_feature_status_channel_lifecycle(void)
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_webauthn_provider(settings, "mock=/tmp/librdp-webauthn-test.cbor") ==
           LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "example.test") == LIBRDP_STATUS_OK);
     CHECK(start_handshake_server_multi(&test_port,
                                        &server_pid,
                                        0,

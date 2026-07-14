@@ -96,7 +96,7 @@ For Xwayland, the viewer sets `_XWAYLAND_MAY_GRAB_KEYBOARD` before requesting ke
 - `--smartcard` uses PC/SC or a controlled virtual source.
 - `--usb` uses libusb selectors.
 - `--webauthn` uses libfido2, a hidraw device, or a controlled mock provider.
-- `--webauthn-rp-id` adds an RP ID allowlist entry for WebAuthn requests.
+- `--webauthn-rp-id` adds an RP ID allowlist entry for WebAuthn requests and is required when WebAuthn is enabled.
 - `--printer` can route output through the configured printer backend path.
 - `--video` can write selected video output to a file path.
 
@@ -110,7 +110,8 @@ build/librdp-x11-viewer \
     --audio-input \
     --camera device=/dev/video0 \
     --smartcard pcsc \
-    --webauthn fido2
+    --webauthn fido2 \
+    --webauthn-rp-id login.example.com
 ```
 
 Filesystem, printer, serial, and parallel paths are interpreted on the local host:

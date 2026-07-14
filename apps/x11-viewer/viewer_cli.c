@@ -551,6 +551,10 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
         i++;
     }
 
+    if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN) &&
+        librdp_settings_webauthn_rp_id_count(settings) == 0)
+        return 0;
+
     return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1) == LIBRDP_STATUS_OK &&
            librdp_settings_set_desktop_size(settings, width, height) == LIBRDP_STATUS_OK &&
            librdp_settings_target(settings) != NULL;

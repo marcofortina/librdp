@@ -282,11 +282,14 @@ Settings and viewer options:
 
 - `LIBRDP_FEATURE_WEBAUTHN`;
 - `librdp_settings_set_webauthn_provider()`;
+- `librdp_settings_add_webauthn_rp_id()`;
 - `--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]`.
+- `--webauthn-rp-id id`.
 
 Operational requirements:
 
 - preserve user-presence policy in the backend;
+- require at least one RP ID allowlist entry before probing an authenticator;
 - never trace assertion secrets or credential IDs in full;
 - handle cancellation and timeout paths;
 - map authenticator status to channel responses.

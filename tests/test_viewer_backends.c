@@ -132,6 +132,23 @@ static int test_webauthn_probe_requires_explicit_provider(void)
 }
 
 /*
+ * A provider alone is not enough consent for WebAuthn. The viewer also needs a
+ * relying-party allowlist before probing host authenticators.
+ */
+static int test_webauthn_probe_requires_rp_allowlist(void)
+{
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "mock") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_webauthn_rp_id_count(settings) == 0);
+    CHECK(x11_device_backends_probe(settings) == 0);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
  * Camera consent is device-scoped in the current X11 viewer backend. File
  * selectors are rejected at probe time so a caller cannot bypass CLI policy and
  * make startup report a camera backend that cannot actually run.
@@ -160,6 +177,8 @@ int main(void)
     if (test_smartcard_probe_requires_explicit_source() != 0)
         return 1;
     if (test_webauthn_probe_requires_explicit_provider() != 0)
+        return 1;
+    if (test_webauthn_probe_requires_rp_allowlist() != 0)
         return 1;
     if (test_camera_probe_rejects_file_source() != 0)
         return 1;

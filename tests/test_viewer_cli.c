@@ -83,6 +83,28 @@ static int test_webauthn_rp_id_requires_value(void)
     return 0;
 }
 
+static int test_webauthn_cli_requires_rp_id_when_enabled(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--webauthn",
+        (char*)"mock",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 0);
+    CHECK(librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN));
+    CHECK(librdp_settings_webauthn_rp_id_count(settings) == 0);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 static int test_camera_cli_accepts_device_source(void)
 {
     char* argv[] = {
@@ -176,6 +198,8 @@ int main(void)
     if (test_webauthn_rp_id_cli() != 0)
         return 1;
     if (test_webauthn_rp_id_requires_value() != 0)
+        return 1;
+    if (test_webauthn_cli_requires_rp_id_when_enabled() != 0)
         return 1;
     if (test_camera_cli_accepts_device_source() != 0)
         return 1;

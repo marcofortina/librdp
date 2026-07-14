@@ -1190,11 +1190,10 @@ LIBRDP_API librdp_status librdp_settings_set_webauthn_provider(librdp_settings* 
 /**
  * @brief Add a WebAuthn relying-party identifier to the allowlist.
  *
- * The RP ID is copied into the settings object. When one or more RP IDs are
- * configured, WebAuthn authentication requests whose wire request does not
- * carry a matching `rpId` value are denied before they reach the host
- * authenticator provider. When the allowlist is empty, librdp keeps the
- * compatibility behavior and does not filter by RP ID.
+ * The RP ID is copied into the settings object. WebAuthn feature readiness
+ * requires at least one configured RP ID. Authentication requests whose wire
+ * request does not carry a matching `rpId` value are denied before they reach
+ * the host authenticator provider.
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
  * @param[in] rp_id NUL-terminated RP ID to copy; must not be NULL or empty and

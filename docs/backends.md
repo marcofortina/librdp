@@ -111,13 +111,13 @@ The filesystem path is viewer-owned. The library packet path enforces protocol s
 WebAuthn redirection can use libfido2 or a controlled mock provider:
 
 ```sh
-build/librdp-x11-viewer --target host --webauthn fido2
-build/librdp-x11-viewer --target host --webauthn fido2=/dev/hidraw0
-build/librdp-x11-viewer --target host --webauthn mock
-build/librdp-x11-viewer --target host --webauthn mock=/path/to/provider
+build/librdp-x11-viewer --target host --webauthn fido2 --webauthn-rp-id login.example.com
+build/librdp-x11-viewer --target host --webauthn fido2=/dev/hidraw0 --webauthn-rp-id login.example.com
+build/librdp-x11-viewer --target host --webauthn mock --webauthn-rp-id login.example.com
+build/librdp-x11-viewer --target host --webauthn mock=/path/to/provider --webauthn-rp-id login.example.com
 ```
 
-Authenticator handles and user-presence policy belong to the backend. Protocol code must not trace assertion secrets.
+Authenticator handles and user-presence policy belong to the backend. At least one RP ID allowlist entry is required. Protocol code must not trace assertion secrets.
 
 ## Remote applications, composition, echo, telemetry, and multitransport
 

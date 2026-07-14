@@ -565,6 +565,13 @@ int x11_device_backends_probe(librdp_settings* settings)
     }
     if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN))
     {
+        if (librdp_settings_webauthn_rp_id_count(settings) == 0)
+        {
+            x11_trace_event(X11_TRACE_CLIENT,
+                            "x11.webauthn.probe",
+                            "ok=0 reason=missing_rp_allowlist");
+            return 0;
+        }
         if (!x11_probe_webauthn(librdp_settings_webauthn_provider(settings)))
             return 0;
     }
