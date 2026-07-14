@@ -83,11 +83,60 @@ static int test_webauthn_rp_id_requires_value(void)
     return 0;
 }
 
+static int test_camera_cli_accepts_device_source(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--camera",
+        (char*)"device=/dev/video0",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 1);
+    CHECK(librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA));
+    CHECK(librdp_settings_camera_count(settings) == 1);
+    CHECK(strcmp(librdp_settings_camera_source(settings, 0), "/dev/video0") == 0);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+static int test_camera_cli_rejects_file_source(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--camera",
+        (char*)"file=/tmp/frame.raw",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 0);
+    CHECK(!librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA));
+    CHECK(librdp_settings_camera_count(settings) == 0);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
     if (test_webauthn_rp_id_cli() != 0)
         return 1;
     if (test_webauthn_rp_id_requires_value() != 0)
+        return 1;
+    if (test_camera_cli_accepts_device_source() != 0)
+        return 1;
+    if (test_camera_cli_rejects_file_source() != 0)
         return 1;
     return 0;
 }

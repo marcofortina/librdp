@@ -131,6 +131,24 @@ static int test_webauthn_probe_requires_explicit_provider(void)
     return 0;
 }
 
+/*
+ * Camera consent is device-scoped in the current X11 viewer backend. File
+ * selectors are rejected at probe time so a caller cannot bypass CLI policy and
+ * make startup report a camera backend that cannot actually run.
+ */
+static int test_camera_probe_rejects_file_source(void)
+{
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_camera(settings, "file=/tmp/frame.raw") == LIBRDP_STATUS_OK);
+    CHECK(x11_device_backends_probe(settings) == 0);
+    CHECK(librdp_settings_camera_count(settings) == 1);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
     if (test_pnp_probe_does_not_autoregister() != 0)
@@ -142,6 +160,8 @@ int main(void)
     if (test_smartcard_probe_requires_explicit_source() != 0)
         return 1;
     if (test_webauthn_probe_requires_explicit_provider() != 0)
+        return 1;
+    if (test_camera_probe_rejects_file_source() != 0)
         return 1;
     return 0;
 }

@@ -248,14 +248,20 @@ static const char* value_after_prefix(const char* text, const char* prefix)
 static int add_camera_arg(librdp_settings* settings, const char* text)
 {
     const char* value = NULL;
+    size_t i = 0;
 
     if (!settings || !text)
         return 0;
     value = value_after_prefix(text, "device=");
     if (!value)
-        value = value_after_prefix(text, "file=");
-    if (!value)
         value = text;
+    if (strncmp(value, "/dev/video", 10u) != 0 || value[10] == '\0')
+        return 0;
+    for (i = 10u; value[i] != '\0'; i++)
+    {
+        if (value[i] < '0' || value[i] > '9')
+            return 0;
+    }
     return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) == LIBRDP_STATUS_OK &&
            librdp_settings_add_camera(settings, value) == LIBRDP_STATUS_OK;
 }

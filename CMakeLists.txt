@@ -667,6 +667,7 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_viewer_backends
         tests/test_viewer_backends.c
+        apps/x11-viewer/camera_v4l2.c
         apps/x11-viewer/device_backends.c
         apps/x11-viewer/viewer_trace.c
     )

@@ -18,6 +18,7 @@
 
 #include "device_backends.h"
 
+#include "camera_v4l2.h"
 #include "viewer_trace.h"
 
 #include <errno.h>
@@ -159,10 +160,18 @@ static int x11_probe_camera(const char* source)
     int fd = -1;
     struct v4l2_capability capability;
 
+    if (!source || source[0] == '\0')
+        return 0;
+    if (!x11_camera_source_allowed(source))
+    {
+        x11_trace_event(X11_TRACE_CLIENT,
+                        "x11.camera.probe",
+                        "ok=0 reason=source_policy source=\"%s\"",
+                        source);
+        return 0;
+    }
     if (!path || path[0] == '\0')
         return 0;
-    if (!x11_text_starts_with(path, "/dev/video"))
-        return x11_probe_file_readable(path, "x11.camera.file.probe");
 
     fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
@@ -197,7 +206,13 @@ static int x11_probe_camera(const char* source)
                     capability.device_caps);
     return 1;
 #else
-    return x11_probe_file_readable(source, "x11.camera.file.probe");
+    if (!source || source[0] == '\0')
+        return 0;
+    x11_trace_event(X11_TRACE_CLIENT,
+                    "x11.camera.probe",
+                    "ok=0 reason=backend_unavailable source=\"%s\"",
+                    source);
+    return 0;
 #endif
 }
 
