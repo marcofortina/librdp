@@ -201,6 +201,7 @@ set(LIBRDP_SOURCES
     src/client/session_clipboard.c
     src/client/session_device.c
     src/client/session_filesystem.c
+    src/client/session_gdi.c
     src/client/session_graphics.c
     src/client/session_graphics_pipeline.c
     src/client/session_input.c

@@ -1099,6 +1099,20 @@ librdp_status rdp_session_handle_graphics_message(librdp_session* session,
                                                   uint32_t channel_id,
                                                   const uint8_t* data,
                                                   size_t data_len);
+void rdp_session_gdi_bitmap_cache_clear(librdp_session* session);
+void rdp_session_gdi_color_table_cache_clear(librdp_session* session);
+void rdp_session_gdi_brush_cache_clear(librdp_session* session);
+void rdp_session_gdi_ninegrid_cache_clear(librdp_session* session);
+void rdp_session_gdi_glyph_cache_clear(librdp_session* session);
+void rdp_session_gdi_glyph_fragment_cache_clear(librdp_session* session);
+void rdp_session_gdi_saved_bitmaps_clear(librdp_session* session);
+void rdp_session_gdi_offscreen_cache_clear(librdp_session* session);
+void rdp_session_gdi_stream_bitmap_reset(librdp_session* session);
+void rdp_session_palette_reset(librdp_session* session);
+librdp_status rdp_session_apply_palette_update(librdp_session* session, const rdp_palette_update* palette);
+librdp_status rdp_session_apply_surface_commands(librdp_session* session,
+                                                 const rdp_surface_command_list* list);
+librdp_status rdp_session_apply_gdi_orders_update(librdp_session* session, const rdp_gdi_orders_update* update);
 void rdp_session_pointer_cache_clear(librdp_session* session);
 void rdp_session_pointer_emit_default(librdp_session* session);
 librdp_status rdp_session_pointer_apply_update(librdp_session* session, const rdp_pointer_update* update);
