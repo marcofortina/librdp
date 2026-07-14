@@ -1075,6 +1075,30 @@ void rdp_session_emit_surface_invalidated(librdp_session* session, uint32_t x, u
 void rdp_session_graphics_dirty_reset(librdp_session* session);
 void rdp_session_graphics_dirty_add(librdp_session* session, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void rdp_session_graphics_dirty_flush(librdp_session* session);
+rdp_session_graphics_surface* rdp_session_graphics_surface_find(librdp_session* session, uint16_t surface_id);
+void rdp_session_graphics_surfaces_clear(librdp_session* session);
+uint64_t rdp_session_trace_hash_bgra(const uint8_t* pixels, uint32_t width, uint32_t height, size_t stride);
+uint64_t rdp_session_trace_surface_hash(const rdp_session_graphics_surface* surface,
+                                        uint32_t x,
+                                        uint32_t y,
+                                        uint32_t width,
+                                        uint32_t height);
+librdp_status rdp_session_graphics_surface_write_bgra(librdp_session* session,
+                                                      rdp_session_graphics_surface* surface,
+                                                      uint16_t x,
+                                                      uint16_t y,
+                                                      uint16_t width,
+                                                      uint16_t height,
+                                                      const uint8_t* pixels,
+                                                      size_t stride,
+                                                      int force_opaque,
+                                                      const char* source);
+void rdp_session_graphics_cache_clear(librdp_session* session);
+librdp_status rdp_session_send_graphics_caps(librdp_session* session);
+librdp_status rdp_session_handle_graphics_message(librdp_session* session,
+                                                  uint32_t channel_id,
+                                                  const uint8_t* data,
+                                                  size_t data_len);
 void rdp_session_pointer_cache_clear(librdp_session* session);
 void rdp_session_pointer_emit_default(librdp_session* session);
 librdp_status rdp_session_pointer_apply_update(librdp_session* session, const rdp_pointer_update* update);
