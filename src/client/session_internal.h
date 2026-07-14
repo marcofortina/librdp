@@ -877,6 +877,10 @@ void rdp_session_set_last_error(librdp_session* session,
 librdp_status rdp_session_fail(librdp_session* session, librdp_status status);
 librdp_status rdp_session_finish_cancel(librdp_session* session);
 librdp_status rdp_session_disconnect_inner(librdp_session* session);
+void rdp_session_composited_reset(librdp_session* session);
+void rdp_session_auth_redirection_channel_reset(librdp_session* session);
+void rdp_session_webauthn_channel_reset(librdp_session* session);
+void rdp_session_credssp_security_reset(librdp_session* session);
 uint8_t rdp_session_feature_ready_for_negotiation(const librdp_session* session, librdp_feature feature);
 librdp_status rdp_session_send_device_redirection_packet(librdp_session* session,
                                                          const rdp_buffer* payload,
