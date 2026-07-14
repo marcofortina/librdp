@@ -6102,6 +6102,59 @@ static int test_dynamic_channel_soft_sync_runtime_fallback(void)
 }
 
 /*
+ * Coverage: locks down protocols whose packet parser is implemented but whose
+ * runtime is intentionally not exposed without a real channel or transport
+ * provider. It catches accidental backend-ready, negotiated, or active status
+ * transitions caused by wiring parser-only helpers into feature negotiation.
+ */
+static int test_parser_only_feature_runtime_gates(void)
+{
+    static const librdp_feature parser_only_features[] = {
+        LIBRDP_FEATURE_TELEMETRY,
+        LIBRDP_FEATURE_MULTITRANSPORT,
+        LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+        LIBRDP_FEATURE_UDP_TRANSPORT,
+        LIBRDP_FEATURE_UDP2_TRANSPORT,
+        LIBRDP_FEATURE_GEOMETRY_TRACKING,
+        LIBRDP_FEATURE_MULTIPARTY
+    };
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status status;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+
+    for (size_t i = 0; i < sizeof(parser_only_features) / sizeof(parser_only_features[0]); i++)
+    {
+        CHECK(librdp_settings_enable_feature(settings, parser_only_features[i], 1) == LIBRDP_STATUS_OK);
+        CHECK(librdp_settings_get_feature_status(settings, parser_only_features[i], &status) ==
+              LIBRDP_STATUS_OK);
+        CHECK(status.feature == parser_only_features[i]);
+        CHECK(status.requested && status.built);
+        CHECK(!status.backend_ready && !status.negotiated && !status.active);
+        CHECK(status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    }
+
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    for (size_t i = 0; i < sizeof(parser_only_features) / sizeof(parser_only_features[0]); i++)
+    {
+        CHECK(librdp_session_get_feature_status(session, parser_only_features[i], &status) ==
+              LIBRDP_STATUS_OK);
+        CHECK(status.feature == parser_only_features[i]);
+        CHECK(status.requested && status.built);
+        CHECK(!status.backend_ready && !status.negotiated && !status.active);
+        CHECK(status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    }
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
  * Coverage: validates the MS-RDPEECO client behavior on an internal ECHO DVC.
  * The mock server sends an echo request and verifies that the client core,
  * not the viewer callback, returns the identical payload without exposing the
@@ -7471,6 +7524,8 @@ int test_client_core(void)
     if (test_dynamic_channel_empty_compressed_fragments() != 0)
         return 1;
     if (test_dynamic_channel_soft_sync_runtime_fallback() != 0)
+        return 1;
+    if (test_parser_only_feature_runtime_gates() != 0)
         return 1;
     if (test_echo_channel_auto_response() != 0)
         return 1;
