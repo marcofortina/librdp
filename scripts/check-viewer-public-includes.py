@@ -16,8 +16,10 @@ VIEWER_ROOT = ROOT / "apps" / "x11-viewer"
 PRIVATE_PREFIXES = (
     "channels/",
     "client/",
+    "clipboard/",
     "common/",
     "graphics/",
+    "input/",
     "licensing/",
     "nla/",
     "platform/",
