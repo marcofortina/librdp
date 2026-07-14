@@ -21280,111 +21280,48 @@ static int rdp_session_usb_pair_is_bus_mode(const char* selector,
 static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second);
 
 #ifdef RDP_HAVE_LIBUSB
-static int rdp_session_usb_class_denied_by_policy(librdp_session* session,
-                                                  libusb_device* device,
-                                                  const struct libusb_device_descriptor* descriptor)
-{
-    const librdp_usb_policy* policy = rdp_settings_usb_policy_internal(session ? session->settings : NULL);
-    struct libusb_config_descriptor* config = NULL;
-    int denied = 0;
-    int rc = 0;
-
-    if (!policy || !device || !descriptor)
-        return 1;
-    if (descriptor->bDeviceClass == LIBUSB_CLASS_HID && !policy->allow_hid)
-        return 1;
-    if (descriptor->bDeviceClass == LIBUSB_CLASS_MASS_STORAGE && !policy->allow_mass_storage)
-        return 1;
-    rc = libusb_get_active_config_descriptor(device, &config);
-    if (rc != LIBUSB_SUCCESS || !config)
-        return 0;
-    for (uint8_t i = 0; i < config->bNumInterfaces && !denied; i++)
-    {
-        const struct libusb_interface* iface = &config->interface[i];
-
-        for (int j = 0; j < iface->num_altsetting && !denied; j++)
-        {
-            const struct libusb_interface_descriptor* alt = &iface->altsetting[j];
-
-            if (alt->bInterfaceClass == LIBUSB_CLASS_HID && !policy->allow_hid)
-                denied = 1;
-            if (alt->bInterfaceClass == LIBUSB_CLASS_MASS_STORAGE && !policy->allow_mass_storage)
-                denied = 1;
-        }
-    }
-    libusb_free_config_descriptor(config);
-    return denied;
-}
-
 static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
                                                  const char* selector,
                                                  uint32_t interface_id,
                                                  rdp_usb_backend_device* out)
 {
-    libusb_device** list = NULL;
-    ssize_t count = 0;
-    ssize_t i = 0;
+    const librdp_usb_policy* policy = NULL;
+    rdp_usb_backend_open_request request;
+    rdp_usb_backend_match match;
     uint32_t first = 0;
     uint32_t second = 0;
     int decimal_only = 0;
-    int bus_mode = 0;
-    librdp_status status = LIBRDP_STATUS_IO_ERROR;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !selector || !out)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
+    memset(&request, 0, sizeof(request));
+    memset(&match, 0, sizeof(match));
     if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
-    if (!session->usb_libusb && libusb_init(&session->usb_libusb) != 0)
-        return LIBRDP_STATUS_IO_ERROR;
-    count = libusb_get_device_list(session->usb_libusb, &list);
-    if (count < 0)
-        return LIBRDP_STATUS_IO_ERROR;
-    for (i = 0; i < count; i++)
+    policy = rdp_settings_usb_policy_internal(session->settings);
+    if (!policy)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    request.first = first;
+    request.second = second;
+    request.interface_id = interface_id;
+    request.bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
+    request.allow_hid = policy->allow_hid;
+    request.allow_mass_storage = policy->allow_mass_storage;
+    status = rdp_usb_backend_open_device(&session->usb_libusb, &request, out, &match);
+    if (status == LIBRDP_STATUS_STATE)
     {
-        libusb_device* device = list[i];
-        struct libusb_device_descriptor descriptor;
-        int matched = 0;
-
-        if (libusb_get_device_descriptor(device, &descriptor) != 0)
-            continue;
-        if (bus_mode)
-        {
-            matched = libusb_get_bus_number(device) == first &&
-                      libusb_get_device_address(device) == second;
-        }
-        else
-        {
-            matched = descriptor.idVendor == first && descriptor.idProduct == second;
-        }
-        if (!matched)
-            continue;
-        if (rdp_session_usb_class_denied_by_policy(session, device, &descriptor))
-        {
-            rdp_trace_event(RDP_TRACE_CLIENT,
-                            "client.urbdrc.policy.denied",
-                            "selector=\"%s\" vid=%04x pid=%04x class=%u bus=%u address=%u",
-                            selector,
-                            (unsigned)descriptor.idVendor,
-                            (unsigned)descriptor.idProduct,
-                            descriptor.bDeviceClass,
-                            libusb_get_bus_number(device),
-                            libusb_get_device_address(device));
-            status = LIBRDP_STATUS_STATE;
-            break;
-        }
-        out->active = 1;
-        out->interface_id = interface_id;
-        out->descriptor = descriptor;
-        out->bus_number = libusb_get_bus_number(device);
-        out->device_address = libusb_get_device_address(device);
-        if (libusb_open(device, &out->handle) != 0)
-            out->handle = NULL;
-        status = LIBRDP_STATUS_OK;
-        break;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.urbdrc.policy.denied",
+                        "selector=\"%s\" vid=%04x pid=%04x class=%u bus=%u address=%u",
+                        selector,
+                        (unsigned)match.vendor_id,
+                        (unsigned)match.product_id,
+                        match.device_class,
+                        match.bus_number,
+                        match.device_address);
     }
-    libusb_free_device_list(list, 1);
     return status;
 }
 

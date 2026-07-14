@@ -20,6 +20,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <librdp/error.h>
+
 #ifdef RDP_HAVE_LIBUSB
 #include <libusb-1.0/libusb.h>
 
@@ -44,9 +46,32 @@ typedef struct rdp_usb_backend_iso_packet
     uint32_t status;
 } rdp_usb_backend_iso_packet;
 
+typedef struct rdp_usb_backend_open_request
+{
+    uint32_t first;
+    uint32_t second;
+    uint32_t interface_id;
+    int bus_mode;
+    int allow_hid;
+    int allow_mass_storage;
+} rdp_usb_backend_open_request;
+
+typedef struct rdp_usb_backend_match
+{
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint8_t device_class;
+    uint8_t bus_number;
+    uint8_t device_address;
+} rdp_usb_backend_match;
+
 void rdp_usb_backend_release_device(rdp_usb_backend_device* device);
 void rdp_usb_backend_release_devices(rdp_usb_backend_device* devices, size_t count);
 void rdp_usb_backend_context_exit(libusb_context** context);
+librdp_status rdp_usb_backend_open_device(libusb_context** context,
+                                          const rdp_usb_backend_open_request* request,
+                                          rdp_usb_backend_device* out,
+                                          rdp_usb_backend_match* match);
 uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device);
 uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
                                         uint8_t endpoint,
