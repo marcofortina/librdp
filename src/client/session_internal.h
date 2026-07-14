@@ -876,6 +876,57 @@ void rdp_session_set_last_error(librdp_session* session,
 librdp_status rdp_session_fail(librdp_session* session, librdp_status status);
 librdp_status rdp_session_finish_cancel(librdp_session* session);
 librdp_status rdp_session_disconnect_inner(librdp_session* session);
+uint8_t rdp_session_feature_ready_for_negotiation(const librdp_session* session, librdp_feature feature);
+librdp_status rdp_session_send_device_redirection_packet(librdp_session* session,
+                                                         const rdp_buffer* payload,
+                                                         const char* event);
+librdp_status rdp_session_send_pnp_redirection_packet(librdp_session* session,
+                                                      const rdp_buffer* payload,
+                                                      const char* event);
+librdp_status rdp_session_send_remote_programs_packet(librdp_session* session,
+                                                      const rdp_buffer* payload,
+                                                      const char* event);
+uint32_t rdp_session_errno_to_device_status(int error);
+void rdp_session_redirected_file_reset(rdp_session_redirected_file* file);
+void rdp_session_redirected_files_clear(librdp_session* session);
+void rdp_session_drive_roots_clear(librdp_session* session);
+uint32_t rdp_session_drive_root_fd(librdp_session* session, uint32_t drive_index, int* fd);
+rdp_session_redirected_file* rdp_session_redirected_file_find(librdp_session* session,
+                                                              uint32_t device_id,
+                                                              uint32_t file_id);
+rdp_session_redirected_file* rdp_session_redirected_file_alloc(librdp_session* session,
+                                                               uint32_t device_id,
+                                                               uint32_t* file_id);
+uint32_t rdp_session_drive_index_from_device_id(const librdp_session* session, uint32_t device_id);
+uint32_t rdp_session_printer_index_from_device_id(const librdp_session* session, uint32_t device_id);
+uint32_t rdp_session_smartcard_index_from_device_id(const librdp_session* session, uint32_t device_id);
+uint32_t rdp_session_serial_port_index_from_device_id(const librdp_session* session, uint32_t device_id);
+uint32_t rdp_session_parallel_port_index_from_device_id(const librdp_session* session, uint32_t device_id);
+librdp_status rdp_session_handle_device_redirection_message(librdp_session* session,
+                                                            const uint8_t* data,
+                                                            size_t data_len);
+librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* session,
+                                                         const uint8_t* data,
+                                                         size_t data_len);
+librdp_status rdp_session_pnp_send_version(librdp_session* session);
+librdp_status rdp_session_pnp_send_authenticated(librdp_session* session);
+librdp_status rdp_session_pnp_send_devices(librdp_session* session);
+librdp_status rdp_session_handle_filesystem_io_request(librdp_session* session,
+                                                       const uint8_t* data,
+                                                       size_t data_len);
+librdp_status rdp_session_handle_port_io_request(librdp_session* session,
+                                                 const uint8_t* data,
+                                                 size_t data_len,
+                                                 uint8_t port_type,
+                                                 uint32_t port_index);
+librdp_status rdp_session_handle_printer_io_request(librdp_session* session,
+                                                    const uint8_t* data,
+                                                    size_t data_len);
+librdp_status rdp_session_handle_smartcard_io_request(librdp_session* session,
+                                                      const uint8_t* data,
+                                                      size_t data_len);
+uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
+                                               const rdp_printer_redirection_cache_event* event);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
                                              const rdp_buffer* pdu,
                                              const char* event);
