@@ -135,7 +135,6 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
 
     if (!app || !settings)
         return 0;
-    app->echo_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_ECHO) ? 1 : 0;
     app->telemetry_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1 : 0;
     app->video_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1 : 0;
     app->camera_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA) &&
@@ -175,8 +174,7 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
     }
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.runtime.features",
-                    "echo=%u telemetry=%u video=%u video_file=%u camera=%u",
-                    app->echo_requested ? 1u : 0u,
+                    "telemetry=%u video=%u video_file=%u camera=%u",
                     app->telemetry_requested ? 1u : 0u,
                     app->video_requested ? 1u : 0u,
                     app->video_output_file ? 1u : 0u,
@@ -335,11 +333,10 @@ static void x11_handle_channel_open(x11_app* app, librdp_session* session, const
     (void)session;
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.channel.open",
-                    "id=%u name=\"%.*s\" echo=%u telemetry=%u video=%u",
+                    "id=%u name=\"%.*s\" telemetry=%u video=%u",
                     event->channel_id,
                     x11_channel_name_print_len(event->name_len),
                     event->name ? event->name : "",
-                    app->echo_requested ? 1u : 0u,
                     app->telemetry_requested ? 1u : 0u,
                     app->video_requested ? 1u : 0u);
 }

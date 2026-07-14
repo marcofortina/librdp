@@ -121,7 +121,6 @@ typedef struct x11_app
     FILE* video_output_file;
     int audio_output_requested;
     int audio_input_requested;
-    int echo_requested;
     int telemetry_requested;
     int video_requested;
     int audio_input_active;
