@@ -205,6 +205,7 @@ set(LIBRDP_SOURCES
     src/client/session_printer.c
     src/client/session_runtime.c
     src/client/session_smartcard.c
+    src/client/session_usb.c
     src/client/smartcard_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c

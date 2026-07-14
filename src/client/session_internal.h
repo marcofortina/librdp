@@ -964,6 +964,10 @@ librdp_status rdp_session_handle_smartcard_io_request(librdp_session* session,
                                                       const uint8_t* data,
                                                       size_t data_len);
 void rdp_session_smartcard_reset(librdp_session* session);
+librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session,
+                                                         const uint8_t* data,
+                                                         size_t data_len);
+void rdp_session_usb_redirection_reset(librdp_session* session);
 uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
                                                const rdp_printer_redirection_cache_event* event);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
