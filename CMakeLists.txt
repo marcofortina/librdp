@@ -195,6 +195,7 @@ set(LIBRDP_SOURCES
     src/client/error.c
     src/client/settings.c
     src/client/session.c
+    src/client/session_audio.c
     src/client/session_channels.c
     src/client/session_clipboard.c
     src/client/session_device.c
