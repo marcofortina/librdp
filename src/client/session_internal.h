@@ -977,6 +977,32 @@ librdp_status rdp_session_handle_audio_output_message(librdp_session* session,
                                                       size_t data_len);
 librdp_status rdp_session_handle_audio_output_udp_datagram(librdp_session* session);
 void rdp_session_audio_output_udp_close(librdp_session* session);
+librdp_status rdp_session_handle_video_redirection_message(librdp_session* session,
+                                                           rdp_session_dynamic_channel* channel,
+                                                           uint32_t channel_id,
+                                                           const uint8_t* data,
+                                                           size_t data_len);
+librdp_status rdp_session_handle_video_optimized_control_message(librdp_session* session,
+                                                                 uint32_t channel_id,
+                                                                 const uint8_t* data,
+                                                                 size_t data_len);
+librdp_status rdp_session_handle_video_optimized_data_message(librdp_session* session,
+                                                              rdp_session_dynamic_channel* entry,
+                                                              uint32_t channel_id,
+                                                              const uint8_t* data,
+                                                              size_t data_len);
+librdp_status rdp_session_handle_video_capture_control_message(librdp_session* session,
+                                                               uint32_t channel_id,
+                                                               const uint8_t* data,
+                                                               size_t data_len);
+librdp_status rdp_session_handle_video_capture_data_message(librdp_session* session,
+                                                            uint32_t channel_id,
+                                                            const uint8_t* data,
+                                                            size_t data_len);
+void rdp_session_video_redirection_reset(librdp_session* session);
+void rdp_session_video_optimized_reset(librdp_session* session);
+void rdp_session_video_capture_reset(librdp_session* session);
+int rdp_session_video_runtime_active(const librdp_session* session);
 uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
                                                const rdp_printer_redirection_cache_event* event);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,

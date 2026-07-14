@@ -196,6 +196,7 @@ set(LIBRDP_SOURCES
     src/client/settings.c
     src/client/session.c
     src/client/session_audio.c
+    src/client/session_camera.c
     src/client/session_channels.c
     src/client/session_clipboard.c
     src/client/session_device.c
@@ -207,6 +208,7 @@ set(LIBRDP_SOURCES
     src/client/session_runtime.c
     src/client/session_smartcard.c
     src/client/session_usb.c
+    src/client/session_video.c
     src/client/smartcard_backend.c
     src/channels/audio_format.c
     src/channels/audio_input.c
