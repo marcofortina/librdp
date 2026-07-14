@@ -1,0 +1,17 @@
+<!--
+Copyright (C) 2026 Marco Fortina
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>librdp</title>
+    <organization>org.marcofortina</organization>
+    <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+    <options customize="never" require-scripts="false"/>
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+    <choice id="default" title="librdp">
+        <pkg-ref id="org.marcofortina.librdp"/>
+    </choice>
+    <pkg-ref id="org.marcofortina.librdp" version="@PROJECT_VERSION@" auth="root">librdp.pkg</pkg-ref>
+</installer-gui-script>

@@ -536,6 +536,29 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/librdp.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+    ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
+    ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    FILES_MATCHING
+        PATTERN "*.md"
+        PATTERN "man" EXCLUDE
+        PATTERN "requirements.txt" EXCLUDE
+)
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+)
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp.7
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-api.7
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-tracing.7
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man7
+)
 
 function(librdp_link_internal_runtime target)
     target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
@@ -1044,6 +1067,9 @@ if(LIBRDP_BUILD_X11_VIEWER)
             target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xrandr_LIB})
         endif()
     endif()
+    install(TARGETS librdp-x11-viewer
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_viewer_render
             tests/test_viewer_render.c
@@ -1185,6 +1211,45 @@ if(LIBRDP_BUILD_X11_VIEWER)
         endif()
     endif()
 endif()
+
+set(CPACK_PACKAGE_NAME "librdp")
+set(CPACK_PACKAGE_VENDOR "Marco Fortina")
+set(CPACK_PACKAGE_CONTACT "Marco Fortina <marco_fortina@hotmail.it>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RDP client library and optional X11 viewer")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/marcofortina/librdp")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_VERBATIM_VARIABLES YES)
+set(CPACK_GENERATOR TGZ)
+
+find_program(LIBRDP_DPKG_DEB_EXECUTABLE dpkg-deb)
+if(LIBRDP_DPKG_DEB_EXECUTABLE)
+    list(APPEND CPACK_GENERATOR DEB)
+    set(CPACK_DEBIAN_PACKAGE_NAME "librdp")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "libs")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Marco Fortina <marco_fortina@hotmail.it>")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+endif()
+
+find_program(LIBRDP_RPMBUILD_EXECUTABLE rpmbuild)
+if(LIBRDP_RPMBUILD_EXECUTABLE)
+    list(APPEND CPACK_GENERATOR RPM)
+    set(CPACK_RPM_PACKAGE_NAME "librdp")
+    set(CPACK_RPM_PACKAGE_GROUP "System/Libraries")
+    set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
+    set(CPACK_RPM_PACKAGE_RELEASE "1")
+endif()
+
+if(APPLE)
+    find_program(LIBRDP_PRODUCTBUILD_EXECUTABLE productbuild)
+    if(LIBRDP_PRODUCTBUILD_EXECUTABLE)
+        list(APPEND CPACK_GENERATOR productbuild)
+        set(CPACK_PRODUCTBUILD_IDENTIFIER "org.marcofortina.librdp")
+    endif()
+endif()
+include(CPack)
 
 message(STATUS "librdp feature summary begin")
 string(REPLACE ";" "+" LIBRDP_LIBRARY_TARGETS_SUMMARY "${LIBRDP_LIBRARY_TARGETS}")

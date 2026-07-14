@@ -18,6 +18,38 @@ Recommended package split:
 
 Distributions may combine these packages, but optional viewer dependencies should not force installation of the viewer when only the core library is needed.
 
+## CPack artifacts
+
+The install rules are the source of truth for generated packages. A default build can create a compressed archive and, when host tools are present, native DEB or RPM artifacts:
+
+```sh
+cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_X11_VIEWER=ON
+cmake --build build -j$(nproc)
+cmake --build build --target package
+```
+
+Specific generators can be selected explicitly:
+
+```sh
+cpack --config build/CPackConfig.cmake -G DEB
+cpack --config build/CPackConfig.cmake -G RPM
+cpack --config build/CPackConfig.cmake -G TGZ
+```
+
+DEB generation requires `dpkg-deb`. RPM generation requires `rpmbuild`. macOS product packages are enabled only on macOS hosts with `productbuild` available.
+
+The generated package installs the library, public headers, CMake package files, pkg-config metadata, Markdown documentation, man pages, and the viewer binary when `LIBRDP_BUILD_X11_VIEWER=ON`.
+
+## Homebrew
+
+The repository ships a head-only Homebrew formula under `packaging/homebrew/librdp.rb`. It builds the portable core library and examples with optional platform backends disabled:
+
+```sh
+brew install --HEAD packaging/homebrew/librdp.rb
+```
+
+Release tarball URL and checksum should be added to the formula only when a signed release artifact exists.
+
 ## Build flags
 
 Packagers should build the core library with:
