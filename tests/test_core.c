@@ -33,6 +33,7 @@
 #include "channels/printer_redirection.h"
 #include "channels/usb_redirection.h"
 #include "channels/virtual_channel.h"
+#include "channels/webauthn_channel.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "licensing/licensing.h"
@@ -87,6 +88,7 @@
 #define DVC_SCENARIO_WEBAUTHN_CREATE_REJECT 18
 #define DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT 19
 #define DVC_SCENARIO_DISPLAY_CONTROL_CREATE_REJECT 20
+#define DVC_SCENARIO_WEBAUTHN_RP_ID_DENIED 21
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
@@ -1827,6 +1829,31 @@ static int build_dynamic_channel_data_payload_packet(rdp_buffer* out, const uint
     return ok;
 }
 
+static int build_dynamic_channel_webauthn_request_packet(rdp_buffer* out, const char* rp_id)
+{
+    static const uint8_t transaction_id[RDP_WEBAUTHN_GUID_LENGTH] = {
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    static const uint8_t request[] = {RDP_WEBAUTHN_CMD_GET_ASSERTION};
+    rdp_buffer webauthn;
+    int ok = 0;
+
+    if (!out || !rp_id)
+        return 0;
+    rdp_buffer_init(&webauthn);
+    ok = rdp_webauthn_write_request(&webauthn,
+                                    RDP_WEBAUTHN_COMMAND_WEB_AUTHN,
+                                    0,
+                                    request,
+                                    sizeof(request),
+                                    rp_id,
+                                    transaction_id) == LIBRDP_STATUS_OK &&
+         build_dynamic_channel_data_payload_packet(out, webauthn.data, webauthn.length);
+    rdp_buffer_free(&webauthn);
+    return ok;
+}
+
 static int build_dynamic_channel_empty_data_packet(rdp_buffer* out)
 {
     rdp_buffer payload;
@@ -2076,6 +2103,57 @@ static int read_echo_response_fd(int fd,
             return 0;
         return echo.payload_len == expected_len &&
                (expected_len == 0 || memcmp(echo.payload, expected, expected_len) == 0);
+    }
+    return 0;
+}
+
+/*
+ * Fixture: validates the WebAuthn policy-denied response without decoding the
+ * whole CBOR payload. It catches RP ID allowlist bypass while avoiding sensitive
+ * authenticator data inspection.
+ */
+static int read_webauthn_operation_denied_response_fd(int fd,
+                                                      uint8_t* input,
+                                                      size_t capacity,
+                                                      uint16_t expected_static_channel_id,
+                                                      uint32_t expected_dynamic_channel_id)
+{
+    static const uint8_t response_marker[] = {
+        0x68, 'r', 'e', 's', 'p', 'o', 'n', 's', 'e', 0x41, 0x27
+    };
+
+    for (size_t attempt = 0; attempt < 8u; attempt++)
+    {
+        size_t input_len = 0;
+        rdp_virtual_channel_packet response_packet;
+        rdp_dynamic_channel_data_pdu data_pdu;
+        rdp_webauthn_response webauthn;
+
+        if (!read_tpkt_fd(fd, input, capacity, &input_len))
+            return 0;
+        if (!parse_client_dynamic_channel_payload(input,
+                                                  input_len,
+                                                  expected_static_channel_id,
+                                                  &response_packet))
+            continue;
+        if (rdp_dynamic_channel_parse_data(response_packet.payload,
+                                           response_packet.payload_len,
+                                           &data_pdu) != LIBRDP_STATUS_OK)
+            continue;
+        if (data_pdu.channel_id != expected_dynamic_channel_id)
+            continue;
+        if (rdp_webauthn_parse_response(data_pdu.data,
+                                        data_pdu.data_len,
+                                        &webauthn) != LIBRDP_STATUS_OK ||
+            webauthn.hresult != 0 ||
+            webauthn.payload_len < sizeof(response_marker))
+            return 0;
+        for (size_t i = 0; i <= webauthn.payload_len - sizeof(response_marker); i++)
+        {
+            if (memcmp(webauthn.payload + i, response_marker, sizeof(response_marker)) == 0)
+                return 1;
+        }
+        return 0;
     }
     return 0;
 }
@@ -3249,6 +3327,19 @@ static int start_handshake_server_full(uint16_t* port,
                                                                           7,
                                                                           &status_code) ||
                             status_code == RDP_DYNAMIC_CHANNEL_STATUS_OK)
+                        {
+                            _exit(5);
+                        }
+                        goto done_connection;
+                    }
+                    else if (dynamic_channel_scenario == DVC_SCENARIO_WEBAUTHN_RP_ID_DENIED)
+                    {
+                        if (!build_dynamic_channel_create_webauthn_packet(&dvc_create) ||
+                            !write_exact_fd(client, dvc_create.data, dvc_create.length) ||
+                            !read_client_dynamic_create_response_fd(client, input, sizeof(input), 1004, 7) ||
+                            !build_dynamic_channel_webauthn_request_packet(&dvc_data, "blocked.example") ||
+                            !write_exact_fd(client, dvc_data.data, dvc_data.length) ||
+                            !read_webauthn_operation_denied_response_fd(client, input, sizeof(input), 1004, 7))
                         {
                             _exit(5);
                         }
@@ -4602,6 +4693,15 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_pnp_device_description(settings, 1) == NULL);
     CHECK(librdp_settings_pnp_device_caps(settings, 1) == 0);
     CHECK(strcmp(librdp_settings_webauthn_provider(settings), "mock=/tmp/auth.json") == 0);
+    CHECK(librdp_settings_webauthn_rp_id_count(settings) == 0);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "example.com") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "login.example.com") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_webauthn_rp_id_count(settings) == 2);
+    CHECK(strcmp(librdp_settings_webauthn_rp_id(settings, 0), "example.com") == 0);
+    CHECK(strcmp(librdp_settings_webauthn_rp_id(settings, 1), "login.example.com") == 0);
+    CHECK(librdp_settings_webauthn_rp_id(settings, 2) == NULL);
     CHECK(librdp_settings_rail_app_count(settings) == 1);
     CHECK(strcmp(librdp_settings_rail_app(settings, 0), "notepad.exe") == 0);
     CHECK(librdp_settings_rail_app(settings, 1) == NULL);
@@ -4790,6 +4890,9 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_pnp_device_caps(copy, 0) ==
           (LIBRDP_PNP_DEVICE_CAP_REMOVABLE | LIBRDP_PNP_DEVICE_CAP_SURPRISE_REMOVAL_OK));
     CHECK(strcmp(librdp_settings_webauthn_provider(copy), "mock=/tmp/auth.json") == 0);
+    CHECK(librdp_settings_webauthn_rp_id_count(copy) == 2);
+    CHECK(strcmp(librdp_settings_webauthn_rp_id(copy, 0), "example.com") == 0);
+    CHECK(strcmp(librdp_settings_webauthn_rp_id(copy, 1), "login.example.com") == 0);
     CHECK(strcmp(librdp_settings_rail_app(copy, 0), "notepad.exe") == 0);
     CHECK(strcmp(librdp_settings_echo_payload(copy), "probe") == 0);
 
@@ -5785,8 +5888,8 @@ static int test_dynamic_channel_empty_continuation(void)
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
-    librdp_status status = LIBRDP_STATUS_OK;
     size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     memset(&counter, 0, sizeof(counter));
     settings = librdp_settings_new();
@@ -6847,6 +6950,78 @@ static int test_webauthn_dvc_rejects_unrequested_feature(void)
 }
 
 /*
+ * Coverage: WebAuthn RP ID allowlists must be enforced before mock or native
+ * providers receive authenticator requests. The loopback peer sends a blocked
+ * RP ID and verifies that the client returns an operation-denied CTAP status.
+ */
+static int test_webauthn_rp_id_allowlist_denies_unmatched_request(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    size_t i = 0;
+    int server_done = 0;
+    struct timespec poll_delay;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_webauthn_provider(settings, "mock") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_webauthn_rp_id(settings, "allowed.example") == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_multi(&test_port,
+                                       &server_pid,
+                                       0,
+                                       0,
+                                       0,
+                                       0,
+                                       1,
+                                       DVC_SCENARIO_WEBAUTHN_RP_ID_DENIED,
+                                       0,
+                                       CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && !server_done; i++)
+    {
+        librdp_status run_status = librdp_session_run_once(session, 1000);
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+        {
+            server_done = 1;
+            break;
+        }
+        CHECK(run_status == LIBRDP_STATUS_OK || run_status == LIBRDP_STATUS_TIMEOUT ||
+              run_status == LIBRDP_STATUS_CLOSED || run_status == LIBRDP_STATUS_STATE);
+    }
+    poll_delay.tv_sec = 0;
+    poll_delay.tv_nsec = 100000000;
+    for (i = 0; i < 20u && !server_done; i++)
+    {
+        pid_t waited = waitpid(server_pid, &child_status, WNOHANG);
+
+        CHECK(waited >= 0);
+        if (waited == server_pid)
+            server_done = 1;
+        else
+            (void)nanosleep(&poll_delay, NULL);
+    }
+    CHECK(server_done);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
  * Coverage: authentication redirection carries sensitive credential material
  * and is valid only after CredSSP security is established. A server-created
  * AuthRedirection DVC in a standard-security session must be rejected before a
@@ -7304,6 +7479,8 @@ int test_client_core(void)
     if (test_webauthn_feature_status_channel_lifecycle() != 0)
         return 1;
     if (test_webauthn_dvc_rejects_unrequested_feature() != 0)
+        return 1;
+    if (test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0)
         return 1;
     if (test_auth_redirection_dvc_requires_credssp() != 0)
         return 1;

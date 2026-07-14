@@ -31,6 +31,7 @@ extern "C" {
 #define LIBRDP_SETTINGS_MAX_PARALLEL_PORTS 8u /**< Maximum configured redirected parallel ports. */
 #define LIBRDP_SETTINGS_MAX_PNP_DEVICES 32u   /**< Maximum configured redirected PNP devices. */
 #define LIBRDP_SETTINGS_MAX_STATIC_CHANNELS 16u /**< Maximum configured application static channels. */
+#define LIBRDP_SETTINGS_MAX_WEBAUTHN_RP_IDS 16u /**< Maximum configured WebAuthn RP ID allowlist entries. */
 
 #define LIBRDP_PNP_DEVICE_CAP_LOCK_SUPPORTED 0x00000001u     /**< PNP device supports lock requests. */
 #define LIBRDP_PNP_DEVICE_CAP_EJECT_SUPPORTED 0x00000002u    /**< PNP device supports eject requests. */
@@ -1187,6 +1188,30 @@ LIBRDP_API librdp_status librdp_settings_add_pnp_device(librdp_settings* setting
 LIBRDP_API librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, const char* provider);
 
 /**
+ * @brief Add a WebAuthn relying-party identifier to the allowlist.
+ *
+ * The RP ID is copied into the settings object. When one or more RP IDs are
+ * configured, WebAuthn authentication requests whose wire request does not
+ * carry a matching `rpId` value are denied before they reach the host
+ * authenticator provider. When the allowlist is empty, librdp keeps the
+ * compatibility behavior and does not filter by RP ID.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] rp_id NUL-terminated RP ID to copy; must not be NULL or empty and
+ * must fit the implementation text limit.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * or invalid arguments or when the allowlist limit is reached;
+ * LIBRDP_STATUS_NO_MEMORY when the copy fails.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @warning RP IDs are security policy inputs. Do not add broad domains unless
+ * the remote session is trusted to request credentials for them.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_add_webauthn_rp_id(librdp_settings* settings, const char* rp_id);
+
+/**
  * @brief Add a remote application launch request.
  *
  * The application string is copied and must be non-empty and within the
@@ -1641,6 +1666,34 @@ LIBRDP_API uint32_t librdp_settings_pnp_device_caps(const librdp_settings* setti
  * @since 0.1.0
  */
 LIBRDP_API const char* librdp_settings_webauthn_provider(const librdp_settings* settings);
+
+/**
+ * @brief Return the number of configured WebAuthn RP ID allowlist entries.
+ *
+ * @param[in] settings Settings object to query, or NULL.
+ *
+ * @return RP ID count, or 0 when settings is NULL.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees the settings object.
+ * @since 0.1.0
+ */
+LIBRDP_API uint32_t librdp_settings_webauthn_rp_id_count(const librdp_settings* settings);
+
+/**
+ * @brief Return a configured WebAuthn RP ID allowlist entry.
+ *
+ * @param[in] settings Settings object to query, or NULL.
+ * @param[in] index Zero-based allowlist index.
+ *
+ * @return Internal NUL-terminated RP ID string, or NULL when settings is NULL
+ * or index is out of range. The caller must not free or modify the string.
+ *
+ * @note Thread-safety: the returned pointer remains valid until the settings
+ * object is mutated or freed.
+ * @since 0.1.0
+ */
+LIBRDP_API const char* librdp_settings_webauthn_rp_id(const librdp_settings* settings, uint32_t index);
 
 /**
  * @brief Return the number of configured remote application entries.

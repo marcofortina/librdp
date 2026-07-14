@@ -147,6 +147,7 @@ LIBRDP_0.1 {
         librdp_settings_get_usb_policy;
         librdp_settings_add_pnp_device;
         librdp_settings_set_webauthn_provider;
+        librdp_settings_add_webauthn_rp_id;
         librdp_settings_add_rail_app;
         librdp_settings_add_static_channel;
         librdp_settings_static_channel_count;
@@ -180,6 +181,8 @@ LIBRDP_0.1 {
         librdp_settings_pnp_device_description;
         librdp_settings_pnp_device_caps;
         librdp_settings_webauthn_provider;
+        librdp_settings_webauthn_rp_id_count;
+        librdp_settings_webauthn_rp_id;
         librdp_settings_rail_app_count;
         librdp_settings_rail_app;
         librdp_settings_echo_payload;

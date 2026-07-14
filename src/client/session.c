@@ -20792,6 +20792,30 @@ static const char* rdp_session_webauthn_fido2_requested_path(const librdp_sessio
     return provider + 6u;
 }
 
+static int rdp_session_webauthn_rp_id_allowed(const librdp_session* session,
+                                              const rdp_webauthn_request* request)
+{
+    uint32_t count = 0;
+
+    if (!session || !session->settings || !request)
+        return 0;
+    count = librdp_settings_webauthn_rp_id_count(session->settings);
+    if (count == 0)
+        return 1;
+    if (!request->rp_id || request->rp_id_len == 0)
+        return 0;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const char* allowed = librdp_settings_webauthn_rp_id(session->settings, i);
+        size_t allowed_len = allowed ? strlen(allowed) : 0;
+
+        if (allowed_len == request->rp_id_len &&
+            memcmp(allowed, request->rp_id, request->rp_id_len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static void rdp_session_webauthn_init_mock_info(rdp_webauthn_device_info* info)
 {
     static const uint8_t guid[RDP_WEBAUTHN_GUID_LENGTH] = {
@@ -20912,6 +20936,21 @@ static librdp_status rdp_session_handle_webauthn_message(librdp_session* session
     else if (request.command == RDP_WEBAUTHN_COMMAND_CANCEL)
     {
         status = rdp_webauthn_write_response(&response, RDP_SESSION_HRESULT_OK, NULL, 0);
+    }
+    else if (request.command == RDP_WEBAUTHN_COMMAND_WEB_AUTHN &&
+             !rdp_session_webauthn_rp_id_allowed(session, &request))
+    {
+        status = rdp_webauthn_write_authenticator_response(&response,
+                                                           RDP_SESSION_HRESULT_OK,
+                                                           RDP_SESSION_CTAP2_ERR_OPERATION_DENIED,
+                                                           NULL,
+                                                           0);
+        hresult = RDP_SESSION_HRESULT_OK;
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.webauthn.rp_id.denied",
+                        "rp_id_len=%u allowlist_count=%u",
+                        (unsigned)request.rp_id_len,
+                        librdp_settings_webauthn_rp_id_count(session->settings));
     }
     else if (request.command == RDP_WEBAUTHN_COMMAND_GET_CREDENTIALS)
     {

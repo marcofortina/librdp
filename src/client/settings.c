@@ -87,6 +87,7 @@ struct librdp_settings
     char* audio_input_device;
     char* video_output_path;
     char* webauthn_provider;
+    char* webauthn_rp_ids[LIBRDP_SETTINGS_MAX_WEBAUTHN_RP_IDS];
     char* echo_payload;
     uint16_t port;
     uint32_t width;
@@ -118,6 +119,7 @@ struct librdp_settings
     char* rail_apps[LIBRDP_SETTINGS_MAX_RAIL_APPS];
     uint32_t pnp_device_count;
     rdp_settings_pnp_device pnp_devices[LIBRDP_SETTINGS_MAX_PNP_DEVICES];
+    uint32_t webauthn_rp_id_count;
     uint32_t static_channel_count;
     rdp_settings_static_channel static_channels[LIBRDP_SETTINGS_MAX_STATIC_CHANNELS];
 };
@@ -859,6 +861,14 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
             return NULL;
         }
     }
+    for (uint32_t i = 0; i < settings->webauthn_rp_id_count; i++)
+    {
+        if (librdp_settings_add_webauthn_rp_id(copy, settings->webauthn_rp_ids[i]) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(copy);
+            return NULL;
+        }
+    }
     for (uint32_t i = 0; i < settings->rail_app_count; i++)
     {
         if (librdp_settings_add_rail_app(copy, settings->rail_apps[i]) != LIBRDP_STATUS_OK)
@@ -920,6 +930,8 @@ void librdp_settings_free(librdp_settings* settings)
         free(settings->pnp_devices[i].compatibility_id);
         free(settings->pnp_devices[i].description);
     }
+    for (uint32_t i = 0; i < settings->webauthn_rp_id_count; i++)
+        free(settings->webauthn_rp_ids[i]);
     for (uint32_t i = 0; i < settings->rail_app_count; i++)
         free(settings->rail_apps[i]);
     free(settings);
@@ -1431,6 +1443,16 @@ librdp_status librdp_settings_set_webauthn_provider(librdp_settings* settings, c
     return rdp_set_string(&settings->webauthn_provider, provider);
 }
 
+librdp_status librdp_settings_add_webauthn_rp_id(librdp_settings* settings, const char* rp_id)
+{
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_settings_add_text(settings->webauthn_rp_ids,
+                                 &settings->webauthn_rp_id_count,
+                                 LIBRDP_SETTINGS_MAX_WEBAUTHN_RP_IDS,
+                                 rp_id);
+}
+
 librdp_status librdp_settings_add_rail_app(librdp_settings* settings, const char* app)
 {
     if (!settings)
@@ -1693,6 +1715,18 @@ uint32_t librdp_settings_pnp_device_caps(const librdp_settings* settings, uint32
 const char* librdp_settings_webauthn_provider(const librdp_settings* settings)
 {
     return settings ? settings->webauthn_provider : NULL;
+}
+
+uint32_t librdp_settings_webauthn_rp_id_count(const librdp_settings* settings)
+{
+    return settings ? settings->webauthn_rp_id_count : 0;
+}
+
+const char* librdp_settings_webauthn_rp_id(const librdp_settings* settings, uint32_t index)
+{
+    if (!settings || index >= settings->webauthn_rp_id_count)
+        return NULL;
+    return settings->webauthn_rp_ids[index];
 }
 
 uint32_t librdp_settings_rail_app_count(const librdp_settings* settings)
