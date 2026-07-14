@@ -41,7 +41,6 @@ typedef struct x11_pressed_key
 #define X11_CURSOR_SHAPE 2
 #define X11_MAX_EVENTS_PER_TICK 128u
 #define X11_MAX_NETWORK_PUMP 64u
-#define X11_MAX_SESSION_POLL_FDS 8u
 #define X11_AUDIO_INPUT_BUFFER_BYTES 16384u
 
 typedef struct x11_app

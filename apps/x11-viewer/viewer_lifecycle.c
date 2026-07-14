@@ -618,7 +618,10 @@ static int x11_handle_session_status(x11_app* app, librdp_status status)
     return 0;
 }
 
-static int x11_dispatch_session_ready(x11_app* app, struct pollfd* session_fds, size_t session_count)
+static int x11_dispatch_session_ready(x11_app* app,
+                                      struct pollfd* session_fds,
+                                      size_t session_capacity,
+                                      size_t session_count)
 {
     librdp_status status = LIBRDP_STATUS_OK;
     unsigned int i = 0;
@@ -638,10 +641,7 @@ static int x11_dispatch_session_ready(x11_app* app, struct pollfd* session_fds, 
             return 0;
         if (!app->dirty && app->event_serial == before)
             break;
-        if (librdp_session_get_pollfds(app->session,
-                                       session_fds,
-                                       X11_MAX_SESSION_POLL_FDS,
-                                       &count) != LIBRDP_STATUS_OK ||
+        if (librdp_session_get_pollfds(app->session, session_fds, session_capacity, &count) != LIBRDP_STATUS_OK ||
             count == 0)
             break;
         if (poll(session_fds, (nfds_t)count, 0) <= 0)
@@ -656,9 +656,10 @@ static int x11_dispatch_session_ready(x11_app* app, struct pollfd* session_fds, 
 
 static int x11_wait_for_events(x11_app* app)
 {
-    struct pollfd poll_fds[1u + X11_MAX_SESSION_POLL_FDS];
-    struct pollfd* session_fds = &poll_fds[1];
+    struct pollfd* poll_fds = NULL;
+    struct pollfd* session_fds = NULL;
     size_t session_count = 0;
+    size_t session_capacity = 0;
     int timeout_ms = -1;
     int clipboard_timeout_ms = -1;
     int rc = 0;
@@ -667,16 +668,38 @@ static int x11_wait_for_events(x11_app* app)
     if (!app || !app->display || !app->session || !app->running)
         return 0;
 
-    memset(poll_fds, 0, sizeof(poll_fds));
+    status = librdp_session_get_pollfds(app->session, NULL, 0, &session_capacity);
+    if (!x11_handle_session_status(app, status))
+        return 0;
+    if (session_capacity > (((size_t)-1) / sizeof(*poll_fds)) - 1u)
+    {
+        fprintf(stderr, "error=pollfds_overflow\n");
+        app->running = 0;
+        return 0;
+    }
+    poll_fds = (struct pollfd*)calloc(session_capacity + 1u, sizeof(*poll_fds));
+    if (!poll_fds)
+    {
+        fprintf(stderr, "error=no_memory\n");
+        app->running = 0;
+        return 0;
+    }
+    session_fds = &poll_fds[1];
     poll_fds[0].fd = ConnectionNumber(app->display);
     poll_fds[0].events = POLLIN;
 
-    status = librdp_session_get_pollfds(app->session, session_fds, X11_MAX_SESSION_POLL_FDS, &session_count);
+    status = librdp_session_get_pollfds(app->session, session_fds, session_capacity, &session_count);
     if (!x11_handle_session_status(app, status))
+    {
+        free(poll_fds);
         return 0;
+    }
     status = librdp_session_get_next_timeout(app->session, &timeout_ms);
     if (!x11_handle_session_status(app, status))
+    {
+        free(poll_fds);
         return 0;
+    }
     if (XPending(app->display) > 0)
         timeout_ms = 0;
     else if (app->audio_input_active && (timeout_ms < 0 || timeout_ms > 10))
@@ -693,20 +716,31 @@ static int x11_wait_for_events(x11_app* app)
     {
         fprintf(stderr, "error=poll errno=%d\n", errno);
         app->running = 0;
+        free(poll_fds);
         return 0;
     }
     if ((poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
     {
         app->running = 0;
+        free(poll_fds);
         return 0;
     }
     if (rc == 0)
     {
+        int ok = 0;
+
         x11_clipboard_check_timeouts(app);
-        return x11_handle_session_status(app, librdp_session_dispatch_pending(app->session));
+        ok = x11_handle_session_status(app, librdp_session_dispatch_pending(app->session));
+        free(poll_fds);
+        return ok;
     }
-    if (session_count > 0 && x11_dispatch_session_ready(app, session_fds, session_count) == 0)
+    if (session_count > 0 &&
+        x11_dispatch_session_ready(app, session_fds, session_capacity, session_count) == 0)
+    {
+        free(poll_fds);
         return 0;
+    }
+    free(poll_fds);
     return 1;
 }
 
