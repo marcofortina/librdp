@@ -85,6 +85,9 @@ host devices.
 .BI --webauthn " [fido2|fido2=/dev/hidrawN|mock|mock=path]"
 Enable WebAuthn redirection through libfido2, a hidraw device, or a controlled mock provider.
 .TP
+.BI --webauthn-rp-id " id"
+Add a WebAuthn relying-party identifier allowlist entry.
+.TP
 .BI --rail " app=path"
 Configure a remote application request.
 .TP

@@ -59,6 +59,7 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --usb vid:pid|bus:dev
 --pnp
 --webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]
+--webauthn-rp-id id
 --rail app=path
 --cr2
 --echo
@@ -95,6 +96,7 @@ For Xwayland, the viewer sets `_XWAYLAND_MAY_GRAB_KEYBOARD` before requesting ke
 - `--smartcard` uses PC/SC or a controlled virtual source.
 - `--usb` uses libusb selectors.
 - `--webauthn` uses libfido2, a hidraw device, or a controlled mock provider.
+- `--webauthn-rp-id` adds an RP ID allowlist entry for WebAuthn requests.
 - `--printer` can route output through the configured printer backend path.
 - `--video` can write selected video output to a file path.
 
