@@ -135,15 +135,16 @@ static int x11_runtime_features_configure(x11_app* app, const librdp_settings* s
 
     if (!app || !settings)
         return 0;
+    video_path = librdp_settings_video_output_path(settings);
     app->telemetry_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1 : 0;
-    app->video_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1 : 0;
+    app->video_requested =
+        librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) && video_path != NULL ? 1 : 0;
     app->camera_requested = librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_CAMERA) &&
                                     librdp_settings_camera_count(settings) > 0 ?
                                 1 :
                                 0;
     if (app->video_requested)
     {
-        video_path = librdp_settings_video_output_path(settings);
         if (video_path)
         {
             app->video_output_file = fopen(video_path, "ab");

@@ -65,9 +65,9 @@ Settings and viewer options:
 - `LIBRDP_FEATURE_CAMERA`;
 - `LIBRDP_FEATURE_VIDEO`;
 - `librdp_settings_add_camera()`;
-- `librdp_settings_set_video_output()`;
+- `librdp_settings_set_video_output_path()`;
 - `--camera device=/dev/videoN`;
-- `--video [file=path]`.
+- `--video file=path`.
 
 Operational requirements:
 

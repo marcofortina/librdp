@@ -53,7 +53,7 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --clipboard-file path
 --audio-output [device=name]
 --audio-input [device=name]
---video [file=path]
+--video file=path
 --camera device=/dev/videoN
 --smartcard [pcsc|vsmartcard=path]
 --usb vid:pid|bus:dev
