@@ -207,6 +207,7 @@ set(LIBRDP_SOURCES
     src/client/session_input.c
     src/client/session_ports.c
     src/client/session_printer.c
+    src/client/session_protocol_io.c
     src/client/session_runtime.c
     src/client/session_smartcard.c
     src/client/session_usb.c

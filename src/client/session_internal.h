@@ -1005,9 +1005,16 @@ void rdp_session_video_capture_reset(librdp_session* session);
 int rdp_session_video_runtime_active(const librdp_session* session);
 uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
                                                const rdp_printer_redirection_cache_event* event);
+librdp_status rdp_session_write_mcs_pdu(librdp_session* session,
+                                        const rdp_buffer* pdu,
+                                        const char* event,
+                                        int allow_hexdump);
 librdp_status rdp_session_write_slowpath_pdu(librdp_session* session,
                                              const rdp_buffer* pdu,
                                              const char* event);
+librdp_status rdp_session_write_license_pdu(librdp_session* session,
+                                            const rdp_buffer* license,
+                                            const char* event);
 librdp_status rdp_session_send_clipboard_packet(librdp_session* session, const rdp_buffer* payload, const char* event);
 librdp_status rdp_session_write_channel_pdu(librdp_session* session,
                                             uint16_t channel_id,
@@ -1026,6 +1033,21 @@ librdp_status rdp_session_send_dynamic_channel_data(librdp_session* session,
                                                     const void* data,
                                                     size_t data_len,
                                                     const char* event);
+librdp_status rdp_session_read_mcs_pdu(librdp_session* session,
+                                       rdp_buffer* packet,
+                                       const uint8_t** pdu,
+                                       size_t* pdu_len,
+                                       const char* event);
+librdp_status rdp_session_read_fastpath_packet(librdp_session* session, rdp_buffer* packet);
+librdp_status rdp_session_read_credssp_ts_request(librdp_session* session, rdp_buffer* packet, int timeout_ms);
+librdp_status rdp_session_apply_bitmap_update(librdp_session* session, const rdp_bitmap_update* update);
+void rdp_session_fastpath_fragment_reset(librdp_session* session);
+librdp_status rdp_session_decompress_bulk_payload(librdp_session* session,
+                                                  uint8_t flags,
+                                                  const uint8_t* data,
+                                                  size_t data_len,
+                                                  rdp_buffer* decoded);
+librdp_status rdp_session_process_fastpath_packet(librdp_session* session, const rdp_buffer* packet);
 rdp_session_dynamic_channel* rdp_session_dynamic_channel_find(librdp_session* session, uint32_t channel_id);
 rdp_session_dynamic_channel* rdp_session_dynamic_channel_find_opening(librdp_session* session, uint32_t channel_id);
 void rdp_session_dynamic_channel_clear_entry(rdp_session_dynamic_channel* entry);
