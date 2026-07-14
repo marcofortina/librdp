@@ -14,6 +14,12 @@ The repository also ships standalone examples that are compiled by CMake when `L
 | `librdp-example-minimal-session` | `examples/minimal_session.c` | Creates settings and a session without opening a network connection. |
 | `librdp-example-surface-blit` | `examples/surface_blit.c` | Allocates a public surface and writes a BGRA rectangle. |
 | `librdp-example-input-events` | `examples/input_events.c` | Builds keyboard and mouse events and demonstrates state-aware send failures before connection. |
+| `librdp-example-event-loop-pollfds` | `examples/event_loop_pollfds.c` | Shows a custom POSIX poll loop around session pollfds, notification, and pending dispatch. |
+| `librdp-example-clipboard-data` | `examples/clipboard_data.c` | Advertises text and named HTML clipboard data through the public clipboard API. |
+| `librdp-example-dynamic-channels` | `examples/dynamic_channels.c` | Registers a static channel and requests an application-owned dynamic virtual channel. |
+| `librdp-example-device-redirection` | `examples/device_redirection.c` | Configures drive, printer, serial, parallel, USB, and PNP device settings and policies. |
+| `librdp-example-media-devices` | `examples/media_devices.c` | Configures audio, video, camera, smartcard, and WebAuthn feature backends. |
+| `librdp-example-trace-tls-policy` | `examples/trace_tls_policy.c` | Installs a trace callback and TLS certificate policy callback. |
 
 ## Minimal session
 
