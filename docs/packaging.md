@@ -81,6 +81,7 @@ Optional runtime dependencies depend on enabled features:
 - libfido2 and libcbor for WebAuthn;
 - CUPS for printer paths;
 - libacl, libattr, and libarchive for filesystem metadata paths;
+- libcurl and libxml2 for gateway and workspace feed paths;
 - X11, Xcursor, Xfixes, xkbcommon, pthreads, PipeWire, and optional image libraries for the X11 viewer.
 
 Package metadata should reflect the build result, not the full optional list.

@@ -70,6 +70,7 @@ librdp_pkg_dependency(LIBRDP_WITH_ACL LIBRDP_ACL libacl)
 librdp_pkg_dependency(LIBRDP_WITH_ATTR LIBRDP_ATTR libattr)
 librdp_pkg_dependency(LIBRDP_WITH_ARCHIVE LIBRDP_ARCHIVE libarchive)
 librdp_pkg_dependency(LIBRDP_WITH_CURL LIBRDP_CURL libcurl)
+librdp_pkg_dependency(LIBRDP_WITH_LIBXML2 LIBRDP_LIBXML2 libxml-2.0)
 librdp_pkg_dependency(LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE libpipewire-0.3)
 librdp_pkg_dependency(LIBRDP_WITH_JPEG LIBRDP_JPEG libjpeg)
 

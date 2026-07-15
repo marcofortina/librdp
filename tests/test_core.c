@@ -7424,7 +7424,11 @@ static int test_workspace_lifecycle(void)
     CHECK(librdp_workspace_clear(workspace) == LIBRDP_STATUS_OK);
     CHECK(librdp_workspace_resource_count(workspace) == 0);
     CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_UNSUPPORTED);
+#ifdef RDP_HAVE_LIBXML2
+    CHECK(librdp_workspace_load_xml(workspace, "<workspace/>", 12u) == LIBRDP_STATUS_OK);
+#else
     CHECK(librdp_workspace_load_xml(workspace, "<workspace/>", 12u) == LIBRDP_STATUS_UNSUPPORTED);
+#endif
     librdp_workspace_free(workspace);
 
     CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
@@ -7435,6 +7439,76 @@ static int test_workspace_lifecycle(void)
     librdp_workspace_free(workspace);
     return 0;
 }
+
+#ifdef RDP_HAVE_LIBXML2
+/*
+ * Coverage: parses a synthetic workspace feed through libxml2 and verifies
+ * resource ownership, malformed XML handling, and oversized feed rejection.
+ */
+static int test_workspace_xml_parse(void)
+{
+    static const char feed[] =
+        "<?xml version=\"1.0\"?>"
+        "<Workspace>"
+        "  <Resources>"
+        "    <Resource>"
+        "      <ID>desktop-1</ID>"
+        "      <Title>Desktop</Title>"
+        "      <Type>Desktop</Type>"
+        "      <RDPFileContents>full address:s:desktop.example.test</RDPFileContents>"
+        "      <IconUrl>https://workspace.example.test/desktop.png</IconUrl>"
+        "      <TerminalServer>desktop.example.test</TerminalServer>"
+        "    </Resource>"
+        "    <RemoteApp id=\"app-1\">"
+        "      <Title>Accounting</Title>"
+        "      <Alias>acct</Alias>"
+        "      <RDPFileUrl>https://workspace.example.test/acct.rdp</RDPFileUrl>"
+        "      <RemoteAppProgram>||acct</RemoteAppProgram>"
+        "    </RemoteApp>"
+        "  </Resources>"
+        "</Workspace>";
+    static const char malformed[] = "<Workspace><Resources><Resource>";
+    const size_t oversize_len = (4u * 1024u * 1024u) + 1u;
+    librdp_workspace_config config;
+    librdp_workspace_resource resource;
+    librdp_workspace* workspace = NULL;
+    char* oversize = NULL;
+
+    CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
+    workspace = librdp_workspace_new(&config);
+    CHECK(workspace != NULL);
+    CHECK(librdp_workspace_load_xml(workspace, feed, sizeof(feed) - 1u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_count(workspace) == 2u);
+
+    CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_at(workspace, 0, &resource) == LIBRDP_STATUS_OK);
+    CHECK(resource.type == LIBRDP_WORKSPACE_RESOURCE_DESKTOP);
+    CHECK(resource.id && strcmp(resource.id, "desktop-1") == 0);
+    CHECK(resource.title && strcmp(resource.title, "Desktop") == 0);
+    CHECK(resource.rdp_file_contents && strstr(resource.rdp_file_contents, "desktop.example.test") != NULL);
+    CHECK(resource.terminal_server && strcmp(resource.terminal_server, "desktop.example.test") == 0);
+
+    CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_at(workspace, 1, &resource) == LIBRDP_STATUS_OK);
+    CHECK(resource.type == LIBRDP_WORKSPACE_RESOURCE_REMOTE_APP);
+    CHECK(resource.id && strcmp(resource.id, "app-1") == 0);
+    CHECK(resource.alias && strcmp(resource.alias, "acct") == 0);
+    CHECK(resource.rdp_file_url && strstr(resource.rdp_file_url, "acct.rdp") != NULL);
+    CHECK(resource.remote_app_program && strcmp(resource.remote_app_program, "||acct") == 0);
+
+    CHECK(librdp_workspace_load_xml(workspace, malformed, sizeof(malformed) - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_workspace_resource_count(workspace) == 2u);
+
+    oversize = (char*)malloc(oversize_len);
+    CHECK(oversize != NULL);
+    memset(oversize, ' ', oversize_len);
+    CHECK(librdp_workspace_load_xml(workspace, oversize, oversize_len) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+    free(oversize);
+
+    librdp_workspace_free(workspace);
+    return 0;
+}
+#endif
 
 int test_common(void)
 {
@@ -7515,6 +7589,10 @@ int test_client_core(void)
         return 1;
     if (test_workspace_lifecycle() != 0)
         return 1;
+#ifdef RDP_HAVE_LIBXML2
+    if (test_workspace_xml_parse() != 0)
+        return 1;
+#endif
     return test_settings_surface_input_session();
 }
 

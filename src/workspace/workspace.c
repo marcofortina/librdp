@@ -18,13 +18,21 @@
 
 #include <openssl/crypto.h>
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef RDP_HAVE_LIBXML2
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#endif
+
 #define RDP_WORKSPACE_DEFAULT_TIMEOUT_MS 15000u
 #define RDP_WORKSPACE_MAX_TIMEOUT_MS 600000u
 #define RDP_WORKSPACE_MAX_TEXT_LEN 65536u
+#define RDP_WORKSPACE_MAX_XML_LEN (4u * 1024u * 1024u)
+#define RDP_WORKSPACE_MAX_RESOURCES 1024u
 
 typedef struct rdp_workspace_resource_storage
 {
@@ -101,6 +109,15 @@ static void rdp_workspace_resources_free(rdp_workspace_resource_storage* resourc
     free(resources);
 }
 
+static void rdp_workspace_commit_resources(librdp_workspace* workspace,
+                                           rdp_workspace_resource_storage* resources,
+                                           size_t count)
+{
+    rdp_workspace_resources_free(workspace->resources, workspace->resource_count);
+    workspace->resources = resources;
+    workspace->resource_count = count;
+}
+
 static int rdp_workspace_config_valid(const librdp_workspace_config* config)
 {
     if (!config || config->version != LIBRDP_WORKSPACE_CONFIG_VERSION ||
@@ -149,6 +166,323 @@ static librdp_status rdp_workspace_copy_config(librdp_workspace* workspace,
     workspace->timeout_ms = config->timeout_ms ? config->timeout_ms : RDP_WORKSPACE_DEFAULT_TIMEOUT_MS;
     return LIBRDP_STATUS_OK;
 }
+
+#ifdef RDP_HAVE_LIBXML2
+typedef struct rdp_workspace_parse_list
+{
+    rdp_workspace_resource_storage* items;
+    size_t count;
+    size_t capacity;
+} rdp_workspace_parse_list;
+
+static int rdp_workspace_node_is(const xmlNode* node, const char* name)
+{
+    return node && node->type == XML_ELEMENT_NODE && node->name &&
+           strcmp((const char*)node->name, name) == 0;
+}
+
+static int rdp_workspace_ascii_lower(int value)
+{
+    return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
+}
+
+static int rdp_workspace_ascii_contains(const char* value, const char* needle)
+{
+    size_t value_len = 0;
+    size_t needle_len = 0;
+    size_t i = 0;
+
+    if (!value || !needle)
+        return 0;
+    value_len = strlen(value);
+    needle_len = strlen(needle);
+    if (needle_len == 0 || needle_len > value_len)
+        return 0;
+    for (i = 0; i + needle_len <= value_len; i++)
+    {
+        size_t j = 0;
+
+        for (j = 0; j < needle_len; j++)
+        {
+            if (rdp_workspace_ascii_lower((unsigned char)value[i + j]) !=
+                rdp_workspace_ascii_lower((unsigned char)needle[j]))
+                break;
+        }
+        if (j == needle_len)
+            return 1;
+    }
+    return 0;
+}
+
+static char* rdp_workspace_trimmed_xml_string(xmlChar* value)
+{
+    const char* text = (const char*)value;
+    const char* start = text;
+    const char* end = NULL;
+    size_t len = 0;
+    char* copy = NULL;
+
+    if (!value)
+        return NULL;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+        start++;
+    end = start + strlen(start);
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n'))
+        end--;
+    len = (size_t)(end - start);
+    if (len == 0 || len > RDP_WORKSPACE_MAX_TEXT_LEN)
+        return NULL;
+    copy = (char*)malloc(len + 1u);
+    if (!copy)
+        return NULL;
+    memcpy(copy, start, len);
+    copy[len] = '\0';
+    return copy;
+}
+
+static librdp_status rdp_workspace_xml_child_text(const xmlNode* node, const char* name, char** destination)
+{
+    const xmlNode* child = NULL;
+    xmlChar* value = NULL;
+    char* copy = NULL;
+
+    if (!destination)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *destination = NULL;
+    for (child = node ? node->children : NULL; child; child = child->next)
+    {
+        if (!rdp_workspace_node_is(child, name))
+            continue;
+        value = xmlNodeGetContent((xmlNode*)child);
+        copy = rdp_workspace_trimmed_xml_string(value);
+        xmlFree(value);
+        if (!copy)
+            return LIBRDP_STATUS_OK;
+        *destination = copy;
+        return LIBRDP_STATUS_OK;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_workspace_xml_prop_text(const xmlNode* node, const char* name, char** destination)
+{
+    xmlChar* value = NULL;
+    char* copy = NULL;
+
+    if (!destination)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *destination = NULL;
+    value = xmlGetProp((xmlNode*)node, (const xmlChar*)name);
+    if (!value)
+        return LIBRDP_STATUS_OK;
+    copy = rdp_workspace_trimmed_xml_string(value);
+    xmlFree(value);
+    if (!copy)
+        return LIBRDP_STATUS_OK;
+    *destination = copy;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_workspace_xml_value(const xmlNode* node,
+                                             const char* const* names,
+                                             size_t name_count,
+                                             char** destination)
+{
+    size_t i = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!destination)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *destination = NULL;
+    for (i = 0; i < name_count && !*destination; i++)
+    {
+        status = rdp_workspace_xml_child_text(node, names[i], destination);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    for (i = 0; i < name_count && !*destination; i++)
+    {
+        status = rdp_workspace_xml_prop_text(node, names[i], destination);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_workspace_resource_type rdp_workspace_resource_type_from_text(const char* value,
+                                                                           const xmlNode* node)
+{
+    if (rdp_workspace_ascii_contains(value, "remoteapp") ||
+        rdp_workspace_ascii_contains(value, "remote app") ||
+        rdp_workspace_ascii_contains(value, "application") ||
+        rdp_workspace_node_is(node, "RemoteApp"))
+        return LIBRDP_WORKSPACE_RESOURCE_REMOTE_APP;
+    if (rdp_workspace_ascii_contains(value, "desktop") || rdp_workspace_node_is(node, "Desktop"))
+        return LIBRDP_WORKSPACE_RESOURCE_DESKTOP;
+    return LIBRDP_WORKSPACE_RESOURCE_UNKNOWN;
+}
+
+static int rdp_workspace_resource_has_content(const rdp_workspace_resource_storage* resource)
+{
+    return resource && (resource->id || resource->title || resource->alias || resource->rdp_file_contents ||
+                        resource->rdp_file_url || resource->icon_url || resource->terminal_server ||
+                        resource->remote_app_program);
+}
+
+static librdp_status rdp_workspace_parse_resource(const xmlNode* node,
+                                                  rdp_workspace_resource_storage* resource)
+{
+    static const char* const id_names[] = {"ID", "Id", "ResourceID", "ResourceId", "id"};
+    static const char* const title_names[] = {"Title", "Name", "DisplayName", "title", "name"};
+    static const char* const alias_names[] = {"Alias", "AppAlias", "alias"};
+    static const char* const type_names[] = {"Type", "ResourceType", "type"};
+    static const char* const rdp_contents_names[] = {"RDPFileContents", "RdpFileContents", "RDPFile", "RdpFile"};
+    static const char* const rdp_url_names[] = {"RDPFileURL", "RDPFileUrl", "RdpFileUrl", "RdpFileURL"};
+    static const char* const icon_names[] = {"IconUrl", "IconURL", "Icon", "iconUrl"};
+    static const char* const server_names[] = {"TerminalServer", "Server", "Host", "Address"};
+    static const char* const app_names[] = {"RemoteAppProgram", "FilePath", "Program", "Executable"};
+    char* type_text = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!node || !resource)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(resource, 0, sizeof(*resource));
+    status = rdp_workspace_xml_value(node, id_names, sizeof(id_names) / sizeof(id_names[0]), &resource->id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, title_names, sizeof(title_names) / sizeof(title_names[0]), &resource->title);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, alias_names, sizeof(alias_names) / sizeof(alias_names[0]), &resource->alias);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node,
+                                         rdp_contents_names,
+                                         sizeof(rdp_contents_names) / sizeof(rdp_contents_names[0]),
+                                         &resource->rdp_file_contents);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, rdp_url_names, sizeof(rdp_url_names) / sizeof(rdp_url_names[0]),
+                                         &resource->rdp_file_url);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, icon_names, sizeof(icon_names) / sizeof(icon_names[0]),
+                                         &resource->icon_url);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, server_names, sizeof(server_names) / sizeof(server_names[0]),
+                                         &resource->terminal_server);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, app_names, sizeof(app_names) / sizeof(app_names[0]),
+                                         &resource->remote_app_program);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_xml_value(node, type_names, sizeof(type_names) / sizeof(type_names[0]), &type_text);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(type_text);
+        rdp_workspace_resource_free(resource);
+        return status;
+    }
+    resource->type = rdp_workspace_resource_type_from_text(type_text, node);
+    free(type_text);
+    if (!rdp_workspace_resource_has_content(resource))
+    {
+        rdp_workspace_resource_free(resource);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_workspace_parse_list_append(rdp_workspace_parse_list* list,
+                                                     const rdp_workspace_resource_storage* resource)
+{
+    rdp_workspace_resource_storage* resized = NULL;
+    size_t new_capacity = 0;
+
+    if (!list || !resource)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (list->count >= RDP_WORKSPACE_MAX_RESOURCES)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (list->count == list->capacity)
+    {
+        new_capacity = list->capacity == 0 ? 8u : list->capacity * 2u;
+        if (new_capacity > RDP_WORKSPACE_MAX_RESOURCES)
+            new_capacity = RDP_WORKSPACE_MAX_RESOURCES;
+        resized = (rdp_workspace_resource_storage*)realloc(list->items, new_capacity * sizeof(*list->items));
+        if (!resized)
+            return LIBRDP_STATUS_NO_MEMORY;
+        memset(resized + list->capacity, 0, (new_capacity - list->capacity) * sizeof(*resized));
+        list->items = resized;
+        list->capacity = new_capacity;
+    }
+    list->items[list->count] = *resource;
+    list->count++;
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_workspace_resource_node(const xmlNode* node)
+{
+    return rdp_workspace_node_is(node, "Resource") || rdp_workspace_node_is(node, "RemoteResource") ||
+           rdp_workspace_node_is(node, "Desktop") || rdp_workspace_node_is(node, "RemoteApp");
+}
+
+static librdp_status rdp_workspace_parse_nodes(const xmlNode* node, rdp_workspace_parse_list* list)
+{
+    const xmlNode* child = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    for (child = node; child; child = child->next)
+    {
+        if (rdp_workspace_resource_node(child))
+        {
+            rdp_workspace_resource_storage resource;
+
+            status = rdp_workspace_parse_resource(child, &resource);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            status = rdp_workspace_parse_list_append(list, &resource);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_workspace_resource_free(&resource);
+                return status;
+            }
+        }
+        else
+        {
+            status = rdp_workspace_parse_nodes(child->children, list);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_workspace_parse_xml(librdp_workspace* workspace, const void* xml, size_t xml_len)
+{
+    xmlDocPtr doc = NULL;
+    xmlNode* root = NULL;
+    rdp_workspace_parse_list list;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    memset(&list, 0, sizeof(list));
+    if (xml_len > RDP_WORKSPACE_MAX_XML_LEN || xml_len > (size_t)INT_MAX)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    doc = xmlReadMemory((const char*)xml,
+                        (int)xml_len,
+                        "workspace.xml",
+                        NULL,
+                        XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS);
+    if (!doc)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    root = xmlDocGetRootElement(doc);
+    if (!root)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_workspace_parse_nodes(root, &list);
+    xmlFreeDoc(doc);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_workspace_resources_free(list.items, list.count);
+        return status;
+    }
+    rdp_workspace_commit_resources(workspace, list.items, list.count);
+    return LIBRDP_STATUS_OK;
+}
+#endif
 
 librdp_status librdp_workspace_config_init(librdp_workspace_config* config)
 {
@@ -221,7 +555,12 @@ librdp_status librdp_workspace_load_xml(librdp_workspace* workspace, const void*
 {
     if (!workspace || !xml || xml_len == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+#ifndef RDP_HAVE_LIBXML2
+    (void)xml_len;
     return LIBRDP_STATUS_UNSUPPORTED;
+#else
+    return rdp_workspace_parse_xml(workspace, xml, xml_len);
+#endif
 }
 
 size_t librdp_workspace_resource_count(const librdp_workspace* workspace)
