@@ -209,6 +209,24 @@ find_library(LIBRDP_ICONV_EXTRA_LIBRARY NAMES iconv)
 if(LIBRDP_ICONV_EXTRA_LIBRARY)
     list(APPEND LIBRDP_ICONV_LINK_LIBRARIES ${LIBRDP_ICONV_EXTRA_LIBRARY})
 endif()
+set(LIBRDP_ICONV_INCLUDE_DIRECTORIES)
+foreach(include_dir IN LISTS Iconv_INCLUDE_DIRS)
+    if(include_dir AND EXISTS "${include_dir}/iconv.h")
+        list(APPEND LIBRDP_ICONV_INCLUDE_DIRECTORIES "${include_dir}")
+    endif()
+endforeach()
+if(Iconv_INCLUDE_DIR AND EXISTS "${Iconv_INCLUDE_DIR}/iconv.h")
+    list(APPEND LIBRDP_ICONV_INCLUDE_DIRECTORIES "${Iconv_INCLUDE_DIR}")
+endif()
+if(LIBRDP_ICONV_INCLUDE_DIRECTORIES)
+    list(REMOVE_DUPLICATES LIBRDP_ICONV_INCLUDE_DIRECTORIES)
+endif()
+
+function(librdp_apply_iconv_include_dirs target)
+    if(LIBRDP_ICONV_INCLUDE_DIRECTORIES)
+        target_include_directories(${target} SYSTEM PRIVATE ${LIBRDP_ICONV_INCLUDE_DIRECTORIES})
+    endif()
+endfunction()
 
 set(LIBRDP_OPENSSL_INCLUDE_DIRECTORIES)
 if(LIBRDP_OPENSSL_INCLUDE_DIR AND EXISTS "${LIBRDP_OPENSSL_INCLUDE_DIR}/openssl/types.h")
@@ -558,6 +576,8 @@ target_include_directories(librdp_backend_objects
 )
 librdp_apply_openssl_include_dirs(librdp_objects)
 librdp_apply_openssl_include_dirs(librdp_backend_objects)
+librdp_apply_iconv_include_dirs(librdp_objects)
+librdp_apply_iconv_include_dirs(librdp_backend_objects)
 
 set_target_properties(librdp_objects PROPERTIES
     C_VISIBILITY_PRESET hidden
