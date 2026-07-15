@@ -107,12 +107,12 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_viewer_backends
         tests/test_viewer_backends.c
-        apps/x11-viewer/camera_v4l2.c
-        apps/x11-viewer/device_backends.c
-        apps/x11-viewer/viewer_trace.c
+        apps/x11/viewer/camera_v4l2.c
+        apps/x11/viewer/device_backends.c
+        apps/x11/viewer/viewer_trace.c
     )
     target_include_directories(test_viewer_backends PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     librdp_apply_system_definitions(test_viewer_backends)
@@ -125,11 +125,11 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_viewer_cli
         tests/test_viewer_cli.c
-        apps/x11-viewer/viewer_cli.c
-        apps/x11-viewer/viewer_trace.c
+        apps/x11/viewer/viewer_cli.c
+        apps/x11/viewer/viewer_trace.c
     )
     target_include_directories(test_viewer_cli PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     librdp_apply_system_definitions(test_viewer_cli)

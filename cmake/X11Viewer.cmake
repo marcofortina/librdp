@@ -23,22 +23,22 @@ if(LIBRDP_BUILD_X11_VIEWER)
     find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
     add_executable(librdp-x11-viewer
-        apps/x11-viewer/audio_pipewire.c
-        apps/x11-viewer/camera_v4l2.c
-        apps/x11-viewer/device_backends.c
-        apps/x11-viewer/main.c
-        apps/x11-viewer/viewer_clipboard.c
-        apps/x11-viewer/viewer_cli.c
-        apps/x11-viewer/viewer_display.c
-        apps/x11-viewer/viewer_input.c
-        apps/x11-viewer/viewer_keyboard.c
-        apps/x11-viewer/viewer_lifecycle.c
-        apps/x11-viewer/viewer_render.c
-        apps/x11-viewer/viewer_trace.c
-        apps/x11-viewer/viewer_window.c
+        apps/x11/viewer/audio_pipewire.c
+        apps/x11/viewer/camera_v4l2.c
+        apps/x11/viewer/device_backends.c
+        apps/x11/viewer/main.c
+        apps/x11/viewer/viewer_clipboard.c
+        apps/x11/viewer/viewer_cli.c
+        apps/x11/viewer/viewer_display.c
+        apps/x11/viewer/viewer_input.c
+        apps/x11/viewer/viewer_keyboard.c
+        apps/x11/viewer/viewer_lifecycle.c
+        apps/x11/viewer/viewer_render.c
+        apps/x11/viewer/viewer_trace.c
+        apps/x11/viewer/viewer_window.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
@@ -97,12 +97,12 @@ if(LIBRDP_BUILD_X11_VIEWER)
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_viewer_render
             tests/test_viewer_render.c
-            apps/x11-viewer/viewer_render.c
-            apps/x11-viewer/viewer_trace.c
-            apps/x11-viewer/viewer_window.c
+            apps/x11/viewer/viewer_render.c
+            apps/x11/viewer/viewer_trace.c
+            apps/x11/viewer/viewer_window.c
         )
         target_include_directories(test_viewer_render PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
@@ -123,11 +123,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         set_tests_properties(viewer_render PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_audio
             tests/test_viewer_audio.c
-            apps/x11-viewer/audio_pipewire.c
-            apps/x11-viewer/viewer_trace.c
+            apps/x11/viewer/audio_pipewire.c
+            apps/x11/viewer/viewer_trace.c
         )
         target_include_directories(test_viewer_audio PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_compile_definitions(test_viewer_audio PRIVATE
@@ -141,11 +141,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         set_tests_properties(viewer_audio PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_camera
             tests/test_viewer_camera.c
-            apps/x11-viewer/camera_v4l2.c
-            apps/x11-viewer/viewer_trace.c
+            apps/x11/viewer/camera_v4l2.c
+            apps/x11/viewer/viewer_trace.c
         )
         target_include_directories(test_viewer_camera PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_compile_definitions(test_viewer_camera PRIVATE
@@ -160,12 +160,12 @@ if(LIBRDP_BUILD_X11_VIEWER)
         set_tests_properties(viewer_camera PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_keyboard
             tests/test_viewer_keyboard.c
-            apps/x11-viewer/viewer_keyboard.c
-            apps/x11-viewer/viewer_trace.c
-            apps/x11-viewer/viewer_window.c
+            apps/x11/viewer/viewer_keyboard.c
+            apps/x11/viewer/viewer_trace.c
+            apps/x11/viewer/viewer_window.c
         )
         target_include_directories(test_viewer_keyboard PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
             ${XKBCOMMON_INCLUDE_DIRS}
@@ -183,11 +183,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         set_tests_properties(viewer_keyboard PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_clipboard
             tests/test_viewer_clipboard.c
-            apps/x11-viewer/viewer_clipboard.c
-            apps/x11-viewer/viewer_trace.c
+            apps/x11/viewer/viewer_clipboard.c
+            apps/x11/viewer/viewer_trace.c
         )
         target_include_directories(test_viewer_clipboard PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
@@ -206,11 +206,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         if(LIBRDP_XRANDR_FOUND)
             add_executable(test_viewer_display
                 tests/test_viewer_display.c
-                apps/x11-viewer/viewer_display.c
-                apps/x11-viewer/viewer_trace.c
+                apps/x11/viewer/viewer_display.c
+                apps/x11/viewer/viewer_trace.c
             )
             target_include_directories(test_viewer_display PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${X11_INCLUDE_DIR}
             )

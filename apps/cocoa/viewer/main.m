@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /*
- * Module: native macOS viewer for exercising public client APIs.
+ * Module: native Cocoa viewer for exercising public client APIs.
  * Invariants: AppKit owns windowing on the main thread, librdp session dispatch
  * is serialized on the same thread, and framebuffer bytes are borrowed only
  * while drawing.
@@ -38,16 +38,16 @@ typedef struct macos_viewer_options
     int show_help;
 } macos_viewer_options;
 
-@class MacOSViewerController;
+@class CocoaViewerController;
 
-@interface MacOSViewerView : NSView
-@property(nonatomic, assign) MacOSViewerController* controller;
+@interface CocoaViewerView : NSView
+@property(nonatomic, assign) CocoaViewerController* controller;
 @end
 
-@interface MacOSViewerController : NSObject
+@interface CocoaViewerController : NSObject
 @property(nonatomic, assign) librdp_session* session;
 @property(nonatomic, strong) NSWindow* window;
-@property(nonatomic, strong) MacOSViewerView* view;
+@property(nonatomic, strong) CocoaViewerView* view;
 @property(nonatomic, strong) NSTimer* timer;
 @property(nonatomic, assign) BOOL dirty;
 @property(nonatomic, assign) BOOL closed;
@@ -281,7 +281,7 @@ static void macos_viewer_graphics_callback(librdp_session* session,
                                            const librdp_graphics_update* update,
                                            void* user_data)
 {
-    MacOSViewerController* controller = (__bridge MacOSViewerController*)user_data;
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
 
     (void)session;
     if (!update || !controller)
@@ -289,7 +289,7 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     [controller markDirty];
 }
 
-@implementation MacOSViewerView
+@implementation CocoaViewerView
 
 - (BOOL)isFlipped
 {
@@ -425,7 +425,7 @@ static void macos_viewer_graphics_callback(librdp_session* session,
 
 @end
 
-@implementation MacOSViewerController
+@implementation CocoaViewerController
 
 - (id)initWithSession:(librdp_session*)session width:(uint32_t)width height:(uint32_t)height
 {
@@ -435,14 +435,14 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     if (!self)
         return nil;
     self.session = session;
-    self.view = [[MacOSViewerView alloc] initWithFrame:frame];
+    self.view = [[CocoaViewerView alloc] initWithFrame:frame];
     self.view.controller = self;
     self.window = [[NSWindow alloc] initWithContentRect:frame
                                               styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                         NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    [self.window setTitle:@"librdp-macos-viewer"];
+    [self.window setTitle:@"librdp-cocoa-viewer"];
     [self.window setContentView:self.view];
     [self.window setAcceptsMouseMovedEvents:YES];
     [self.window center];
@@ -575,7 +575,7 @@ int main(int argc, char** argv)
     macos_viewer_options options;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
-    MacOSViewerController* controller = nil;
+    CocoaViewerController* controller = nil;
     librdp_status status = LIBRDP_STATUS_OK;
     int exit_code = 1;
 
@@ -604,7 +604,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "failed to create session\n");
             return 1;
         }
-        controller = [[MacOSViewerController alloc] initWithSession:session width:options.width height:options.height];
+        controller = [[CocoaViewerController alloc] initWithSession:session width:options.width height:options.height];
         if (!controller)
         {
             fprintf(stderr, "failed to create viewer window\n");

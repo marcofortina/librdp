@@ -174,17 +174,17 @@ def markdown_files() -> list[str]:
 
 
 def viewer_source_options() -> set[str]:
-    source = read("apps/x11-viewer/main.c") + "\n" + read("apps/x11-viewer/viewer_cli.c")
+    source = read("apps/x11/viewer/main.c") + "\n" + read("apps/x11/viewer/viewer_cli.c")
     return set(VIEWER_OPTION_RE.findall(source))
 
 
 def admin_source_options() -> set[str]:
-    return set(VIEWER_OPTION_RE.findall(read("apps/x11-admin/main.c")))
+    return set(VIEWER_OPTION_RE.findall(read("apps/x11/admin/main.c")))
 
 
 def workspace_source_options() -> set[str]:
     forwarded_viewer_options = {"--target", "--rail", "--gateway", "--gateway-mode"}
-    return set(VIEWER_OPTION_RE.findall(read("apps/x11-workspace/main.c"))) - forwarded_viewer_options
+    return set(VIEWER_OPTION_RE.findall(read("apps/x11/workspace/main.c"))) - forwarded_viewer_options
 
 
 def documented_options(path: str) -> set[str]:

@@ -28,7 +28,7 @@ cmake -S . -B build-macos -G Ninja \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=ON \
   -DLIBRDP_BUILD_X11_VIEWER=OFF \
-  -DLIBRDP_BUILD_MACOS_VIEWER=ON \
+  -DLIBRDP_BUILD_COCOA_VIEWER=ON \
   -DLIBRDP_WITH_PIPEWIRE=OFF \
   -DLIBRDP_WITH_JPEG=OFF \
   -DLIBRDP_WITH_XSHM=OFF \
@@ -37,5 +37,5 @@ cmake --build build-macos --parallel
 ctest --test-dir build-macos --output-on-failure
 ```
 
-The disabled options are X11-viewer-specific paths. `librdp-macos-viewer`
+The disabled options are X11-viewer-specific paths. `librdp-cocoa-viewer`
 uses AppKit and the public client APIs.

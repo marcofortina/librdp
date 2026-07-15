@@ -17,7 +17,7 @@ librdp separates protocol mechanics from viewer and host integration code. The c
 - Input normalization: `src/input`.
 - Static and dynamic virtual channels: `src/channels`, `src/clipboard`.
 - Shared utilities: `src/common`.
-- Viewer and host backend probes: `apps/x11-viewer`.
+- Viewer and host backend probes: `apps/x11/viewer`.
 
 ## Core boundary
 

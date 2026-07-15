@@ -4,7 +4,7 @@
 if(LIBRDP_BUILD_X11_WORKSPACE)
     find_package(X11 REQUIRED)
     add_executable(librdp-x11-workspace
-        apps/x11-workspace/main.c
+        apps/x11/workspace/main.c
     )
     target_include_directories(librdp-x11-workspace PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
