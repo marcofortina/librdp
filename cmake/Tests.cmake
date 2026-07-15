@@ -87,6 +87,7 @@ if(LIBRDP_BUILD_TESTS)
     add_executable(test_server tests/test_server.c)
     target_include_directories(test_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
     target_link_libraries(test_server PRIVATE librdp)
     librdp_apply_warning_options(test_server)

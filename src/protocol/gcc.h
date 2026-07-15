@@ -122,6 +122,12 @@ typedef struct rdp_gcc_conference_response
     size_t user_data_len;
 } rdp_gcc_conference_response;
 
+typedef struct rdp_gcc_conference_request
+{
+    const uint8_t* user_data;
+    size_t user_data_len;
+} rdp_gcc_conference_request;
+
 typedef struct rdp_gcc_server_data
 {
     uint8_t has_core;
@@ -145,6 +151,9 @@ typedef struct rdp_gcc_server_data
 
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config);
 librdp_status rdp_gcc_write_conference_create_request(rdp_buffer* buffer, const void* user_data, size_t user_data_len);
+librdp_status rdp_gcc_parse_conference_create_request(const void* data,
+                                                      size_t length,
+                                                      rdp_gcc_conference_request* request);
 librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, rdp_gcc_client_data_summary* summary);
 librdp_status rdp_gcc_parse_conference_create_response(const void* data,
                                                        size_t length,

@@ -35,6 +35,12 @@ typedef struct rdp_mcs_connect_response
     size_t user_data_len;
 } rdp_mcs_connect_response;
 
+typedef struct rdp_mcs_connect_initial
+{
+    const uint8_t* user_data;
+    size_t user_data_len;
+} rdp_mcs_connect_initial;
+
 typedef struct rdp_mcs_attach_user_confirm
 {
     uint8_t result;
@@ -63,6 +69,7 @@ typedef struct rdp_mcs_send_data_indication
 librdp_status rdp_mcs_write_ber_length(rdp_buffer* buffer, size_t length);
 librdp_status rdp_mcs_write_ber_integer(rdp_buffer* buffer, uint32_t value);
 librdp_status rdp_mcs_write_connect_initial(rdp_buffer* buffer, const void* gcc_data, size_t gcc_data_len);
+librdp_status rdp_mcs_parse_connect_initial(const void* data, size_t length, rdp_mcs_connect_initial* initial);
 librdp_status rdp_mcs_write_erect_domain_request(rdp_buffer* buffer);
 librdp_status rdp_mcs_write_attach_user_request(rdp_buffer* buffer);
 librdp_status rdp_mcs_parse_attach_user_confirm(const void* data, size_t length, rdp_mcs_attach_user_confirm* confirm);

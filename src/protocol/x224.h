@@ -49,7 +49,21 @@ typedef struct rdp_x224_connection_confirm
     rdp_x224_negotiation negotiation;
 } rdp_x224_connection_confirm;
 
+typedef struct rdp_x224_connection_request
+{
+    uint16_t destination_ref;
+    uint16_t source_ref;
+    uint8_t class_option;
+    rdp_x224_negotiation negotiation;
+    uint32_t requested_protocols;
+} rdp_x224_connection_request;
+
 librdp_status rdp_x224_build_connection_request(rdp_buffer* buffer, const char* cookie_name, uint32_t protocols);
+librdp_status rdp_x224_parse_connection_request(const void* payload,
+                                                size_t payload_len,
+                                                rdp_x224_connection_request* request);
+librdp_status rdp_x224_build_connection_confirm(rdp_buffer* buffer, uint32_t selected_protocol);
+librdp_status rdp_x224_build_negotiation_failure(rdp_buffer* buffer, uint32_t failure_code);
 librdp_status rdp_x224_parse_connection_confirm(const void* payload, size_t payload_len, rdp_x224_connection_confirm* confirm);
 librdp_status rdp_x224_wrap_data(rdp_buffer* buffer, const void* payload, size_t payload_len);
 librdp_status rdp_x224_parse_data(const void* payload,

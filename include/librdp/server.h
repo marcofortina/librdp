@@ -57,9 +57,10 @@ typedef enum librdp_server_peer_state
 {
     LIBRDP_SERVER_PEER_NEW = 0,         /**< Peer was accepted and no bytes have been processed. */
     LIBRDP_SERVER_PEER_NEGOTIATING = 1, /**< Peer is processing initial connection negotiation. */
-    LIBRDP_SERVER_PEER_CLOSING = 2,     /**< Peer shutdown is in progress. */
-    LIBRDP_SERVER_PEER_CLOSED = 3,      /**< Peer socket is closed. */
-    LIBRDP_SERVER_PEER_FAILED = 4       /**< Peer failed because input or I/O was invalid. */
+    LIBRDP_SERVER_PEER_X224_CONFIRMED = 2, /**< X.224 was accepted and MCS/GCC validation is pending. */
+    LIBRDP_SERVER_PEER_CLOSING = 3,     /**< Peer shutdown is in progress. */
+    LIBRDP_SERVER_PEER_CLOSED = 4,      /**< Peer socket is closed. */
+    LIBRDP_SERVER_PEER_FAILED = 5       /**< Peer failed because input or I/O was invalid. */
 } librdp_server_peer_state;
 
 /**
@@ -204,9 +205,11 @@ LIBRDP_API librdp_status librdp_server_accept(librdp_server* server,
  * @brief Drive one minimal server-side peer iteration.
  *
  * The current implementation processes the initial TPKT/X.224 connection
- * request. Valid requests receive a protocol negotiation failure response and
- * return LIBRDP_STATUS_UNSUPPORTED because full server activation is not
- * implemented. Malformed input returns LIBRDP_STATUS_PROTOCOL_ERROR.
+ * request and, for Standard RDP requests, validates the following MCS
+ * Connect-Initial/GCC Conference Create Request. Full server activation is not
+ * implemented; the peer is closed with LIBRDP_STATUS_UNSUPPORTED after the
+ * validated MCS/GCC boundary. Malformed input returns
+ * LIBRDP_STATUS_PROTOCOL_ERROR.
  *
  * @param[in,out] peer Peer to drive; must not be NULL.
  * @param[in] timeout_ms Poll timeout in milliseconds; must be non-negative.

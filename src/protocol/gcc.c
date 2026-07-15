@@ -509,6 +509,61 @@ librdp_status rdp_gcc_write_conference_create_request(rdp_buffer* buffer, const 
     return status;
 }
 
+/*
+ * Parse a client Conference Create Request and expose the opaque GCC user-data
+ * block sequence. The conference name, keys, and PER lengths are validated so
+ * malformed MCS Connect-Initial payloads cannot pass into server state.
+ */
+librdp_status rdp_gcc_parse_conference_create_request(const void* data,
+                                                      size_t length,
+                                                      rdp_gcc_conference_request* request)
+{
+    static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
+    static const uint8_t key[] = {'D', 'u', 'c', 'a'};
+    rdp_stream stream;
+    uint8_t choice = 0;
+    uint8_t user_data_count = 0;
+    uint8_t h221_choice = 0;
+    size_t connect_len = 0;
+    size_t user_len = 0;
+    size_t conference_name_bytes = 0;
+
+    if (!data || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(request, 0, sizeof(*request));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u8(&stream, &choice) != LIBRDP_STATUS_OK || choice != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_gcc_read_object_identifier(&stream, oid, sizeof(oid)) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_gcc_read_per_length(&stream, &connect_len) != LIBRDP_STATUS_OK ||
+        connect_len > rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_u8(&stream, &choice) != LIBRDP_STATUS_OK || choice != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_u8(&stream, &choice) != LIBRDP_STATUS_OK || choice != 0x08u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_gcc_read_per_length(&stream, &user_len) != LIBRDP_STATUS_OK ||
+        user_len > ((size_t)-1) - 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    conference_name_bytes = (user_len + 2u) / 2u;
+    if (rdp_stream_skip(&stream, conference_name_bytes) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_u8(&stream, &choice) != LIBRDP_STATUS_OK || choice != 0u ||
+        rdp_stream_read_u8(&stream, &user_data_count) != LIBRDP_STATUS_OK || user_data_count != 1u ||
+        rdp_stream_read_u8(&stream, &h221_choice) != LIBRDP_STATUS_OK || h221_choice != 0xc0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_gcc_read_per_octet_string(&stream, key, sizeof(key), sizeof(key)) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_gcc_read_per_length(&stream, &request->user_data_len) != LIBRDP_STATUS_OK ||
+        request->user_data_len > rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_bytes(&stream, &request->user_data, request->user_data_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return request->user_data_len > 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
 librdp_status rdp_gcc_parse_conference_create_response(const void* data,
                                                        size_t length,
                                                        rdp_gcc_conference_response* response)

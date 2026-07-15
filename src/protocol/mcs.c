@@ -304,6 +304,91 @@ librdp_status rdp_mcs_write_connect_initial(rdp_buffer* buffer, const void* gcc_
     return status;
 }
 
+static librdp_status rdp_mcs_read_ber_octet_string(rdp_stream* stream, const uint8_t** data, size_t* length)
+{
+    uint8_t tag = 0;
+
+    if (!stream || !data || !length)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &tag) != LIBRDP_STATUS_OK || tag != 0x04u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_length(stream, length) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_stream_read_bytes(stream, data, *length);
+}
+
+static librdp_status rdp_mcs_skip_ber_sequence(rdp_stream* stream)
+{
+    uint8_t tag = 0;
+    size_t length = 0;
+
+    if (!stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &tag) != LIBRDP_STATUS_OK || tag != 0x30u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_length(stream, &length) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_stream_skip(stream, length);
+}
+
+static librdp_status rdp_mcs_read_upward_flag(rdp_stream* stream)
+{
+    uint8_t tag = 0;
+    size_t length = 0;
+    uint8_t value = 0;
+
+    if (!stream)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_stream_read_u8(stream, &tag) != LIBRDP_STATUS_OK || tag != 0x01u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_length(stream, &length) != LIBRDP_STATUS_OK || length != 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_read_u8(stream, &value) != LIBRDP_STATUS_OK || value == 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Parse a client MCS Connect-Initial PDU far enough to expose the embedded GCC
+ * Conference Create Request. Domain parameters are structurally validated and
+ * skipped; caller-owned input backs the returned view.
+ */
+librdp_status rdp_mcs_parse_connect_initial(const void* data, size_t length, rdp_mcs_connect_initial* initial)
+{
+    rdp_stream stream;
+    const uint8_t* ignored = NULL;
+    size_t ignored_len = 0;
+    size_t body_len = 0;
+    uint8_t tag0 = 0;
+    uint8_t tag1 = 0;
+
+    if (!data || !initial)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(initial, 0, sizeof(*initial));
+    rdp_stream_init(&stream, data, length);
+    if (rdp_stream_read_u8(&stream, &tag0) != LIBRDP_STATUS_OK ||
+        rdp_stream_read_u8(&stream, &tag1) != LIBRDP_STATUS_OK ||
+        tag0 != 0x7fu || tag1 != 0x65u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_length(&stream, &body_len) != LIBRDP_STATUS_OK ||
+        body_len != rdp_stream_remaining(&stream))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_octet_string(&stream, &ignored, &ignored_len) != LIBRDP_STATUS_OK ||
+        ignored_len == 0u ||
+        rdp_mcs_read_ber_octet_string(&stream, &ignored, &ignored_len) != LIBRDP_STATUS_OK ||
+        ignored_len == 0u ||
+        rdp_mcs_read_upward_flag(&stream) != LIBRDP_STATUS_OK ||
+        rdp_mcs_skip_ber_sequence(&stream) != LIBRDP_STATUS_OK ||
+        rdp_mcs_skip_ber_sequence(&stream) != LIBRDP_STATUS_OK ||
+        rdp_mcs_skip_ber_sequence(&stream) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_mcs_read_ber_octet_string(&stream, &initial->user_data, &initial->user_data_len) != LIBRDP_STATUS_OK ||
+        initial->user_data_len == 0u ||
+        rdp_stream_remaining(&stream) != 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_mcs_write_erect_domain_request(rdp_buffer* buffer)
 {
     librdp_status status = LIBRDP_STATUS_OK;

@@ -14,9 +14,16 @@
 
 #include <librdp/librdp.h>
 
+#include "common/buffer.h"
+#include "protocol/gcc.h"
+#include "protocol/mcs.h"
+#include "protocol/tpkt.h"
+#include "protocol/x224.h"
+
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -25,7 +32,10 @@
     do                                                                                                                \
     {                                                                                                                 \
         if (!(condition))                                                                                             \
+        {                                                                                                             \
+            fprintf(stderr, "check failed %s:%d: %s\n", __FILE__, __LINE__, #condition);                              \
             return 1;                                                                                                 \
+        }                                                                                                             \
     } while (0)
 
 static int test_server_config_defaults(void)
@@ -130,6 +140,57 @@ static int test_server_read_response(int fd, uint8_t* response, size_t response_
     return count > 0 ? (int)count : 0;
 }
 
+static int test_server_send_all(int fd, const uint8_t* data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t written = send(fd, data + offset, length - offset, 0);
+
+        if (written <= 0)
+            return 0;
+        offset += (size_t)written;
+    }
+    return 1;
+}
+
+static int test_server_send_client_mcs_connect_initial(int fd)
+{
+    rdp_buffer gcc_blocks;
+    rdp_buffer gcc_request;
+    rdp_buffer mcs_initial;
+    rdp_buffer x224_data;
+    rdp_buffer tpkt;
+    rdp_gcc_client_config config;
+    int ok = 0;
+
+    rdp_buffer_init(&gcc_blocks);
+    rdp_buffer_init(&gcc_request);
+    rdp_buffer_init(&mcs_initial);
+    rdp_buffer_init(&x224_data);
+    rdp_buffer_init(&tpkt);
+    memset(&config, 0, sizeof(config));
+    config.desktop_width = 800;
+    config.desktop_height = 600;
+    config.requested_protocols = RDP_X224_PROTOCOL_STANDARD;
+    config.client_name = "server-test";
+    if (rdp_gcc_write_client_data_blocks(&gcc_blocks, &config) == LIBRDP_STATUS_OK &&
+        rdp_gcc_write_conference_create_request(&gcc_request, gcc_blocks.data, gcc_blocks.length) ==
+            LIBRDP_STATUS_OK &&
+        rdp_mcs_write_connect_initial(&mcs_initial, gcc_request.data, gcc_request.length) ==
+            LIBRDP_STATUS_OK &&
+        rdp_x224_wrap_data(&x224_data, mcs_initial.data, mcs_initial.length) == LIBRDP_STATUS_OK &&
+        rdp_tpkt_write(&tpkt, x224_data.data, x224_data.length) == LIBRDP_STATUS_OK)
+        ok = test_server_send_all(fd, tpkt.data, tpkt.length);
+    rdp_buffer_free(&tpkt);
+    rdp_buffer_free(&x224_data);
+    rdp_buffer_free(&mcs_initial);
+    rdp_buffer_free(&gcc_request);
+    rdp_buffer_free(&gcc_blocks);
+    return ok;
+}
+
 static int test_server_loopback_negotiation_failure(void)
 {
     static const uint8_t request[] = {
@@ -172,10 +233,54 @@ static int test_server_loopback_negotiation_failure(void)
     SCHECK(response_len == 19);
     SCHECK(response[0] == 0x03 && response[1] == 0x00 && response[2] == 0x00 && response[3] == 0x13);
     SCHECK(response[4] == 0x0e && response[5] == 0xd0);
-    SCHECK(response[11] == 0x03 && response[13] == 0x08 && response[15] == 0x01);
+    SCHECK(response[11] == 0x03 && response[13] == 0x08 && response[15] == 0x02);
     librdp_server_peer_free(peer);
     librdp_server_close(server);
     SCHECK(librdp_server_local_port(server) == 0);
+    librdp_server_free(server);
+    close(client_fd);
+    return 0;
+}
+
+static int test_server_loopback_standard_mcs_boundary(void)
+{
+    static const uint8_t request[] = {
+        0x03, 0x00, 0x00, 0x0b, 0x06, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    uint8_t response[64];
+    int client_fd = -1;
+    int response_len = 0;
+    librdp_server_config config;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0;
+
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.bind_address = "127.0.0.1";
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    SCHECK(librdp_server_listen(server) == LIBRDP_STATUS_OK);
+    port = librdp_server_local_port(server);
+    SCHECK(port != 0);
+    client_fd = test_server_connect_loopback(port);
+    SCHECK(client_fd >= 0);
+    SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
+    SCHECK(peer != NULL);
+    SCHECK(test_server_send_all(client_fd, request, sizeof(request)));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_X224_CONFIRMED);
+    response_len = test_server_read_response(client_fd, response, sizeof(response));
+    SCHECK(response_len == 11);
+    SCHECK(response[0] == 0x03 && response[1] == 0x00 && response[2] == 0x00 && response[3] == 0x0b);
+    SCHECK(response[4] == 0x06 && response[5] == 0xd0);
+    SCHECK(test_server_send_client_mcs_connect_initial(client_fd));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_UNSUPPORTED);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CLOSED);
+    librdp_server_peer_free(peer);
+    librdp_server_close(server);
     librdp_server_free(server);
     close(client_fd);
     return 0;
@@ -190,6 +295,8 @@ int main(void)
     if (test_server_new_copies_strings() != 0)
         return 1;
     if (test_server_loopback_negotiation_failure() != 0)
+        return 1;
+    if (test_server_loopback_standard_mcs_boundary() != 0)
         return 1;
     return 0;
 }

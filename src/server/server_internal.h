@@ -39,6 +39,7 @@ struct librdp_server_peer
 {
     int fd;
     librdp_server_peer_state state;
+    uint32_t selected_protocol;
     rdp_buffer input;
 };
 
