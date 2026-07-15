@@ -33,7 +33,7 @@ Supported security values are:
 
 TLS certificate verification is strict by default. `--tls-prompt-cert` shows the presented leaf certificate and asks before accepting it for the current connection. `--tls-accept-any-cert` accepts the presented certificate for the current connection without prompting and should be used only when the caller has explicitly chosen that trust policy.
 
-`--gateway` tunnels the target connection through an HTTP CONNECT gateway. Dedicated gateway credentials can be supplied with `--gateway-user`, `--gateway-password`, and `--gateway-domain`; otherwise the viewer can reuse session credentials. `--gateway-no-session-credentials` disables that reuse, and `--gateway-timeout` sets the gateway connection timeout in milliseconds.
+`--gateway` configures an intermediate gateway endpoint. The default `--gateway-mode http-connect` tunnels the target connection through a generic HTTP CONNECT proxy. `--gateway-mode rdg-http` selects Microsoft RD Gateway HTTP transport and requires an HTTPS gateway URL; the session fails with `UNSUPPORTED` when the RDG runtime provider is not available. Dedicated gateway credentials can be supplied with `--gateway-user`, `--gateway-password`, and `--gateway-domain`; otherwise the viewer can reuse session credentials. `--gateway-no-session-credentials` disables that reuse, and `--gateway-timeout` sets the gateway connection timeout in milliseconds.
 
 ## Options
 
@@ -49,6 +49,7 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --tls-prompt-cert
 --tls-accept-any-cert
 --gateway url
+--gateway-mode http-connect|rdg-http
 --gateway-user name
 --gateway-password value
 --gateway-domain name

@@ -231,7 +231,8 @@ typedef librdp_status (*librdp_credentials_provider)(librdp_credentials* credent
 typedef enum librdp_gateway_mode
 {
     LIBRDP_GATEWAY_DISABLED = 0,     /**< Connect directly to the target. */
-    LIBRDP_GATEWAY_HTTP_CONNECT = 1  /**< Tunnel the target TCP stream through an HTTP CONNECT gateway. */
+    LIBRDP_GATEWAY_HTTP_CONNECT = 1, /**< Tunnel the target TCP stream through an HTTP CONNECT gateway. */
+    LIBRDP_GATEWAY_RDG_HTTP = 2      /**< Use Microsoft RD Gateway HTTP transport when available. */
 } librdp_gateway_mode;
 
 /**
@@ -239,7 +240,11 @@ typedef enum librdp_gateway_mode
  *
  * Initialize with librdp_gateway_config_init(). url is copied by
  * librdp_settings_set_gateway_config() and must include an `http://` or
- * `https://` scheme when mode is LIBRDP_GATEWAY_HTTP_CONNECT. When
+ * `https://` scheme when mode is LIBRDP_GATEWAY_HTTP_CONNECT or
+ * LIBRDP_GATEWAY_RDG_HTTP. RD Gateway HTTP transport is distinct from generic
+ * HTTP CONNECT proxying and fails with LIBRDP_STATUS_UNSUPPORTED when the
+ * runtime provider is not compiled or not complete for the selected platform.
+ * When
  * use_session_credentials is non-zero and username is NULL, the connection
  * reuses the session credentials for gateway authentication.
  *
@@ -762,7 +767,8 @@ LIBRDP_API librdp_status librdp_settings_set_security_mode(librdp_settings* sett
  * @brief Set or clear gateway transport configuration.
  *
  * Passing NULL restores the disabled default. For HTTP CONNECT mode the url
- * must be non-empty and start with `http://` or `https://`. All string fields
+ * must be non-empty and start with `http://` or `https://`. For RD Gateway HTTP
+ * mode the url must be non-empty and start with `https://`. All string fields
  * are copied; password storage is zeroized when replaced or cleared.
  *
  * @param[in,out] settings Settings object to update; must not be NULL.

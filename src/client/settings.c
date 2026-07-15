@@ -598,6 +598,11 @@ static int rdp_settings_valid_gateway_url(const char* url)
             rdp_settings_has_prefix(url, "http://"));
 }
 
+static int rdp_settings_valid_rdg_gateway_url(const char* url)
+{
+    return rdp_settings_valid_text(url) && rdp_settings_has_prefix(url, "https://");
+}
+
 /*
  * Parse user-facing USB selectors once for settings, viewer probing, and
  * backend dispatch. Explicit prefixes avoid ambiguity while the raw form keeps
@@ -1255,7 +1260,7 @@ librdp_status librdp_settings_set_gateway_config(librdp_settings* settings,
         config = &defaults;
     }
     if (config->version != LIBRDP_GATEWAY_CONFIG_VERSION || config->size < sizeof(*config) ||
-        config->mode < LIBRDP_GATEWAY_DISABLED || config->mode > LIBRDP_GATEWAY_HTTP_CONNECT)
+        config->mode < LIBRDP_GATEWAY_DISABLED || config->mode > LIBRDP_GATEWAY_RDG_HTTP)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (config->timeout_ms > RDP_SETTINGS_GATEWAY_MAX_TIMEOUT_MS)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -1264,6 +1269,14 @@ librdp_status librdp_settings_set_gateway_config(librdp_settings* settings,
     if (config->mode == LIBRDP_GATEWAY_HTTP_CONNECT)
     {
         if (!rdp_settings_valid_gateway_url(config->url))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        url_copy = rdp_strdup(config->url);
+        if (!url_copy)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    else if (config->mode == LIBRDP_GATEWAY_RDG_HTTP)
+    {
+        if (!rdp_settings_valid_rdg_gateway_url(config->url))
             return LIBRDP_STATUS_INVALID_ARGUMENT;
         url_copy = rdp_strdup(config->url);
         if (!url_copy)

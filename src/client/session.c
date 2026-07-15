@@ -3157,7 +3157,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
 
-    if (rdp_settings_gateway_mode_internal(session->settings) == LIBRDP_GATEWAY_HTTP_CONNECT)
+    if (rdp_settings_gateway_mode_internal(session->settings) != LIBRDP_GATEWAY_DISABLED)
     {
         rdp_gateway_connect_config gateway_config;
         const char* gateway_username = rdp_settings_gateway_username_internal(session->settings);
@@ -3178,6 +3178,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         gateway_config.password = gateway_password;
         gateway_config.domain = gateway_domain;
         gateway_config.timeout_ms = rdp_settings_gateway_timeout_ms_internal(session->settings);
+        gateway_config.mode = rdp_settings_gateway_mode_internal(session->settings);
         status = rdp_gateway_connect_transport(&session->transport, &gateway_config);
     }
     else
@@ -3188,7 +3189,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
     {
         const int via_gateway =
-            rdp_settings_gateway_mode_internal(session->settings) == LIBRDP_GATEWAY_HTTP_CONNECT;
+            rdp_settings_gateway_mode_internal(session->settings) != LIBRDP_GATEWAY_DISABLED;
 
         rdp_session_set_last_error(session,
                                    status,

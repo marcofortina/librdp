@@ -4252,6 +4252,17 @@ static int test_settings_surface_input_session(void)
     gateway_config.timeout_ms = 600001u;
     CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_INVALID_ARGUMENT);
     gateway_config.timeout_ms = 30000u;
+    gateway_config.mode = LIBRDP_GATEWAY_RDG_HTTP;
+    gateway_config.url = "http://gateway.example.com/rdg";
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    gateway_config.url = "https://gateway.example.com/rdg";
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway_config_out) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_RDG_HTTP);
+    CHECK(strcmp(gateway_config_out.url, "https://gateway.example.com/rdg") == 0);
+    gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+    gateway_config.url = "https://gateway.example.com/rdp";
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_port(settings) == 3389);
     CHECK(librdp_settings_width(settings) == 1024);
     CHECK(librdp_settings_height(settings) == 768);

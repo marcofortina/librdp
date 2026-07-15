@@ -17,6 +17,7 @@
 #define RDP_GATEWAY_GATEWAY_H
 
 #include <librdp/error.h>
+#include <librdp/settings.h>
 
 #include <stdint.h>
 
@@ -31,6 +32,7 @@ typedef struct rdp_gateway_connect_config
     const char* password;
     const char* domain;
     uint32_t timeout_ms;
+    librdp_gateway_mode mode;
 } rdp_gateway_connect_config;
 
 librdp_status rdp_gateway_connect_transport(rdp_transport* transport,

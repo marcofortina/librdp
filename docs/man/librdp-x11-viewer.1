@@ -51,6 +51,14 @@ Tunnel the target TCP connection through an HTTP CONNECT gateway. The URL may us
 or
 .B https .
 .TP
+.BI --gateway-mode " http-connect|rdg-http"
+Select the gateway transport. The default is
+.BR http-connect .
+.B rdg-http
+selects Microsoft RD Gateway HTTP transport and requires an HTTPS gateway URL; the connection fails with
+.B LIBRDP_STATUS_UNSUPPORTED
+when the RDG runtime provider is not available.
+.TP
 .BI --gateway-user " name"
 Gateway authentication user name. If omitted, the viewer reuses the session user name when gateway credential reuse is enabled.
 .TP

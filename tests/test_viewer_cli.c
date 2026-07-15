@@ -231,6 +231,55 @@ static int test_gateway_cli_configures_http_connect(void)
     return 0;
 }
 
+static int test_gateway_cli_configures_rdg_http(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--gateway",
+        (char*)"https://gateway.example.com/rdg",
+        (char*)"--gateway-mode",
+        (char*)"rdg-http",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    librdp_gateway_config gateway;
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 1);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway) == LIBRDP_STATUS_OK);
+    CHECK(gateway.mode == LIBRDP_GATEWAY_RDG_HTTP);
+    CHECK(strcmp(gateway.url, "https://gateway.example.com/rdg") == 0);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+static int test_gateway_cli_rejects_mode_without_gateway(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--gateway-mode",
+        (char*)"rdg-http",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    librdp_gateway_config gateway;
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 0);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway) == LIBRDP_STATUS_OK);
+    CHECK(gateway.mode == LIBRDP_GATEWAY_DISABLED);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 static int test_gateway_cli_rejects_credentials_without_gateway(void)
 {
     char* argv[] = {
@@ -271,6 +320,10 @@ int main(void)
     if (test_video_cli_requires_file_sink() != 0)
         return 1;
     if (test_gateway_cli_configures_http_connect() != 0)
+        return 1;
+    if (test_gateway_cli_configures_rdg_http() != 0)
+        return 1;
+    if (test_gateway_cli_rejects_mode_without_gateway() != 0)
         return 1;
     if (test_gateway_cli_rejects_credentials_without_gateway() != 0)
         return 1;

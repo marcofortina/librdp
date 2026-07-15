@@ -48,6 +48,11 @@ static int rdp_gateway_valid_url(const char* url)
            (strncmp(url, "https://", 8u) == 0 || strncmp(url, "http://", 7u) == 0);
 }
 
+static int rdp_gateway_valid_rdg_url(const char* url)
+{
+    return rdp_gateway_valid_text(url, RDP_GATEWAY_URL_MAX) && strncmp(url, "https://", 8u) == 0;
+}
+
 static librdp_status rdp_gateway_target_url(const char* host, uint16_t port, char** out)
 {
     int written = 0;
@@ -139,6 +144,31 @@ static librdp_status rdp_gateway_curl_code_status(CURLcode code)
 }
 #endif
 
+/*
+ * Rejects Microsoft RD Gateway HTTP transport unless a complete RDGSP runtime
+ * provider is available. The generic HTTP CONNECT path must never be used as a
+ * substitute because RDG requires tunnel/channel negotiation before RDP bytes
+ * can flow.
+ */
+static librdp_status rdp_gateway_connect_rdg_http(const rdp_gateway_connect_config* config)
+{
+    if (!config || !rdp_gateway_valid_rdg_url(config->gateway_url) ||
+        !rdp_gateway_valid_text(config->target_host, RDP_GATEWAY_TARGET_MAX) || config->target_port == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                    "transport.gateway.rdg.unsupported",
+                    "target=\"%s\" port=%u",
+                    config->target_host,
+                    (unsigned)config->target_port);
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+/*
+ * Selects the configured gateway transport and commits the caller-owned
+ * transport only after the selected provider succeeds. Invalid modes fail
+ * before any socket work, and RDG HTTP is kept separate from HTTP CONNECT so
+ * unsupported protocol state cannot silently fall back to a generic proxy.
+ */
 librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
                                             const rdp_gateway_connect_config* config)
 {
@@ -146,7 +176,12 @@ librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
     char* proxy_user = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!transport || !config || !rdp_gateway_valid_url(config->gateway_url) ||
+    if (!transport || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->mode == LIBRDP_GATEWAY_RDG_HTTP)
+        return rdp_gateway_connect_rdg_http(config);
+    if (config->mode != LIBRDP_GATEWAY_HTTP_CONNECT ||
+        !rdp_gateway_valid_url(config->gateway_url) ||
         !rdp_gateway_valid_text(config->target_host, RDP_GATEWAY_TARGET_MAX) || config->target_port == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 

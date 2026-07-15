@@ -153,11 +153,19 @@ static int test_gateway_connect_transport(void)
     config.target_host = "127.0.0.1";
     config.target_port = 3390;
     config.timeout_ms = 1000u;
+    config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     rdp_transport_init(&transport);
 #ifndef RDP_HAVE_CURL
     TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
+    config.mode = LIBRDP_GATEWAY_RDG_HTTP;
+    config.gateway_url = "https://gateway.example.com/rdg";
+    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
     return 0;
 #else
+    config.mode = LIBRDP_GATEWAY_RDG_HTTP;
+    config.gateway_url = "https://gateway.example.com/rdg";
+    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
+    config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     listen_fd = test_gateway_proxy_listen(&port);
     TCHECK(listen_fd >= 0);
     child = fork();

@@ -178,6 +178,19 @@ static int parse_security(const char* text, librdp_security_mode* mode)
     return 1;
 }
 
+static int parse_gateway_mode(const char* text, librdp_gateway_mode* mode)
+{
+    if (!text || !mode)
+        return 0;
+    if (strcmp(text, "http-connect") == 0)
+        *mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+    else if (strcmp(text, "rdg-http") == 0)
+        *mode = LIBRDP_GATEWAY_RDG_HTTP;
+    else
+        return 0;
+    return 1;
+}
+
 static int add_drive_arg(librdp_settings* settings, const char* text)
 {
     const char* separator = NULL;
@@ -351,7 +364,7 @@ static const char* optional_value(int argc, int* index, char** argv)
 
 const char* x11_cli_usage(void)
 {
-    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--gateway url] [--gateway-user name] [--gateway-password value] [--gateway-domain name] [--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--webauthn-rp-id id] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
+    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--gateway url] [--gateway-mode http-connect|rdg-http] [--gateway-user name] [--gateway-password value] [--gateway-domain name] [--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--webauthn-rp-id id] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
 }
 
 void x11_cli_options_free(x11_cli_options* options)
@@ -376,9 +389,11 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
     const char* gateway_username = NULL;
     const char* gateway_password = NULL;
     const char* gateway_domain = NULL;
+    librdp_gateway_mode gateway_mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     uint32_t gateway_timeout_ms = 0;
     int gateway_has_timeout = 0;
     int gateway_no_session_credentials = 0;
+    int gateway_mode_set = 0;
 
     if (!settings || !options)
         return 0;
@@ -449,6 +464,12 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
             if (!require_value(argc, &i))
                 return 0;
             gateway_username = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-mode") == 0)
+        {
+            if (!require_value(argc, &i) || !parse_gateway_mode(argv[i], &gateway_mode))
+                return 0;
+            gateway_mode_set = 1;
         }
         else if (strcmp(argv[i], "--gateway-password") == 0)
         {
@@ -611,7 +632,7 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
         return 0;
     if (!gateway_url &&
         (gateway_username || gateway_password || gateway_domain || gateway_has_timeout ||
-         gateway_no_session_credentials))
+         gateway_no_session_credentials || gateway_mode_set))
         return 0;
     if (gateway_url)
     {
@@ -619,7 +640,7 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
 
         if (librdp_gateway_config_init(&gateway_config) != LIBRDP_STATUS_OK)
             return 0;
-        gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+        gateway_config.mode = gateway_mode;
         gateway_config.url = gateway_url;
         gateway_config.username = gateway_username;
         gateway_config.password = gateway_password;
@@ -668,14 +689,15 @@ void x11_cli_trace_settings(const librdp_settings* settings)
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_DISPLAY_CONTROL) ? 1u : 0u,
-                    gateway_config.mode == LIBRDP_GATEWAY_HTTP_CONNECT ? 1u : 0u,
+                    gateway_config.mode != LIBRDP_GATEWAY_DISABLED ? 1u : 0u,
                     librdp_settings_drive_count(settings),
                     librdp_settings_printer_count(settings),
                     librdp_settings_pnp_device_count(settings));
-    if (gateway_config.mode == LIBRDP_GATEWAY_HTTP_CONNECT)
+    if (gateway_config.mode != LIBRDP_GATEWAY_DISABLED)
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.gateway.config",
-                        "mode=http_connect timeout_ms=%u use_session_credentials=%u",
+                        "mode=%s timeout_ms=%u use_session_credentials=%u",
+                        gateway_config.mode == LIBRDP_GATEWAY_RDG_HTTP ? "rdg_http" : "http_connect",
                         gateway_config.timeout_ms,
                         gateway_config.use_session_credentials ? 1u : 0u);
     if (librdp_settings_audio_output_device(settings))

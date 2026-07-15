@@ -309,23 +309,42 @@ static int workspace_resource_remote_app(const librdp_workspace_resource* resour
     return workspace_rdp_file_get(resource->rdp_file_contents, "remoteapplicationprogram", out, out_len);
 }
 
+static int workspace_resource_gateway(const librdp_workspace_resource* resource,
+                                      char* out,
+                                      size_t out_len)
+{
+    char host[WORKSPACE_FIELD_MAX];
+    int written = 0;
+
+    if (!workspace_rdp_file_get(resource->rdp_file_contents, "gatewayhostname", host, sizeof(host)))
+        return 0;
+    if (strstr(host, "://"))
+        return workspace_copy_value(host, strlen(host), out, out_len);
+    written = snprintf(out, out_len, "https://%s/", host);
+    return written > 0 && (size_t)written < out_len;
+}
+
 static void workspace_print_resource(size_t index, const librdp_workspace_resource* resource)
 {
     char target[WORKSPACE_FIELD_MAX];
     char remote_app[WORKSPACE_FIELD_MAX];
+    char gateway[WORKSPACE_FIELD_MAX];
 
     target[0] = '\0';
     remote_app[0] = '\0';
+    gateway[0] = '\0';
     workspace_resource_target(resource, target, sizeof(target));
     workspace_resource_remote_app(resource, remote_app, sizeof(remote_app));
-    printf("resource index=%zu type=%s id=\"%s\" alias=\"%s\" title=\"%s\" target=\"%s\" app=\"%s\"\n",
+    workspace_resource_gateway(resource, gateway, sizeof(gateway));
+    printf("resource index=%zu type=%s id=\"%s\" alias=\"%s\" title=\"%s\" target=\"%s\" app=\"%s\" gateway=\"%s\"\n",
            index,
            workspace_resource_type_name(resource->type),
            resource->id ? resource->id : "",
            resource->alias ? resource->alias : "",
            resource->title ? resource->title : "",
            target,
-           remote_app);
+           remote_app,
+           gateway);
 }
 
 static int workspace_print_resources(const librdp_workspace* workspace)
@@ -416,14 +435,16 @@ static int workspace_launch_viewer(const workspace_cli_options* options,
 {
     char target[WORKSPACE_FIELD_MAX];
     char remote_app[WORKSPACE_FIELD_MAX];
+    char gateway[WORKSPACE_FIELD_MAX];
     char rail_arg[WORKSPACE_FIELD_MAX + 5u];
-    char* args[20];
+    char* args[24];
     size_t argc = 0;
     pid_t pid = 0;
     int status = 0;
 
     target[0] = '\0';
     remote_app[0] = '\0';
+    gateway[0] = '\0';
     if (!workspace_resource_target(resource, target, sizeof(target)))
     {
         fprintf(stderr, "selected resource does not contain a launch target\n");
@@ -460,6 +481,13 @@ static int workspace_launch_viewer(const workspace_cli_options* options,
         }
         args[argc++] = (char*)"--rail";
         args[argc++] = rail_arg;
+    }
+    if (workspace_resource_gateway(resource, gateway, sizeof(gateway)))
+    {
+        args[argc++] = (char*)"--gateway";
+        args[argc++] = gateway;
+        args[argc++] = (char*)"--gateway-mode";
+        args[argc++] = (char*)"rdg-http";
     }
     args[argc] = NULL;
 
