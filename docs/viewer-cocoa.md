@@ -35,9 +35,12 @@ Supported security values are:
 - `tls`;
 - `nla`.
 
-TLS certificate verification is strict by default. `--accept-tls-certificate`
-accepts the presented certificate for the current connection after printing
-its host, subject, issuer, and SHA-256 fingerprint to stderr.
+TLS certificate verification is strict by default. `--tls-prompt-cert` prints
+the presented certificate and asks whether to trust it for the current
+connection. `--tls-accept-any-cert` accepts the certificate for the current
+connection without prompting after printing the same details.
+`--accept-tls-certificate` is kept as a compatibility alias for the automatic
+accept path.
 
 RemoteApp launches can be requested with `--rail app=<program>`.
 
@@ -46,6 +49,33 @@ Gateway tunneling can be configured with `--gateway <url>`. The gateway mode is
 Gateway HTTP transport. Gateway credentials can be supplied separately with
 `--gateway-user`, `--gateway-password`, and `--gateway-domain`, or inherited
 from the session credentials by default.
+
+## Session Features
+
+The Cocoa viewer accepts the same public session feature switches as the X11
+viewer:
+
+- `--drive name=path`;
+- `--serial name=path`;
+- `--parallel name=path`;
+- `--printer name=driver=path`;
+- `--audio-output [device=name]`;
+- `--audio-input [device=name]`;
+- `--video file=path`;
+- `--camera device=name`;
+- `--smartcard [pcsc|source]`;
+- `--usb vid:pid|bus:dev`;
+- `--pnp`;
+- `--webauthn [fido2|mock|provider]`;
+- `--webauthn-rp-id id`;
+- `--cr2`;
+- `--echo`;
+- `--telemetry`;
+- `--multitransport`.
+
+These switches configure the public librdp settings object. Runtime availability
+still depends on negotiated server support and on a real platform provider for
+the selected feature.
 
 ## Platform Integration
 

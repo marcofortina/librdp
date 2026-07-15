@@ -24,4 +24,8 @@ if(LIBRDP_BUILD_COCOA_VIEWER)
     install(TARGETS librdp-cocoa-viewer
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+    if(LIBRDP_BUILD_TESTS)
+        add_test(NAME cocoa_viewer_cli COMMAND librdp-cocoa-viewer --help)
+        set_tests_properties(cocoa_viewer_cli PROPERTIES TIMEOUT 30)
+    endif()
 endif()

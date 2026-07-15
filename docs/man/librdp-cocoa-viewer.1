@@ -39,11 +39,69 @@ Initial desktop height.
 .BI --security " auto|rdp|tls|nla"
 Security negotiation mode.
 .TP
+.B --tls-prompt-cert
+Print the presented TLS certificate and ask whether to trust it for the current connection.
+.TP
+.B --tls-accept-any-cert
+Accept the presented TLS certificate for the current connection without prompting after printing certificate details.
+.TP
 .B --accept-tls-certificate
-Accept the presented TLS certificate for the current connection after printing certificate details to stderr.
+Compatibility alias for
+.BR --tls-accept-any-cert .
 .TP
 .BI --rail " app=program"
 Request a RemoteApp launch for the selected program.
+.TP
+.BI --drive " name=path"
+Redirect a filesystem drive through the public device redirection settings.
+.TP
+.BI --serial " name=path"
+Redirect a serial port selector.
+.TP
+.BI --parallel " name=path"
+Redirect a parallel port selector.
+.TP
+.BI --printer " name=driver=path"
+Configure a redirected printer.
+.TP
+.BI --audio-output " [device=name]"
+Enable audio output redirection and select the Core Audio device selector used by the viewer configuration.
+.TP
+.BI --audio-input " [device=name]"
+Enable audio input redirection and select the Core Audio device selector used by the viewer configuration.
+.TP
+.BI --video " file=path"
+Enable video output capture into a file sink.
+.TP
+.BI --camera " device=name"
+Enable camera redirection with a platform device selector.
+.TP
+.BI --smartcard " [pcsc|source]"
+Enable smartcard redirection with a PC/SC or explicit source selector.
+.TP
+.BI --usb " vid:pid|bus:dev"
+Enable USB redirection for the selected device.
+.TP
+.B --pnp
+Enable PnP device metadata redirection.
+.TP
+.BI --webauthn " [fido2|mock|provider]"
+Enable WebAuthn redirection with the selected provider.
+.TP
+.BI --webauthn-rp-id " id"
+Allow one WebAuthn relying-party identifier.
+.TP
+.B --cr2
+Enable composited-remoting configuration.
+.TP
+.B --echo
+Enable the echo diagnostics channel.
+.TP
+.B --telemetry
+Enable telemetry configuration.
+.TP
+.B --multitransport
+Enable multitransport negotiation.
 .TP
 .BI --gateway " url"
 Tunnel the RDP connection through an HTTP CONNECT or Microsoft RD Gateway endpoint.
