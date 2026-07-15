@@ -116,6 +116,15 @@ LIBRDP_0.1 {
         librdp_credentials_clear;
         librdp_credentials_set;
         librdp_gateway_config_init;
+        librdp_workspace_config_init;
+        librdp_workspace_resource_init;
+        librdp_workspace_new;
+        librdp_workspace_free;
+        librdp_workspace_clear;
+        librdp_workspace_fetch;
+        librdp_workspace_load_xml;
+        librdp_workspace_resource_count;
+        librdp_workspace_resource_at;
         librdp_drive_policy_init;
         librdp_usb_selector_parse;
         librdp_usb_policy_init;

@@ -92,6 +92,7 @@ set(LIBRDP_SOURCES
     src/transport/multitransport.c
     src/transport/transport.c
     src/transport/udp_transport.c
+    src/workspace/workspace.c
 )
 
 set(LIBRDP_BACKEND_SOURCES

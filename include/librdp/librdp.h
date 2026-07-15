@@ -31,6 +31,7 @@
 #include <librdp/settings.h>
 #include <librdp/surface.h>
 #include <librdp/video.h>
+#include <librdp/workspace.h>
 
 /** @} */
 

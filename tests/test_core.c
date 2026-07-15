@@ -7394,6 +7394,48 @@ static int test_licensing_request_before_activation(void)
     return 0;
 }
 
+/*
+ * Coverage: validates workspace object ownership and unsupported backend
+ * status before XML/feed runtime backends are compiled into the library.
+ */
+static int test_workspace_lifecycle(void)
+{
+    librdp_workspace_config config;
+    librdp_workspace_resource resource;
+    librdp_workspace* workspace = NULL;
+
+    CHECK(librdp_workspace_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_workspace_resource_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
+    CHECK(config.version == LIBRDP_WORKSPACE_CONFIG_VERSION);
+    CHECK(config.size == sizeof(config));
+    CHECK(config.timeout_ms > 0);
+    CHECK(librdp_workspace_new(NULL) == NULL);
+
+    config.feed_url = "https://workspace.example.test/feed";
+    config.username = "user";
+    config.password = "secret";
+    config.domain = "domain";
+    workspace = librdp_workspace_new(&config);
+    CHECK(workspace != NULL);
+    CHECK(librdp_workspace_resource_count(workspace) == 0);
+    CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_at(workspace, 0, &resource) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_workspace_clear(workspace) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_count(workspace) == 0);
+    CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(librdp_workspace_load_xml(workspace, "<workspace/>", 12u) == LIBRDP_STATUS_UNSUPPORTED);
+    librdp_workspace_free(workspace);
+
+    CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
+    workspace = librdp_workspace_new(&config);
+    CHECK(workspace != NULL);
+    CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_workspace_load_xml(workspace, NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    librdp_workspace_free(workspace);
+    return 0;
+}
+
 int test_common(void)
 {
     if (test_trace() != 0)
@@ -7470,6 +7512,8 @@ int test_client_core(void)
     if (test_licensing_valid_client_alert_before_activation() != 0)
         return 1;
     if (test_licensing_request_before_activation() != 0)
+        return 1;
+    if (test_workspace_lifecycle() != 0)
         return 1;
     return test_settings_surface_input_session();
 }

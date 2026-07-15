@@ -28,6 +28,7 @@ return codes, and `@since` tags, use the Doxygen pages described in
 | `include/librdp/channel.h` | Application-owned dynamic virtual channel send and close APIs. |
 | `include/librdp/audio.h` | Audio format structure and audio input response/send APIs. |
 | `include/librdp/video.h` | Video capture media description and sample/error response APIs. |
+| `include/librdp/workspace.h` | Workspace feed discovery and published resource inspection APIs. |
 
 ## Primary objects
 
@@ -125,6 +126,10 @@ Application dynamic channels use `librdp_channel_id`. Applications send and clos
 Audio APIs provide response paths for audio input requests. Video APIs provide response paths for video capture requests.
 
 Applications should call these APIs from the same serialized session-driving context that receives the corresponding event.
+
+## Workspace API
+
+Workspace APIs fetch or load remote workspace feeds and expose published desktop or RemoteApp resources as borrowed resource views. Feed credentials are copied into workspace-owned storage and cleared when the workspace is freed.
 
 ## Error model
 
