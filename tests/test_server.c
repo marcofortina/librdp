@@ -15,6 +15,7 @@
 #include <librdp/librdp.h>
 
 #include "common/buffer.h"
+#include "graphics/bitmap.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -43,6 +44,8 @@
 static int test_server_config_defaults(void)
 {
     librdp_server_config config;
+    librdp_server_input_event input_event;
+    librdp_server_static_channel_info channel_info;
 
     SCHECK(librdp_server_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
@@ -55,6 +58,14 @@ static int test_server_config_defaults(void)
     SCHECK(config.width == 1024);
     SCHECK(config.height == 768);
     SCHECK(config.server_name == NULL);
+    SCHECK(librdp_server_input_event_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_input_event_init(&input_event) == LIBRDP_STATUS_OK);
+    SCHECK(input_event.version == LIBRDP_SERVER_INPUT_EVENT_VERSION);
+    SCHECK(input_event.size == sizeof(input_event));
+    SCHECK(librdp_server_static_channel_info_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_static_channel_info_init(&channel_info) == LIBRDP_STATUS_OK);
+    SCHECK(channel_info.version == LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION);
+    SCHECK(channel_info.size == sizeof(channel_info));
     return 0;
 }
 
@@ -157,8 +168,59 @@ static int test_server_send_all(int fd, const uint8_t* data, size_t length)
     return 1;
 }
 
+typedef struct test_server_runtime_context
+{
+    uint32_t input_count;
+    uint32_t control_count;
+    uint32_t font_list_count;
+    uint32_t key_count;
+    uint32_t channel_count;
+    uint16_t last_channel_id;
+    uint8_t channel_payload[16];
+    size_t channel_payload_len;
+} test_server_runtime_context;
+
+static void test_server_input_callback(librdp_server_peer* peer,
+                                       const librdp_server_input_event* event,
+                                       void* user_data)
+{
+    test_server_runtime_context* context = (test_server_runtime_context*)user_data;
+
+    (void)peer;
+    if (!context || !event)
+        return;
+    context->input_count++;
+    if (event->type == LIBRDP_SERVER_INPUT_CONTROL)
+        context->control_count++;
+    else if (event->type == LIBRDP_SERVER_INPUT_FONT_LIST)
+        context->font_list_count++;
+    else if (event->type == LIBRDP_SERVER_INPUT_SCANCODE_KEY)
+        context->key_count++;
+}
+
+static void test_server_channel_callback(librdp_server_peer* peer,
+                                         const librdp_server_channel_event* event,
+                                         void* user_data)
+{
+    test_server_runtime_context* context = (test_server_runtime_context*)user_data;
+    size_t copy_len = 0;
+
+    (void)peer;
+    if (!context || !event)
+        return;
+    context->channel_count++;
+    context->last_channel_id = event->channel_id;
+    copy_len = event->data_len > sizeof(context->channel_payload) ? sizeof(context->channel_payload) : event->data_len;
+    if (copy_len > 0)
+        memcpy(context->channel_payload, event->data, copy_len);
+    context->channel_payload_len = copy_len;
+}
+
 static int test_server_send_client_mcs_connect_initial(int fd)
 {
+    static const rdp_gcc_channel_definition extra_channels[1] = {
+        {{'t', 'e', 's', 't', 'v', 'c', 0, 0}, 0xc0800000u}
+    };
     rdp_buffer gcc_blocks;
     rdp_buffer gcc_request;
     rdp_buffer mcs_initial;
@@ -177,6 +239,8 @@ static int test_server_send_client_mcs_connect_initial(int fd)
     config.desktop_height = 600;
     config.requested_protocols = RDP_X224_PROTOCOL_STANDARD;
     config.client_name = "server-test";
+    config.extra_channels = extra_channels;
+    config.extra_channel_count = 1;
     if (rdp_gcc_write_client_data_blocks(&gcc_blocks, &config) == LIBRDP_STATUS_OK &&
         rdp_gcc_write_conference_create_request(&gcc_request, gcc_blocks.data, gcc_blocks.length) ==
             LIBRDP_STATUS_OK &&
@@ -258,6 +322,97 @@ static int test_server_send_confirm_active(int fd, uint32_t share_id, uint16_t u
     return ok;
 }
 
+static int test_server_send_slowpath(int fd, uint16_t user_id, const rdp_buffer* slowpath)
+{
+    rdp_buffer send_data;
+    int ok = 0;
+
+    if (!slowpath)
+        return 0;
+    rdp_buffer_init(&send_data);
+    if (rdp_security_write_send_data_request(&send_data,
+                                             user_id,
+                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             slowpath->data,
+                                             slowpath->length) == LIBRDP_STATUS_OK)
+        ok = test_server_send_mcs_pdu(fd, &send_data);
+    rdp_buffer_free(&send_data);
+    return ok;
+}
+
+static int test_server_send_client_synchronize(int fd, uint32_t share_id, uint16_t user_id)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    rdp_buffer_init(&slowpath);
+    if (rdp_slowpath_write_client_synchronize(&slowpath,
+                                              share_id,
+                                              (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
+        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+static int test_server_send_client_control(int fd, uint32_t share_id, uint16_t user_id, uint16_t action)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    rdp_buffer_init(&slowpath);
+    if (rdp_slowpath_write_client_control(&slowpath,
+                                          share_id,
+                                          (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                          action) == LIBRDP_STATUS_OK)
+        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+static int test_server_send_client_font_list(int fd, uint32_t share_id, uint16_t user_id)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    rdp_buffer_init(&slowpath);
+    if (rdp_slowpath_write_client_font_list(&slowpath,
+                                            share_id,
+                                            (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
+        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+static int test_server_send_keyboard_input(int fd, uint32_t share_id, uint16_t user_id)
+{
+    rdp_buffer slowpath;
+    int ok = 0;
+
+    rdp_buffer_init(&slowpath);
+    if (rdp_slowpath_write_client_keyboard_input(&slowpath,
+                                                 share_id,
+                                                 (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                 0,
+                                                 30) == LIBRDP_STATUS_OK)
+        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    rdp_buffer_free(&slowpath);
+    return ok;
+}
+
+static int test_server_send_static_channel_data(int fd, uint16_t user_id, uint16_t channel_id)
+{
+    static const uint8_t payload[] = {1, 2, 3, 4};
+    rdp_buffer send_data;
+    int ok = 0;
+
+    rdp_buffer_init(&send_data);
+    if (rdp_security_write_send_data_request(&send_data, user_id, channel_id, payload, sizeof(payload)) ==
+        LIBRDP_STATUS_OK)
+        ok = test_server_send_mcs_pdu(fd, &send_data);
+    rdp_buffer_free(&send_data);
+    return ok;
+}
+
 static int test_server_read_tpkt_x224_data(int fd, uint8_t* buffer, size_t buffer_len, rdp_tpkt* tpkt)
 {
     struct pollfd pfd;
@@ -291,6 +446,51 @@ static int test_server_read_tpkt_x224_data(int fd, uint8_t* buffer, size_t buffe
         offset += (size_t)count;
     }
     return rdp_tpkt_parse(buffer, total, tpkt) == LIBRDP_STATUS_OK;
+}
+
+static int test_server_read_slowpath_data_pdu(int fd,
+                                              uint8_t* response,
+                                              size_t response_len,
+                                              rdp_slowpath_data_pdu* data_pdu)
+{
+    rdp_tpkt tpkt;
+    rdp_mcs_send_data_indication indication;
+    const uint8_t* x224_data = NULL;
+    size_t x224_data_len = 0;
+
+    if (!test_server_read_tpkt_x224_data(fd, response, response_len, &tpkt))
+        return 0;
+    if (rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) != LIBRDP_STATUS_OK)
+        return 0;
+    if (rdp_mcs_parse_send_data_indication(x224_data, x224_data_len, &indication) != LIBRDP_STATUS_OK)
+        return 0;
+    return rdp_slowpath_parse_data_pdu(indication.payload, indication.payload_len, data_pdu) == LIBRDP_STATUS_OK;
+}
+
+static int test_server_read_static_channel_data(int fd,
+                                                uint8_t* response,
+                                                size_t response_len,
+                                                uint16_t* channel_id,
+                                                const uint8_t** data,
+                                                size_t* data_len)
+{
+    rdp_tpkt tpkt;
+    rdp_mcs_send_data_indication indication;
+    const uint8_t* x224_data = NULL;
+    size_t x224_data_len = 0;
+
+    if (!channel_id || !data || !data_len)
+        return 0;
+    if (!test_server_read_tpkt_x224_data(fd, response, response_len, &tpkt))
+        return 0;
+    if (rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) != LIBRDP_STATUS_OK)
+        return 0;
+    if (rdp_mcs_parse_send_data_indication(x224_data, x224_data_len, &indication) != LIBRDP_STATUS_OK)
+        return 0;
+    *channel_id = indication.channel_id;
+    *data = indication.payload;
+    *data_len = indication.payload_len;
+    return 1;
 }
 
 static int test_server_loopback_negotiation_failure(void)
@@ -364,8 +564,14 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_mcs_channel_join_confirm join_confirm;
     rdp_mcs_send_data_indication demand_indication;
     rdp_slowpath_demand_active demand;
+    rdp_slowpath_data_pdu data_pdu;
+    rdp_bitmap_update bitmap_update;
+    librdp_server_static_channel_info static_info;
+    test_server_runtime_context runtime_context;
     const uint8_t* x224_data = NULL;
     size_t x224_data_len = 0;
+    const uint8_t* static_payload = NULL;
+    size_t static_payload_len = 0;
     int client_fd = -1;
     int response_len = 0;
     librdp_server_config config;
@@ -373,7 +579,14 @@ static int test_server_loopback_standard_activation_sequence(void)
     librdp_server_peer* peer = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
     uint16_t port = 0;
+    uint16_t static_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u);
+    uint16_t response_channel_id = 0;
+    uint8_t pixels[4u * 4u * 4u];
 
+    memset(&runtime_context, 0, sizeof(runtime_context));
+    memset(pixels, 0, sizeof(pixels));
+    for (size_t pixel_index = 0; pixel_index < sizeof(pixels); pixel_index++)
+        pixels[pixel_index] = (uint8_t)pixel_index;
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     config.bind_address = "127.0.0.1";
     server = librdp_server_new(&config);
@@ -385,6 +598,10 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(client_fd >= 0);
     SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
     SCHECK(peer != NULL);
+    SCHECK(librdp_server_peer_set_input_callback(peer, test_server_input_callback, &runtime_context) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_set_channel_callback(peer, test_server_channel_callback, &runtime_context) ==
+           LIBRDP_STATUS_OK);
     SCHECK(test_server_send_all(client_fd, request, sizeof(request)));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
@@ -410,6 +627,13 @@ static int test_server_loopback_standard_activation_sequence(void)
                                             &server_data) == LIBRDP_STATUS_OK);
     SCHECK(server_data.has_core && server_data.has_security && server_data.has_network);
     SCHECK(server_data.mcs_channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
+    SCHECK(librdp_server_peer_static_channel_count(peer) == 1);
+    SCHECK(librdp_server_static_channel_info_init(&static_info) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 0, &static_info) == LIBRDP_STATUS_OK);
+    SCHECK(static_info.channel_id == static_channel_id);
+    SCHECK(static_info.joined == 0);
+    SCHECK(strcmp(static_info.name, "testvc") == 0);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 1, &static_info) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     SCHECK(test_server_send_simple_mcs(client_fd, rdp_mcs_write_erect_domain_request));
     status = librdp_server_peer_run_once(peer, 1000);
@@ -437,11 +661,22 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_send_channel_join(client_fd, attach_confirm.user_id, RDP_MCS_GLOBAL_CHANNEL_ID));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVATING);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CHANNEL_JOINING);
     SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
     SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
     SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data, x224_data_len, &join_confirm) == LIBRDP_STATUS_OK);
     SCHECK(join_confirm.channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
+
+    SCHECK(test_server_send_channel_join(client_fd, attach_confirm.user_id, static_channel_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVATING);
+    SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
+    SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data, x224_data_len, &join_confirm) == LIBRDP_STATUS_OK);
+    SCHECK(join_confirm.channel_id == static_channel_id);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 0, &static_info) == LIBRDP_STATUS_OK);
+    SCHECK(static_info.joined != 0);
     SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
     SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
     SCHECK(rdp_mcs_parse_send_data_indication(x224_data, x224_data_len, &demand_indication) == LIBRDP_STATUS_OK);
@@ -453,7 +688,71 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_send_confirm_active(client_fd, demand.share_id, attach_confirm.user_id));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVATING);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL &&
+           data_pdu.payload_len == 8 &&
+           data_pdu.payload[0] == 4);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL &&
+           data_pdu.payload_len == 8 &&
+           data_pdu.payload[0] == 2);
+
+    SCHECK(test_server_send_client_synchronize(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_control(client_fd, demand.share_id, attach_confirm.user_id, 4));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_control(client_fd, demand.share_id, attach_confirm.user_id, 1));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_font_list(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVE);
+    SCHECK(runtime_context.control_count == 2);
+    SCHECK(runtime_context.font_list_count == 1);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP &&
+           data_pdu.payload_len == 8);
+
+    SCHECK(librdp_server_peer_surface_blit_bgra32(peer, 0, 0, 4, 4, 16, pixels) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_surface_present(peer, 0, 0, 4, 4) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+    SCHECK(rdp_bitmap_parse_update(data_pdu.payload, data_pdu.payload_len, &bitmap_update) == LIBRDP_STATUS_OK);
+    SCHECK(bitmap_update.count == 1 &&
+           bitmap_update.rects[0].width == 4 &&
+           bitmap_update.rects[0].height == 4 &&
+           bitmap_update.rects[0].bits_per_pixel == 32);
+
+    SCHECK(test_server_send_keyboard_input(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(runtime_context.key_count == 1);
+
+    SCHECK(test_server_send_static_channel_data(client_fd, attach_confirm.user_id, static_channel_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(runtime_context.channel_count == 1);
+    SCHECK(runtime_context.last_channel_id == static_channel_id);
+    SCHECK(runtime_context.channel_payload_len == 4 &&
+           runtime_context.channel_payload[0] == 1 &&
+           runtime_context.channel_payload[3] == 4);
+    SCHECK(librdp_server_peer_send_channel_data(peer, static_channel_id, pixels, 4) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == static_channel_id &&
+           static_payload_len == 4 &&
+           static_payload[0] == pixels[0] &&
+           static_payload[3] == pixels[3]);
     librdp_server_peer_free(peer);
     librdp_server_close(server);
     librdp_server_free(server);

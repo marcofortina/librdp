@@ -125,13 +125,24 @@ librdp_status rdp_slowpath_write_share_data_header(rdp_buffer* buffer,
 librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
                                                     uint32_t share_id,
                                                     uint16_t channel_id);
+librdp_status rdp_slowpath_write_server_synchronize(rdp_buffer* buffer,
+                                                    uint32_t share_id,
+                                                    uint16_t channel_id,
+                                                    uint16_t target_user_id);
 librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id,
+                                                uint16_t action);
+librdp_status rdp_slowpath_write_server_control(rdp_buffer* buffer,
                                                 uint32_t share_id,
                                                 uint16_t channel_id,
                                                 uint16_t action);
 librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
                                                   uint32_t share_id,
                                                   uint16_t channel_id);
+librdp_status rdp_slowpath_write_server_font_map(rdp_buffer* buffer,
+                                                 uint32_t share_id,
+                                                 uint16_t channel_id);
 librdp_status rdp_slowpath_write_client_persistent_key_list(rdp_buffer* buffer,
                                                             uint32_t share_id,
                                                             uint16_t channel_id);

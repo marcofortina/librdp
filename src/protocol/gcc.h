@@ -109,6 +109,7 @@ typedef struct rdp_gcc_client_data_summary
     uint32_t desktop_physical_width;
     uint32_t desktop_physical_height;
     uint16_t channel_count;
+    rdp_gcc_channel_definition channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t has_multitransport;
     uint32_t multitransport_flags;
 } rdp_gcc_client_data_summary;

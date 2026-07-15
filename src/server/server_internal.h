@@ -18,6 +18,7 @@
 #define RDP_SERVER_INTERNAL_H
 
 #include "common/buffer.h"
+#include "protocol/gcc.h"
 
 #include <librdp/server.h>
 
@@ -46,10 +47,21 @@ struct librdp_server_peer
     uint16_t height;
     uint16_t advertised_channel_count;
     uint16_t joined_channel_count;
+    rdp_gcc_channel_definition advertised_channels[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t confirm_active_seen;
     uint8_t synchronize_seen;
     uint8_t control_seen;
     uint8_t font_list_seen;
+    uint8_t updates_suppressed;
+    uint8_t* framebuffer;
+    size_t framebuffer_len;
+    size_t framebuffer_stride;
+    librdp_server_input_callback input_callback;
+    void* input_callback_user_data;
+    librdp_server_channel_callback channel_callback;
+    void* channel_callback_user_data;
     rdp_buffer input;
 };
 

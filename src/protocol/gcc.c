@@ -908,6 +908,21 @@ librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, 
             if (rdp_stream_read_u16_le(&payload, &summary->channel_count) != LIBRDP_STATUS_OK ||
                 rdp_stream_read_u16_le(&payload, &ignored16) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
+            if (summary->channel_count > RDP_GCC_MAX_SERVER_CHANNELS ||
+                rdp_stream_remaining(&payload) < (size_t)summary->channel_count * 12u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            for (uint16_t channel_index = 0; channel_index < summary->channel_count; channel_index++)
+            {
+                const uint8_t* name = NULL;
+
+                if (rdp_stream_read_bytes(&payload, &name, sizeof(summary->channels[channel_index].name)) !=
+                        LIBRDP_STATUS_OK ||
+                    rdp_stream_read_u32_le(&payload, &summary->channels[channel_index].flags) != LIBRDP_STATUS_OK)
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                memcpy(summary->channels[channel_index].name,
+                       name,
+                       sizeof(summary->channels[channel_index].name));
+            }
             summary->has_network = 1;
         }
         else if (block.type == RDP_GCC_CS_MULTITRANSPORT)

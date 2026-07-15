@@ -735,14 +735,39 @@ librdp_status rdp_slowpath_write_client_synchronize(rdp_buffer* buffer,
                                        sizeof(payload));
 }
 
-librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
+/*
+ * Serialize the server Synchronize PDU. target_user_id is the attached MCS
+ * user identifier, not a virtual-channel identifier.
+ */
+librdp_status rdp_slowpath_write_server_synchronize(rdp_buffer* buffer,
+                                                    uint32_t share_id,
+                                                    uint16_t channel_id,
+                                                    uint16_t target_user_id)
+{
+    uint8_t payload[4];
+
+    payload[0] = 1;
+    payload[1] = 0;
+    payload[2] = (uint8_t)(target_user_id & 0xffu);
+    payload[3] = (uint8_t)((target_user_id >> 8) & 0xffu);
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE,
+                                       payload,
+                                       sizeof(payload));
+}
+
+static librdp_status rdp_slowpath_write_control(rdp_buffer* buffer,
                                                 uint32_t share_id,
                                                 uint16_t channel_id,
-                                                uint16_t action)
+                                                uint16_t action,
+                                                int server_side)
 {
     uint8_t payload[8];
 
-    if (action != 1u && action != 4u)
+    if ((!server_side && action != 1u && action != 4u) ||
+        (server_side && action != 2u && action != 4u))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     payload[0] = (uint8_t)(action & 0xffu);
     payload[1] = (uint8_t)((action >> 8) & 0xffu);
@@ -760,6 +785,26 @@ librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
                                        sizeof(payload));
 }
 
+librdp_status rdp_slowpath_write_client_control(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id,
+                                                uint16_t action)
+{
+    return rdp_slowpath_write_control(buffer, share_id, channel_id, action, 0);
+}
+
+/*
+ * Serialize server Control PDUs used by activation. Valid server-side actions
+ * are Cooperate and Granted Control.
+ */
+librdp_status rdp_slowpath_write_server_control(rdp_buffer* buffer,
+                                                uint32_t share_id,
+                                                uint16_t channel_id,
+                                                uint16_t action)
+{
+    return rdp_slowpath_write_control(buffer, share_id, channel_id, action, 1);
+}
+
 librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
                                                   uint32_t share_id,
                                                   uint16_t channel_id)
@@ -770,6 +815,25 @@ librdp_status rdp_slowpath_write_client_font_list(rdp_buffer* buffer,
                                        share_id,
                                        channel_id,
                                        RDP_SLOWPATH_DATA_PDU_FONT_LIST,
+                                       payload,
+                                       sizeof(payload));
+}
+
+/*
+ * Serialize the server Font Map completion PDU. The zero-entry map is the
+ * activation acknowledgment used by clients that do not require legacy font
+ * enumeration from the server.
+ */
+librdp_status rdp_slowpath_write_server_font_map(rdp_buffer* buffer,
+                                                 uint32_t share_id,
+                                                 uint16_t channel_id)
+{
+    static const uint8_t payload[8] = {0, 0, 0, 0, 3, 0, 4, 0};
+
+    return rdp_slowpath_write_data_pdu(buffer,
+                                       share_id,
+                                       channel_id,
+                                       RDP_SLOWPATH_DATA_PDU_FONT_MAP,
                                        payload,
                                        sizeof(payload));
 }
