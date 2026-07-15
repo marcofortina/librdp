@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-set(LIBRDP_SOURCES
+set(LIBRDP_CLIENT_SOURCES
     src/client/client.c
     src/client/error.c
     src/client/settings.c
@@ -26,7 +26,15 @@ set(LIBRDP_SOURCES
     src/client/session_usb.c
     src/client/session_video.c
     src/client/smartcard_backend.c
+)
+
+set(LIBRDP_PUBLIC_SERVICE_SOURCES
     src/admin/admin.c
+    src/clipboard/clipboard.c
+    src/workspace/workspace.c
+)
+
+set(LIBRDP_CHANNEL_SOURCES
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c
@@ -56,11 +64,18 @@ set(LIBRDP_SOURCES
     src/channels/virtual_channel.c
     src/channels/webauthn_channel.c
     src/channels/xps_print.c
-    src/clipboard/clipboard.c
+)
+
+set(LIBRDP_COMMON_SOURCES
     src/common/buffer.c
     src/common/charset.c
     src/common/stream.c
     src/common/trace.c
+    src/input/input.c
+    src/platform/socket.c
+)
+
+set(LIBRDP_GRAPHICS_SOURCES
     src/graphics/avc.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
@@ -72,12 +87,21 @@ set(LIBRDP_SOURCES
     src/graphics/rfx_stream.c
     src/graphics/surface.c
     src/graphics/surface_commands.c
+)
+
+set(LIBRDP_GATEWAY_SOURCES
     src/gateway/gateway.c
     src/gateway/rdg_http.c
-    src/input/input.c
-    src/licensing/licensing.c
+)
+
+set(LIBRDP_SECURITY_SOURCES
     src/nla/credssp.c
-    src/platform/socket.c
+    src/security/certificate.c
+    src/security/security.c
+)
+
+set(LIBRDP_PROTOCOL_SOURCES
+    src/licensing/licensing.c
     src/protocol/capabilities.c
     src/protocol/bulk.c
     src/protocol/fastpath.c
@@ -88,13 +112,25 @@ set(LIBRDP_SOURCES
     src/protocol/slowpath.c
     src/protocol/tpkt.c
     src/protocol/x224.c
-    src/security/certificate.c
-    src/security/security.c
+)
+
+set(LIBRDP_TRANSPORT_SOURCES
     src/transport/tcp.c
     src/transport/multitransport.c
     src/transport/transport.c
     src/transport/udp_transport.c
-    src/workspace/workspace.c
+)
+
+set(LIBRDP_SOURCES
+    ${LIBRDP_CLIENT_SOURCES}
+    ${LIBRDP_PUBLIC_SERVICE_SOURCES}
+    ${LIBRDP_CHANNEL_SOURCES}
+    ${LIBRDP_COMMON_SOURCES}
+    ${LIBRDP_GRAPHICS_SOURCES}
+    ${LIBRDP_GATEWAY_SOURCES}
+    ${LIBRDP_SECURITY_SOURCES}
+    ${LIBRDP_PROTOCOL_SOURCES}
+    ${LIBRDP_TRANSPORT_SOURCES}
 )
 
 set(LIBRDP_BACKEND_SOURCES
