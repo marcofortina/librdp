@@ -175,6 +175,7 @@ static int rdp_admin_action_valid(const librdp_admin_action* action)
     return action->message_text == NULL;
 }
 
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
 /*
  * Builds a bounded Windows command for the WinRM process provider. Free-form
  * message text is accepted only after rejecting shell metacharacters so action
@@ -236,6 +237,7 @@ static librdp_status rdp_admin_build_action_command(const librdp_admin_action* a
     }
     return LIBRDP_STATUS_OK;
 }
+#endif
 
 static librdp_status rdp_admin_copy_optional(const char* source, char** destination)
 {
@@ -887,6 +889,7 @@ static librdp_status rdp_admin_parse_xml(librdp_admin* admin, const void* xml, s
     return LIBRDP_STATUS_OK;
 }
 
+#ifdef RDP_HAVE_CURL
 static librdp_status rdp_admin_find_return_value(const xmlNode* node, int* found, uint32_t* value)
 {
     const xmlNode* child = NULL;
@@ -959,6 +962,7 @@ static librdp_status rdp_admin_parse_action_response(const void* xml, size_t xml
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     return value == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
 }
+#endif
 #endif
 
 librdp_status librdp_admin_config_init(librdp_admin_config* config)
