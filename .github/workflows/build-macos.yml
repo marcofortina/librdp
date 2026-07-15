@@ -1,0 +1,92 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: build-macos
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-core-no-viewer:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: >
+          brew update &&
+          brew install
+          cmake ninja pkg-config openssl@3 doxygen graphviz
+          ffmpeg openh264 pcsc-lite libusb libfido2 libcbor libarchive
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-macos-core-no-viewer -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+          -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
+
+      - name: Build
+        run: cmake --build build-macos-core-no-viewer --parallel
+
+      - name: Test
+        run: ctest --test-dir build-macos-core-no-viewer --output-on-failure
+
+  macos-core-no-backends:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: >
+          brew update &&
+          brew install
+          cmake ninja pkg-config openssl@3 doxygen graphviz
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-macos-core-no-backends -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=OFF
+          -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=OFF
+          -DLIBRDP_WITH_OPENH264_AVC=OFF
+          -DLIBRDP_WITH_PCSC=OFF
+          -DLIBRDP_WITH_LIBUSB=OFF
+          -DLIBRDP_WITH_FIDO2=OFF
+          -DLIBRDP_WITH_CBOR=OFF
+          -DLIBRDP_WITH_CUPS=OFF
+          -DLIBRDP_WITH_ACL=OFF
+          -DLIBRDP_WITH_ATTR=OFF
+          -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+          -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
+
+      - name: Build
+        run: cmake --build build-macos-core-no-backends --parallel
+
+      - name: Test
+        run: ctest --test-dir build-macos-core-no-backends --output-on-failure
