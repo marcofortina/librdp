@@ -24,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef RDP_HAVE_CURL
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
 #include <curl/curl.h>
 #include <pthread.h>
 #endif
@@ -165,7 +165,7 @@ static librdp_status rdp_workspace_copy_config(librdp_workspace* workspace,
     return LIBRDP_STATUS_OK;
 }
 
-#ifdef RDP_HAVE_CURL
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
 typedef struct rdp_workspace_fetch_buffer
 {
     char* data;
