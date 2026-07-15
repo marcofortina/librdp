@@ -13,11 +13,14 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
-def run_command(args: list[str]) -> str:
+def run_command(args: list[str], *, required: bool = True) -> Optional[str]:
     result = subprocess.run(args, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode != 0:
+        if not required:
+            return None
         raise RuntimeError(f"{' '.join(args)} failed with {result.returncode}: {result.stderr.strip()}")
     return result.stdout
 
@@ -25,27 +28,52 @@ def run_command(args: list[str]) -> str:
 def parse_symbol_output(output: str) -> set[str]:
     symbols: set[str] = set()
     for line in output.splitlines():
-        if " UND " in line or line.lstrip().startswith("Num:"):
+        stripped = line.strip()
+        if not stripped or " UND " in line or stripped.startswith("Num:"):
             continue
-        match = re.search(r"[ \t]([_A-Za-z][_A-Za-z0-9]*(?:@@?[^ \t]+)?)$", line)
+        if re.match(r"^\d+:", stripped) and not re.search(r"\b(GLOBAL|WEAK)\b", stripped):
+            continue
+        if not re.match(r"^(\d+:|[0-9A-Fa-f]+[ \t]+[A-Za-z][ \t]+|[_A-Za-z][_A-Za-z0-9]*[ \t]+[A-Za-z][ \t])", stripped):
+            continue
+        match = re.search(r"(^|[ \t])(_?librdp_[A-Za-z0-9_]+(?:@@?[^ \t]+)?)($|[ \t])", stripped)
         if not match:
             continue
-        symbol = re.sub(r"@@?.*$", "", match.group(1))
+        symbol = re.sub(r"@@?.*$", "", match.group(2))
         if symbol.startswith("_librdp_"):
             symbol = symbol[1:]
-        if symbol.startswith("librdp_"):
-            symbols.add(symbol)
+        symbols.add(symbol)
     return symbols
 
 
 def exported_symbols(library: Path) -> set[str]:
     readelf = shutil.which("readelf")
     nm = shutil.which("nm")
-    if readelf:
-        return parse_symbol_output(run_command([readelf, "--dyn-syms", "--wide", str(library)]))
-    if nm:
-        return parse_symbol_output(run_command([nm, "-D", "--defined-only", str(library)]))
-    raise RuntimeError("readelf or nm is required for ABI symbol validation")
+    attempts: list[list[str]] = []
+    if sys.platform == "darwin":
+        if nm:
+            attempts.append([nm, "-gU", str(library)])
+            attempts.append([nm, "-g", str(library)])
+        else:
+            raise RuntimeError("nm is required for Mach-O ABI symbol validation")
+    else:
+        if readelf:
+            attempts.append([readelf, "--dyn-syms", "--wide", str(library)])
+            attempts.append([readelf, "-Ws", str(library)])
+            attempts.append([readelf, "-s", str(library)])
+        if nm:
+            attempts.append([nm, "-D", "--defined-only", str(library)])
+            attempts.append([nm, "-gP", str(library)])
+            attempts.append([nm, "-g", str(library)])
+    if not attempts:
+        raise RuntimeError("readelf or nm is required for ABI symbol validation")
+    for attempt in attempts:
+        output = run_command(attempt, required=False)
+        if output is None:
+            continue
+        symbols = parse_symbol_output(output)
+        if symbols:
+            return symbols
+    raise RuntimeError("unable to inspect exported ABI symbols with readelf or nm")
 
 
 def abi_key(probe: dict[str, object]) -> str:
