@@ -116,15 +116,6 @@ static void rdp_workspace_resources_free(rdp_workspace_resource_storage* resourc
     free(resources);
 }
 
-static void rdp_workspace_commit_resources(librdp_workspace* workspace,
-                                           rdp_workspace_resource_storage* resources,
-                                           size_t count)
-{
-    rdp_workspace_resources_free(workspace->resources, workspace->resource_count);
-    workspace->resources = resources;
-    workspace->resource_count = count;
-}
-
 static int rdp_workspace_config_valid(const librdp_workspace_config* config)
 {
     if (!config || config->version != LIBRDP_WORKSPACE_CONFIG_VERSION ||
@@ -288,6 +279,15 @@ typedef struct rdp_workspace_parse_list
     size_t count;
     size_t capacity;
 } rdp_workspace_parse_list;
+
+static void rdp_workspace_commit_resources(librdp_workspace* workspace,
+                                           rdp_workspace_resource_storage* resources,
+                                           size_t count)
+{
+    rdp_workspace_resources_free(workspace->resources, workspace->resource_count);
+    workspace->resources = resources;
+    workspace->resource_count = count;
+}
 
 static int rdp_workspace_node_is(const xmlNode* node, const char* name)
 {
