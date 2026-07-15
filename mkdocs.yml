@@ -73,6 +73,12 @@ nav:
   - Home: index.md
   - Build and integration:
       - Build: build.md
+      - Build Linux: build-linux.md
+      - Build macOS: build-macos.md
+      - Build FreeBSD: build-freebsd.md
+      - Build OpenBSD: build-openbsd.md
+      - Build NetBSD: build-netbsd.md
+      - Build Solaris: build-solaris.md
       - Contributing: contributing.md
       - Coding standards: coding-standards.md
       - Packaging: packaging.md

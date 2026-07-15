@@ -10,6 +10,12 @@ librdp is a C client library for building RDP viewers and integration tools on U
 ## Start here
 
 - [Build](build.md)
+- [Build Linux](build-linux.md)
+- [Build macOS](build-macos.md)
+- [Build FreeBSD](build-freebsd.md)
+- [Build OpenBSD](build-openbsd.md)
+- [Build NetBSD](build-netbsd.md)
+- [Build Solaris](build-solaris.md)
 - [API guide](api.md)
 - [API reference](api-reference.md)
 - [Generated API documentation](generated-api.md)

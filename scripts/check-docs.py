@@ -16,6 +16,12 @@ REQUIRED_MARKDOWN = (
     "README.md",
     "docs/index.md",
     "docs/build.md",
+    "docs/build-linux.md",
+    "docs/build-macos.md",
+    "docs/build-freebsd.md",
+    "docs/build-openbsd.md",
+    "docs/build-netbsd.md",
+    "docs/build-solaris.md",
     "docs/contributing.md",
     "docs/coding-standards.md",
     "docs/api.md",
@@ -42,7 +48,7 @@ REQUIRED_MARKDOWN = (
 REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "mkdocs.yml",
     "docs/requirements.txt",
-    ".github/workflows/pages.yml",
+    ".github/workflows/build-pages.yml",
     "docs/man/librdp.7",
     "docs/man/librdp-api.7",
     "docs/man/librdp-tracing.7",
@@ -334,10 +340,10 @@ def validate_mkdocs(errors: list[str]) -> None:
 
 
 def validate_pages_workflow(errors: list[str]) -> None:
-    workflow = read(".github/workflows/pages.yml")
+    workflow = read(".github/workflows/build-pages.yml")
     required_snippets = (
-        "actions/deploy-pages@v4",
-        "actions/upload-pages-artifact@v3",
+        "actions/deploy-pages@v5",
+        "actions/upload-pages-artifact@v5",
         "python3 scripts/check-docs.py",
         "python3 scripts/check-public-api-docs.py",
         "python3 scripts/check-examples.py",

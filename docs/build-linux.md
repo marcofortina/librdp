@@ -1,0 +1,58 @@
+<!--
+Copyright (C) 2026 Marco Fortina
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+# Build Linux
+
+Linux is the primary development environment and the only CI platform that builds the X11 viewer by default in local developer workflows.
+
+## Dependencies
+
+On Debian or Ubuntu:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz \
+  libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev \
+  libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev \
+  libacl1-dev libattr1-dev libarchive-dev \
+  libx11-dev libxcursor-dev libxfixes-dev libxext-dev libxrandr-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libpipewire-0.3-dev libjpeg-dev
+```
+
+## Core And Tests
+
+```sh
+cmake -S . -B build-linux -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_EXAMPLES=ON \
+  -DLIBRDP_BUILD_X11_VIEWER=OFF
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
+```
+
+## X11 Viewer
+
+```sh
+cmake -S . -B build-linux-x11 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_X11_VIEWER=ON
+cmake --build build-linux-x11 --parallel
+```
+
+The viewer executable is `build-linux-x11/librdp-x11-viewer`.
+
+## Fuzz Targets
+
+```sh
+CC=clang cmake -S . -B build-linux-fuzz -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLIBRDP_BUILD_FUZZ=ON \
+  -DLIBRDP_BUILD_TESTS=OFF \
+  -DLIBRDP_BUILD_X11_VIEWER=OFF
+cmake --build build-linux-fuzz --parallel
+```
