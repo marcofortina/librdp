@@ -20,13 +20,20 @@
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef RDP_HAVE_CURL
+#include <curl/curl.h>
+#include <pthread.h>
+#endif
 #ifdef RDP_HAVE_LIBXML2
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #endif
+
+#include "common/trace.h"
 
 #define RDP_WORKSPACE_DEFAULT_TIMEOUT_MS 15000u
 #define RDP_WORKSPACE_MAX_TIMEOUT_MS 600000u
@@ -166,6 +173,113 @@ static librdp_status rdp_workspace_copy_config(librdp_workspace* workspace,
     workspace->timeout_ms = config->timeout_ms ? config->timeout_ms : RDP_WORKSPACE_DEFAULT_TIMEOUT_MS;
     return LIBRDP_STATUS_OK;
 }
+
+#ifdef RDP_HAVE_CURL
+typedef struct rdp_workspace_fetch_buffer
+{
+    char* data;
+    size_t length;
+    size_t capacity;
+    int limit_exceeded;
+} rdp_workspace_fetch_buffer;
+
+static pthread_once_t rdp_workspace_curl_once = PTHREAD_ONCE_INIT;
+
+static void rdp_workspace_curl_init_once(void)
+{
+    (void)curl_global_init(CURL_GLOBAL_DEFAULT);
+}
+
+static librdp_status rdp_workspace_curl_status(CURLcode code)
+{
+    if (code == CURLE_OK)
+        return LIBRDP_STATUS_OK;
+    if (code == CURLE_OPERATION_TIMEDOUT)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (code == CURLE_UNSUPPORTED_PROTOCOL)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE)
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    if (code == CURLE_OUT_OF_MEMORY)
+        return LIBRDP_STATUS_NO_MEMORY;
+    return LIBRDP_STATUS_IO_ERROR;
+}
+
+static size_t rdp_workspace_curl_write(char* ptr, size_t size, size_t nmemb, void* user_data)
+{
+    rdp_workspace_fetch_buffer* buffer = (rdp_workspace_fetch_buffer*)user_data;
+    size_t total = 0;
+    size_t required = 0;
+    size_t capacity = 0;
+    char* resized = NULL;
+
+    if (!buffer || !ptr || (size != 0 && nmemb > SIZE_MAX / size))
+        return 0;
+    total = size * nmemb;
+    if (total == 0)
+        return 0;
+    if (buffer->length > RDP_WORKSPACE_MAX_XML_LEN || total > RDP_WORKSPACE_MAX_XML_LEN - buffer->length)
+    {
+        buffer->limit_exceeded = 1;
+        return 0;
+    }
+    required = buffer->length + total + 1u;
+    if (required > buffer->capacity)
+    {
+        capacity = buffer->capacity == 0 ? 4096u : buffer->capacity;
+        while (capacity < required)
+        {
+            if (capacity > RDP_WORKSPACE_MAX_XML_LEN / 2u)
+            {
+                capacity = RDP_WORKSPACE_MAX_XML_LEN + 1u;
+                break;
+            }
+            capacity *= 2u;
+        }
+        if (capacity > RDP_WORKSPACE_MAX_XML_LEN + 1u)
+            capacity = RDP_WORKSPACE_MAX_XML_LEN + 1u;
+        resized = (char*)realloc(buffer->data, capacity);
+        if (!resized)
+            return 0;
+        buffer->data = resized;
+        buffer->capacity = capacity;
+    }
+    memcpy(buffer->data + buffer->length, ptr, total);
+    buffer->length += total;
+    buffer->data[buffer->length] = '\0';
+    return total;
+}
+
+static librdp_status rdp_workspace_http_user(const librdp_workspace* workspace, char** out)
+{
+    int written = 0;
+    size_t needed = 0;
+    char* value = NULL;
+
+    if (!out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *out = NULL;
+    if (!workspace->username)
+        return LIBRDP_STATUS_OK;
+    if (!workspace->domain)
+        return rdp_workspace_copy_optional(workspace->username, out);
+    written = snprintf(NULL, 0, "%s\\%s", workspace->domain, workspace->username);
+    if (written <= 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    needed = (size_t)written + 1u;
+    value = (char*)malloc(needed);
+    if (!value)
+        return LIBRDP_STATUS_NO_MEMORY;
+    written = snprintf(value, needed, "%s\\%s", workspace->domain, workspace->username);
+    if (written <= 0 || (size_t)written + 1u != needed)
+    {
+        free(value);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    *out = value;
+    return LIBRDP_STATUS_OK;
+}
+#endif
 
 #ifdef RDP_HAVE_LIBXML2
 typedef struct rdp_workspace_parse_list
@@ -548,7 +662,87 @@ librdp_status librdp_workspace_fetch(librdp_workspace* workspace)
 {
     if (!workspace || !workspace->feed_url || workspace->feed_url[0] == '\0')
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+#if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
     return LIBRDP_STATUS_UNSUPPORTED;
+#else
+    CURL* easy = NULL;
+    CURLcode code = CURLE_OK;
+    rdp_workspace_fetch_buffer buffer;
+    librdp_status status = LIBRDP_STATUS_OK;
+    char* http_user = NULL;
+    long response_code = 0;
+
+    memset(&buffer, 0, sizeof(buffer));
+    status = rdp_workspace_http_user(workspace, &http_user);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+
+    pthread_once(&rdp_workspace_curl_once, rdp_workspace_curl_init_once);
+    easy = curl_easy_init();
+    if (!easy)
+    {
+        free(http_user);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.workspace.fetch.start",
+                    "url_set=1 has_user=%d timeout_ms=%u",
+                    workspace->username ? 1 : 0,
+                    (unsigned)workspace->timeout_ms);
+    curl_easy_setopt(easy, CURLOPT_URL, workspace->feed_url);
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, (long)workspace->timeout_ms);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, (long)workspace->timeout_ms);
+    curl_easy_setopt(easy, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(easy, CURLOPT_HTTPAUTH, (long)CURLAUTH_ANYSAFE);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+    curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, rdp_workspace_curl_write);
+    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &buffer);
+    if (http_user)
+        curl_easy_setopt(easy, CURLOPT_USERNAME, http_user);
+    if (workspace->password)
+        curl_easy_setopt(easy, CURLOPT_PASSWORD, workspace->password);
+
+    code = curl_easy_perform(easy);
+    if (buffer.limit_exceeded)
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    else
+        status = rdp_workspace_curl_status(code);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        (void)curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code < 200 || response_code >= 300)
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = buffer.length == 0 ? LIBRDP_STATUS_PROTOCOL_ERROR :
+                                      rdp_workspace_parse_xml(workspace, buffer.data, buffer.length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.workspace.fetch.done",
+                        "bytes=%zu resources=%zu",
+                        buffer.length,
+                        workspace->resource_count);
+    else
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.workspace.fetch.failed",
+                        "status=%s curl_code=%u http_status=%ld",
+                        librdp_status_name(status),
+                        (unsigned)code,
+                        response_code);
+    curl_easy_cleanup(easy);
+    free(buffer.data);
+    free(http_user);
+    return status;
+#endif
 }
 
 librdp_status librdp_workspace_load_xml(librdp_workspace* workspace, const void* xml, size_t xml_len)

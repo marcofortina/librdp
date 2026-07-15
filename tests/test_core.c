@@ -7423,7 +7423,9 @@ static int test_workspace_lifecycle(void)
     CHECK(librdp_workspace_resource_at(workspace, 0, &resource) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_workspace_clear(workspace) == LIBRDP_STATUS_OK);
     CHECK(librdp_workspace_resource_count(workspace) == 0);
+#if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
     CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_UNSUPPORTED);
+#endif
 #ifdef RDP_HAVE_LIBXML2
     CHECK(librdp_workspace_load_xml(workspace, "<workspace/>", 12u) == LIBRDP_STATUS_OK);
 #else
@@ -7510,6 +7512,146 @@ static int test_workspace_xml_parse(void)
 }
 #endif
 
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+static int test_workspace_http_listen(uint16_t* port)
+{
+    struct sockaddr_in addr;
+    socklen_t addr_len = (socklen_t)sizeof(addr);
+    int fd = -1;
+    int one = 1;
+
+    if (!port)
+        return -1;
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0 ||
+        listen(fd, 1) != 0)
+    {
+        close(fd);
+        return -1;
+    }
+    *port = ntohs(addr.sin_port);
+    return fd;
+}
+
+static int test_workspace_write_all(int fd, const char* data, size_t length)
+{
+    size_t written = 0;
+
+    while (written < length)
+    {
+        ssize_t result = write(fd, data + written, length - written);
+
+        if (result <= 0)
+            return 0;
+        written += (size_t)result;
+    }
+    return 1;
+}
+
+/*
+ * Fixture: serves one workspace feed over loopback HTTP so fetch coverage does
+ * not depend on external RDS infrastructure or credentials.
+ */
+static int test_workspace_http_child(int listen_fd)
+{
+    static const char feed[] =
+        "<Workspace><Resources><Resource><Title>Remote Desktop</Title><Type>Desktop</Type>"
+        "<RDPFileContents>full address:s:desktop.example.test</RDPFileContents>"
+        "</Resource></Resources></Workspace>";
+    char request[1024];
+    char header[256];
+    size_t used = 0;
+    int client = -1;
+    int header_len = 0;
+
+    client = accept(listen_fd, NULL, NULL);
+    if (client < 0)
+        return 1;
+    while (used + 1u < sizeof(request))
+    {
+        ssize_t got = read(client, request + used, sizeof(request) - used - 1u);
+
+        if (got <= 0)
+        {
+            close(client);
+            return 1;
+        }
+        used += (size_t)got;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n"))
+            break;
+    }
+    if (!strstr(request, "GET /feed HTTP/"))
+    {
+        close(client);
+        return 1;
+    }
+    header_len = snprintf(header,
+                          sizeof(header),
+                          "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
+                          sizeof(feed) - 1u);
+    if (header_len <= 0 || (size_t)header_len >= sizeof(header) ||
+        !test_workspace_write_all(client, header, (size_t)header_len) ||
+        !test_workspace_write_all(client, feed, sizeof(feed) - 1u))
+    {
+        close(client);
+        return 1;
+    }
+    close(client);
+    return 0;
+}
+
+static int test_workspace_fetch_http(void)
+{
+    librdp_workspace_config config;
+    librdp_workspace_resource resource;
+    librdp_workspace* workspace = NULL;
+    char url[128];
+    uint16_t port = 0;
+    int listen_fd = -1;
+    pid_t child = -1;
+    int child_status = 0;
+
+    listen_fd = test_workspace_http_listen(&port);
+    CHECK(listen_fd >= 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0)
+    {
+        int rc = test_workspace_http_child(listen_fd);
+
+        close(listen_fd);
+        _exit(rc);
+    }
+    snprintf(url, sizeof(url), "http://127.0.0.1:%u/feed", (unsigned)port);
+    CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
+    config.feed_url = url;
+    config.timeout_ms = 5000u;
+    workspace = librdp_workspace_new(&config);
+    CHECK(workspace != NULL);
+    CHECK(librdp_workspace_fetch(workspace) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_count(workspace) == 1u);
+    CHECK(librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK);
+    CHECK(librdp_workspace_resource_at(workspace, 0, &resource) == LIBRDP_STATUS_OK);
+    CHECK(resource.type == LIBRDP_WORKSPACE_RESOURCE_DESKTOP);
+    CHECK(resource.title && strcmp(resource.title, "Remote Desktop") == 0);
+    CHECK(resource.rdp_file_contents && strstr(resource.rdp_file_contents, "desktop.example.test") != NULL);
+    librdp_workspace_free(workspace);
+    close(listen_fd);
+    CHECK(waitpid(child, &child_status, 0) == child);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+#endif
+
 int test_common(void)
 {
     if (test_trace() != 0)
@@ -7591,6 +7733,10 @@ int test_client_core(void)
         return 1;
 #ifdef RDP_HAVE_LIBXML2
     if (test_workspace_xml_parse() != 0)
+        return 1;
+#endif
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+    if (test_workspace_fetch_http() != 0)
         return 1;
 #endif
     return test_settings_surface_input_session();
