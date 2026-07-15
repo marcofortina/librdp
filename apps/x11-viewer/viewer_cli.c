@@ -147,6 +147,20 @@ static int parse_u32(const char* text, uint32_t* value)
     return 1;
 }
 
+static int parse_u32_any(const char* text, uint32_t* value)
+{
+    char* end = NULL;
+    unsigned long parsed = 0;
+
+    if (!text || !value)
+        return 0;
+    parsed = strtoul(text, &end, 10);
+    if (!end || *end != '\0' || parsed > UINT32_MAX)
+        return 0;
+    *value = (uint32_t)parsed;
+    return 1;
+}
+
 static int parse_security(const char* text, librdp_security_mode* mode)
 {
     if (!text || !mode)
@@ -337,7 +351,7 @@ static const char* optional_value(int argc, int* index, char** argv)
 
 const char* x11_cli_usage(void)
 {
-    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--webauthn-rp-id id] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
+    return "usage: %s --target host [--port port] [--user name] [--password value] [--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] [--tls-prompt-cert] [--tls-accept-any-cert] [--gateway url] [--gateway-user name] [--gateway-password value] [--gateway-domain name] [--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] [--serial name=path] [--parallel name=path] [--printer name=driver=path] [--clipboard-file path] [--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] [--camera device=/dev/videoN] [--smartcard [pcsc|vsmartcard=path]] [--usb vid:pid|bus:dev] [--pnp] [--webauthn [fido2|fido2=/dev/hidrawN|mock|mock=path]] [--webauthn-rp-id id] [--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n";
 }
 
 void x11_cli_options_free(x11_cli_options* options)
@@ -358,6 +372,13 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
     int i = 1;
     uint32_t width = librdp_settings_width(settings);
     uint32_t height = librdp_settings_height(settings);
+    const char* gateway_url = NULL;
+    const char* gateway_username = NULL;
+    const char* gateway_password = NULL;
+    const char* gateway_domain = NULL;
+    uint32_t gateway_timeout_ms = 0;
+    int gateway_has_timeout = 0;
+    int gateway_no_session_credentials = 0;
 
     if (!settings || !options)
         return 0;
@@ -416,6 +437,40 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
         {
             if (!configure_tls_prompt_policy(settings, options, X11_TLS_CERT_ACCEPT))
                 return 0;
+        }
+        else if (strcmp(argv[i], "--gateway") == 0)
+        {
+            if (!require_value(argc, &i))
+                return 0;
+            gateway_url = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-user") == 0)
+        {
+            if (!require_value(argc, &i))
+                return 0;
+            gateway_username = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-password") == 0)
+        {
+            if (!require_value(argc, &i))
+                return 0;
+            gateway_password = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-domain") == 0)
+        {
+            if (!require_value(argc, &i))
+                return 0;
+            gateway_domain = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-timeout") == 0)
+        {
+            if (!require_value(argc, &i) || !parse_u32_any(argv[i], &gateway_timeout_ms))
+                return 0;
+            gateway_has_timeout = 1;
+        }
+        else if (strcmp(argv[i], "--gateway-no-session-credentials") == 0)
+        {
+            gateway_no_session_credentials = 1;
         }
         else if (strcmp(argv[i], "--drive") == 0)
         {
@@ -554,22 +609,51 @@ int x11_cli_configure(librdp_settings* settings, x11_cli_options* options, int a
     if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN) &&
         librdp_settings_webauthn_rp_id_count(settings) == 0)
         return 0;
+    if (!gateway_url &&
+        (gateway_username || gateway_password || gateway_domain || gateway_has_timeout ||
+         gateway_no_session_credentials))
+        return 0;
+    if (gateway_url)
+    {
+        librdp_gateway_config gateway_config;
+
+        if (librdp_gateway_config_init(&gateway_config) != LIBRDP_STATUS_OK)
+            return 0;
+        gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+        gateway_config.url = gateway_url;
+        gateway_config.username = gateway_username;
+        gateway_config.password = gateway_password;
+        gateway_config.domain = gateway_domain;
+        gateway_config.timeout_ms = gateway_has_timeout ? gateway_timeout_ms : 0u;
+        gateway_config.use_session_credentials = gateway_no_session_credentials ? 0 : 1;
+        if (librdp_settings_set_gateway_config(settings, &gateway_config) != LIBRDP_STATUS_OK)
+            return 0;
+    }
 
     return librdp_settings_enable_feature(settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1) == LIBRDP_STATUS_OK &&
            librdp_settings_set_desktop_size(settings, width, height) == LIBRDP_STATUS_OK &&
            librdp_settings_target(settings) != NULL;
 }
 
+/*
+ * Emit startup trace for viewer-visible feature policy. The trace is useful for
+ * reproducing backend and gateway setup decisions, but it deliberately omits
+ * passwords and raw device payloads so command-line diagnostics do not leak
+ * credentials or host data.
+ */
 void x11_cli_trace_settings(const librdp_settings* settings)
 {
     uint32_t i = 0;
+    librdp_gateway_config gateway_config;
 
     if (!settings)
         return;
+    if (librdp_settings_get_gateway_config(settings, &gateway_config) != LIBRDP_STATUS_OK)
+        memset(&gateway_config, 0, sizeof(gateway_config));
 
     x11_trace_event(X11_TRACE_CLIENT,
                     "x11.viewer.features",
-                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u display_control=%u drives=%u printers=%u pnp_devices=%u",
+                    "audio_output=%u audio_input=%u video=%u camera=%u smartcard=%u usb=%u pnp=%u webauthn=%u rail=%u cr2=%u echo=%u telemetry=%u multitransport=%u display_control=%u gateway=%u drives=%u printers=%u pnp_devices=%u",
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_OUTPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_AUDIO_INPUT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_VIDEO) ? 1u : 0u,
@@ -584,9 +668,16 @@ void x11_cli_trace_settings(const librdp_settings* settings)
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_TELEMETRY) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_MULTITRANSPORT) ? 1u : 0u,
                     librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_DISPLAY_CONTROL) ? 1u : 0u,
+                    gateway_config.mode == LIBRDP_GATEWAY_HTTP_CONNECT ? 1u : 0u,
                     librdp_settings_drive_count(settings),
                     librdp_settings_printer_count(settings),
                     librdp_settings_pnp_device_count(settings));
+    if (gateway_config.mode == LIBRDP_GATEWAY_HTTP_CONNECT)
+        x11_trace_event(X11_TRACE_CLIENT,
+                        "x11.gateway.config",
+                        "mode=http_connect timeout_ms=%u use_session_credentials=%u",
+                        gateway_config.timeout_ms,
+                        gateway_config.use_session_credentials ? 1u : 0u);
     if (librdp_settings_audio_output_device(settings))
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.audio.output.config",

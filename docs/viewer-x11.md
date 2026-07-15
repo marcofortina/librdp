@@ -33,6 +33,8 @@ Supported security values are:
 
 TLS certificate verification is strict by default. `--tls-prompt-cert` shows the presented leaf certificate and asks before accepting it for the current connection. `--tls-accept-any-cert` accepts the presented certificate for the current connection without prompting and should be used only when the caller has explicitly chosen that trust policy.
 
+`--gateway` tunnels the target connection through an HTTP CONNECT gateway. Dedicated gateway credentials can be supplied with `--gateway-user`, `--gateway-password`, and `--gateway-domain`; otherwise the viewer can reuse session credentials. `--gateway-no-session-credentials` disables that reuse, and `--gateway-timeout` sets the gateway connection timeout in milliseconds.
+
 ## Options
 
 ```text
@@ -46,6 +48,12 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --security auto|rdp|tls|nla
 --tls-prompt-cert
 --tls-accept-any-cert
+--gateway url
+--gateway-user name
+--gateway-password value
+--gateway-domain name
+--gateway-timeout ms
+--gateway-no-session-credentials
 --drive name=path
 --serial name=path
 --parallel name=path

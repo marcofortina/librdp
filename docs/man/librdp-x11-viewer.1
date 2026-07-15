@@ -45,6 +45,27 @@ Show the presented TLS leaf certificate and ask whether to accept it for the cur
 .B --tls-accept-any-cert
 Accept the presented TLS leaf certificate for the current connection without prompting. This is an explicit trust-policy override for controlled environments.
 .TP
+.BI --gateway " url"
+Tunnel the target TCP connection through an HTTP CONNECT gateway. The URL may use
+.B http
+or
+.B https .
+.TP
+.BI --gateway-user " name"
+Gateway authentication user name. If omitted, the viewer reuses the session user name when gateway credential reuse is enabled.
+.TP
+.BI --gateway-password " value"
+Gateway authentication password. Avoid placing credentials in shell history on shared systems.
+.TP
+.BI --gateway-domain " name"
+Gateway authentication domain.
+.TP
+.BI --gateway-timeout " ms"
+Gateway connection timeout in milliseconds.
+.TP
+.B --gateway-no-session-credentials
+Do not reuse the session credentials for gateway authentication when dedicated gateway credentials are not provided.
+.TP
 .BI --drive " name=path"
 Redirect a local directory as a remote drive.
 .TP
@@ -121,6 +142,8 @@ Set the maximum number of bytes emitted by bounded protocol hexdumps.
 .SH EXAMPLES
 .nf
 librdp-x11-viewer --target host --user user --password password --security nla --width 1024 --height 768
+
+librdp-x11-viewer --target host --security nla --gateway https://gateway.example.com/
 
 LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla
 .fi

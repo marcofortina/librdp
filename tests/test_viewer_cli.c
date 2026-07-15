@@ -193,6 +193,67 @@ static int test_video_cli_requires_file_sink(void)
     return 0;
 }
 
+static int test_gateway_cli_configures_http_connect(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--gateway",
+        (char*)"https://gateway.example.com/rdp",
+        (char*)"--gateway-user",
+        (char*)"gateway-user",
+        (char*)"--gateway-password",
+        (char*)"gateway-secret",
+        (char*)"--gateway-domain",
+        (char*)"DOMAIN",
+        (char*)"--gateway-timeout",
+        (char*)"30000",
+        (char*)"--gateway-no-session-credentials",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    librdp_gateway_config gateway;
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 1);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway) == LIBRDP_STATUS_OK);
+    CHECK(gateway.mode == LIBRDP_GATEWAY_HTTP_CONNECT);
+    CHECK(strcmp(gateway.url, "https://gateway.example.com/rdp") == 0);
+    CHECK(strcmp(gateway.username, "gateway-user") == 0);
+    CHECK(strcmp(gateway.password, "gateway-secret") == 0);
+    CHECK(strcmp(gateway.domain, "DOMAIN") == 0);
+    CHECK(gateway.timeout_ms == 30000u);
+    CHECK(gateway.use_session_credentials == 0);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+static int test_gateway_cli_rejects_credentials_without_gateway(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"127.0.0.1",
+        (char*)"--gateway-user",
+        (char*)"gateway-user",
+    };
+    librdp_settings* settings = librdp_settings_new();
+    librdp_gateway_config gateway;
+    x11_cli_options options;
+
+    memset(&options, 0, sizeof(options));
+    CHECK(settings != NULL);
+    CHECK(x11_cli_configure(settings, &options, (int)(sizeof(argv) / sizeof(argv[0])), argv) == 0);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway) == LIBRDP_STATUS_OK);
+    CHECK(gateway.mode == LIBRDP_GATEWAY_DISABLED);
+    x11_cli_options_free(&options);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
     if (test_webauthn_rp_id_cli() != 0)
@@ -208,6 +269,10 @@ int main(void)
     if (test_video_cli_accepts_file_sink() != 0)
         return 1;
     if (test_video_cli_requires_file_sink() != 0)
+        return 1;
+    if (test_gateway_cli_configures_http_connect() != 0)
+        return 1;
+    if (test_gateway_cli_rejects_credentials_without_gateway() != 0)
         return 1;
     return 0;
 }
