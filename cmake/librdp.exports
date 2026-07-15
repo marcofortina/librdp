@@ -33,6 +33,13 @@ _librdp_client_lifecycle
 _librdp_server_config_init
 _librdp_server_new
 _librdp_server_free
+_librdp_server_listen
+_librdp_server_close
+_librdp_server_local_port
+_librdp_server_accept
+_librdp_server_peer_run_once
+_librdp_server_peer_get_state
+_librdp_server_peer_free
 _librdp_limits_init
 _librdp_metrics_init
 _librdp_echo_stats_init

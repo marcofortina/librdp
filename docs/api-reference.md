@@ -30,6 +30,7 @@ return codes, and `@since` tags, use the Doxygen pages described in
 | `include/librdp/audio.h` | Audio format structure and audio input response/send APIs. |
 | `include/librdp/video.h` | Video capture media description and sample/error response APIs. |
 | `include/librdp/workspace.h` | Workspace feed discovery and published resource inspection APIs. |
+| `include/librdp/server.h` | Server-side listener, peer, and minimal negotiation lifecycle APIs. |
 
 ## Primary objects
 
@@ -44,6 +45,8 @@ return codes, and `@since` tags, use the Doxygen pages described in
 `librdp_surface` is the framebuffer object. A session owns its active surface; applications receive borrowed access through `librdp_session_get_surface()`.
 
 `librdp_event` is a borrowed callback payload. Its active union member is selected by `librdp_event_type`.
+
+`librdp_server` owns server-side listener configuration and accepts `librdp_server_peer` handles for the current minimal negotiation runtime.
 
 ## Settings API
 
@@ -133,6 +136,10 @@ Applications should call these APIs from the same serialized session-driving con
 ## Workspace API
 
 Workspace APIs fetch or load remote workspace feeds and expose published desktop or RemoteApp resources as borrowed resource views. Feed credentials are copied into workspace-owned storage and cleared when the workspace is freed.
+
+## Server API
+
+Server APIs create a loopback-capable listener, accept one peer at a time, and drive the initial TPKT/X.224 negotiation boundary. Full desktop server activation is not part of the current public server runtime.
 
 ## Error model
 

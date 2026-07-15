@@ -41,6 +41,8 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_client_ptr", librdp_client*, ",");
     ABI_TYPE_ENTRY("librdp_client_config", librdp_client_config, ",");
     ABI_TYPE_ENTRY("librdp_server_ptr", librdp_server*, ",");
+    ABI_TYPE_ENTRY("librdp_server_peer_ptr", librdp_server_peer*, ",");
+    ABI_TYPE_ENTRY("librdp_server_peer_state", librdp_server_peer_state, ",");
     ABI_TYPE_ENTRY("librdp_server_config", librdp_server_config, ",");
     ABI_TYPE_ENTRY("librdp_settings_ptr", librdp_settings*, ",");
     ABI_TYPE_ENTRY("librdp_surface_ptr", librdp_surface*, ",");

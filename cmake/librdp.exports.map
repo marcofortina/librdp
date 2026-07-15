@@ -35,6 +35,13 @@ LIBRDP_0.1 {
         librdp_server_config_init;
         librdp_server_new;
         librdp_server_free;
+        librdp_server_listen;
+        librdp_server_close;
+        librdp_server_local_port;
+        librdp_server_accept;
+        librdp_server_peer_run_once;
+        librdp_server_peer_get_state;
+        librdp_server_peer_free;
         librdp_limits_init;
         librdp_metrics_init;
         librdp_echo_stats_init;

@@ -27,7 +27,8 @@ Group pages: [umbrella](https://marcofortina.github.io/librdp/api/doxygen/html/g
 [channel](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__channel.html),
 [audio](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__audio.html), and
 [video](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__video.html), and
-[workspace](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__workspace.html).
+[workspace](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__workspace.html), and
+[server](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__server.html).
 
 The GitHub Pages workflow builds this reference with Doxygen and publishes it under:
 
