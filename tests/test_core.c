@@ -7653,8 +7653,8 @@ static int test_workspace_fetch_http(void)
 #endif
 
 /*
- * Coverage: validates admin inventory object ownership and unsupported query
- * status before the WinRM transport backend is compiled into the library.
+ * Coverage: validates admin inventory object ownership, versioned public views,
+ * and the query status contract when transport backends are not compiled.
  */
 static int test_admin_lifecycle(void)
 {
@@ -7680,7 +7680,9 @@ static int test_admin_lifecycle(void)
     CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
     CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_clear(admin) == LIBRDP_STATUS_OK);
+#if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
     CHECK(librdp_admin_query_sessions(admin) == LIBRDP_STATUS_UNSUPPORTED);
+#endif
     librdp_admin_free(admin);
 
     CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
@@ -7735,6 +7737,105 @@ static int test_admin_sessions_xml_parse(void)
     CHECK(librdp_admin_load_sessions_xml(admin, malformed, sizeof(malformed) - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
     CHECK(librdp_admin_session_count(admin) == 2u);
     librdp_admin_free(admin);
+    return 0;
+}
+#endif
+
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+/*
+ * Fixture: serves a minimal WinRM SOAP response over loopback HTTP so Admin
+ * query coverage does not depend on an external RDS deployment.
+ */
+static int test_admin_winrm_child(int listen_fd)
+{
+    static const char response[] =
+        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
+        "<s:Body><Win32_LogonSession><LogonId>77</LogonId><Status>Active</Status>"
+        "<UserName>Marco</UserName><Domain>LAB</Domain></Win32_LogonSession></s:Body></s:Envelope>";
+    char request[2048];
+    char header[256];
+    size_t used = 0;
+    int client = -1;
+    int header_len = 0;
+
+    client = accept(listen_fd, NULL, NULL);
+    if (client < 0)
+        return 1;
+    while (used + 1u < sizeof(request))
+    {
+        ssize_t got = read(client, request + used, sizeof(request) - used - 1u);
+
+        if (got <= 0)
+        {
+            close(client);
+            return 1;
+        }
+        used += (size_t)got;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n") && strstr(request, "</s:Envelope>"))
+            break;
+    }
+    if (!strstr(request, "POST /wsman HTTP/") || !strstr(request, "<n:Enumerate/>"))
+    {
+        close(client);
+        return 1;
+    }
+    header_len = snprintf(header,
+                          sizeof(header),
+                          "HTTP/1.1 200 OK\r\nContent-Type: application/soap+xml\r\n"
+                          "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+                          sizeof(response) - 1u);
+    if (header_len <= 0 || (size_t)header_len >= sizeof(header) ||
+        !test_workspace_write_all(client, header, (size_t)header_len) ||
+        !test_workspace_write_all(client, response, sizeof(response) - 1u))
+    {
+        close(client);
+        return 1;
+    }
+    close(client);
+    return 0;
+}
+
+static int test_admin_query_winrm_http(void)
+{
+    librdp_admin_config config;
+    librdp_admin_session session;
+    librdp_admin* admin = NULL;
+    char url[128];
+    uint16_t port = 0;
+    int listen_fd = -1;
+    pid_t child = -1;
+    int child_status = 0;
+
+    listen_fd = test_workspace_http_listen(&port);
+    CHECK(listen_fd >= 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0)
+    {
+        int rc = test_admin_winrm_child(listen_fd);
+
+        close(listen_fd);
+        _exit(rc);
+    }
+    snprintf(url, sizeof(url), "http://127.0.0.1:%u/wsman", (unsigned)port);
+    CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    config.endpoint_url = url;
+    config.timeout_ms = 5000u;
+    admin = librdp_admin_new(&config);
+    CHECK(admin != NULL);
+    CHECK(librdp_admin_query_sessions(admin) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_count(admin) == 1u);
+    CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_OK);
+    CHECK(session.logon_id == 77u);
+    CHECK(session.username && strcmp(session.username, "Marco") == 0);
+    CHECK(session.domain && strcmp(session.domain, "LAB") == 0);
+    CHECK(session.state && strcmp(session.state, "Active") == 0);
+    librdp_admin_free(admin);
+    close(listen_fd);
+    CHECK(waitpid(child, &child_status, 0) == child);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
 #endif
@@ -7828,6 +7929,8 @@ int test_client_core(void)
 #endif
 #if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
     if (test_workspace_fetch_http() != 0)
+        return 1;
+    if (test_admin_query_winrm_http() != 0)
         return 1;
 #endif
     return test_settings_surface_input_session();

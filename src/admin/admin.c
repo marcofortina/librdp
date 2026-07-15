@@ -21,19 +21,27 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+#include <curl/curl.h>
+#include <pthread.h>
+#endif
 #ifdef RDP_HAVE_LIBXML2
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #endif
+
+#include "common/trace.h"
 
 #define RDP_ADMIN_DEFAULT_TIMEOUT_MS 15000u
 #define RDP_ADMIN_MAX_TIMEOUT_MS 600000u
 #define RDP_ADMIN_MAX_TEXT_LEN 65536u
 #define RDP_ADMIN_MAX_XML_LEN (4u * 1024u * 1024u)
 #define RDP_ADMIN_MAX_SESSIONS 4096u
+#define RDP_ADMIN_DEFAULT_RESOURCE_URI "http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_LogonSession"
 
 typedef struct rdp_admin_session_storage
 {
@@ -164,6 +172,240 @@ static librdp_status rdp_admin_copy_config(librdp_admin* admin, const librdp_adm
     admin->allow_insecure_tls = config->allow_insecure_tls ? 1 : 0;
     return LIBRDP_STATUS_OK;
 }
+
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+typedef struct rdp_admin_fetch_buffer
+{
+    char* data;
+    size_t length;
+    size_t capacity;
+    int limit_exceeded;
+} rdp_admin_fetch_buffer;
+
+static pthread_once_t rdp_admin_curl_once = PTHREAD_ONCE_INIT;
+
+static void rdp_admin_curl_init_once(void)
+{
+    (void)curl_global_init(CURL_GLOBAL_DEFAULT);
+}
+
+static librdp_status rdp_admin_curl_status(CURLcode code)
+{
+    if (code == CURLE_OK)
+        return LIBRDP_STATUS_OK;
+    if (code == CURLE_OPERATION_TIMEDOUT)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (code == CURLE_UNSUPPORTED_PROTOCOL)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE)
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    if (code == CURLE_OUT_OF_MEMORY)
+        return LIBRDP_STATUS_NO_MEMORY;
+    return LIBRDP_STATUS_IO_ERROR;
+}
+
+static size_t rdp_admin_curl_write(char* ptr, size_t size, size_t nmemb, void* user_data)
+{
+    rdp_admin_fetch_buffer* buffer = (rdp_admin_fetch_buffer*)user_data;
+    size_t total = 0;
+    size_t required = 0;
+    size_t capacity = 0;
+    char* resized = NULL;
+
+    if (!buffer || !ptr || (size != 0 && nmemb > SIZE_MAX / size))
+        return 0;
+    total = size * nmemb;
+    if (total == 0)
+        return 0;
+    if (buffer->length > RDP_ADMIN_MAX_XML_LEN || total > RDP_ADMIN_MAX_XML_LEN - buffer->length)
+    {
+        buffer->limit_exceeded = 1;
+        return 0;
+    }
+    required = buffer->length + total + 1u;
+    if (required > buffer->capacity)
+    {
+        capacity = buffer->capacity == 0 ? 4096u : buffer->capacity;
+        while (capacity < required)
+        {
+            if (capacity > RDP_ADMIN_MAX_XML_LEN / 2u)
+            {
+                capacity = RDP_ADMIN_MAX_XML_LEN + 1u;
+                break;
+            }
+            capacity *= 2u;
+        }
+        if (capacity > RDP_ADMIN_MAX_XML_LEN + 1u)
+            capacity = RDP_ADMIN_MAX_XML_LEN + 1u;
+        resized = (char*)realloc(buffer->data, capacity);
+        if (!resized)
+            return 0;
+        buffer->data = resized;
+        buffer->capacity = capacity;
+    }
+    memcpy(buffer->data + buffer->length, ptr, total);
+    buffer->length += total;
+    buffer->data[buffer->length] = '\0';
+    return total;
+}
+
+static librdp_status rdp_admin_http_user(const librdp_admin* admin, char** out)
+{
+    int written = 0;
+    size_t needed = 0;
+    char* value = NULL;
+
+    if (!out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *out = NULL;
+    if (!admin->username)
+        return LIBRDP_STATUS_OK;
+    if (!admin->domain)
+        return rdp_admin_copy_optional(admin->username, out);
+    written = snprintf(NULL, 0, "%s\\%s", admin->domain, admin->username);
+    if (written <= 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    needed = (size_t)written + 1u;
+    value = (char*)malloc(needed);
+    if (!value)
+        return LIBRDP_STATUS_NO_MEMORY;
+    written = snprintf(value, needed, "%s\\%s", admin->domain, admin->username);
+    if (written <= 0 || (size_t)written + 1u != needed)
+    {
+        free(value);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    *out = value;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_admin_xml_escape(const char* value, char** out)
+{
+    size_t i = 0;
+    size_t length = 0;
+    char* escaped = NULL;
+    char* cursor = NULL;
+
+    if (!out)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *out = NULL;
+    if (!value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (i = 0; value[i]; i++)
+    {
+        switch (value[i])
+        {
+            case '&':
+                length += 5u;
+                break;
+            case '<':
+            case '>':
+                length += 4u;
+                break;
+            case '"':
+            case '\'':
+                length += 6u;
+                break;
+            default:
+                length++;
+                break;
+        }
+        if (length > RDP_ADMIN_MAX_TEXT_LEN * 6u)
+            return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    escaped = (char*)malloc(length + 1u);
+    if (!escaped)
+        return LIBRDP_STATUS_NO_MEMORY;
+    cursor = escaped;
+    for (i = 0; value[i]; i++)
+    {
+        switch (value[i])
+        {
+            case '&':
+                memcpy(cursor, "&amp;", 5u);
+                cursor += 5u;
+                break;
+            case '<':
+                memcpy(cursor, "&lt;", 4u);
+                cursor += 4u;
+                break;
+            case '>':
+                memcpy(cursor, "&gt;", 4u);
+                cursor += 4u;
+                break;
+            case '"':
+                memcpy(cursor, "&quot;", 6u);
+                cursor += 6u;
+                break;
+            case '\'':
+                memcpy(cursor, "&apos;", 6u);
+                cursor += 6u;
+                break;
+            default:
+                *cursor++ = value[i];
+                break;
+        }
+    }
+    *cursor = '\0';
+    *out = escaped;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_admin_build_enumerate_request(const librdp_admin* admin, char** request)
+{
+    static const char prefix[] =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" "
+        "xmlns:a=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
+        "xmlns:w=\"http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd\" "
+        "xmlns:n=\"http://schemas.xmlsoap.org/ws/2004/09/enumeration\">"
+        "<s:Header><a:To>";
+    static const char middle[] =
+        "</a:To><w:ResourceURI s:mustUnderstand=\"true\">";
+    static const char suffix[] =
+        "</w:ResourceURI><a:ReplyTo><a:Address>"
+        "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous"
+        "</a:Address></a:ReplyTo><a:Action s:mustUnderstand=\"true\">"
+        "http://schemas.xmlsoap.org/ws/2004/09/enumeration/Enumerate"
+        "</a:Action><a:MessageID>uuid:librdp-admin-enumerate</a:MessageID>"
+        "<w:OperationTimeout>PT60S</w:OperationTimeout></s:Header>"
+        "<s:Body><n:Enumerate/></s:Body></s:Envelope>";
+    const char* resource_uri = NULL;
+    char* endpoint = NULL;
+    char* resource = NULL;
+    char* body = NULL;
+    size_t body_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!admin || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *request = NULL;
+    resource_uri = admin->resource_uri ? admin->resource_uri : RDP_ADMIN_DEFAULT_RESOURCE_URI;
+    status = rdp_admin_xml_escape(admin->endpoint_url, &endpoint);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_xml_escape(resource_uri, &resource);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(endpoint);
+        free(resource);
+        return status;
+    }
+    body_len = sizeof(prefix) - 1u + strlen(endpoint) + sizeof(middle) - 1u + strlen(resource) +
+               sizeof(suffix) - 1u;
+    body = (char*)malloc(body_len + 1u);
+    if (!body)
+    {
+        free(endpoint);
+        free(resource);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    snprintf(body, body_len + 1u, "%s%s%s%s%s", prefix, endpoint, middle, resource, suffix);
+    free(endpoint);
+    free(resource);
+    *request = body;
+    return LIBRDP_STATUS_OK;
+}
+#endif
 
 #ifdef RDP_HAVE_LIBXML2
 typedef struct rdp_admin_parse_list
@@ -519,11 +761,136 @@ librdp_status librdp_admin_clear(librdp_admin* admin)
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Sends one bounded WinRM enumeration request and commits parsed sessions only
+ * after curl transport, HTTP status, response size, and XML parsing all
+ * succeed. The function owns every transient credential-bearing curl option
+ * for the duration of the call and never writes response payloads to trace.
+ */
 librdp_status librdp_admin_query_sessions(librdp_admin* admin)
 {
     if (!admin || !admin->endpoint_url || admin->endpoint_url[0] == '\0')
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+#if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
     return LIBRDP_STATUS_UNSUPPORTED;
+#else
+    CURL* easy = NULL;
+    CURLcode code = CURLE_OK;
+    struct curl_slist* headers = NULL;
+    rdp_admin_fetch_buffer buffer;
+    librdp_status status = LIBRDP_STATUS_OK;
+    char* http_user = NULL;
+    char* request_body = NULL;
+    struct curl_slist* appended = NULL;
+    long response_code = 0;
+
+    memset(&buffer, 0, sizeof(buffer));
+    status = rdp_admin_http_user(admin, &http_user);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_build_enumerate_request(admin, &request_body);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(http_user);
+        return status;
+    }
+    pthread_once(&rdp_admin_curl_once, rdp_admin_curl_init_once);
+    easy = curl_easy_init();
+    if (!easy)
+    {
+        free(http_user);
+        free(request_body);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.admin.query.start",
+                    "transport=winrm endpoint_set=1 has_user=%d timeout_ms=%u insecure_tls=%d",
+                    admin->username ? 1 : 0,
+                    (unsigned)admin->timeout_ms,
+                    admin->allow_insecure_tls ? 1 : 0);
+    if (admin->allow_insecure_tls)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.admin.tls.insecure",
+                        "policy=insecure-lab verification=disabled");
+    appended = curl_slist_append(headers, "Content-Type: application/soap+xml; charset=utf-8");
+    if (!appended)
+        status = LIBRDP_STATUS_NO_MEMORY;
+    else
+        headers = appended;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        appended = curl_slist_append(headers, "Accept: application/soap+xml, text/xml");
+        if (!appended)
+            status = LIBRDP_STATUS_NO_MEMORY;
+        else
+            headers = appended;
+    }
+    if (!headers)
+        status = LIBRDP_STATUS_NO_MEMORY;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        curl_easy_setopt(easy, CURLOPT_URL, admin->endpoint_url);
+        curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(easy, CURLOPT_POST, 1L);
+        curl_easy_setopt(easy, CURLOPT_POSTFIELDS, request_body);
+        curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, (long)strlen(request_body));
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, (long)admin->timeout_ms);
+        curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, (long)admin->timeout_ms);
+        curl_easy_setopt(easy, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(easy, CURLOPT_HTTPAUTH, (long)CURLAUTH_ANYSAFE);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, rdp_admin_curl_write);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &buffer);
+        if (admin->allow_insecure_tls)
+        {
+            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
+#if LIBCURL_VERSION_NUM >= 0x075500
+        curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+        curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+        curl_easy_setopt(easy, CURLOPT_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+        curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
+        if (http_user)
+            curl_easy_setopt(easy, CURLOPT_USERNAME, http_user);
+        if (admin->password)
+            curl_easy_setopt(easy, CURLOPT_PASSWORD, admin->password);
+        code = curl_easy_perform(easy);
+        if (buffer.limit_exceeded)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        else
+            status = rdp_admin_curl_status(code);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        (void)curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code < 200 || response_code >= 300)
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = buffer.length == 0 ? LIBRDP_STATUS_PROTOCOL_ERROR :
+                                      rdp_admin_parse_xml(admin, buffer.data, buffer.length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.admin.query.done",
+                        "bytes=%zu sessions=%zu",
+                        buffer.length,
+                        admin->session_count);
+    else
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.admin.query.failed",
+                        "status=%s curl_code=%u http_status=%ld",
+                        librdp_status_name(status),
+                        (unsigned)code,
+                        response_code);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(easy);
+    free(buffer.data);
+    free(http_user);
+    free(request_body);
+    return status;
+#endif
 }
 
 librdp_status librdp_admin_load_sessions_xml(librdp_admin* admin, const void* xml, size_t xml_len)
