@@ -158,6 +158,10 @@ static int rdp_rdg_loopback_http_url(const char* url)
            strncmp(url + 7u, "[::1]", 5u) == 0;
 }
 
+/*
+ * Accept plain HTTP only for deterministic loopback tests; configured gateway
+ * URLs otherwise must use HTTPS before credentials or RDP payloads are sent.
+ */
 static int rdp_rdg_valid_url(const char* url)
 {
     return rdp_rdg_valid_text(url, RDP_RDG_URL_MAX) &&
@@ -213,6 +217,10 @@ static int rdp_rdg_make_pipe(int fds[2])
     return 1;
 }
 
+/*
+ * Wake the worker or transport waiter without caring about coalesced bytes:
+ * one readable byte is enough to force the receiver to re-check shared state.
+ */
 static void rdp_rdg_signal_pipe(int fd)
 {
     const uint8_t byte = 1u;
@@ -226,6 +234,10 @@ static void rdp_rdg_signal_pipe(int fd)
     } while (rc < 0 && errno == EINTR);
 }
 
+/*
+ * Clear all pending wake bytes after poll() reports readiness. The pipe is
+ * non-blocking, so EOF/EAGAIN both mean the consumer has caught up.
+ */
 static void rdp_rdg_drain_pipe(int fd)
 {
     uint8_t bytes[64];
@@ -324,6 +336,10 @@ static size_t rdp_rdg_queue_peek_copy(const rdp_rdg_queue_node* node, void* data
     return copied;
 }
 
+/*
+ * Copy queued RDP bytes to the caller and retire fully consumed nodes while
+ * preserving the remaining head node offset for short reads.
+ */
 static size_t rdp_rdg_queue_read_copy(rdp_rdg_queue_node** head,
                                       rdp_rdg_queue_node** tail,
                                       void* data,
@@ -355,6 +371,10 @@ static size_t rdp_rdg_queue_read_copy(rdp_rdg_queue_node** head,
     return copied;
 }
 
+/*
+ * Bound synchronous startup waits with the gateway timeout. CLOCK_REALTIME is
+ * used because pthread_cond_timedwait() requires an absolute time on POSIX.
+ */
 static int rdp_rdg_timed_wait_locked(rdp_rdg_http_context* context)
 {
     struct timespec deadline;
@@ -372,6 +392,10 @@ static int rdp_rdg_timed_wait_locked(rdp_rdg_http_context* context)
     return pthread_cond_timedwait(&context->cond, &context->mutex, &deadline);
 }
 
+/*
+ * Serialize one RDG packet header and optional body. The caller chooses the
+ * control or data packet type; this helper owns only framing and size limits.
+ */
 static librdp_status rdp_rdg_make_packet(uint16_t type, const rdp_buffer* body, rdp_buffer* packet)
 {
     uint32_t packet_len = 0;
@@ -460,6 +484,10 @@ static librdp_status rdp_rdg_build_tunnel_create(rdp_buffer* body)
     return status;
 }
 
+/*
+ * Authenticate the tunnel with workstation identity only. User credentials are
+ * handled by HTTP authentication, so this packet must not duplicate secrets.
+ */
 static librdp_status rdp_rdg_build_tunnel_auth(rdp_buffer* body)
 {
     char host[256];
@@ -565,6 +593,11 @@ static librdp_status rdp_rdg_control_enqueue_locked(rdp_rdg_http_context* contex
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Split remote HTTP entity bytes into complete RDG packets under the context
+ * lock. Data packets feed the transport queue; control packets feed startup
+ * state and service handling.
+ */
 static librdp_status rdp_rdg_parse_incoming_locked(rdp_rdg_http_context* context)
 {
     while (context->incoming.length >= RDP_RDG_PACKET_HEADER_LEN)

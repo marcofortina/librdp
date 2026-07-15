@@ -77,6 +77,11 @@ void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, i
     transport->curl_socket = fd;
 }
 
+/*
+ * Hand ownership of all I/O callbacks to a tunnel backend. Gateway transports
+ * use this path so the protocol core can keep the same read/write/wait calls
+ * without learning about HTTP streams or worker wakeups.
+ */
 void rdp_transport_attach_backend(rdp_transport* transport,
                                   void* context,
                                   const rdp_transport_backend_ops* ops)
@@ -115,6 +120,10 @@ static librdp_status rdp_transport_tls_status(SSL* tls, int rc)
     return LIBRDP_STATUS_IO_ERROR;
 }
 
+/*
+ * Map OpenSSL verification failures onto public status codes before any trace
+ * line or caller-visible error collapses them into a generic handshake failure.
+ */
 static librdp_status rdp_transport_tls_verify_status(long verify_result)
 {
     if (verify_result == X509_V_OK)
@@ -124,6 +133,10 @@ static librdp_status rdp_transport_tls_verify_status(long verify_result)
     return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
 }
 
+/*
+ * Decide whether OpenSSL must enforce chain and hostname verification for the
+ * selected policy. Insecure lab mode is the only policy that disables it.
+ */
 static int rdp_transport_tls_verify_peer_required(const rdp_transport_tls_config* config)
 {
     if (!config)
@@ -134,6 +147,10 @@ static int rdp_transport_tls_verify_peer_required(const rdp_transport_tls_config
            config->trust_anchor != NULL;
 }
 
+/*
+ * TOFU needs the handshake to complete so the application callback can inspect
+ * the leaf certificate. Final accept/reject still happens after the handshake.
+ */
 static int rdp_transport_tls_allow_verify_callback(int preverify_ok, X509_STORE_CTX* store)
 {
     (void)preverify_ok;
