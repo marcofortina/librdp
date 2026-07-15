@@ -6,10 +6,12 @@ cmake_minimum_required(VERSION 3.16)
 project(librdp VERSION 0.1.0 LANGUAGES C)
 
 include(CMakePackageConfigHelpers)
+include(CheckCSourceCompiles)
 include(GNUInstallDirs)
 
 set(LIBRDP_ABI_VERSION 0 CACHE STRING "Shared-library ABI version")
 set(LIBRDP_LIBRARY_TYPE "AUTO" CACHE STRING "Library type to build (AUTO, STATIC, SHARED, BOTH)")
+set(LIBRDP_OPENSSL_INCLUDE_DIR "" CACHE PATH "Additional OpenSSL include directory for platform package layouts")
 set_property(CACHE LIBRDP_LIBRARY_TYPE PROPERTY STRINGS AUTO STATIC SHARED BOTH)
 string(TOUPPER "${LIBRDP_LIBRARY_TYPE}" LIBRDP_LIBRARY_TYPE)
 set(LIBRDP_LIBRARY_TYPE "${LIBRDP_LIBRARY_TYPE}" CACHE STRING "Library type to build (AUTO, STATIC, SHARED, BOTH)" FORCE)
@@ -29,7 +31,34 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+function(librdp_check_sanitizer_support flag result_var)
+    set(saved_required_flags "")
+    set(saved_required_link_options "")
+    if(DEFINED CMAKE_REQUIRED_FLAGS)
+        set(saved_required_flags "${CMAKE_REQUIRED_FLAGS}")
+    endif()
+    if(DEFINED CMAKE_REQUIRED_LINK_OPTIONS)
+        set(saved_required_link_options "${CMAKE_REQUIRED_LINK_OPTIONS}")
+    endif()
+    if(saved_required_flags)
+        set(CMAKE_REQUIRED_FLAGS "${saved_required_flags} ${flag}")
+    else()
+        set(CMAKE_REQUIRED_FLAGS "${flag}")
+    endif()
+    list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "${flag}")
+    check_c_source_compiles("int main(void) { return 0; }" ${result_var})
+    set(CMAKE_REQUIRED_FLAGS "${saved_required_flags}")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "${saved_required_link_options}")
+endfunction()
+
 set(LIBRDP_SANITIZER_FLAG_VALUE "")
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    librdp_check_sanitizer_support("-fsanitize=address" LIBRDP_SANITIZER_ADDRESS_LINKS)
+    librdp_check_sanitizer_support("-fsanitize=undefined" LIBRDP_SANITIZER_UNDEFINED_LINKS)
+else()
+    set(LIBRDP_SANITIZER_ADDRESS_LINKS 0)
+    set(LIBRDP_SANITIZER_UNDEFINED_LINKS 0)
+endif()
 if(LIBRDP_ENABLE_SANITIZERS)
     if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         message(FATAL_ERROR "LIBRDP_ENABLE_SANITIZERS requires GCC or Clang")
@@ -41,6 +70,12 @@ if(LIBRDP_ENABLE_SANITIZERS)
         if(NOT sanitizer_name MATCHES "^(address|undefined)$")
             message(FATAL_ERROR "LIBRDP_SANITIZERS entries must be address or undefined")
         endif()
+        if(sanitizer_name STREQUAL "address" AND NOT LIBRDP_SANITIZER_ADDRESS_LINKS)
+            message(FATAL_ERROR "address sanitizer is not supported by this compiler")
+        endif()
+        if(sanitizer_name STREQUAL "undefined" AND NOT LIBRDP_SANITIZER_UNDEFINED_LINKS)
+            message(FATAL_ERROR "undefined sanitizer is not supported by this compiler")
+        endif()
         list(APPEND LIBRDP_SANITIZER_FLAGS "${sanitizer_name}")
     endforeach()
     list(REMOVE_DUPLICATES LIBRDP_SANITIZER_FLAGS)
@@ -49,6 +84,21 @@ if(LIBRDP_ENABLE_SANITIZERS)
     endif()
     list(JOIN LIBRDP_SANITIZER_FLAGS "," LIBRDP_SANITIZER_FLAG_VALUE)
 endif()
+
+set(LIBRDP_SYSTEM_COMPILE_DEFINITIONS)
+if(APPLE)
+    list(APPEND LIBRDP_SYSTEM_COMPILE_DEFINITIONS _DARWIN_C_SOURCE)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "NetBSD")
+    list(APPEND LIBRDP_SYSTEM_COMPILE_DEFINITIONS _NETBSD_SOURCE)
+elseif(NOT CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD)$")
+    list(APPEND LIBRDP_SYSTEM_COMPILE_DEFINITIONS _POSIX_C_SOURCE=200809L)
+endif()
+
+function(librdp_apply_system_definitions target)
+    if(LIBRDP_SYSTEM_COMPILE_DEFINITIONS)
+        target_compile_definitions(${target} PRIVATE ${LIBRDP_SYSTEM_COMPILE_DEFINITIONS})
+    endif()
+endfunction()
 
 set(LIBRDP_OPTION_VALUES AUTO ON OFF)
 
@@ -138,11 +188,46 @@ librdp_feature_option(LIBRDP_WITH_JPEG "Use JPEG camera conversion backend in th
 librdp_feature_option(LIBRDP_WITH_XSHM "Use MIT-SHM presentation path in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_XRANDR "Use XRandR monitor layout bridge in the X11 viewer")
 
-find_package(OpenSSL 3.0 REQUIRED)
+if(NOT DEFINED OPENSSL_INCLUDE_DIR AND DEFINED ENV{OPENSSL_INCLUDE_DIR})
+    set(OPENSSL_INCLUDE_DIR "$ENV{OPENSSL_INCLUDE_DIR}" CACHE PATH "OpenSSL include directory")
+endif()
+find_package(OpenSSL 3.0 CONFIG QUIET)
+if(NOT OpenSSL_FOUND)
+    find_package(OpenSSL 3.0 REQUIRED)
+endif()
 find_package(Iconv REQUIRED)
 find_package(Doxygen QUIET)
 find_package(PkgConfig QUIET)
 find_package(Threads REQUIRED)
+
+set(LIBRDP_ICONV_LINK_LIBRARIES Iconv::Iconv)
+find_library(LIBRDP_ICONV_EXTRA_LIBRARY NAMES iconv)
+if(LIBRDP_ICONV_EXTRA_LIBRARY)
+    list(APPEND LIBRDP_ICONV_LINK_LIBRARIES ${LIBRDP_ICONV_EXTRA_LIBRARY})
+endif()
+
+set(LIBRDP_OPENSSL_INCLUDE_DIRECTORIES)
+if(LIBRDP_OPENSSL_INCLUDE_DIR AND EXISTS "${LIBRDP_OPENSSL_INCLUDE_DIR}/openssl/types.h")
+    list(APPEND LIBRDP_OPENSSL_INCLUDE_DIRECTORIES "${LIBRDP_OPENSSL_INCLUDE_DIR}")
+endif()
+foreach(var OPENSSL_INCLUDE_DIR OpenSSL_INCLUDE_DIR OPENSSL_INCLUDE_DIRS OpenSSL_INCLUDE_DIRS)
+    if(DEFINED ${var})
+        foreach(include_dir IN LISTS ${var})
+            if(include_dir AND EXISTS "${include_dir}/openssl/types.h")
+                list(APPEND LIBRDP_OPENSSL_INCLUDE_DIRECTORIES "${include_dir}")
+            endif()
+        endforeach()
+    endif()
+endforeach()
+if(LIBRDP_OPENSSL_INCLUDE_DIRECTORIES)
+    list(REMOVE_DUPLICATES LIBRDP_OPENSSL_INCLUDE_DIRECTORIES)
+endif()
+
+function(librdp_apply_openssl_include_dirs target)
+    if(LIBRDP_OPENSSL_INCLUDE_DIRECTORIES)
+        target_include_directories(${target} SYSTEM PRIVATE ${LIBRDP_OPENSSL_INCLUDE_DIRECTORIES})
+    endif()
+endfunction()
 
 librdp_pkg_dependency(LIBRDP_WITH_FFMPEG_AVC LIBRDP_FFMPEG_AVC libavcodec libavutil libswscale)
 librdp_pkg_dependency(LIBRDP_WITH_OPENH264_AVC LIBRDP_OPENH264_AVC openh264)
@@ -189,6 +274,28 @@ set(LIBRDP_CUPS_USES_PKG_CONFIG 0)
 if(LIBRDP_CUPS_FOUND AND TARGET PkgConfig::LIBRDP_CUPS)
     set(LIBRDP_CUPS_USES_PKG_CONFIG 1)
 endif()
+
+function(librdp_apply_x11_camera_backends target)
+    if(LIBRDP_JPEG_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_JPEG=1)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_JPEG)
+    endif()
+endfunction()
+
+function(librdp_apply_x11_device_backends target)
+    if(LIBRDP_LIBUSB_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_LIBUSB=1)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    endif()
+    if(LIBRDP_PCSC_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_PCSC=1)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_PCSC)
+    endif()
+    if(LIBRDP_FIDO2_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_FIDO2=1)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FIDO2)
+    endif()
+endfunction()
 
 set(LIBRDP_SOURCES
     src/client/client.c
@@ -349,13 +456,13 @@ function(librdp_configure_library_target target kind)
             set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_MAP})
         endif()
     endif()
-    target_compile_definitions(${target} PUBLIC _POSIX_C_SOURCE=200809L)
-    target_link_libraries(${target} PRIVATE OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv Threads::Threads)
+    librdp_apply_system_definitions(${target})
+    target_link_libraries(${target} PUBLIC OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
 endfunction()
 
 function(librdp_link_library_targets)
     foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
-        target_link_libraries(${target} PRIVATE ${ARGN})
+        target_link_libraries(${target} PUBLIC ${ARGN})
     endforeach()
 endfunction()
 
@@ -394,6 +501,8 @@ target_include_directories(librdp_backend_objects
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+librdp_apply_openssl_include_dirs(librdp_objects)
+librdp_apply_openssl_include_dirs(librdp_backend_objects)
 
 set_target_properties(librdp_objects PROPERTIES
     C_VISIBILITY_PRESET hidden
@@ -403,8 +512,10 @@ set_target_properties(librdp_backend_objects PROPERTIES
     C_VISIBILITY_PRESET hidden
     POSITION_INDEPENDENT_CODE ON
 )
-target_compile_definitions(librdp_objects PRIVATE _POSIX_C_SOURCE=200809L)
-target_compile_definitions(librdp_backend_objects PRIVATE _POSIX_C_SOURCE=200809L)
+librdp_apply_system_definitions(librdp_objects)
+librdp_apply_system_definitions(librdp_backend_objects)
+target_link_libraries(librdp_objects PRIVATE OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
+target_link_libraries(librdp_backend_objects PRIVATE OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
 librdp_apply_warning_options(librdp_objects)
 librdp_apply_warning_options(librdp_backend_objects)
 librdp_apply_sanitizer_compile_options(librdp_objects)
@@ -580,8 +691,9 @@ install(FILES
 )
 
 function(librdp_link_internal_runtime target)
-    target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
-    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto Iconv::Iconv)
+    librdp_apply_system_definitions(${target})
+    librdp_apply_openssl_include_dirs(${target})
+    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES})
     if(LIBRDP_FFMPEG_AVC_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
     endif()
@@ -652,12 +764,25 @@ endif()
 
 if(LIBRDP_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter)
+    set(LIBRDP_NESTED_CONFIGURE_ARGS)
+    if(DEFINED OpenSSL_DIR AND NOT "${OpenSSL_DIR}" STREQUAL "")
+        list(APPEND LIBRDP_NESTED_CONFIGURE_ARGS
+            "-DLIBRDP_OPENSSL_DIR=${OpenSSL_DIR}"
+        )
+    endif()
+    if(LIBRDP_OPENSSL_INCLUDE_DIR)
+        list(APPEND LIBRDP_NESTED_CONFIGURE_ARGS
+            "-DLIBRDP_OPENSSL_INCLUDE_DIR=${LIBRDP_OPENSSL_INCLUDE_DIR}"
+        )
+    endif()
     function(librdp_configure_test_compile target)
         target_include_directories(${target} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${CMAKE_CURRENT_SOURCE_DIR}/src
         )
-        target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
+        librdp_apply_system_definitions(${target})
+        librdp_apply_openssl_include_dirs(${target})
+        target_link_libraries(${target} PRIVATE OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
         librdp_apply_warning_options(${target})
         librdp_apply_sanitizer_compile_options(${target})
         if(LIBRDP_FFMPEG_AVC_FOUND)
@@ -668,6 +793,7 @@ if(LIBRDP_BUILD_TESTS)
         endif()
         if(LIBRDP_LIBUSB_FOUND)
             target_compile_definitions(${target} PRIVATE RDP_HAVE_LIBUSB=1)
+            target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBUSB)
         endif()
     endfunction()
 
@@ -723,8 +849,10 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_compile_definitions(test_viewer_backends PRIVATE _POSIX_C_SOURCE=200809L)
+    librdp_apply_system_definitions(test_viewer_backends)
     target_link_libraries(test_viewer_backends PRIVATE librdp)
+    librdp_apply_x11_camera_backends(test_viewer_backends)
+    librdp_apply_x11_device_backends(test_viewer_backends)
     librdp_apply_warning_options(test_viewer_backends)
     librdp_apply_sanitizer_compile_options(test_viewer_backends)
     librdp_apply_sanitizer_link_options(test_viewer_backends)
@@ -738,7 +866,7 @@ if(LIBRDP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11-viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_compile_definitions(test_viewer_cli PRIVATE _POSIX_C_SOURCE=200809L)
+    librdp_apply_system_definitions(test_viewer_cli)
     target_link_libraries(test_viewer_cli PRIVATE librdp)
     librdp_apply_warning_options(test_viewer_cli)
     librdp_apply_sanitizer_compile_options(test_viewer_cli)
@@ -776,6 +904,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_optional_backends_off.cmake)
     add_test(NAME optional_backend_matrix
         COMMAND ${CMAKE_COMMAND}
@@ -785,6 +914,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/optional_backend_matrix.cmake)
     set_tests_properties(optional_backend_matrix PROPERTIES TIMEOUT 180)
     add_test(NAME shared_symbol_visibility
@@ -797,6 +927,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DLIBRDP_ABI_VERSION=${LIBRDP_ABI_VERSION}"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
     add_test(NAME library_type_selection
         COMMAND ${CMAKE_COMMAND}
@@ -808,6 +939,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DLIBRDP_STATIC_LIBRARY_SUFFIX=${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/library_type_selection.cmake)
     if(Python3_Interpreter_FOUND)
         add_test(NAME abi_baseline
@@ -820,6 +952,7 @@ if(LIBRDP_BUILD_TESTS)
                 "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
                 "-DLIBRDP_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
                 "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
+                ${LIBRDP_NESTED_CONFIGURE_ARGS}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/abi_baseline.cmake)
     endif()
     add_test(NAME installed_public_api_consumer
@@ -830,8 +963,9 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
             "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+            ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/install_consumer.cmake)
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    if(LIBRDP_SANITIZER_ADDRESS_LINKS AND LIBRDP_SANITIZER_UNDEFINED_LINKS)
         add_test(NAME sanitizer_core
             COMMAND ${CMAKE_COMMAND}
                 "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -840,6 +974,7 @@ if(LIBRDP_BUILD_TESTS)
                 "-DLIBRDP_C_COMPILER=${CMAKE_C_COMPILER}"
                 "-DLIBRDP_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
                 "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
+                ${LIBRDP_NESTED_CONFIGURE_ARGS}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/sanitizer_core.cmake)
     endif()
     if(Python3_Interpreter_FOUND)
@@ -1033,7 +1168,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         ${XKBCOMMON_LIBRARIES}
         Threads::Threads
     )
-    target_compile_definitions(librdp-x11-viewer PRIVATE _POSIX_C_SOURCE=200809L)
+    librdp_apply_system_definitions(librdp-x11-viewer)
     get_target_property(LIBRDP_X11_VIEWER_INCLUDES librdp-x11-viewer INCLUDE_DIRECTORIES)
     foreach(LIBRDP_X11_VIEWER_INCLUDE IN LISTS LIBRDP_X11_VIEWER_INCLUDES)
         if(NOT IS_ABSOLUTE "${LIBRDP_X11_VIEWER_INCLUDE}")
@@ -1054,22 +1189,8 @@ if(LIBRDP_BUILD_X11_VIEWER)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
         target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)
     endif()
-    if(LIBRDP_LIBUSB_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_LIBUSB=1)
-        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_LIBUSB)
-    endif()
-    if(LIBRDP_PCSC_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PCSC=1)
-        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PCSC)
-    endif()
-    if(LIBRDP_FIDO2_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_FIDO2=1)
-        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_FIDO2)
-    endif()
-    if(LIBRDP_JPEG_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_JPEG=1)
-        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_JPEG)
-    endif()
+    librdp_apply_x11_device_backends(librdp-x11-viewer)
+    librdp_apply_x11_camera_backends(librdp-x11-viewer)
     if(LIBRDP_XSHM_FOUND)
         target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_XSHM=1)
         if(TARGET X11::Xext)
@@ -1101,7 +1222,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
-        target_compile_definitions(test_viewer_render PRIVATE _POSIX_C_SOURCE=200809L)
+        librdp_apply_system_definitions(test_viewer_render)
         target_link_libraries(test_viewer_render PRIVATE librdp ${X11_LIBRARIES})
         if(LIBRDP_XSHM_FOUND)
             target_compile_definitions(test_viewer_render PRIVATE LIBRDP_HAVE_XSHM=1)
@@ -1126,9 +1247,9 @@ if(LIBRDP_BUILD_X11_VIEWER)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_compile_definitions(test_viewer_audio PRIVATE
-            _POSIX_C_SOURCE=200809L
             LIBRDP_X11_AUDIO_TESTING=1
         )
+        librdp_apply_system_definitions(test_viewer_audio)
         librdp_apply_warning_options(test_viewer_audio)
         librdp_apply_sanitizer_compile_options(test_viewer_audio)
         librdp_apply_sanitizer_link_options(test_viewer_audio)
@@ -1144,13 +1265,10 @@ if(LIBRDP_BUILD_X11_VIEWER)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_compile_definitions(test_viewer_camera PRIVATE
-            _POSIX_C_SOURCE=200809L
             LIBRDP_X11_CAMERA_TESTING=1
         )
-        if(LIBRDP_JPEG_FOUND)
-            target_compile_definitions(test_viewer_camera PRIVATE LIBRDP_HAVE_JPEG=1)
-            target_link_libraries(test_viewer_camera PRIVATE PkgConfig::LIBRDP_JPEG)
-        endif()
+        librdp_apply_system_definitions(test_viewer_camera)
+        librdp_apply_x11_camera_backends(test_viewer_camera)
         librdp_apply_warning_options(test_viewer_camera)
         librdp_apply_sanitizer_compile_options(test_viewer_camera)
         librdp_apply_sanitizer_link_options(test_viewer_camera)
@@ -1168,7 +1286,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
             ${X11_INCLUDE_DIR}
             ${XKBCOMMON_INCLUDE_DIRS}
         )
-        target_compile_definitions(test_viewer_keyboard PRIVATE _POSIX_C_SOURCE=200809L)
+        librdp_apply_system_definitions(test_viewer_keyboard)
         target_link_libraries(test_viewer_keyboard PRIVATE
             librdp
             ${X11_LIBRARIES}
@@ -1189,7 +1307,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
         )
-        target_compile_definitions(test_viewer_clipboard PRIVATE _POSIX_C_SOURCE=200809L)
+        librdp_apply_system_definitions(test_viewer_clipboard)
         target_link_libraries(test_viewer_clipboard PRIVATE
             librdp
             Iconv::Iconv
@@ -1213,9 +1331,9 @@ if(LIBRDP_BUILD_X11_VIEWER)
                 ${X11_INCLUDE_DIR}
             )
             target_compile_definitions(test_viewer_display PRIVATE
-                _POSIX_C_SOURCE=200809L
                 LIBRDP_HAVE_XRANDR=1
             )
+            librdp_apply_system_definitions(test_viewer_display)
             target_link_libraries(test_viewer_display PRIVATE librdp ${X11_LIBRARIES})
             if(TARGET X11::Xrandr)
                 target_link_libraries(test_viewer_display PRIVATE X11::Xrandr)

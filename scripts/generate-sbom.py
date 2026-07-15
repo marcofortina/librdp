@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -77,9 +78,10 @@ def sha256_file(path: Path) -> str:
 
 
 def source_files(source_dir: Path) -> list[Path]:
-    if (source_dir / ".git").exists():
+    git = shutil.which("git")
+    if git and (source_dir / ".git").exists():
         result = subprocess.run(
-            ["git", "ls-files"],
+            [git, "ls-files"],
             cwd=source_dir,
             check=False,
             text=True,
@@ -87,7 +89,7 @@ def source_files(source_dir: Path) -> list[Path]:
             stderr=subprocess.PIPE,
         )
         if result.returncode == 0:
-            return sorted(source_dir / line for line in result.stdout.splitlines() if line)
+            return sorted(source_dir / line for line in result.stdout.splitlines() if line and (source_dir / line).exists())
 
     excluded = {".git", "__pycache__", "build"}
     files: list[Path] = []

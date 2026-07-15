@@ -21,7 +21,7 @@
 #include <time.h>
 
 #ifdef RDP_HAVE_LIBUSB
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #endif
 
 void rdp_session_usb_redirection_reset(librdp_session* session)
@@ -1768,7 +1768,8 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
                                                    device->handle,
-                                                   (uint8_t)(LIBUSB_ENDPOINT_IN | request.recipient),
+                                                   (uint8_t)((uint8_t)LIBUSB_ENDPOINT_IN |
+                                                             request.recipient),
                                                    LIBUSB_REQUEST_GET_DESCRIPTOR,
                                                    0x03eeu,
                                                    0,
@@ -1793,8 +1794,8 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
     actual = 0;
     usbd_status = rdp_usb_backend_control_transfer(session->usb_libusb,
                                                    device->handle,
-                                                   (uint8_t)(LIBUSB_ENDPOINT_IN |
-                                                             LIBUSB_REQUEST_TYPE_VENDOR |
+                                                   (uint8_t)((uint8_t)LIBUSB_ENDPOINT_IN |
+                                                             (uint8_t)LIBUSB_REQUEST_TYPE_VENDOR |
                                                              request.recipient),
                                                    vendor_code,
                                                    (uint16_t)(((uint16_t)request.interface_number << 8u) |
@@ -2746,4 +2747,3 @@ librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session
                     (unsigned)header.payload_len);
     return LIBRDP_STATUS_OK;
 }
-

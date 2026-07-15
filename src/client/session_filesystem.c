@@ -1841,6 +1841,7 @@ static librdp_status rdp_session_write_volume_information(rdp_buffer* buffer,
     struct statvfs vfs;
     uint64_t total_units = 0;
     uint64_t available_units = 0;
+    uint64_t volume_serial = 0;
     uint32_t bytes_per_sector = 512;
     uint32_t sectors_per_unit = 1;
 
@@ -1863,13 +1864,13 @@ static librdp_status rdp_session_write_volume_information(rdp_buffer* buffer,
         if (sectors_per_unit == 0)
             sectors_per_unit = 1;
     }
+    volume_serial = (uint64_t)st.st_dev ^ (uint64_t)st.st_ino;
     return rdp_filesystem_redirection_write_volume_information(buffer,
                                                               information_class,
                                                               volume_label,
                                                               "POSIX",
                                                               rdp_session_stat_ctime(&st),
-                                                              (uint32_t)((st.st_dev ^ st.st_ino) &
-                                                                         0xffffffffu),
+                                                              (uint32_t)(volume_serial & UINT64_C(0xffffffff)),
                                                               total_units,
                                                               available_units,
                                                               sectors_per_unit,
@@ -4564,4 +4565,3 @@ librdp_status rdp_session_handle_filesystem_io_request(librdp_session* session,
                                                              io_status);
     }
 }
-

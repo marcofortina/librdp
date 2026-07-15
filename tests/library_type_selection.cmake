@@ -50,6 +50,16 @@ endif()
 if(DEFINED LIBRDP_BUILD_TYPE AND NOT "${LIBRDP_BUILD_TYPE}" STREQUAL "")
     list(APPEND common_configure_args -DCMAKE_BUILD_TYPE=${LIBRDP_BUILD_TYPE})
 endif()
+if(DEFINED LIBRDP_OPENSSL_DIR AND NOT "${LIBRDP_OPENSSL_DIR}" STREQUAL "")
+    list(APPEND common_configure_args
+        -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
+        -DOpenSSL_DIR=${LIBRDP_OPENSSL_DIR})
+endif()
+if(DEFINED LIBRDP_OPENSSL_INCLUDE_DIR AND NOT "${LIBRDP_OPENSSL_INCLUDE_DIR}" STREQUAL "")
+    list(APPEND common_configure_args
+        -DOPENSSL_INCLUDE_DIR=${LIBRDP_OPENSSL_INCLUDE_DIR}
+        -DLIBRDP_OPENSSL_INCLUDE_DIR=${LIBRDP_OPENSSL_INCLUDE_DIR})
+endif()
 
 function(librdp_run_library_type_case name library_type build_shared expect_static expect_shared)
     set(case_dir "${work_dir}/${name}")

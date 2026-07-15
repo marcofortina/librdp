@@ -81,7 +81,7 @@
 #include <winscard.h>
 #endif
 #ifdef RDP_HAVE_LIBUSB
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #endif
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u

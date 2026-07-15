@@ -55,7 +55,7 @@ def tracked_files(repo: Path) -> list[Path]:
     )
     if result.returncode != 0:
         return filesystem_files(repo)
-    return [repo / line for line in result.stdout.splitlines() if line]
+    return [repo / line for line in result.stdout.splitlines() if line and (repo / line).exists()]
 
 
 def filesystem_files(repo: Path) -> list[Path]:

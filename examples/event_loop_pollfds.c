@@ -24,7 +24,10 @@ static int drive_session(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         return 1;
 
-    if (poll(fds, count, timeout_ms) < 0)
+    if (count > sizeof(fds) / sizeof(fds[0]) || count > (size_t)((nfds_t)-1))
+        return 1;
+
+    if (poll(fds, (nfds_t)count, timeout_ms) < 0)
         return 1;
 
     status = librdp_session_notify_poll(session, fds, count);

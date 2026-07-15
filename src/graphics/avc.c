@@ -155,7 +155,7 @@ void rdp_avc_frame_free(rdp_avc_frame* frame)
     frame->stride = 0;
 }
 
-#if defined(RDP_HAVE_ANY_AVC)
+#if defined(RDP_HAVE_FFMPEG_AVC)
 static void rdp_avc_frame_move(rdp_avc_frame* dst, rdp_avc_frame* src)
 {
     if (!dst || !src || dst == src)

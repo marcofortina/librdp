@@ -27,17 +27,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #ifdef __linux__
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <unistd.h>
 #endif
 
 #ifdef LIBRDP_HAVE_LIBUSB
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #endif
 
 #ifdef LIBRDP_HAVE_PCSC
@@ -64,19 +64,6 @@ static const char* x11_text_after(const char* text, const char* prefix)
     if (text[strlen(prefix)] == '\0')
         return NULL;
     return text + strlen(prefix);
-}
-
-static const char* x11_device_source_path(const char* source)
-{
-    const char* value = NULL;
-
-    value = x11_text_after(source, "device=");
-    if (value)
-        return value;
-    value = x11_text_after(source, "file=");
-    if (value)
-        return value;
-    return source;
 }
 
 static int x11_probe_file_readable(const char* path, const char* event_name)
@@ -156,7 +143,8 @@ static int x11_probe_parallel_port(const char* path)
 static int x11_probe_camera(const char* source)
 {
 #ifdef __linux__
-    const char* path = x11_device_source_path(source);
+    const char* value = NULL;
+    const char* path = source;
     int fd = -1;
     struct v4l2_capability capability;
 
@@ -169,6 +157,15 @@ static int x11_probe_camera(const char* source)
                         "ok=0 reason=source_policy source=\"%s\"",
                         source);
         return 0;
+    }
+    value = x11_text_after(source, "device=");
+    if (value)
+        path = value;
+    else
+    {
+        value = x11_text_after(source, "file=");
+        if (value)
+            path = value;
     }
     if (!path || path[0] == '\0')
         return 0;

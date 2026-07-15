@@ -23,7 +23,7 @@
 #include <librdp/error.h>
 
 #ifdef RDP_HAVE_LIBUSB
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 
 uint32_t rdp_usb_backend_libusb_status(int rc);
 uint32_t rdp_usb_backend_transfer_status(enum libusb_transfer_status status);

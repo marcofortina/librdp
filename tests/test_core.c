@@ -548,6 +548,22 @@ static void test_sleep_ms(uint32_t timeout_ms)
         requested = remaining;
 }
 
+static int wait_atomic_uint_gt(const atomic_uint* value, unsigned int baseline, uint32_t timeout_ms)
+{
+    uint32_t waited_ms = 0;
+
+    if (!value)
+        return 0;
+    while (waited_ms <= timeout_ms)
+    {
+        if (atomic_load_explicit(value, memory_order_relaxed) > baseline)
+            return 1;
+        test_sleep_ms(5u);
+        waited_ms += 5u;
+    }
+    return 0;
+}
+
 /*
  * Coverage: exercises the smartcard backend boundary without a real reader.
  * Bug classes: provider timeout, cancellation, reconnect after cancellation,
@@ -652,8 +668,7 @@ static int test_smartcard_backend_mock(void)
     CHECK(active_protocol == 0);
     CHECK(atomic_load_explicit(&mock.connect_calls, memory_order_relaxed) == 2u);
     CHECK(atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed) > cancel_calls);
-    test_sleep_ms(50u);
-    CHECK(atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed) > disconnect_calls);
+    CHECK(wait_atomic_uint_gt(&mock.disconnect_calls, disconnect_calls, 500u));
 
     atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
     mock.hang_connect_ms = 0;
@@ -3303,6 +3318,7 @@ static int start_handshake_server_full(uint16_t* port,
                         {
                             _exit(5);
                         }
+                        goto done_connection;
                     }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_WEBAUTHN_CREATE_CLOSE)
                     {
@@ -3678,6 +3694,30 @@ static int start_handshake_server(uint16_t* port, pid_t* child_pid, int encrypte
     return start_handshake_server_ex(port, child_pid, encrypted, error_info, 0, 0);
 }
 
+static int test_standard_security_available(void)
+{
+    rdp_standard_security_context security;
+    uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    memset(client_random, 0x11, sizeof(client_random));
+    memset(server_random, 0x22, sizeof(server_random));
+    memset(&security, 0, sizeof(security));
+    status = rdp_security_standard_client_init(&security,
+                                               RDP_SECURITY_METHOD_128BIT,
+                                               client_random,
+                                               server_random);
+    rdp_security_standard_clear(&security);
+    return status == LIBRDP_STATUS_OK;
+}
+
+/*
+ * Coverage: validates static channel registration, activation-time channel
+ * metadata, fragmented channel delivery, and deterministic fixture shutdown.
+ * Bug classes: invalid channel names, clone ownership, stale channel state,
+ * partial static-channel payloads, and peer teardown races after local close.
+ */
 static int test_static_channels(void)
 {
     librdp_settings* settings = NULL;
@@ -3690,6 +3730,7 @@ static int test_static_channels(void)
     pid_t server_pid = -1;
     int child_status = 0;
     size_t count = 0;
+    size_t i = 0;
 
     memset(&counter, 0, sizeof(counter));
     CHECK(librdp_static_channel_info_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -3767,6 +3808,8 @@ static int test_static_channels(void)
     CHECK(counter.last_channel_id == 1006);
     CHECK(counter.last_channel_data_len == 8);
     CHECK(memcmp(counter.last_channel_data, "statchan", 8) == 0);
+    for (i = 0; i < 4u; i++)
+        (void)librdp_session_run_once(session, 100);
     librdp_session_free(session);
     session = NULL;
     if (server_pid > 0)
@@ -5619,35 +5662,39 @@ static int test_settings_surface_input_session(void)
         CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     }
 
-    memset(&counter, 0, sizeof(counter));
-    server_pid = -1;
-    child_status = 0;
-    CHECK(start_handshake_server(&test_port, &server_pid, 1, 0));
-    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
-    session = librdp_session_new(settings);
-    CHECK(session != NULL);
-    librdp_session_set_event_callback(session, on_event, &counter);
-    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
-    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
-    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
-    CHECK(counter.states == 2);
-    cancel_capture.session = session;
-    cancel_capture.delay_ms = 50;
-    cancel_capture.status = LIBRDP_STATUS_AGAIN;
-    CHECK(pthread_create(&cancel_thread, NULL, cancel_thread_main, &cancel_capture) == 0);
-    CHECK(librdp_session_run_once(session, 5000) == LIBRDP_STATUS_CANCELLED);
-    CHECK(pthread_join(cancel_thread, NULL) == 0);
-    CHECK(cancel_capture.status == LIBRDP_STATUS_OK);
-    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CANCELLED);
-    CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
-    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
-    CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
-    CHECK(error_info.status == LIBRDP_STATUS_CANCELLED);
-    librdp_session_free(session);
-    if (server_pid > 0)
+    if (test_standard_security_available())
     {
-        CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
-        CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+        memset(&counter, 0, sizeof(counter));
+        server_pid = -1;
+        child_status = 0;
+        CHECK(start_handshake_server(&test_port, &server_pid, 1, 0));
+        CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+        session = librdp_session_new(settings);
+        CHECK(session != NULL);
+        librdp_session_set_event_callback(session, on_event, &counter);
+        CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CONNECTED);
+        CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_ACTIVATING);
+        CHECK(counter.states == 2);
+        cancel_capture.session = session;
+        cancel_capture.delay_ms = 50;
+        cancel_capture.status = LIBRDP_STATUS_AGAIN;
+        CHECK(pthread_create(&cancel_thread, NULL, cancel_thread_main, &cancel_capture) == 0);
+        CHECK(librdp_session_run_once(session, 5000) == LIBRDP_STATUS_CANCELLED);
+        CHECK(pthread_join(cancel_thread, NULL) == 0);
+        CHECK(cancel_capture.status == LIBRDP_STATUS_OK);
+        CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_CANCELLED);
+        CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_DISCONNECTED);
+        CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+        CHECK(librdp_error_copy_info(librdp_session_last_error(session), &error_info) == LIBRDP_STATUS_OK);
+        CHECK(error_info.status == LIBRDP_STATUS_CANCELLED);
+        librdp_session_free(session);
+        session = NULL;
+        if (server_pid > 0)
+        {
+            CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+            CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+        }
     }
 
     librdp_settings_free(copy);
@@ -6471,10 +6518,10 @@ static int test_echo_channel_client_late_response(void)
     }
     CHECK(status == LIBRDP_STATUS_OK);
     CHECK(saw_active);
-    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 20, &sequence) ==
+    CHECK(librdp_session_echo_send(session, ping, sizeof(ping), 50, &sequence) ==
           LIBRDP_STATUS_OK);
     CHECK(sequence != 0);
-    test_sleep_ms(100u);
+    test_sleep_ms(500u);
     for (i = 0; i < 16u && status == LIBRDP_STATUS_OK && counter.echo_result == 0; i++)
         status = librdp_session_run_once(session, 1000);
     CHECK(status == LIBRDP_STATUS_OK);

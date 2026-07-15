@@ -5,8 +5,12 @@
 
 include(CMakeFindDependencyMacro)
 
-find_dependency(OpenSSL 3.0)
+find_package(OpenSSL 3.0 CONFIG QUIET)
+if(NOT OpenSSL_FOUND)
+    find_dependency(OpenSSL 3.0)
+endif()
 find_dependency(Iconv)
+find_dependency(Threads)
 
 set(_librdp_needs_pkgconfig FALSE)
 if(@LIBRDP_FFMPEG_AVC_FOUND@ OR @LIBRDP_OPENH264_AVC_FOUND@ OR @LIBRDP_PCSC_FOUND@ OR @LIBRDP_LIBUSB_FOUND@ OR @LIBRDP_FIDO2_FOUND@ OR @LIBRDP_CBOR_FOUND@ OR @LIBRDP_ACL_FOUND@ OR @LIBRDP_ATTR_FOUND@ OR @LIBRDP_ARCHIVE_FOUND@)

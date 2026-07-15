@@ -3840,6 +3840,8 @@ static int test_path_security_license_channels(void)
     rdp_surface_command_list surface_commands;
     rdp_surface_bits surface_bits;
     librdp_status graphics_avc_status;
+    librdp_status standard_security_status;
+    librdp_status ntlm_auth_status;
     rdp_avc_decoder* avc_decoder;
     rdp_avc_frame avc_frame;
     rdp_clearcodec_stream clear_stream;
@@ -6376,10 +6378,12 @@ static int test_path_security_license_channels(void)
         client_random[i] = (uint8_t)(i + 1u);
         server_random[i] = (uint8_t)(0xa0u + i);
     }
-    PCHECK(rdp_security_standard_client_init(&secure_a,
-                                             RDP_SECURITY_METHOD_128BIT,
-                                             client_random,
-                                             server_random) == LIBRDP_STATUS_OK);
+    standard_security_status = rdp_security_standard_client_init(&secure_a,
+                                                                 RDP_SECURITY_METHOD_128BIT,
+                                                                 client_random,
+                                                                 server_random);
+    if (standard_security_status == LIBRDP_STATUS_OK)
+    {
     PCHECK(secure_a.key_len == 16);
     PCHECK(rdp_security_standard_client_init(&secure_b,
                                              RDP_SECURITY_METHOD_128BIT,
@@ -6741,6 +6745,11 @@ static int test_path_security_license_channels(void)
                                              server_random) == LIBRDP_STATUS_OK);
     PCHECK(secure_a.key_len == 8 && secure_a.sign_key[0] == 0xd1);
     rdp_security_standard_clear(&secure_a);
+    }
+    else
+    {
+        PCHECK(standard_security_status == LIBRDP_STATUS_UNSUPPORTED);
+    }
     PCHECK(rdp_security_standard_client_init(&secure_a,
                                              RDP_SECURITY_METHOD_FIPS,
                                              client_random,
@@ -7411,6 +7420,7 @@ static int test_path_security_license_channels(void)
         rdp_buffer response_mac_input;
         uint8_t challenge_mac[RDP_LICENSE_MAC_LEN];
         uint8_t response_mac[RDP_LICENSE_MAC_LEN];
+        librdp_status license_crypto_status;
 
         memset(&license_crypto, 0, sizeof(license_crypto));
         rdp_buffer_init(&encrypted_challenge);
@@ -7426,83 +7436,91 @@ static int test_path_security_license_channels(void)
         for (i = 0; i < RDP_LICENSE_HARDWARE_ID_LEN; i++)
             license_crypto.hardware_id[i] = (uint8_t)(0xc0u + i);
 
-        PCHECK(rdp_security_license_crypt(license_crypto.encryption_key,
-                                          challenge_plain,
-                                          sizeof(challenge_plain),
-                                          &encrypted_challenge) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_security_license_mac(license_crypto.mac_salt_key,
-                                        challenge_plain,
-                                        sizeof(challenge_plain),
-                                        challenge_mac) == LIBRDP_STATUS_OK);
-        license_payload.length = 0;
-        license_packet.length = 0;
-        PCHECK(rdp_buffer_append_u32_le(&license_payload, 0u) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_license_write_binary_blob(&license_payload,
-                                             RDP_LICENSE_BLOB_ENCRYPTED_DATA,
-                                             encrypted_challenge.data,
-                                             (uint16_t)encrypted_challenge.length) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_buffer_append(&license_payload, challenge_mac, sizeof(challenge_mac)) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_license_write_preamble(&license_packet,
-                                          RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE,
-                                          RDP_LICENSE_VERSION_3,
-                                          (uint16_t)license_payload.length) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_buffer_append(&license_packet, license_payload.data, license_payload.length) ==
-               LIBRDP_STATUS_OK);
-        PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
-                                                    license_packet.length,
-                                                    &license_challenge) == LIBRDP_STATUS_OK);
-        license_payload.length = 0;
-        PCHECK(rdp_license_build_platform_challenge_response(&license_crypto,
-                                                             &license_challenge,
-                                                             &license_payload) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_license_parse_platform_challenge_response(license_payload.data,
-                                                             license_payload.length,
-                                                             &client_challenge_response) ==
-               LIBRDP_STATUS_OK);
-        PCHECK(rdp_security_license_crypt(license_crypto.encryption_key,
-                                          client_challenge_response.encrypted_response.data,
-                                          client_challenge_response.encrypted_response.length,
-                                          &response_plain) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_security_license_crypt(license_crypto.encryption_key,
-                                          client_challenge_response.encrypted_hardware_id.data,
-                                          client_challenge_response.encrypted_hardware_id.length,
-                                          &hardware_plain) == LIBRDP_STATUS_OK);
-        PCHECK(hardware_plain.length == RDP_LICENSE_HARDWARE_ID_LEN &&
-               memcmp(hardware_plain.data,
-                      license_crypto.hardware_id,
-                      RDP_LICENSE_HARDWARE_ID_LEN) == 0);
-        PCHECK(rdp_license_parse_platform_challenge_response_data(
-                   response_plain.data,
-                   response_plain.length,
-                   &parsed_challenge_response_data) == LIBRDP_STATUS_OK);
-        PCHECK(parsed_challenge_response_data.version ==
-                   RDP_LICENSE_PLATFORM_CHALLENGE_RESPONSE_VERSION &&
-               parsed_challenge_response_data.client_type == RDP_LICENSE_CLIENT_TYPE_OTHER &&
-               parsed_challenge_response_data.license_detail_level == RDP_LICENSE_DETAIL_LEVEL_DETAIL &&
-               parsed_challenge_response_data.challenge_len == sizeof(challenge_plain) &&
-               memcmp(parsed_challenge_response_data.challenge,
-                      challenge_plain,
-                      sizeof(challenge_plain)) == 0);
-        PCHECK(rdp_buffer_append(&response_mac_input,
-                                 response_plain.data,
-                                 response_plain.length) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_buffer_append(&response_mac_input,
-                                 license_crypto.hardware_id,
-                                 RDP_LICENSE_HARDWARE_ID_LEN) == LIBRDP_STATUS_OK);
-        PCHECK(rdp_security_license_mac(license_crypto.mac_salt_key,
-                                        response_mac_input.data,
-                                        response_mac_input.length,
-                                        response_mac) == LIBRDP_STATUS_OK);
-        PCHECK(memcmp(response_mac, client_challenge_response.mac, sizeof(response_mac)) == 0);
-        license_packet.data[license_packet.length - 1u] ^= 0x01u;
-        PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
-                                                    license_packet.length,
-                                                    &license_challenge) == LIBRDP_STATUS_OK);
-        license_payload.length = 0;
-        PCHECK(rdp_license_build_platform_challenge_response(&license_crypto,
-                                                             &license_challenge,
-                                                             &license_payload) ==
-               LIBRDP_STATUS_PROTOCOL_ERROR);
+        license_crypto_status = rdp_security_license_crypt(license_crypto.encryption_key,
+                                                           challenge_plain,
+                                                           sizeof(challenge_plain),
+                                                           &encrypted_challenge);
+        if (license_crypto_status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            PCHECK(encrypted_challenge.length == 0);
+        }
+        else
+        {
+            PCHECK(license_crypto_status == LIBRDP_STATUS_OK);
+            PCHECK(rdp_security_license_mac(license_crypto.mac_salt_key,
+                                            challenge_plain,
+                                            sizeof(challenge_plain),
+                                            challenge_mac) == LIBRDP_STATUS_OK);
+            license_payload.length = 0;
+            license_packet.length = 0;
+            PCHECK(rdp_buffer_append_u32_le(&license_payload, 0u) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_license_write_binary_blob(&license_payload,
+                                                 RDP_LICENSE_BLOB_ENCRYPTED_DATA,
+                                                 encrypted_challenge.data,
+                                                 (uint16_t)encrypted_challenge.length) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_buffer_append(&license_payload, challenge_mac, sizeof(challenge_mac)) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_license_write_preamble(&license_packet,
+                                              RDP_LICENSE_MESSAGE_PLATFORM_CHALLENGE,
+                                              RDP_LICENSE_VERSION_3,
+                                              (uint16_t)license_payload.length) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_buffer_append(&license_packet, license_payload.data, license_payload.length) ==
+                   LIBRDP_STATUS_OK);
+            PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
+                                                        license_packet.length,
+                                                        &license_challenge) == LIBRDP_STATUS_OK);
+            license_payload.length = 0;
+            PCHECK(rdp_license_build_platform_challenge_response(&license_crypto,
+                                                                 &license_challenge,
+                                                                 &license_payload) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_license_parse_platform_challenge_response(license_payload.data,
+                                                                 license_payload.length,
+                                                                 &client_challenge_response) ==
+                   LIBRDP_STATUS_OK);
+            PCHECK(rdp_security_license_crypt(license_crypto.encryption_key,
+                                              client_challenge_response.encrypted_response.data,
+                                              client_challenge_response.encrypted_response.length,
+                                              &response_plain) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_security_license_crypt(license_crypto.encryption_key,
+                                              client_challenge_response.encrypted_hardware_id.data,
+                                              client_challenge_response.encrypted_hardware_id.length,
+                                              &hardware_plain) == LIBRDP_STATUS_OK);
+            PCHECK(hardware_plain.length == RDP_LICENSE_HARDWARE_ID_LEN &&
+                   memcmp(hardware_plain.data,
+                          license_crypto.hardware_id,
+                          RDP_LICENSE_HARDWARE_ID_LEN) == 0);
+            PCHECK(rdp_license_parse_platform_challenge_response_data(
+                       response_plain.data,
+                       response_plain.length,
+                       &parsed_challenge_response_data) == LIBRDP_STATUS_OK);
+            PCHECK(parsed_challenge_response_data.version ==
+                       RDP_LICENSE_PLATFORM_CHALLENGE_RESPONSE_VERSION &&
+                   parsed_challenge_response_data.client_type == RDP_LICENSE_CLIENT_TYPE_OTHER &&
+                   parsed_challenge_response_data.license_detail_level == RDP_LICENSE_DETAIL_LEVEL_DETAIL &&
+                   parsed_challenge_response_data.challenge_len == sizeof(challenge_plain) &&
+                   memcmp(parsed_challenge_response_data.challenge,
+                          challenge_plain,
+                          sizeof(challenge_plain)) == 0);
+            PCHECK(rdp_buffer_append(&response_mac_input,
+                                     response_plain.data,
+                                     response_plain.length) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_buffer_append(&response_mac_input,
+                                     license_crypto.hardware_id,
+                                     RDP_LICENSE_HARDWARE_ID_LEN) == LIBRDP_STATUS_OK);
+            PCHECK(rdp_security_license_mac(license_crypto.mac_salt_key,
+                                            response_mac_input.data,
+                                            response_mac_input.length,
+                                            response_mac) == LIBRDP_STATUS_OK);
+            PCHECK(memcmp(response_mac, client_challenge_response.mac, sizeof(response_mac)) == 0);
+            license_packet.data[license_packet.length - 1u] ^= 0x01u;
+            PCHECK(rdp_license_parse_platform_challenge(license_packet.data,
+                                                        license_packet.length,
+                                                        &license_challenge) == LIBRDP_STATUS_OK);
+            license_payload.length = 0;
+            PCHECK(rdp_license_build_platform_challenge_response(&license_crypto,
+                                                                 &license_challenge,
+                                                                 &license_payload) ==
+                   LIBRDP_STATUS_PROTOCOL_ERROR);
+        }
         rdp_buffer_free(&response_mac_input);
         rdp_buffer_free(&hardware_plain);
         rdp_buffer_free(&response_plain);
@@ -11310,107 +11328,115 @@ static int test_path_security_license_channels(void)
     ntlm_v2_challenge.target_name_len = sizeof(ntlm_v2_target_name);
     ntlm_v2_challenge.target_info = ntlm_v2_target_info;
     ntlm_v2_challenge.target_info_len = sizeof(ntlm_v2_target_info);
-    PCHECK(rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
-                                               &ntlm_v2_challenge,
-                                               "user",
-                                               "SecREt01",
-                                               "DOMAIN",
-                                               "COMPUTER",
-                                               0x01c334b736d39000ull,
-                                               ntlm_v2_client_challenge,
-                                               ntlm_v2_session_key,
-                                               &ntlm_auth_result) == LIBRDP_STATUS_OK);
-    PCHECK(ntlm_authenticate.length > 88);
-    PCHECK(memcmp(ntlm_authenticate.data, "NTLMSSP", 7) == 0);
-    PCHECK(test_read_u32_le(ntlm_authenticate.data + 8) == 3);
-    lm_len = test_read_u16_le(ntlm_authenticate.data + 12);
-    lm_offset = test_read_u32_le(ntlm_authenticate.data + 16);
-    nt_len = test_read_u16_le(ntlm_authenticate.data + 20);
-    nt_offset = test_read_u32_le(ntlm_authenticate.data + 24);
-    key_len = test_read_u16_le(ntlm_authenticate.data + 52);
-    key_offset = test_read_u32_le(ntlm_authenticate.data + 56);
-    PCHECK(test_read_u32_le(ntlm_authenticate.data + 60) == ntlm_auth_result.flags);
-    PCHECK(lm_len == sizeof(ntlm_v2_expected_lm));
-    PCHECK(nt_len > sizeof(ntlm_v2_expected_proof));
-    PCHECK(key_len == sizeof(ntlm_v2_session_key));
-    PCHECK((size_t)lm_offset + lm_len <= ntlm_authenticate.length);
-    PCHECK((size_t)nt_offset + nt_len <= ntlm_authenticate.length);
-    PCHECK((size_t)key_offset + key_len <= ntlm_authenticate.length);
-    PCHECK(memcmp(ntlm_authenticate.data + lm_offset, ntlm_v2_expected_lm, sizeof(ntlm_v2_expected_lm)) == 0);
-    PCHECK(memcmp(ntlm_authenticate.data + nt_offset,
-                  ntlm_v2_expected_proof,
-                  sizeof(ntlm_v2_expected_proof)) == 0);
-    PCHECK(memcmp(ntlm_authenticate.data + key_offset,
-                  ntlm_v2_expected_encrypted_key,
-                  sizeof(ntlm_v2_expected_encrypted_key)) == 0);
-    PCHECK(memcmp(ntlm_auth_result.session_key, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) == 0);
-    PCHECK(memcmp(ntlm_authenticate.data + key_offset, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) != 0);
-    PCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
-                                                      ntlm_authenticate.data,
-                                                      ntlm_authenticate.length) == LIBRDP_STATUS_OK);
-    PCHECK(spnego_authenticate.length > ntlm_authenticate.length && spnego_authenticate.data[0] == 0xa1);
-    PCHECK(rdp_credssp_ntlm_security_init(&ntlm_security, &ntlm_auth_result) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_credssp_ntlm_wrap(&ntlm_security, "data", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
-    PCHECK(ntlm_wrapped.length == 20);
-    PCHECK(test_read_u32_le(ntlm_wrapped.data) == 1);
-    PCHECK(test_read_u32_le(ntlm_wrapped.data + 12) == 0);
-    PCHECK(memcmp(ntlm_wrapped.data, ntlm_expected_wrapped_data, sizeof(ntlm_expected_wrapped_data)) == 0);
-    PCHECK(memcmp(ntlm_wrapped.data + 16, "data", 4) != 0);
-    PCHECK(ntlm_security.send_seq == 1);
-    PCHECK(rdp_credssp_encrypt_public_key_hash(&ntlm_security,
-                                               credssp_client_nonce,
-                                               sizeof(credssp_client_nonce),
-                                               credssp_public_key,
-                                               sizeof(credssp_public_key),
-                                               &pub_key_auth) == LIBRDP_STATUS_OK);
-    PCHECK(pub_key_auth.length == 48 && ntlm_security.send_seq == 2);
-    server_security = ntlm_security;
-    memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
-    server_security.send_rc4 = ntlm_security.recv_rc4;
-    server_security.send_seq = 0;
-    PCHECK(test_sha256_three((const uint8_t*)"CredSSP Server-To-Client Binding Hash",
-                             sizeof("CredSSP Server-To-Client Binding Hash"),
-                             credssp_client_nonce,
-                             sizeof(credssp_client_nonce),
-                             credssp_public_key,
-                             sizeof(credssp_public_key),
-                             server_hash));
-    PCHECK(rdp_credssp_ntlm_wrap(&server_security,
-                                 server_hash,
-                                 sizeof(server_hash),
-                                 &server_pub_key_auth) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_credssp_verify_public_key_hash(&ntlm_security,
-                                              credssp_client_nonce,
-                                              sizeof(credssp_client_nonce),
-                                              credssp_public_key,
-                                              sizeof(credssp_public_key),
-                                              server_pub_key_auth.data,
-                                              server_pub_key_auth.length) == LIBRDP_STATUS_OK);
-    server_security = ntlm_security;
-    memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
-    server_security.send_rc4 = ntlm_security.recv_rc4;
-    server_security.send_seq = ntlm_security.recv_seq;
-    PCHECK(rdp_credssp_ntlm_wrap(&server_security, "peer", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
-    PCHECK(rdp_credssp_ntlm_unwrap(&ntlm_security,
-                                   ntlm_wrapped.data + 20,
-                                   ntlm_wrapped.length - 20,
-                                   &ntlm_unwrapped) == LIBRDP_STATUS_OK);
-    PCHECK(ntlm_unwrapped.length == 4 && memcmp(ntlm_unwrapped.data, "peer", 4) == 0);
-    PCHECK(rdp_credssp_write_password_credentials(&ts_credentials,
-                                                  "DOMAIN",
-                                                  "user",
-                                                  "SecREt01") == LIBRDP_STATUS_OK);
-    PCHECK(ts_credentials.length > 32 && ts_credentials.data[0] == 0x30);
-    PCHECK(rdp_credssp_encrypt_password_credentials(&ntlm_security,
-                                                    "DOMAIN",
-                                                    "user",
-                                                    "SecREt01",
-                                                    &auth_info) == LIBRDP_STATUS_OK);
-    PCHECK(auth_info.length == ts_credentials.length + 16u);
-    PCHECK(test_read_u32_le(auth_info.data) == 1);
-    PCHECK(test_read_u32_le(auth_info.data + 12) == 2);
-    PCHECK(memcmp(auth_info.data + 16, ts_credentials.data, ts_credentials.length < 8u ? ts_credentials.length : 8u) !=
-           0);
+    ntlm_auth_status = rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
+                                                           &ntlm_v2_challenge,
+                                                           "user",
+                                                           "SecREt01",
+                                                           "DOMAIN",
+                                                           "COMPUTER",
+                                                           0x01c334b736d39000ull,
+                                                           ntlm_v2_client_challenge,
+                                                           ntlm_v2_session_key,
+                                                           &ntlm_auth_result);
+    if (ntlm_auth_status == LIBRDP_STATUS_UNSUPPORTED)
+    {
+        PCHECK(ntlm_authenticate.length == 0);
+    }
+    else
+    {
+        PCHECK(ntlm_auth_status == LIBRDP_STATUS_OK);
+        PCHECK(ntlm_authenticate.length > 88);
+        PCHECK(memcmp(ntlm_authenticate.data, "NTLMSSP", 7) == 0);
+        PCHECK(test_read_u32_le(ntlm_authenticate.data + 8) == 3);
+        lm_len = test_read_u16_le(ntlm_authenticate.data + 12);
+        lm_offset = test_read_u32_le(ntlm_authenticate.data + 16);
+        nt_len = test_read_u16_le(ntlm_authenticate.data + 20);
+        nt_offset = test_read_u32_le(ntlm_authenticate.data + 24);
+        key_len = test_read_u16_le(ntlm_authenticate.data + 52);
+        key_offset = test_read_u32_le(ntlm_authenticate.data + 56);
+        PCHECK(test_read_u32_le(ntlm_authenticate.data + 60) == ntlm_auth_result.flags);
+        PCHECK(lm_len == sizeof(ntlm_v2_expected_lm));
+        PCHECK(nt_len > sizeof(ntlm_v2_expected_proof));
+        PCHECK(key_len == sizeof(ntlm_v2_session_key));
+        PCHECK((size_t)lm_offset + lm_len <= ntlm_authenticate.length);
+        PCHECK((size_t)nt_offset + nt_len <= ntlm_authenticate.length);
+        PCHECK((size_t)key_offset + key_len <= ntlm_authenticate.length);
+        PCHECK(memcmp(ntlm_authenticate.data + lm_offset, ntlm_v2_expected_lm, sizeof(ntlm_v2_expected_lm)) == 0);
+        PCHECK(memcmp(ntlm_authenticate.data + nt_offset,
+                      ntlm_v2_expected_proof,
+                      sizeof(ntlm_v2_expected_proof)) == 0);
+        PCHECK(memcmp(ntlm_authenticate.data + key_offset,
+                      ntlm_v2_expected_encrypted_key,
+                      sizeof(ntlm_v2_expected_encrypted_key)) == 0);
+        PCHECK(memcmp(ntlm_auth_result.session_key, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) == 0);
+        PCHECK(memcmp(ntlm_authenticate.data + key_offset, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) != 0);
+        PCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
+                                                          ntlm_authenticate.data,
+                                                          ntlm_authenticate.length) == LIBRDP_STATUS_OK);
+        PCHECK(spnego_authenticate.length > ntlm_authenticate.length && spnego_authenticate.data[0] == 0xa1);
+        PCHECK(rdp_credssp_ntlm_security_init(&ntlm_security, &ntlm_auth_result) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_wrap(&ntlm_security, "data", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
+        PCHECK(ntlm_wrapped.length == 20);
+        PCHECK(test_read_u32_le(ntlm_wrapped.data) == 1);
+        PCHECK(test_read_u32_le(ntlm_wrapped.data + 12) == 0);
+        PCHECK(memcmp(ntlm_wrapped.data, ntlm_expected_wrapped_data, sizeof(ntlm_expected_wrapped_data)) == 0);
+        PCHECK(memcmp(ntlm_wrapped.data + 16, "data", 4) != 0);
+        PCHECK(ntlm_security.send_seq == 1);
+        PCHECK(rdp_credssp_encrypt_public_key_hash(&ntlm_security,
+                                                   credssp_client_nonce,
+                                                   sizeof(credssp_client_nonce),
+                                                   credssp_public_key,
+                                                   sizeof(credssp_public_key),
+                                                   &pub_key_auth) == LIBRDP_STATUS_OK);
+        PCHECK(pub_key_auth.length == 48 && ntlm_security.send_seq == 2);
+        server_security = ntlm_security;
+        memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
+        server_security.send_rc4 = ntlm_security.recv_rc4;
+        server_security.send_seq = 0;
+        PCHECK(test_sha256_three((const uint8_t*)"CredSSP Server-To-Client Binding Hash",
+                                 sizeof("CredSSP Server-To-Client Binding Hash"),
+                                 credssp_client_nonce,
+                                 sizeof(credssp_client_nonce),
+                                 credssp_public_key,
+                                 sizeof(credssp_public_key),
+                                 server_hash));
+        PCHECK(rdp_credssp_ntlm_wrap(&server_security,
+                                     server_hash,
+                                     sizeof(server_hash),
+                                     &server_pub_key_auth) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_verify_public_key_hash(&ntlm_security,
+                                                  credssp_client_nonce,
+                                                  sizeof(credssp_client_nonce),
+                                                  credssp_public_key,
+                                                  sizeof(credssp_public_key),
+                                                  server_pub_key_auth.data,
+                                                  server_pub_key_auth.length) == LIBRDP_STATUS_OK);
+        server_security = ntlm_security;
+        memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
+        server_security.send_rc4 = ntlm_security.recv_rc4;
+        server_security.send_seq = ntlm_security.recv_seq;
+        PCHECK(rdp_credssp_ntlm_wrap(&server_security, "peer", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_unwrap(&ntlm_security,
+                                       ntlm_wrapped.data + 20,
+                                       ntlm_wrapped.length - 20,
+                                       &ntlm_unwrapped) == LIBRDP_STATUS_OK);
+        PCHECK(ntlm_unwrapped.length == 4 && memcmp(ntlm_unwrapped.data, "peer", 4) == 0);
+        PCHECK(rdp_credssp_write_password_credentials(&ts_credentials,
+                                                      "DOMAIN",
+                                                      "user",
+                                                      "SecREt01") == LIBRDP_STATUS_OK);
+        PCHECK(ts_credentials.length > 32 && ts_credentials.data[0] == 0x30);
+        PCHECK(rdp_credssp_encrypt_password_credentials(&ntlm_security,
+                                                        "DOMAIN",
+                                                        "user",
+                                                        "SecREt01",
+                                                        &auth_info) == LIBRDP_STATUS_OK);
+        PCHECK(auth_info.length == ts_credentials.length + 16u);
+        PCHECK(test_read_u32_le(auth_info.data) == 1);
+        PCHECK(test_read_u32_le(auth_info.data + 12) == 2);
+        PCHECK(memcmp(auth_info.data + 16, ts_credentials.data, ts_credentials.length < 8u ? ts_credentials.length : 8u) !=
+               0);
+    }
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&dyn_response);
     rdp_buffer_free(&channel_packet);

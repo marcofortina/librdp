@@ -120,7 +120,7 @@
 #endif
 #include "client/smartcard_backend.h"
 #ifdef RDP_HAVE_LIBUSB
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #endif
 
 static uint32_t rdp_session_pixels_to_mm(uint16_t pixels)

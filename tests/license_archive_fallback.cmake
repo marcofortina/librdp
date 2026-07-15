@@ -16,22 +16,36 @@ file(REMOVE_RECURSE "${archive_dir}")
 file(MAKE_DIRECTORY "${archive_dir}")
 
 find_program(GIT_EXECUTABLE NAMES git)
-if(NOT GIT_EXECUTABLE)
-    message(FATAL_ERROR "git is required to prepare the source-archive fixture")
+if(GIT_EXECUTABLE)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${LIBRDP_SOURCE_DIR}" ls-files
+        RESULT_VARIABLE git_result
+        OUTPUT_VARIABLE git_output
+    )
+    if(NOT git_result EQUAL 0)
+        message(FATAL_ERROR "git ls-files failed while preparing source-archive fixture")
+    endif()
+    string(REPLACE "\n" ";" tracked_files "${git_output}")
+else()
+    file(GLOB_RECURSE tracked_files
+        LIST_DIRECTORIES false
+        RELATIVE "${LIBRDP_SOURCE_DIR}"
+        "${LIBRDP_SOURCE_DIR}/*"
+        "${LIBRDP_SOURCE_DIR}/.github/*"
+        "${LIBRDP_SOURCE_DIR}/.gitignore"
+    )
+    list(FILTER tracked_files EXCLUDE REGEX "(^|/)\\.git(/|$)")
+    list(FILTER tracked_files EXCLUDE REGEX "(^|/)__pycache__(/|$)")
+    list(FILTER tracked_files EXCLUDE REGEX "^build(/|$)")
+    list(FILTER tracked_files EXCLUDE REGEX "^build-[^/]*(/|$)")
+    list(SORT tracked_files)
 endif()
 
-execute_process(
-    COMMAND "${GIT_EXECUTABLE}" -C "${LIBRDP_SOURCE_DIR}" ls-files
-    RESULT_VARIABLE git_result
-    OUTPUT_VARIABLE git_output
-)
-if(NOT git_result EQUAL 0)
-    message(FATAL_ERROR "git ls-files failed while preparing source-archive fixture")
-endif()
-
-string(REPLACE "\n" ";" tracked_files "${git_output}")
 foreach(rel IN LISTS tracked_files)
     if(rel STREQUAL "")
+        continue()
+    endif()
+    if(NOT EXISTS "${LIBRDP_SOURCE_DIR}/${rel}")
         continue()
     endif()
     get_filename_component(parent "${rel}" DIRECTORY)
