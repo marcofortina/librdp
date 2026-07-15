@@ -30,10 +30,19 @@ typedef struct cocoa_viewer_options
     const char* username;
     const char* password;
     const char* domain;
+    const char* rail_app;
+    const char* gateway_url;
+    const char* gateway_username;
+    const char* gateway_password;
+    const char* gateway_domain;
     uint16_t port;
     uint32_t width;
     uint32_t height;
     librdp_security_mode security;
+    librdp_gateway_mode gateway_mode;
+    uint32_t gateway_timeout_ms;
+    int gateway_has_timeout;
+    int gateway_no_session_credentials;
     int accept_tls_certificate;
     int show_help;
 } cocoa_viewer_options;
@@ -71,7 +80,9 @@ static void cocoa_viewer_usage(FILE* stream, const char* program)
     fprintf(stream,
             "usage: %s --target host [--port port] [--user name] [--password value] "
             "[--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] "
-            "[--accept-tls-certificate]\n",
+            "[--accept-tls-certificate] [--gateway url] [--gateway-mode http-connect|rdg-http] "
+            "[--gateway-user name] [--gateway-password value] [--gateway-domain name] "
+            "[--gateway-timeout ms] [--gateway-no-session-credentials] [--rail app=path]\n",
             program);
 }
 
@@ -116,6 +127,21 @@ static int cocoa_viewer_parse_size(const char* text, uint32_t* value)
     return 1;
 }
 
+static int cocoa_viewer_parse_u32(const char* text, uint32_t* value)
+{
+    char* end = NULL;
+    unsigned long parsed = 0;
+
+    if (!text || !value)
+        return 0;
+    errno = 0;
+    parsed = strtoul(text, &end, 10);
+    if (errno != 0 || !end || *end != '\0' || parsed > UINT32_MAX)
+        return 0;
+    *value = (uint32_t)parsed;
+    return 1;
+}
+
 static int cocoa_viewer_parse_security(const char* text, librdp_security_mode* mode)
 {
     if (!text || !mode)
@@ -133,6 +159,30 @@ static int cocoa_viewer_parse_security(const char* text, librdp_security_mode* m
     return 1;
 }
 
+static int cocoa_viewer_parse_gateway_mode(const char* text, librdp_gateway_mode* mode)
+{
+    if (!text || !mode)
+        return 0;
+    if (strcmp(text, "http-connect") == 0)
+        *mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+    else if (strcmp(text, "rdg-http") == 0)
+        *mode = LIBRDP_GATEWAY_RDG_HTTP;
+    else
+        return 0;
+    return 1;
+}
+
+static const char* cocoa_viewer_rail_value(const char* text)
+{
+    const char prefix[] = "app=";
+
+    if (!text)
+        return NULL;
+    if (strncmp(text, prefix, sizeof(prefix) - 1u) != 0 || text[sizeof(prefix) - 1u] == '\0')
+        return NULL;
+    return text + sizeof(prefix) - 1u;
+}
+
 static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* options)
 {
     int i = 0;
@@ -144,6 +194,7 @@ static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* 
     options->width = 1024u;
     options->height = 768u;
     options->security = LIBRDP_SECURITY_AUTO;
+    options->gateway_mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     for (i = 1; i < argc; i++)
     {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
@@ -198,6 +249,53 @@ static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* 
         }
         else if (strcmp(argv[i], "--accept-tls-certificate") == 0)
             options->accept_tls_certificate = 1;
+        else if (strcmp(argv[i], "--rail") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
+                return 0;
+            options->rail_app = cocoa_viewer_rail_value(argv[i]);
+            if (!options->rail_app)
+                return 0;
+        }
+        else if (strcmp(argv[i], "--gateway") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
+                return 0;
+            options->gateway_url = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-mode") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_gateway_mode(argv[i], &options->gateway_mode))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--gateway-user") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
+                return 0;
+            options->gateway_username = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-password") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
+                return 0;
+            options->gateway_password = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-domain") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
+                return 0;
+            options->gateway_domain = argv[i];
+        }
+        else if (strcmp(argv[i], "--gateway-timeout") == 0)
+        {
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_u32(argv[i], &options->gateway_timeout_ms))
+                return 0;
+            options->gateway_has_timeout = 1;
+        }
+        else if (strcmp(argv[i], "--gateway-no-session-credentials") == 0)
+            options->gateway_no_session_credentials = 1;
         else
         {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
@@ -261,6 +359,33 @@ static librdp_settings* cocoa_viewer_create_settings(cocoa_viewer_options* optio
     {
         librdp_settings_free(settings);
         return NULL;
+    }
+    if (options->rail_app && librdp_settings_add_rail_app(settings, options->rail_app) != LIBRDP_STATUS_OK)
+    {
+        librdp_settings_free(settings);
+        return NULL;
+    }
+    if (options->gateway_url)
+    {
+        librdp_gateway_config gateway_config;
+
+        if (librdp_gateway_config_init(&gateway_config) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(settings);
+            return NULL;
+        }
+        gateway_config.mode = options->gateway_mode;
+        gateway_config.url = options->gateway_url;
+        gateway_config.username = options->gateway_username;
+        gateway_config.password = options->gateway_password;
+        gateway_config.domain = options->gateway_domain;
+        gateway_config.timeout_ms = options->gateway_has_timeout ? options->gateway_timeout_ms : 0u;
+        gateway_config.use_session_credentials = options->gateway_no_session_credentials ? 0 : 1;
+        if (librdp_settings_set_gateway_config(settings, &gateway_config) != LIBRDP_STATUS_OK)
+        {
+            librdp_settings_free(settings);
+            return NULL;
+        }
     }
     if (options->accept_tls_certificate)
     {

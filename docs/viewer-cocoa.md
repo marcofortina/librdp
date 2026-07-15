@@ -39,6 +39,14 @@ TLS certificate verification is strict by default. `--accept-tls-certificate`
 accepts the presented certificate for the current connection after printing
 its host, subject, issuer, and SHA-256 fingerprint to stderr.
 
+RemoteApp launches can be requested with `--rail app=<program>`.
+
+Gateway tunneling can be configured with `--gateway <url>`. The gateway mode is
+`http-connect` by default; use `--gateway-mode rdg-http` for Microsoft RD
+Gateway HTTP transport. Gateway credentials can be supplied separately with
+`--gateway-user`, `--gateway-password`, and `--gateway-domain`, or inherited
+from the session credentials by default.
+
 ## Platform Integration
 
 The viewer uses Cocoa text input for Unicode keyboard events and AppKit mouse
@@ -51,4 +59,3 @@ Local pasteboard text changes are advertised through the public clipboard API.
 
 Framebuffer updates are rendered from the public BGRA surface using
 CoreGraphics. Resize events are sent through the public session resize path.
-

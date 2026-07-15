@@ -41,6 +41,30 @@ Security negotiation mode.
 .TP
 .B --accept-tls-certificate
 Accept the presented TLS certificate for the current connection after printing certificate details to stderr.
+.TP
+.BI --rail " app=program"
+Request a RemoteApp launch for the selected program.
+.TP
+.BI --gateway " url"
+Tunnel the RDP connection through an HTTP CONNECT or Microsoft RD Gateway endpoint.
+.TP
+.BI --gateway-mode " http-connect|rdg-http"
+Gateway transport mode. The default is http-connect.
+.TP
+.BI --gateway-user " name"
+Gateway user name. Session credentials are reused when gateway credentials are omitted.
+.TP
+.BI --gateway-password " value"
+Gateway password.
+.TP
+.BI --gateway-domain " name"
+Gateway authentication domain.
+.TP
+.BI --gateway-timeout " ms"
+Gateway operation timeout in milliseconds.
+.TP
+.B --gateway-no-session-credentials
+Do not reuse session credentials for gateway authentication.
 .SH ENVIRONMENT
 .TP
 .B LIBRDP_TRACE_CLIENT
