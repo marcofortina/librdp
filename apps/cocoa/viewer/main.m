@@ -19,6 +19,7 @@
 #include <librdp/librdp.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,6 +479,8 @@ static void cocoa_viewer_clipboard_callback(librdp_session* session,
     CGDataProviderRef provider = NULL;
     CGImageRef image = NULL;
     CGRect destination;
+    CGBitmapInfo bitmap_info = (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little |
+                                             (uint32_t)kCGImageAlphaNoneSkipFirst);
     librdp_status status = LIBRDP_STATUS_OK;
 
     (void)dirtyRect;
@@ -504,7 +507,7 @@ static void cocoa_viewer_clipboard_callback(librdp_session* session,
                               32,
                               mapping.stride,
                               color_space,
-                              kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst,
+                              bitmap_info,
                               provider,
                               NULL,
                               false,
@@ -565,9 +568,13 @@ static void cocoa_viewer_clipboard_callback(librdp_session* session,
 
 - (void)otherMouseDown:(NSEvent*)event
 {
-    NSUInteger button_number = [event buttonNumber];
+    NSInteger raw_button_number = [event buttonNumber];
+    NSUInteger button_number = 0;
     librdp_mouse_button button = LIBRDP_MOUSE_BUTTON_X2;
 
+    if (raw_button_number < 0)
+        return;
+    button_number = (NSUInteger)raw_button_number;
     if (button_number == 2)
         button = LIBRDP_MOUSE_BUTTON_MIDDLE;
     else if (button_number == 3)
@@ -578,9 +585,13 @@ static void cocoa_viewer_clipboard_callback(librdp_session* session,
 
 - (void)otherMouseUp:(NSEvent*)event
 {
-    NSUInteger button_number = [event buttonNumber];
+    NSInteger raw_button_number = [event buttonNumber];
+    NSUInteger button_number = 0;
     librdp_mouse_button button = LIBRDP_MOUSE_BUTTON_X2;
 
+    if (raw_button_number < 0)
+        return;
+    button_number = (NSUInteger)raw_button_number;
     if (button_number == 2)
         button = LIBRDP_MOUSE_BUTTON_MIDDLE;
     else if (button_number == 3)
@@ -766,43 +777,55 @@ static void cocoa_viewer_clipboard_callback(librdp_session* session,
 
 - (NSCursor*)cursorFromPointer:(const librdp_pointer_event*)pointer
 {
-    NSBitmapImageRep* rep = nil;
+    CFDataRef data = NULL;
+    CGColorSpaceRef color_space = NULL;
+    CGDataProviderRef provider = NULL;
+    CGImageRef cg_image = NULL;
     NSImage* image = nil;
-    uint8_t* destination = NULL;
-    uint16_t y = 0;
+    NSCursor* cursor = nil;
+    size_t payload_len = 0;
+    CGBitmapInfo bitmap_info = (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little |
+                                             (uint32_t)kCGImageAlphaPremultipliedFirst);
 
     if (!pointer || !pointer->pixels || pointer->pixels_len == 0 || pointer->width == 0 || pointer->height == 0 ||
         pointer->stride < (uint32_t)pointer->width * 4u ||
         pointer->pixels_len < (size_t)pointer->stride * (size_t)pointer->height)
         return [NSCursor arrowCursor];
 
-    rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-                                                  pixelsWide:pointer->width
-                                                  pixelsHigh:pointer->height
-                                               bitsPerSample:8
-                                             samplesPerPixel:4
-                                                    hasAlpha:YES
-                                                    isPlanar:NO
-                                              colorSpaceName:NSDeviceRGBColorSpace
-                                                bitmapFormat:NSBitmapFormatAlphaFirst |
-                                                             NSBitmapFormatByteOrder32Little
-                                                 bytesPerRow:(NSInteger)pointer->stride
-                                                bitsPerPixel:32];
-    if (!rep)
+    payload_len = (size_t)pointer->stride * (size_t)pointer->height;
+    if (payload_len > (size_t)LONG_MAX)
         return [NSCursor arrowCursor];
-    destination = [rep bitmapData];
-    if (!destination)
-        return [NSCursor arrowCursor];
-    for (y = 0; y < pointer->height; y++)
-    {
-        memcpy(destination + ((size_t)y * (size_t)pointer->stride),
-               pointer->pixels + ((size_t)y * (size_t)pointer->stride),
-               (size_t)pointer->stride);
-    }
-    image = [[NSImage alloc] initWithSize:NSMakeSize((CGFloat)pointer->width, (CGFloat)pointer->height)];
-    [image addRepresentation:rep];
-    return [[NSCursor alloc] initWithImage:image
-                                   hotSpot:NSMakePoint((CGFloat)pointer->hot_x, (CGFloat)pointer->hot_y)];
+    data = CFDataCreate(kCFAllocatorDefault, pointer->pixels, (CFIndex)payload_len);
+    color_space = CGColorSpaceCreateDeviceRGB();
+    if (data)
+        provider = CGDataProviderCreateWithCFData(data);
+    if (color_space && provider)
+        cg_image = CGImageCreate(pointer->width,
+                                 pointer->height,
+                                 8,
+                                 32,
+                                 pointer->stride,
+                                 color_space,
+                                 bitmap_info,
+                                 provider,
+                                 NULL,
+                                 false,
+                                 kCGRenderingIntentDefault);
+    if (cg_image)
+        image = [[NSImage alloc] initWithCGImage:cg_image
+                                           size:NSMakeSize((CGFloat)pointer->width, (CGFloat)pointer->height)];
+    if (image)
+        cursor = [[NSCursor alloc] initWithImage:image
+                                         hotSpot:NSMakePoint((CGFloat)pointer->hot_x, (CGFloat)pointer->hot_y)];
+    if (cg_image)
+        CGImageRelease(cg_image);
+    if (provider)
+        CGDataProviderRelease(provider);
+    if (color_space)
+        CGColorSpaceRelease(color_space);
+    if (data)
+        CFRelease(data);
+    return cursor ? cursor : [NSCursor arrowCursor];
 }
 
 - (void)setCurrentCursor:(NSCursor*)cursor
