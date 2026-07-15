@@ -1726,6 +1726,26 @@ static librdp_status rdp_rfx_get_gr_code(rdp_rfx_bit_reader* reader, int* krp, i
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_rfx_rlgr_finish(size_t written, size_t* coefficients_written)
+{
+    if (coefficients_written)
+        *coefficients_written = written;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_rfx_rlgr_tail_or_error(int32_t* coefficients,
+                                                size_t coefficient_count,
+                                                size_t written,
+                                                size_t* coefficients_written,
+                                                int allow_tail_zero_fill)
+{
+    if (!allow_tail_zero_fill)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    while (written < coefficient_count)
+        coefficients[written++] = 0;
+    return rdp_rfx_rlgr_finish(written, coefficients_written);
+}
+
 /*
  * Decode RLGR coefficient data for RemoteFX. Run, Golomb, and sign handling
  * are centralized so malformed coefficient streams cannot overrun the tile
@@ -1767,7 +1787,11 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
             for (;;)
             {
                 if (rdp_rfx_read_bits(&reader, 1, &bit) != LIBRDP_STATUS_OK)
-                    goto tail_or_error;
+                    return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                      coefficient_count,
+                                                      written,
+                                                      coefficients_written,
+                                                      allow_tail_zero_fill);
                 if (bit != 0)
                     break;
                 {
@@ -1782,24 +1806,20 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
                     if (status != LIBRDP_STATUS_OK)
                         return status;
                     if (filled_tail)
-                        goto done;
+                        return rdp_rfx_rlgr_finish(written, coefficients_written);
                 }
                 if (written == coefficient_count)
-                {
-                    if (coefficients_written)
-                        *coefficients_written = written;
-                    return LIBRDP_STATUS_OK;
-                }
+                    return rdp_rfx_rlgr_finish(written, coefficients_written);
                 k = rdp_rfx_update_param(&kp, RDP_RFX_RLGR_UP_GR);
                 if (written == coefficient_count)
-                {
-                    if (coefficients_written)
-                        *coefficients_written = written;
-                    return LIBRDP_STATUS_OK;
-                }
+                    return rdp_rfx_rlgr_finish(written, coefficients_written);
             }
             if (rdp_rfx_read_bits(&reader, (uint8_t)k, &run) != LIBRDP_STATUS_OK)
-                goto tail_or_error;
+                return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                  coefficient_count,
+                                                  written,
+                                                  coefficients_written,
+                                                  allow_tail_zero_fill);
             {
                 int filled_tail = 0;
                 librdp_status status = rdp_rfx_write_zeroes_limited(coefficients,
@@ -1811,17 +1831,17 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
                 if (status != LIBRDP_STATUS_OK)
                     return status;
                 if (filled_tail)
-                    goto done;
+                    return rdp_rfx_rlgr_finish(written, coefficients_written);
             }
             if (written == coefficient_count)
-            {
-                if (coefficients_written)
-                    *coefficients_written = written;
-                return LIBRDP_STATUS_OK;
-            }
+                return rdp_rfx_rlgr_finish(written, coefficients_written);
             if (rdp_rfx_read_bits(&reader, 1, &sign) != LIBRDP_STATUS_OK ||
                 rdp_rfx_get_gr_code(&reader, &krp, &kr, &mag) != LIBRDP_STATUS_OK)
-                goto tail_or_error;
+                return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                  coefficient_count,
+                                                  written,
+                                                  coefficients_written,
+                                                  allow_tail_zero_fill);
             mag++;
             if (rdp_rfx_write_value(coefficients,
                                     coefficient_count,
@@ -1835,7 +1855,11 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
             uint32_t mag = 0;
 
             if (rdp_rfx_get_gr_code(&reader, &krp, &kr, &mag) != LIBRDP_STATUS_OK)
-                goto tail_or_error;
+                return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                  coefficient_count,
+                                                  written,
+                                                  coefficients_written,
+                                                  allow_tail_zero_fill);
             if (mag == 0)
             {
                 if (rdp_rfx_write_value(coefficients, coefficient_count, &written, 0) !=
@@ -1861,10 +1885,18 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
             uint8_t bits = 0;
 
             if (rdp_rfx_get_gr_code(&reader, &krp, &kr, &sum) != LIBRDP_STATUS_OK)
-                goto tail_or_error;
+                return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                  coefficient_count,
+                                                  written,
+                                                  coefficients_written,
+                                                  allow_tail_zero_fill);
             bits = rdp_rfx_min_bits(sum);
             if (rdp_rfx_read_bits(&reader, bits, &value1) != LIBRDP_STATUS_OK || value1 > sum)
-                goto tail_or_error;
+                return rdp_rfx_rlgr_tail_or_error(coefficients,
+                                                  coefficient_count,
+                                                  written,
+                                                  coefficients_written,
+                                                  allow_tail_zero_fill);
             value2 = sum - value1;
             if (value1 != 0 && value2 != 0)
                 k = rdp_rfx_update_param(&kp, -2 * RDP_RFX_RLGR_DQ_GR);
@@ -1884,19 +1916,7 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
         }
     }
 
-done:
-    if (coefficients_written)
-        *coefficients_written = written;
-    return LIBRDP_STATUS_OK;
-
-tail_or_error:
-    if (!allow_tail_zero_fill)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    while (written < coefficient_count)
-        coefficients[written++] = 0;
-    if (coefficients_written)
-        *coefficients_written = written;
-    return LIBRDP_STATUS_OK;
+    return rdp_rfx_rlgr_finish(written, coefficients_written);
 }
 
 librdp_status rdp_rfx_rlgr_decode(rdp_rfx_rlgr_mode mode,

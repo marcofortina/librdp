@@ -4338,6 +4338,16 @@ static int rdp_session_transport_input_ready_now(const librdp_session* session)
     return rc > 0 && (pfd.revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0;
 }
 
+static librdp_status rdp_session_run_once_idle(rdp_buffer* packet)
+{
+    rdp_buffer_free(packet);
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.active.loop.done",
+                          "status=idle");
+    return LIBRDP_STATUS_OK;
+}
+
 /*
  * Run one iteration of the active session loop. Transport readiness, PDU
  * decoding, channel dispatch, framebuffer events, and disconnect conditions
@@ -4410,7 +4420,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
             rdp_session_audio_output_udp_close(session);
         }
         if (status == LIBRDP_STATUS_OK && (revents & POLLIN) == 0)
-            goto done;
+            return rdp_session_run_once_idle(&packet);
     }
     else
     {
@@ -4471,7 +4481,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_session_audio_output_udp_close(session);
             }
             if (status == LIBRDP_STATUS_OK && (revents & POLLIN) == 0)
-                goto done;
+                return rdp_session_run_once_idle(&packet);
         }
     }
     if (status == LIBRDP_STATUS_TIMEOUT)
@@ -4519,7 +4529,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_buffer_free(&packet);
                 return rdp_session_fail(session, status);
             }
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         const uint8_t* pdu = NULL;
         size_t pdu_len = 0;
@@ -4628,7 +4638,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         {
             rdp_session_static_channel* static_channel =
@@ -4665,7 +4675,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     return rdp_session_fail(session, status);
                 }
                 rdp_buffer_free(&security_payload);
-                goto done;
+                return rdp_session_run_once_idle(&packet);
             }
         }
         if (session->clipboard_channel_id != 0 && indication.channel_id == session->clipboard_channel_id)
@@ -4759,7 +4769,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         if (session->audio_output_channel_id != 0 && indication.channel_id == session->audio_output_channel_id)
         {
@@ -4848,7 +4858,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         if (session->device_redirection_channel_id != 0 &&
             indication.channel_id == session->device_redirection_channel_id)
@@ -4941,7 +4951,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         if (session->pnp_redirection_channel_id != 0 &&
             indication.channel_id == session->pnp_redirection_channel_id)
@@ -5033,7 +5043,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         if (session->remote_programs_channel_id != 0 &&
             indication.channel_id == session->remote_programs_channel_id)
@@ -5126,7 +5136,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 return rdp_session_fail(session, status);
             }
             rdp_buffer_free(&security_payload);
-            goto done;
+            return rdp_session_run_once_idle(&packet);
         }
         status = rdp_slowpath_parse_share_control_header(indication_payload, indication_payload_len, &slow_header);
         if (status == LIBRDP_STATUS_OK)
@@ -5289,7 +5299,8 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     rdp_buffer_free(&packet);
                     return rdp_session_fail(session, status);
                 }
-                goto done;
+                rdp_buffer_free(&security_payload);
+                return rdp_session_run_once_idle(&packet);
             }
         }
         if (have_slow_header && status == LIBRDP_STATUS_OK &&
@@ -5489,13 +5500,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         rdp_buffer_free(&security_payload);
     }
 
-done:
-    rdp_buffer_free(&packet);
-    rdp_trace_event_level(RDP_TRACE_CLIENT,
-                          RDP_TRACE_LEVEL_DEBUG,
-                          "client.active.loop.done",
-                          "status=idle");
-    return LIBRDP_STATUS_OK;
+    return rdp_session_run_once_idle(&packet);
 }
 
 librdp_status librdp_session_run_once(librdp_session* session, int timeout_ms)
