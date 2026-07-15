@@ -931,19 +931,32 @@ if(LIBRDP_BUILD_TESTS)
     target_compile_definitions(test_core_units PRIVATE LIBRDP_TEST_NO_MAIN)
     librdp_configure_test_compile(test_core_units)
 
+    add_library(test_core_device_units OBJECT tests/test_core_devices.c)
+    target_compile_definitions(test_core_device_units PRIVATE LIBRDP_TEST_NO_MAIN)
+    librdp_configure_test_compile(test_core_device_units)
+
     add_executable(test_common
         tests/test_common_main.c
         $<TARGET_OBJECTS:test_core_units>
+        $<TARGET_OBJECTS:test_core_device_units>
     )
     librdp_configure_test_executable(test_common)
 
     add_executable(test_core
         tests/test_core_main.c
         $<TARGET_OBJECTS:test_core_units>
+        $<TARGET_OBJECTS:test_core_device_units>
     )
     librdp_configure_test_executable(test_core)
 
-    add_executable(test_protocol tests/test_protocol.c)
+    add_executable(test_protocol
+        tests/test_protocol.c
+        tests/test_protocol_channels.c
+        tests/test_protocol_core.c
+        tests/test_protocol_devices.c
+        tests/test_protocol_graphics.c
+        tests/test_protocol_transport.c
+    )
     target_compile_definitions(test_protocol PRIVATE LIBRDP_TEST_PROTOCOL_MAIN)
     librdp_configure_test_executable(test_protocol)
 
