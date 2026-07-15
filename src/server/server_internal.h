@@ -40,6 +40,16 @@ struct librdp_server_peer
     int fd;
     librdp_server_peer_state state;
     uint32_t selected_protocol;
+    uint32_t share_id;
+    uint16_t user_id;
+    uint16_t width;
+    uint16_t height;
+    uint16_t advertised_channel_count;
+    uint16_t joined_channel_count;
+    uint8_t confirm_active_seen;
+    uint8_t synchronize_seen;
+    uint8_t control_seen;
+    uint8_t font_list_seen;
     rdp_buffer input;
 };
 

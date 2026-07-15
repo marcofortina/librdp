@@ -17,6 +17,8 @@
 
 #include "protocol/gcc.h"
 
+#include "protocol/mcs.h"
+
 #include <string.h>
 
 static librdp_status rdp_gcc_write_per_length(rdp_buffer* buffer, size_t length)
@@ -83,6 +85,32 @@ static librdp_status rdp_gcc_read_per_integer(rdp_stream* stream, uint32_t* valu
         return LIBRDP_STATUS_OK;
     }
     return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_gcc_write_per_integer(rdp_buffer* buffer, uint32_t value)
+{
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (value <= 0xffu)
+    {
+        librdp_status status = rdp_gcc_write_per_length(buffer, 1);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_buffer_append_u8(buffer, (uint8_t)value);
+    }
+    if (value <= 0xffffu)
+    {
+        librdp_status status = rdp_gcc_write_per_length(buffer, 2);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_buffer_append_u16_be(buffer, (uint16_t)value);
+    }
+    {
+        librdp_status status = rdp_gcc_write_per_length(buffer, 4);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_buffer_append_u32_be(buffer, value);
+    }
 }
 
 static librdp_status rdp_gcc_read_per_integer16(rdp_stream* stream, uint16_t min, uint16_t* value)
@@ -506,6 +534,95 @@ librdp_status rdp_gcc_write_conference_create_request(rdp_buffer* buffer, const 
         status = rdp_gcc_write_per_octet_string(buffer, key, sizeof(key), sizeof(key));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_per_octet_string(buffer, user_data, user_data_len, 0);
+    return status;
+}
+
+librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc_server_config* config)
+{
+    rdp_buffer payload;
+    uint16_t i = 0;
+    uint16_t channel_count = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !config || config->channel_count > RDP_GCC_MAX_SERVER_CHANNELS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&payload);
+    status = rdp_buffer_append_u32_le(&payload,
+                                      config->version ? config->version : RDP_GCC_CLIENT_VERSION_5);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, config->selected_protocol);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, config->early_capability_flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(buffer, RDP_GCC_SC_CORE, &payload);
+
+    payload.length = 0;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u32_le(&payload, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(buffer, RDP_GCC_SC_SECURITY, &payload);
+
+    payload.length = 0;
+    channel_count = config->channel_count;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload,
+                                          config->mcs_channel_id ? config->mcs_channel_id
+                                                                 : (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(&payload, channel_count);
+    for (i = 0; status == LIBRDP_STATUS_OK && i < channel_count; i++)
+        status = rdp_buffer_append_u16_le(&payload, (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u + i));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_block(buffer, RDP_GCC_SC_NETWORK, &payload);
+
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status rdp_gcc_write_conference_create_response(rdp_buffer* buffer,
+                                                       const void* user_data,
+                                                       size_t user_data_len)
+{
+    static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
+    static const uint8_t key[] = {'M', 'c', 'D', 'n'};
+    rdp_buffer body;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || (!user_data && user_data_len > 0) || user_data_len > 0x7fffu)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&body);
+    status = rdp_buffer_append_u8(&body, 0x14);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_be(&body, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_per_integer(&body, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&body, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&body, 1);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&body, 0xc0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_per_octet_string(&body, key, sizeof(key), sizeof(key));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_per_length(&body, user_data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&body, user_data, user_data_len);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, oid, sizeof(oid));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_per_length(buffer, body.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, body.data, body.length);
+
+    rdp_buffer_free(&body);
     return status;
 }
 

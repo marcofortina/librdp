@@ -97,6 +97,12 @@ librdp_status rdp_slowpath_write_share_control_header(rdp_buffer* buffer,
 librdp_status rdp_slowpath_parse_demand_active(const void* data,
                                                size_t length,
                                                rdp_slowpath_demand_active* demand);
+librdp_status rdp_slowpath_write_demand_active(rdp_buffer* buffer,
+                                               uint32_t share_id,
+                                               uint16_t channel_id,
+                                               uint16_t width,
+                                               uint16_t height,
+                                               const char* source_descriptor);
 librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
                                                 uint32_t share_id,
                                                 uint16_t channel_id,

@@ -46,10 +46,9 @@ typedef struct librdp_server_peer librdp_server_peer;
 /**
  * @brief Server-side peer lifecycle state.
  *
- * The current server runtime intentionally stops at the initial negotiation
- * boundary. CLOSED after librdp_server_peer_run_once() can therefore mean the
- * peer received a protocol-correct rejection for an unsupported full desktop
- * session.
+ * The server runtime advances one explicit protocol phase at a time. ACTIVE
+ * means the base connection and activation handshake completed; higher-level
+ * desktop rendering, virtual channels, and policy remain application-driven.
  *
  * @since 0.1.0
  */
@@ -60,7 +59,13 @@ typedef enum librdp_server_peer_state
     LIBRDP_SERVER_PEER_X224_CONFIRMED = 2, /**< X.224 was accepted and MCS/GCC validation is pending. */
     LIBRDP_SERVER_PEER_CLOSING = 3,     /**< Peer shutdown is in progress. */
     LIBRDP_SERVER_PEER_CLOSED = 4,      /**< Peer socket is closed. */
-    LIBRDP_SERVER_PEER_FAILED = 5       /**< Peer failed because input or I/O was invalid. */
+    LIBRDP_SERVER_PEER_FAILED = 5,      /**< Peer failed because input or I/O was invalid. */
+    LIBRDP_SERVER_PEER_MCS_CONNECTED = 6, /**< MCS Connect-Initial was accepted and Connect-Response was sent. */
+    LIBRDP_SERVER_PEER_DOMAIN_READY = 7,  /**< Erect Domain Request was accepted. */
+    LIBRDP_SERVER_PEER_USER_ATTACHED = 8, /**< Attach User Request was accepted and confirmed. */
+    LIBRDP_SERVER_PEER_CHANNEL_JOINING = 9, /**< Channel Join Requests are being accepted. */
+    LIBRDP_SERVER_PEER_ACTIVATING = 10,  /**< Demand Active was sent and client activation PDUs are pending. */
+    LIBRDP_SERVER_PEER_ACTIVE = 11       /**< Client confirmed activation and the peer is ready for runtime PDUs. */
 } librdp_server_peer_state;
 
 /**
@@ -206,19 +211,20 @@ LIBRDP_API librdp_status librdp_server_accept(librdp_server* server,
  *
  * The current implementation processes the initial TPKT/X.224 connection
  * request and, for Standard RDP requests, validates the following MCS
- * Connect-Initial/GCC Conference Create Request. Full server activation is not
- * implemented; the peer is closed with LIBRDP_STATUS_UNSUPPORTED after the
- * validated MCS/GCC boundary. Malformed input returns
- * LIBRDP_STATUS_PROTOCOL_ERROR.
+ * Connect-Initial/GCC Conference Create Request, MCS domain setup, user attach,
+ * channel join, Demand Active, and the first activation/data PDUs needed to
+ * enter LIBRDP_SERVER_PEER_ACTIVE. The server API owns only protocol
+ * orchestration; applications remain responsible for serving graphics,
+ * channels, input, and policy on top of the active peer.
  *
  * @param[in,out] peer Peer to drive; must not be NULL.
  * @param[in] timeout_ms Poll timeout in milliseconds; must be non-negative.
  *
- * @return LIBRDP_STATUS_UNSUPPORTED after a valid request is rejected by the
- * minimal server policy; LIBRDP_STATUS_TIMEOUT when no input arrives before
- * timeout; LIBRDP_STATUS_INVALID_ARGUMENT for NULL peer or negative timeout;
- * LIBRDP_STATUS_STATE when the peer is already closed;
- * LIBRDP_STATUS_LIMIT_EXCEEDED when the initial request exceeds the server
+ * @return LIBRDP_STATUS_OK when one peer phase was processed or a runtime
+ * keepalive/data PDU was accepted; LIBRDP_STATUS_TIMEOUT when no input arrives
+ * before timeout; LIBRDP_STATUS_INVALID_ARGUMENT for NULL peer or negative
+ * timeout; LIBRDP_STATUS_STATE when the peer is already closed;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when an initial request exceeds the server
  * bound; LIBRDP_STATUS_PROTOCOL_ERROR for malformed input;
  * LIBRDP_STATUS_IO_ERROR for socket failures.
  *

@@ -149,8 +149,19 @@ typedef struct rdp_gcc_server_data
     uint32_t multitransport_flags;
 } rdp_gcc_server_data;
 
+typedef struct rdp_gcc_server_config
+{
+    uint32_t version;
+    uint32_t selected_protocol;
+    uint32_t early_capability_flags;
+    uint16_t mcs_channel_id;
+    uint16_t channel_count;
+} rdp_gcc_server_config;
+
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config);
 librdp_status rdp_gcc_write_conference_create_request(rdp_buffer* buffer, const void* user_data, size_t user_data_len);
+librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc_server_config* config);
+librdp_status rdp_gcc_write_conference_create_response(rdp_buffer* buffer, const void* user_data, size_t user_data_len);
 librdp_status rdp_gcc_parse_conference_create_request(const void* data,
                                                       size_t length,
                                                       rdp_gcc_conference_request* request);

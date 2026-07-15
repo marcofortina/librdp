@@ -127,6 +127,9 @@ static int server_listener_run_peer(librdp_server_peer* peer, int timeout_ms)
         printf("peer status=%s state=%d\n",
                librdp_status_name(status),
                (int)librdp_server_peer_get_state(peer));
+        if (status == LIBRDP_STATUS_TIMEOUT &&
+            librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVE)
+            return 0;
         if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
             return status == LIBRDP_STATUS_UNSUPPORTED ? 3 : 2;
     }
