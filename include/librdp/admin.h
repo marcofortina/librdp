@@ -23,6 +23,7 @@ extern "C" {
 
 #define LIBRDP_ADMIN_CONFIG_VERSION 1u  /**< Current librdp_admin_config version. */
 #define LIBRDP_ADMIN_SESSION_VERSION 1u /**< Current librdp_admin_session version. */
+#define LIBRDP_ADMIN_ACTION_VERSION 1u  /**< Current librdp_admin_action version. */
 
 /**
  * @brief Opaque administration handle.
@@ -49,6 +50,22 @@ typedef enum librdp_admin_transport
 {
     LIBRDP_ADMIN_TRANSPORT_WINRM = 1 /**< Use WinRM SOAP over HTTP(S). */
 } librdp_admin_transport;
+
+/**
+ * @brief Remote administration action type.
+ *
+ * Actions are executed through the configured management transport. The WinRM
+ * backend maps the current action set to bounded server-side process requests
+ * and requires a numeric session identifier.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_admin_action_type
+{
+    LIBRDP_ADMIN_ACTION_LOGOFF = 1,    /**< Log off the selected remote session. */
+    LIBRDP_ADMIN_ACTION_DISCONNECT = 2, /**< Disconnect the selected remote session. */
+    LIBRDP_ADMIN_ACTION_MESSAGE = 3    /**< Send a text message to the selected remote session. */
+} librdp_admin_action_type;
 
 /**
  * @brief Versioned administration endpoint configuration.
@@ -100,6 +117,28 @@ typedef struct librdp_admin_session
 } librdp_admin_session;
 
 /**
+ * @brief Versioned remote administration action request.
+ *
+ * Initialize with librdp_admin_action_init(). session_id is required for every
+ * action. message_text is required only for LIBRDP_ADMIN_ACTION_MESSAGE and is
+ * borrowed during librdp_admin_execute_action(). message_title is optional.
+ * The backend rejects shell metacharacters in message fields before building a
+ * WinRM command request.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_admin_action
+{
+    uint32_t version; /**< Struct version, LIBRDP_ADMIN_ACTION_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    librdp_admin_action_type type; /**< Action to execute. */
+    uint32_t session_id;           /**< Remote session identifier; must be non-zero. */
+    const char* message_title;     /**< Optional message title for MESSAGE; borrowed and may be NULL. */
+    const char* message_text;      /**< Required message body for MESSAGE; borrowed and must not be NULL. */
+    uint32_t timeout_ms;           /**< Action timeout in milliseconds, or zero to use the admin default. */
+} librdp_admin_action;
+
+/**
  * @brief Initialize an admin configuration with safe defaults.
  *
  * The default transport is WinRM, the timeout is suitable for interactive
@@ -127,6 +166,19 @@ LIBRDP_API librdp_status librdp_admin_config_init(librdp_admin_config* config);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_admin_session_init(librdp_admin_session* session);
+
+/**
+ * @brief Initialize an admin action request.
+ *
+ * @param[out] action Caller-owned action request; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * action is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_admin_action_init(librdp_admin_action* action);
 
 /**
  * @brief Create an admin handle from a versioned configuration.
@@ -199,6 +251,30 @@ LIBRDP_API librdp_status librdp_admin_clear(librdp_admin* admin);
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_admin_query_sessions(librdp_admin* admin);
+
+/**
+ * @brief Execute a remote administration action.
+ *
+ * The action is sent through the configured admin transport. The WinRM backend
+ * performs synchronous HTTP(S) I/O on the caller thread and returns only after
+ * the endpoint responds or the timeout expires.
+ *
+ * @param[in,out] admin Admin handle configured with an endpoint; must not be NULL.
+ * @param[in] action Initialized action request; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid action metadata; LIBRDP_STATUS_UNSUPPORTED when the
+ * required backend is not compiled; LIBRDP_STATUS_IO_ERROR for transport or
+ * non-success action responses; LIBRDP_STATUS_TIMEOUT for request timeout;
+ * LIBRDP_STATUS_NO_MEMORY for allocation failure.
+ *
+ * @note Thread-safety: call from the serialized admin-driving context.
+ * @warning Logoff and disconnect are disruptive operations. Message contents
+ * may be visible to the remote user and must not contain secrets.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_admin_execute_action(librdp_admin* admin,
+                                                     const librdp_admin_action* action);
 
 /**
  * @brief Parse session inventory XML from caller-provided memory.

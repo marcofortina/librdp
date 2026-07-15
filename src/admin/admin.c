@@ -41,7 +41,9 @@
 #define RDP_ADMIN_MAX_TEXT_LEN 65536u
 #define RDP_ADMIN_MAX_XML_LEN (4u * 1024u * 1024u)
 #define RDP_ADMIN_MAX_SESSIONS 4096u
+#define RDP_ADMIN_MAX_ACTION_TEXT_LEN 512u
 #define RDP_ADMIN_DEFAULT_RESOURCE_URI "http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_LogonSession"
+#define RDP_ADMIN_PROCESS_RESOURCE_URI "http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_Process"
 
 typedef struct rdp_admin_session_storage
 {
@@ -134,6 +136,105 @@ static int rdp_admin_config_valid(const librdp_admin_config* config)
         (config->resource_uri && strlen(config->resource_uri) > RDP_ADMIN_MAX_TEXT_LEN))
         return 0;
     return 1;
+}
+
+static int rdp_admin_action_text_valid(const char* text, int required)
+{
+    size_t i = 0;
+    size_t len = 0;
+
+    if (!text)
+        return required ? 0 : 1;
+    len = strlen(text);
+    if ((required && len == 0) || len > RDP_ADMIN_MAX_ACTION_TEXT_LEN)
+        return 0;
+    for (i = 0; i < len; i++)
+    {
+        unsigned char c = (unsigned char)text[i];
+
+        if (c < 0x20u || c == 0x7fu)
+            return 0;
+        if (strchr("\"&|<>^%!`", (int)c))
+            return 0;
+    }
+    return 1;
+}
+
+static int rdp_admin_action_valid(const librdp_admin_action* action)
+{
+    if (!action || action->version != LIBRDP_ADMIN_ACTION_VERSION ||
+        action->size < offsetof(librdp_admin_action, timeout_ms) + sizeof(action->timeout_ms) ||
+        action->session_id == 0 || action->timeout_ms > RDP_ADMIN_MAX_TIMEOUT_MS)
+        return 0;
+    if (action->type < LIBRDP_ADMIN_ACTION_LOGOFF || action->type > LIBRDP_ADMIN_ACTION_MESSAGE)
+        return 0;
+    if (!rdp_admin_action_text_valid(action->message_title, 0))
+        return 0;
+    if (action->type == LIBRDP_ADMIN_ACTION_MESSAGE)
+        return rdp_admin_action_text_valid(action->message_text, 1);
+    return action->message_text == NULL;
+}
+
+/*
+ * Builds a bounded Windows command for the WinRM process provider. Free-form
+ * message text is accepted only after rejecting shell metacharacters so action
+ * requests cannot become command-injection primitives.
+ */
+static librdp_status rdp_admin_build_action_command(const librdp_admin_action* action,
+                                                    char** command)
+{
+    int written = 0;
+    size_t needed = 0;
+    uint32_t message_seconds = 60u;
+
+    if (!rdp_admin_action_valid(action) || !command)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *command = NULL;
+    if (action->type == LIBRDP_ADMIN_ACTION_LOGOFF)
+        written = snprintf(NULL, 0, "logoff %u", (unsigned)action->session_id);
+    else if (action->type == LIBRDP_ADMIN_ACTION_DISCONNECT)
+        written = snprintf(NULL, 0, "tsdiscon %u", (unsigned)action->session_id);
+    else
+    {
+        if (action->timeout_ms)
+            message_seconds = action->timeout_ms / 1000u;
+        if (message_seconds == 0)
+            message_seconds = 1u;
+        written = snprintf(NULL,
+                           0,
+                           "msg %u /TIME:%u \"%s%s%s\"",
+                           (unsigned)action->session_id,
+                           (unsigned)message_seconds,
+                           action->message_title ? action->message_title : "",
+                           action->message_title ? ": " : "",
+                           action->message_text);
+    }
+    if (written <= 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    needed = (size_t)written + 1u;
+    *command = (char*)malloc(needed);
+    if (!*command)
+        return LIBRDP_STATUS_NO_MEMORY;
+    if (action->type == LIBRDP_ADMIN_ACTION_LOGOFF)
+        written = snprintf(*command, needed, "logoff %u", (unsigned)action->session_id);
+    else if (action->type == LIBRDP_ADMIN_ACTION_DISCONNECT)
+        written = snprintf(*command, needed, "tsdiscon %u", (unsigned)action->session_id);
+    else
+        written = snprintf(*command,
+                           needed,
+                           "msg %u /TIME:%u \"%s%s%s\"",
+                           (unsigned)action->session_id,
+                           (unsigned)message_seconds,
+                           action->message_title ? action->message_title : "",
+                           action->message_title ? ": " : "",
+                           action->message_text);
+    if (written <= 0 || (size_t)written + 1u != needed)
+    {
+        free(*command);
+        *command = NULL;
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status rdp_admin_copy_optional(const char* source, char** destination)
@@ -402,6 +503,94 @@ static librdp_status rdp_admin_build_enumerate_request(const librdp_admin* admin
     snprintf(body, body_len + 1u, "%s%s%s%s%s", prefix, endpoint, middle, resource, suffix);
     free(endpoint);
     free(resource);
+    *request = body;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Builds the WinRM Process.Create envelope used by bounded admin actions. The
+ * command string has already passed action validation; this layer only escapes
+ * XML content and keeps management credentials out of the generated body.
+ */
+static librdp_status rdp_admin_build_process_create_request(const librdp_admin* admin,
+                                                            const char* command,
+                                                            char** request)
+{
+    static const char prefix[] =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" "
+        "xmlns:a=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
+        "xmlns:w=\"http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd\" "
+        "xmlns:p=\"http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_Process\">"
+        "<s:Header><a:To>";
+    static const char resource_prefix[] =
+        "</a:To><w:ResourceURI s:mustUnderstand=\"true\">";
+    static const char action_prefix[] =
+        "</w:ResourceURI><a:ReplyTo><a:Address>"
+        "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous"
+        "</a:Address></a:ReplyTo><a:Action s:mustUnderstand=\"true\">";
+    static const char body_prefix[] =
+        "</a:Action><a:MessageID>uuid:librdp-admin-action</a:MessageID>"
+        "<w:OperationTimeout>PT60S</w:OperationTimeout></s:Header>"
+        "<s:Body><p:Create_INPUT><p:CommandLine>";
+    static const char suffix[] =
+        "</p:CommandLine></p:Create_INPUT></s:Body></s:Envelope>";
+    static const char action_uri[] =
+        "http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_Process/Create";
+    char* endpoint = NULL;
+    char* resource = NULL;
+    char* action = NULL;
+    char* escaped_command = NULL;
+    char* body = NULL;
+    size_t body_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!admin || !command || !request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *request = NULL;
+    status = rdp_admin_xml_escape(admin->endpoint_url, &endpoint);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_xml_escape(RDP_ADMIN_PROCESS_RESOURCE_URI, &resource);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_xml_escape(action_uri, &action);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_xml_escape(command, &escaped_command);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(endpoint);
+        free(resource);
+        free(action);
+        free(escaped_command);
+        return status;
+    }
+    body_len = sizeof(prefix) - 1u + strlen(endpoint) + sizeof(resource_prefix) - 1u +
+               strlen(resource) + sizeof(action_prefix) - 1u + strlen(action) +
+               sizeof(body_prefix) - 1u + strlen(escaped_command) + sizeof(suffix) - 1u;
+    body = (char*)malloc(body_len + 1u);
+    if (!body)
+    {
+        free(endpoint);
+        free(resource);
+        free(action);
+        free(escaped_command);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    snprintf(body,
+             body_len + 1u,
+             "%s%s%s%s%s%s%s%s%s",
+             prefix,
+             endpoint,
+             resource_prefix,
+             resource,
+             action_prefix,
+             action,
+             body_prefix,
+             escaped_command,
+             suffix);
+    free(endpoint);
+    free(resource);
+    free(action);
+    free(escaped_command);
     *request = body;
     return LIBRDP_STATUS_OK;
 }
@@ -697,6 +886,79 @@ static librdp_status rdp_admin_parse_xml(librdp_admin* admin, const void* xml, s
     rdp_admin_commit_sessions(admin, list.items, list.count);
     return LIBRDP_STATUS_OK;
 }
+
+static librdp_status rdp_admin_find_return_value(const xmlNode* node, int* found, uint32_t* value)
+{
+    const xmlNode* child = NULL;
+    xmlChar* content = NULL;
+    char* text = NULL;
+
+    if (!found || !value)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (child = node; child; child = child->next)
+    {
+        if (rdp_admin_node_is(child, "ReturnValue") || rdp_admin_node_is(child, "ReturnCode"))
+        {
+            content = xmlNodeGetContent((xmlNode*)child);
+            text = rdp_admin_trimmed_xml_string(content);
+            xmlFree(content);
+            if (!text)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            {
+                char* end = NULL;
+                unsigned long parsed = strtoul(text, &end, 10);
+
+                if (!end || *end != '\0' || parsed > UINT32_MAX)
+                {
+                    free(text);
+                    return LIBRDP_STATUS_PROTOCOL_ERROR;
+                }
+                *value = (uint32_t)parsed;
+            }
+            free(text);
+            *found = 1;
+            return LIBRDP_STATUS_OK;
+        }
+        if (child->children)
+        {
+            librdp_status status = rdp_admin_find_return_value(child->children, found, value);
+
+            if (status != LIBRDP_STATUS_OK || *found)
+                return status;
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_admin_parse_action_response(const void* xml, size_t xml_len)
+{
+    xmlDocPtr doc = NULL;
+    xmlNode* root = NULL;
+    int found = 0;
+    uint32_t value = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!xml || xml_len == 0 || xml_len > RDP_ADMIN_MAX_XML_LEN || xml_len > (size_t)INT_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    doc = xmlReadMemory((const char*)xml,
+                        (int)xml_len,
+                        "admin-action.xml",
+                        NULL,
+                        XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NOBLANKS);
+    if (!doc)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    root = xmlDocGetRootElement(doc);
+    if (!root)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_find_return_value(root, &found, &value);
+    xmlFreeDoc(doc);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!found)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return value == 0 ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
+}
 #endif
 
 librdp_status librdp_admin_config_init(librdp_admin_config* config)
@@ -718,6 +980,17 @@ librdp_status librdp_admin_session_init(librdp_admin_session* session)
     memset(session, 0, sizeof(*session));
     session->version = LIBRDP_ADMIN_SESSION_VERSION;
     session->size = (uint32_t)sizeof(*session);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_admin_action_init(librdp_admin_action* action)
+{
+    if (!action)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(action, 0, sizeof(*action));
+    action->version = LIBRDP_ADMIN_ACTION_VERSION;
+    action->size = (uint32_t)sizeof(*action);
+    action->type = LIBRDP_ADMIN_ACTION_LOGOFF;
     return LIBRDP_STATUS_OK;
 }
 
@@ -888,6 +1161,143 @@ librdp_status librdp_admin_query_sessions(librdp_admin* admin)
     curl_easy_cleanup(easy);
     free(buffer.data);
     free(http_user);
+    free(request_body);
+    return status;
+#endif
+}
+
+/*
+ * Executes one bounded WinRM process action. Trace records only action type and
+ * session id so message text, credentials, and generated command lines never
+ * leave process memory through diagnostics.
+ */
+librdp_status librdp_admin_execute_action(librdp_admin* admin,
+                                          const librdp_admin_action* action)
+{
+    if (!admin || !admin->endpoint_url || admin->endpoint_url[0] == '\0' ||
+        !rdp_admin_action_valid(action))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+#if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
+    return LIBRDP_STATUS_UNSUPPORTED;
+#else
+    CURL* easy = NULL;
+    CURLcode code = CURLE_OK;
+    struct curl_slist* headers = NULL;
+    struct curl_slist* appended = NULL;
+    rdp_admin_fetch_buffer buffer;
+    librdp_status status = LIBRDP_STATUS_OK;
+    char* http_user = NULL;
+    char* command = NULL;
+    char* request_body = NULL;
+    long response_code = 0;
+    uint32_t timeout_ms = action->timeout_ms ? action->timeout_ms : admin->timeout_ms;
+
+    memset(&buffer, 0, sizeof(buffer));
+    status = rdp_admin_build_action_command(action, &command);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_http_user(admin, &http_user);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_admin_build_process_create_request(admin, command, &request_body);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(command);
+        free(http_user);
+        free(request_body);
+        return status;
+    }
+    pthread_once(&rdp_admin_curl_once, rdp_admin_curl_init_once);
+    easy = curl_easy_init();
+    if (!easy)
+        status = LIBRDP_STATUS_NO_MEMORY;
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.admin.action.start",
+                    "transport=winrm type=%u session_id=%u timeout_ms=%u insecure_tls=%d",
+                    (unsigned)action->type,
+                    (unsigned)action->session_id,
+                    (unsigned)timeout_ms,
+                    admin->allow_insecure_tls ? 1 : 0);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        appended = curl_slist_append(headers, "Content-Type: application/soap+xml; charset=utf-8");
+        if (!appended)
+            status = LIBRDP_STATUS_NO_MEMORY;
+        else
+            headers = appended;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        appended = curl_slist_append(headers, "Accept: application/soap+xml, text/xml");
+        if (!appended)
+            status = LIBRDP_STATUS_NO_MEMORY;
+        else
+            headers = appended;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        curl_easy_setopt(easy, CURLOPT_URL, admin->endpoint_url);
+        curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(easy, CURLOPT_POST, 1L);
+        curl_easy_setopt(easy, CURLOPT_POSTFIELDS, request_body);
+        curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, (long)strlen(request_body));
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms);
+        curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, (long)timeout_ms);
+        curl_easy_setopt(easy, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(easy, CURLOPT_HTTPAUTH, (long)CURLAUTH_ANYSAFE);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, rdp_admin_curl_write);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &buffer);
+        if (admin->allow_insecure_tls)
+        {
+            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
+#if LIBCURL_VERSION_NUM >= 0x075500
+        curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+        curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+        curl_easy_setopt(easy, CURLOPT_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+        curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
+        if (http_user)
+            curl_easy_setopt(easy, CURLOPT_USERNAME, http_user);
+        if (admin->password)
+            curl_easy_setopt(easy, CURLOPT_PASSWORD, admin->password);
+        code = curl_easy_perform(easy);
+        if (buffer.limit_exceeded)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        else
+            status = rdp_admin_curl_status(code);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        (void)curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code < 200 || response_code >= 300)
+            status = LIBRDP_STATUS_IO_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = buffer.length == 0 ? LIBRDP_STATUS_PROTOCOL_ERROR :
+                                      rdp_admin_parse_action_response(buffer.data, buffer.length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.admin.action.done",
+                        "type=%u session_id=%u",
+                        (unsigned)action->type,
+                        (unsigned)action->session_id);
+    else
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.admin.action.failed",
+                        "type=%u session_id=%u status=%s curl_code=%u http_status=%ld",
+                        (unsigned)action->type,
+                        (unsigned)action->session_id,
+                        librdp_status_name(status),
+                        (unsigned)code,
+                        response_code);
+    curl_slist_free_all(headers);
+    if (easy)
+        curl_easy_cleanup(easy);
+    free(buffer.data);
+    free(http_user);
+    free(command);
     free(request_body);
     return status;
 #endif

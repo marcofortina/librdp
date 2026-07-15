@@ -8,10 +8,12 @@ LIBRDP_0.1 {
         librdp_client_config_init;
         librdp_admin_config_init;
         librdp_admin_session_init;
+        librdp_admin_action_init;
         librdp_admin_new;
         librdp_admin_free;
         librdp_admin_clear;
         librdp_admin_query_sessions;
+        librdp_admin_execute_action;
         librdp_admin_load_sessions_xml;
         librdp_admin_session_count;
         librdp_admin_session_at;

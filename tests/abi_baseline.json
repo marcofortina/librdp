@@ -3,6 +3,8 @@
   "spdx": "SPDX-License-Identifier: AGPL-3.0-or-later",
   "version": 1,
   "symbols": [
+    "librdp_admin_action_init",
+    "librdp_admin_execute_action",
     "librdp_client_config_init",
     "librdp_client_cancel",
     "librdp_client_connect",
@@ -202,6 +204,8 @@
   ],
   "layouts": {
     "ptr8_long8_size_t8": [
+      {"name":"librdp_admin_action_type","size":4,"align":4},
+      {"name":"librdp_admin_action","size":40,"align":8},
       {"name":"librdp_session_ptr","size":8,"align":8},
       {"name":"librdp_client_ptr","size":8,"align":8},
       {"name":"librdp_client_config","size":64,"align":8},

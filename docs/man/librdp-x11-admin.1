@@ -2,7 +2,7 @@
 .\" SPDX-License-Identifier: AGPL-3.0-or-later
 .TH LIBRDP-X11-ADMIN 1 "2026-07-15" "librdp 0.1.0" "User Commands"
 .SH NAME
-librdp-x11-admin \- query and display RDS session inventory
+librdp-x11-admin \- query RDS sessions and execute bounded admin actions
 .SH SYNOPSIS
 .B librdp-x11-admin
 .BI --endpoint " url"
@@ -10,7 +10,8 @@ librdp-x11-admin \- query and display RDS session inventory
 .SH DESCRIPTION
 .B librdp-x11-admin
 queries a WinRM administration endpoint through the public librdp Admin API and
-prints the returned session inventory. By default it also opens a small X11
+prints the returned session inventory. It can also run bounded actions against
+a selected session. By default it opens a small X11
 window containing the same inventory. Use
 .B --no-window
 for scripts, CI jobs, and non-interactive checks.
@@ -41,6 +42,31 @@ inventory.
 .BI --timeout " ms"
 Connection and request timeout in milliseconds.
 .TP
+.BI --action " query|logoff|disconnect|message"
+Operation to run. The default is
+.BR query .
+.B logoff
+and
+.B disconnect
+require
+.BR --confirm .
+.TP
+.BI --session-id " id"
+Remote session id used by action modes.
+.TP
+.BI --message-title " text"
+Optional title for
+.B --action message
+.
+.TP
+.BI --message-text " text"
+Message body for
+.B --action message
+.
+.TP
+.B --confirm
+Confirm a logoff or disconnect action.
+.TP
 .B --insecure-lab
 Disable TLS certificate verification for explicitly controlled lab endpoints.
 Do not use this option for production endpoints.
@@ -54,6 +80,8 @@ Print usage.
 .nf
 librdp-x11-admin --endpoint http://server:5985/wsman --user Marco --password-env RDS_PASSWORD --no-window
 librdp-x11-admin --endpoint https://server:5986/wsman --user Marco --domain LAB
+librdp-x11-admin --endpoint http://server:5985/wsman --action disconnect --session-id 4 --confirm --no-window
+librdp-x11-admin --endpoint http://server:5985/wsman --action message --session-id 4 --message-text "Maintenance window" --no-window
 .fi
 .SH SEE ALSO
 .BR librdp (7),

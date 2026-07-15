@@ -7671,14 +7671,20 @@ static int test_admin_lifecycle(void)
 {
     librdp_admin_config config;
     librdp_admin_session session;
+    librdp_admin_action action;
     librdp_admin* admin = NULL;
 
     CHECK(librdp_admin_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_session_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_admin_action_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_action_init(&action) == LIBRDP_STATUS_OK);
     CHECK(config.version == LIBRDP_ADMIN_CONFIG_VERSION);
     CHECK(config.size == sizeof(config));
     CHECK(config.transport == LIBRDP_ADMIN_TRANSPORT_WINRM);
+    CHECK(action.version == LIBRDP_ADMIN_ACTION_VERSION);
+    CHECK(action.size == sizeof(action));
+    CHECK(action.type == LIBRDP_ADMIN_ACTION_LOGOFF);
     CHECK(librdp_admin_new(NULL) == NULL);
 
     config.endpoint_url = "https://admin.example.test/wsman";
@@ -7691,9 +7697,14 @@ static int test_admin_lifecycle(void)
     CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
     CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_clear(admin) == LIBRDP_STATUS_OK);
+    action.session_id = 4u;
 #if !defined(RDP_HAVE_CURL) || !defined(RDP_HAVE_LIBXML2)
+    CHECK(librdp_admin_execute_action(admin, &action) == LIBRDP_STATUS_UNSUPPORTED);
     CHECK(librdp_admin_query_sessions(admin) == LIBRDP_STATUS_UNSUPPORTED);
 #endif
+    action.type = LIBRDP_ADMIN_ACTION_MESSAGE;
+    action.message_text = "bad&command";
+    CHECK(librdp_admin_execute_action(admin, &action) == LIBRDP_STATUS_INVALID_ARGUMENT);
     librdp_admin_free(admin);
 
     CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
@@ -7849,6 +7860,104 @@ static int test_admin_query_winrm_http(void)
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     return 0;
 }
+
+/*
+ * Fixture: validates the action path as a Process.Create SOAP request without
+ * contacting a real WinRM endpoint. It catches command escaping, request
+ * routing and response-code parsing regressions.
+ */
+static int test_admin_action_winrm_child(int listen_fd)
+{
+    static const char response[] =
+        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
+        "<s:Body><p:Create_OUTPUT "
+        "xmlns:p=\"http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2/Win32_Process\">"
+        "<p:ReturnValue>0</p:ReturnValue></p:Create_OUTPUT></s:Body></s:Envelope>";
+    char request[3072];
+    char header[256];
+    size_t used = 0;
+    int client = -1;
+    int header_len = 0;
+
+    client = accept(listen_fd, NULL, NULL);
+    if (client < 0)
+        return 1;
+    while (used + 1u < sizeof(request))
+    {
+        ssize_t got = read(client, request + used, sizeof(request) - used - 1u);
+
+        if (got <= 0)
+        {
+            close(client);
+            return 1;
+        }
+        used += (size_t)got;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n") && strstr(request, "</s:Envelope>"))
+            break;
+    }
+    if (!strstr(request, "POST /wsman HTTP/") ||
+        !strstr(request, "Win32_Process/Create") ||
+        !strstr(request, "tsdiscon 4"))
+    {
+        close(client);
+        return 1;
+    }
+    header_len = snprintf(header,
+                          sizeof(header),
+                          "HTTP/1.1 200 OK\r\nContent-Type: application/soap+xml\r\n"
+                          "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+                          sizeof(response) - 1u);
+    if (header_len <= 0 || (size_t)header_len >= sizeof(header) ||
+        !test_workspace_write_all(client, header, (size_t)header_len) ||
+        !test_workspace_write_all(client, response, sizeof(response) - 1u))
+    {
+        close(client);
+        return 1;
+    }
+    close(client);
+    return 0;
+}
+
+static int test_admin_action_winrm_http(void)
+{
+    librdp_admin_config config;
+    librdp_admin_action action;
+    librdp_admin* admin = NULL;
+    char url[128];
+    uint16_t port = 0;
+    int listen_fd = -1;
+    pid_t child = -1;
+    int child_status = 0;
+
+    listen_fd = test_workspace_http_listen(&port);
+    CHECK(listen_fd >= 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0)
+    {
+        int rc = test_admin_action_winrm_child(listen_fd);
+
+        close(listen_fd);
+        _exit(rc);
+    }
+    snprintf(url, sizeof(url), "http://127.0.0.1:%u/wsman", (unsigned)port);
+    CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    config.endpoint_url = url;
+    config.timeout_ms = 5000u;
+    admin = librdp_admin_new(&config);
+    CHECK(admin != NULL);
+    CHECK(librdp_admin_action_init(&action) == LIBRDP_STATUS_OK);
+    action.type = LIBRDP_ADMIN_ACTION_DISCONNECT;
+    action.session_id = 4u;
+    action.timeout_ms = 5000u;
+    CHECK(librdp_admin_execute_action(admin, &action) == LIBRDP_STATUS_OK);
+    librdp_admin_free(admin);
+    close(listen_fd);
+    CHECK(waitpid(child, &child_status, 0) == child);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
 #endif
 
 int test_common(void)
@@ -7942,6 +8051,8 @@ int test_client_core(void)
     if (test_workspace_fetch_http() != 0)
         return 1;
     if (test_admin_query_winrm_http() != 0)
+        return 1;
+    if (test_admin_action_winrm_http() != 0)
         return 1;
 #endif
     return test_settings_surface_input_session();

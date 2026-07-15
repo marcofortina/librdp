@@ -27,16 +27,23 @@
 typedef struct admin_cli_options
 {
     librdp_admin_config config;
+    librdp_admin_action action;
     int no_window;
     int show_help;
+    int execute_action;
+    int confirm_action;
     char* password_from_env;
 } admin_cli_options;
+
+#define ADMIN_ACTION_QUERY ((librdp_admin_action_type)0)
 
 static void admin_usage(FILE* stream, const char* program)
 {
     fprintf(stream,
             "usage: %s --endpoint url [--user name] [--password value] [--password-env name] "
-            "[--domain name] [--resource-uri uri] [--timeout ms] [--insecure-lab] [--no-window]\n",
+            "[--domain name] [--resource-uri uri] [--timeout ms] [--insecure-lab] "
+            "[--action query|logoff|disconnect|message] [--session-id id] "
+            "[--message-title text] [--message-text text] [--confirm] [--no-window]\n",
             program);
 }
 
@@ -59,7 +66,8 @@ static int admin_cli_init(admin_cli_options* options)
     if (!options)
         return 0;
     memset(options, 0, sizeof(*options));
-    return librdp_admin_config_init(&options->config) == LIBRDP_STATUS_OK;
+    return librdp_admin_config_init(&options->config) == LIBRDP_STATUS_OK &&
+           librdp_admin_action_init(&options->action) == LIBRDP_STATUS_OK;
 }
 
 static int admin_cli_need_value(int index, int argc, const char* option)
@@ -70,10 +78,28 @@ static int admin_cli_need_value(int index, int argc, const char* option)
     return 0;
 }
 
+static int admin_parse_action_type(const char* text, librdp_admin_action_type* type)
+{
+    if (!text || !type)
+        return 0;
+    if (strcmp(text, "query") == 0)
+        *type = ADMIN_ACTION_QUERY;
+    else if (strcmp(text, "logoff") == 0)
+        *type = LIBRDP_ADMIN_ACTION_LOGOFF;
+    else if (strcmp(text, "disconnect") == 0)
+        *type = LIBRDP_ADMIN_ACTION_DISCONNECT;
+    else if (strcmp(text, "message") == 0)
+        *type = LIBRDP_ADMIN_ACTION_MESSAGE;
+    else
+        return 0;
+    return 1;
+}
+
 /*
  * Parses startup-only options. Password environment lookup is resolved before
  * handle creation so the public admin API still receives a normal borrowed
- * string and owns the copied sensitive storage.
+ * string and owns the copied sensitive storage. Destructive actions require an
+ * explicit confirmation flag and a numeric session id.
  */
 static int admin_parse_args(int argc, char** argv, admin_cli_options* options)
 {
@@ -140,6 +166,36 @@ static int admin_parse_args(int argc, char** argv, admin_cli_options* options)
             options->config.allow_insecure_tls = 1;
         else if (strcmp(argv[i], "--no-window") == 0)
             options->no_window = 1;
+        else if (strcmp(argv[i], "--action") == 0)
+        {
+            librdp_admin_action_type type = ADMIN_ACTION_QUERY;
+
+            if (!admin_cli_need_value(i, argc, argv[i]) || !admin_parse_action_type(argv[++i], &type))
+                return 0;
+            options->execute_action = type != ADMIN_ACTION_QUERY;
+            if (type != ADMIN_ACTION_QUERY)
+                options->action.type = type;
+        }
+        else if (strcmp(argv[i], "--session-id") == 0)
+        {
+            if (!admin_cli_need_value(i, argc, argv[i]) ||
+                !admin_parse_u32(argv[++i], &options->action.session_id))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--message-title") == 0)
+        {
+            if (!admin_cli_need_value(i, argc, argv[i]))
+                return 0;
+            options->action.message_title = argv[++i];
+        }
+        else if (strcmp(argv[i], "--message-text") == 0)
+        {
+            if (!admin_cli_need_value(i, argc, argv[i]))
+                return 0;
+            options->action.message_text = argv[++i];
+        }
+        else if (strcmp(argv[i], "--confirm") == 0)
+            options->confirm_action = 1;
         else
         {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
@@ -149,6 +205,38 @@ static int admin_parse_args(int argc, char** argv, admin_cli_options* options)
     if (!options->show_help && (!options->config.endpoint_url || options->config.endpoint_url[0] == '\0'))
     {
         fprintf(stderr, "--endpoint is required\n");
+        return 0;
+    }
+    if (options->execute_action)
+    {
+        if (options->action.session_id == 0)
+        {
+            fprintf(stderr, "--session-id is required for admin actions\n");
+            return 0;
+        }
+        if ((options->action.type == LIBRDP_ADMIN_ACTION_LOGOFF ||
+             options->action.type == LIBRDP_ADMIN_ACTION_DISCONNECT) &&
+            !options->confirm_action)
+        {
+            fprintf(stderr, "--confirm is required for logoff and disconnect actions\n");
+            return 0;
+        }
+        if (options->action.type != LIBRDP_ADMIN_ACTION_MESSAGE &&
+            (options->action.message_title || options->action.message_text))
+        {
+            fprintf(stderr, "message fields are valid only with --action message\n");
+            return 0;
+        }
+        if (options->action.type == LIBRDP_ADMIN_ACTION_MESSAGE && !options->action.message_text)
+        {
+            fprintf(stderr, "--message-text is required with --action message\n");
+            return 0;
+        }
+    }
+    else if (options->action.session_id != 0 || options->action.message_title ||
+             options->action.message_text || options->confirm_action)
+    {
+        fprintf(stderr, "admin action options require --action logoff|disconnect|message\n");
         return 0;
     }
     return 1;
@@ -319,6 +407,24 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "failed to create admin handle\n");
         return 2;
+    }
+    if (options.execute_action)
+    {
+        status = librdp_admin_execute_action(admin, &options.action);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            fprintf(stderr, "admin action failed: %s\n", librdp_status_name(status));
+            librdp_admin_free(admin);
+            return 3;
+        }
+        printf("admin action done type=%u session_id=%u\n",
+               (unsigned)options.action.type,
+               (unsigned)options.action.session_id);
+        if (options.no_window)
+        {
+            librdp_admin_free(admin);
+            return 0;
+        }
     }
     status = librdp_admin_query_sessions(admin);
     if (status != LIBRDP_STATUS_OK)
