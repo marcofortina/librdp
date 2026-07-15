@@ -89,11 +89,18 @@ struct librdp_settings
     char* webauthn_provider;
     char* webauthn_rp_ids[LIBRDP_SETTINGS_MAX_WEBAUTHN_RP_IDS];
     char* echo_payload;
+    char* gateway_url;
+    char* gateway_username;
+    char* gateway_password;
+    char* gateway_domain;
     uint16_t port;
     uint32_t width;
     uint32_t height;
     uint32_t features;
     librdp_security_mode security_mode;
+    librdp_gateway_mode gateway_mode;
+    uint32_t gateway_timeout_ms;
+    int gateway_use_session_credentials;
     librdp_tls_policy_mode tls_policy_mode;
     int tls_use_system_store;
     char* tls_pinned_sha256;
@@ -129,6 +136,8 @@ struct librdp_settings
 #define RDP_SETTINGS_DRIVE_MAX_OPEN_HANDLES 1024u
 #define RDP_SETTINGS_USB_DEFAULT_TRANSFER_MS 5000u
 #define RDP_SETTINGS_USB_MAX_TRANSFER_MS 60000u
+#define RDP_SETTINGS_GATEWAY_DEFAULT_TIMEOUT_MS 15000u
+#define RDP_SETTINGS_GATEWAY_MAX_TIMEOUT_MS 600000u
 #define RDP_SETTINGS_LIMIT_DYNAMIC_CHANNELS 64u
 #define RDP_SETTINGS_LIMIT_DYNAMIC_MESSAGE_BYTES (64u * 1024u * 1024u)
 #define RDP_SETTINGS_LIMIT_FASTPATH_FRAGMENT_BYTES (16u * 1024u * 1024u)
@@ -337,6 +346,19 @@ librdp_status librdp_credentials_set(librdp_credentials* credentials,
     credentials->username = username_copy;
     credentials->password = password_copy;
     credentials->domain = domain_copy;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_gateway_config_init(librdp_gateway_config* config)
+{
+    if (!config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(config, 0, sizeof(*config));
+    config->version = LIBRDP_GATEWAY_CONFIG_VERSION;
+    config->size = (uint32_t)sizeof(*config);
+    config->mode = LIBRDP_GATEWAY_DISABLED;
+    config->timeout_ms = RDP_SETTINGS_GATEWAY_DEFAULT_TIMEOUT_MS;
+    config->use_session_credentials = 1;
     return LIBRDP_STATUS_OK;
 }
 
@@ -567,6 +589,13 @@ static int rdp_settings_has_prefix(const char* text, const char* prefix)
         return 0;
     prefix_len = strlen(prefix);
     return strncmp(text, prefix, prefix_len) == 0;
+}
+
+static int rdp_settings_valid_gateway_url(const char* url)
+{
+    return rdp_settings_valid_text(url) &&
+           (rdp_settings_has_prefix(url, "https://") ||
+            rdp_settings_has_prefix(url, "http://"));
 }
 
 /*
@@ -831,6 +860,9 @@ librdp_settings* librdp_settings_new(void)
     settings->width = 1024;
     settings->height = 768;
     settings->security_mode = LIBRDP_SECURITY_AUTO;
+    settings->gateway_mode = LIBRDP_GATEWAY_DISABLED;
+    settings->gateway_timeout_ms = RDP_SETTINGS_GATEWAY_DEFAULT_TIMEOUT_MS;
+    settings->gateway_use_session_credentials = 1;
     settings->tls_policy_mode = LIBRDP_TLS_POLICY_STRICT;
     settings->tls_use_system_store = 1;
     librdp_usb_policy_init(&settings->usb_policy);
@@ -863,6 +895,9 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
     copy->height = settings->height;
     copy->features = settings->features;
     copy->security_mode = settings->security_mode;
+    copy->gateway_mode = settings->gateway_mode;
+    copy->gateway_timeout_ms = settings->gateway_timeout_ms;
+    copy->gateway_use_session_credentials = settings->gateway_use_session_credentials;
     copy->credentials_provider = settings->credentials_provider;
     copy->credentials_provider_user_data = settings->credentials_provider_user_data;
     copy->tls_policy_mode = settings->tls_policy_mode;
@@ -884,6 +919,14 @@ librdp_settings* librdp_settings_clone(const librdp_settings* settings)
          librdp_settings_set_video_output_path(copy, settings->video_output_path) != LIBRDP_STATUS_OK) ||
         (settings->webauthn_provider &&
          librdp_settings_set_webauthn_provider(copy, settings->webauthn_provider) != LIBRDP_STATUS_OK) ||
+        (settings->gateway_url &&
+         rdp_set_string(&copy->gateway_url, settings->gateway_url) != LIBRDP_STATUS_OK) ||
+        (settings->gateway_username &&
+         rdp_set_string(&copy->gateway_username, settings->gateway_username) != LIBRDP_STATUS_OK) ||
+        (settings->gateway_password &&
+         rdp_set_secure_string(&copy->gateway_password, settings->gateway_password) != LIBRDP_STATUS_OK) ||
+        (settings->gateway_domain &&
+         rdp_set_string(&copy->gateway_domain, settings->gateway_domain) != LIBRDP_STATUS_OK) ||
         (settings->tls_pinned_sha256 &&
          rdp_set_string(&copy->tls_pinned_sha256, settings->tls_pinned_sha256) != LIBRDP_STATUS_OK) ||
         (settings->echo_payload &&
@@ -1012,6 +1055,10 @@ void librdp_settings_free(librdp_settings* settings)
     free(settings->audio_input_device);
     free(settings->video_output_path);
     free(settings->webauthn_provider);
+    free(settings->gateway_url);
+    free(settings->gateway_username);
+    rdp_secure_string_free(settings->gateway_password);
+    free(settings->gateway_domain);
     free(settings->echo_payload);
     free(settings->tls_pinned_sha256);
     for (uint32_t i = 0; i < settings->drive_count; i++)
@@ -1176,6 +1223,132 @@ librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librd
     if (!settings || mode < LIBRDP_SECURITY_AUTO || mode > LIBRDP_SECURITY_NLA)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     settings->security_mode = mode;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Copy gateway transport policy into settings. The function validates URL,
+ * timeout, and credential field bounds before replacing the old state, so a
+ * malformed update cannot leave a partially applied gateway configuration.
+ * Password ownership is transferred only to the settings object after every
+ * allocation has succeeded; all temporary password copies are cleansed on
+ * failure.
+ */
+librdp_status librdp_settings_set_gateway_config(librdp_settings* settings,
+                                                 const librdp_gateway_config* config)
+{
+    librdp_gateway_config defaults;
+    char* url_copy = NULL;
+    char* username_copy = NULL;
+    char* password_copy = NULL;
+    char* domain_copy = NULL;
+    uint32_t timeout_ms = RDP_SETTINGS_GATEWAY_DEFAULT_TIMEOUT_MS;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!config)
+    {
+        status = librdp_gateway_config_init(&defaults);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        config = &defaults;
+    }
+    if (config->version != LIBRDP_GATEWAY_CONFIG_VERSION || config->size < sizeof(*config) ||
+        config->mode < LIBRDP_GATEWAY_DISABLED || config->mode > LIBRDP_GATEWAY_HTTP_CONNECT)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->timeout_ms > RDP_SETTINGS_GATEWAY_MAX_TIMEOUT_MS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->timeout_ms != 0)
+        timeout_ms = config->timeout_ms;
+    if (config->mode == LIBRDP_GATEWAY_HTTP_CONNECT)
+    {
+        if (!rdp_settings_valid_gateway_url(config->url))
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        url_copy = rdp_strdup(config->url);
+        if (!url_copy)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    else if (config->url || config->username || config->password || config->domain)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (config->username)
+    {
+        if (!rdp_settings_valid_text(config->username))
+        {
+            free(url_copy);
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        }
+        username_copy = rdp_strdup(config->username);
+        if (!username_copy)
+        {
+            free(url_copy);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+    if (config->password)
+    {
+        if (!rdp_settings_valid_text(config->password))
+        {
+            free(url_copy);
+            free(username_copy);
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        }
+        password_copy = rdp_secure_string_dup(config->password);
+        if (!password_copy)
+        {
+            free(url_copy);
+            free(username_copy);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+    if (config->domain)
+    {
+        if (!rdp_settings_valid_text(config->domain))
+        {
+            free(url_copy);
+            free(username_copy);
+            rdp_secure_string_free_plain(password_copy);
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        }
+        domain_copy = rdp_strdup(config->domain);
+        if (!domain_copy)
+        {
+            free(url_copy);
+            free(username_copy);
+            rdp_secure_string_free_plain(password_copy);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+
+    free(settings->gateway_url);
+    free(settings->gateway_username);
+    rdp_secure_string_free(settings->gateway_password);
+    free(settings->gateway_domain);
+    settings->gateway_url = url_copy;
+    settings->gateway_username = username_copy;
+    settings->gateway_password = password_copy;
+    settings->gateway_domain = domain_copy;
+    settings->gateway_mode = config->mode;
+    settings->gateway_timeout_ms = timeout_ms;
+    settings->gateway_use_session_credentials = config->use_session_credentials ? 1 : 0;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_settings_get_gateway_config(const librdp_settings* settings,
+                                                 librdp_gateway_config* config)
+{
+    if (!settings || !config)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (librdp_gateway_config_init(config) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    config->mode = settings->gateway_mode;
+    config->url = settings->gateway_url;
+    config->username = settings->gateway_username;
+    config->password = settings->gateway_password;
+    config->domain = settings->gateway_domain;
+    config->timeout_ms = settings->gateway_timeout_ms;
+    config->use_session_credentials = settings->gateway_use_session_credentials;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1908,6 +2081,41 @@ librdp_security_mode librdp_settings_security_mode(const librdp_settings* settin
 const char* rdp_settings_password_internal(const librdp_settings* settings)
 {
     return settings ? settings->password : NULL;
+}
+
+librdp_gateway_mode rdp_settings_gateway_mode_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_mode : LIBRDP_GATEWAY_DISABLED;
+}
+
+const char* rdp_settings_gateway_url_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_url : NULL;
+}
+
+const char* rdp_settings_gateway_username_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_username : NULL;
+}
+
+const char* rdp_settings_gateway_password_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_password : NULL;
+}
+
+const char* rdp_settings_gateway_domain_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_domain : NULL;
+}
+
+uint32_t rdp_settings_gateway_timeout_ms_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_timeout_ms : 0;
+}
+
+int rdp_settings_gateway_use_session_credentials_internal(const librdp_settings* settings)
+{
+    return settings ? settings->gateway_use_session_credentials : 0;
 }
 
 librdp_credentials_provider rdp_settings_credentials_provider_internal(const librdp_settings* settings,

@@ -22,6 +22,13 @@
 #include <librdp/settings.h>
 
 const char* rdp_settings_password_internal(const librdp_settings* settings);
+librdp_gateway_mode rdp_settings_gateway_mode_internal(const librdp_settings* settings);
+const char* rdp_settings_gateway_url_internal(const librdp_settings* settings);
+const char* rdp_settings_gateway_username_internal(const librdp_settings* settings);
+const char* rdp_settings_gateway_password_internal(const librdp_settings* settings);
+const char* rdp_settings_gateway_domain_internal(const librdp_settings* settings);
+uint32_t rdp_settings_gateway_timeout_ms_internal(const librdp_settings* settings);
+int rdp_settings_gateway_use_session_credentials_internal(const librdp_settings* settings);
 librdp_credentials_provider rdp_settings_credentials_provider_internal(const librdp_settings* settings,
                                                                        void** user_data);
 typedef void (*rdp_settings_secure_string_observer)(const void* data, size_t length, void* user_data);

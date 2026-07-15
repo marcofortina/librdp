@@ -115,6 +115,7 @@ LIBRDP_0.1 {
         librdp_credentials_init;
         librdp_credentials_clear;
         librdp_credentials_set;
+        librdp_gateway_config_init;
         librdp_drive_policy_init;
         librdp_usb_selector_parse;
         librdp_usb_policy_init;
@@ -130,6 +131,8 @@ LIBRDP_0.1 {
         librdp_settings_set_port;
         librdp_settings_set_desktop_size;
         librdp_settings_set_security_mode;
+        librdp_settings_set_gateway_config;
+        librdp_settings_get_gateway_config;
         librdp_tls_policy_init;
         librdp_settings_set_tls_policy;
         librdp_settings_get_tls_policy;

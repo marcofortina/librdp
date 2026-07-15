@@ -3995,6 +3995,8 @@ static int test_settings_surface_input_session(void)
     librdp_feature_status feature_status;
     librdp_tls_policy tls_policy;
     librdp_tls_policy tls_policy_out;
+    librdp_gateway_config gateway_config;
+    librdp_gateway_config gateway_config_out;
     const struct
     {
         librdp_status status;
@@ -4218,6 +4220,38 @@ static int test_settings_surface_input_session(void)
     tls_policy.mode = LIBRDP_TLS_POLICY_PINNED_FINGERPRINT;
     tls_policy.pinned_sha256 = "not-a-sha256";
     CHECK(librdp_settings_set_tls_policy(settings, &tls_policy) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_gateway_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_gateway_config_init(&gateway_config) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config.version == LIBRDP_GATEWAY_CONFIG_VERSION);
+    CHECK(gateway_config.mode == LIBRDP_GATEWAY_DISABLED);
+    CHECK(gateway_config.timeout_ms == 15000u);
+    CHECK(gateway_config.use_session_credentials == 1);
+    CHECK(librdp_settings_get_gateway_config(NULL, &gateway_config_out) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_gateway_config(settings, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway_config_out) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_DISABLED);
+    gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
+    gateway_config.url = "https://gateway.example.com/rdp";
+    gateway_config.username = "gateway-user";
+    gateway_config.password = "gateway-secret";
+    gateway_config.domain = "DOMAIN";
+    gateway_config.timeout_ms = 30000u;
+    gateway_config.use_session_credentials = 0;
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway_config_out) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_HTTP_CONNECT);
+    CHECK(strcmp(gateway_config_out.url, "https://gateway.example.com/rdp") == 0);
+    CHECK(strcmp(gateway_config_out.username, "gateway-user") == 0);
+    CHECK(strcmp(gateway_config_out.password, "gateway-secret") == 0);
+    CHECK(strcmp(gateway_config_out.domain, "DOMAIN") == 0);
+    CHECK(gateway_config_out.timeout_ms == 30000u);
+    CHECK(gateway_config_out.use_session_credentials == 0);
+    gateway_config.url = "ftp://gateway.example.com";
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    gateway_config.url = "https://gateway.example.com/rdp";
+    gateway_config.timeout_ms = 600001u;
+    CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    gateway_config.timeout_ms = 30000u;
     CHECK(librdp_settings_port(settings) == 3389);
     CHECK(librdp_settings_width(settings) == 1024);
     CHECK(librdp_settings_height(settings) == 768);
@@ -4714,6 +4748,14 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_username(copy), "user") == 0);
     CHECK(strcmp(librdp_settings_domain(copy), "domain") == 0);
     CHECK(librdp_settings_security_mode(copy) == LIBRDP_SECURITY_TLS);
+    CHECK(librdp_settings_get_gateway_config(copy, &gateway_config_out) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_HTTP_CONNECT);
+    CHECK(strcmp(gateway_config_out.url, "https://gateway.example.com/rdp") == 0);
+    CHECK(strcmp(gateway_config_out.username, "gateway-user") == 0);
+    CHECK(strcmp(gateway_config_out.password, "gateway-secret") == 0);
+    CHECK(strcmp(gateway_config_out.domain, "DOMAIN") == 0);
+    CHECK(gateway_config_out.timeout_ms == 30000u);
+    CHECK(gateway_config_out.use_session_credentials == 0);
     CHECK(librdp_settings_get_tls_policy(copy, &tls_policy_out) == LIBRDP_STATUS_OK);
     CHECK(tls_policy_out.mode == LIBRDP_TLS_POLICY_PINNED_FINGERPRINT);
     CHECK(tls_policy_out.use_system_store == 0);
@@ -4769,6 +4811,9 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_webauthn_rp_id(copy, 1), "login.example.com") == 0);
     CHECK(strcmp(librdp_settings_rail_app(copy, 0), "notepad.exe") == 0);
     CHECK(strcmp(librdp_settings_echo_payload(copy), "probe") == 0);
+    CHECK(librdp_settings_set_gateway_config(settings, NULL) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_get_gateway_config(settings, &gateway_config_out) == LIBRDP_STATUS_OK);
+    CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_DISABLED);
 
     surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
     CHECK(surface != NULL);

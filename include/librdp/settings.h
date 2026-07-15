@@ -71,6 +71,7 @@ typedef enum librdp_security_mode
 #define LIBRDP_DRIVE_POLICY_VERSION 1u         /**< Current librdp_drive_policy version. */
 #define LIBRDP_USB_POLICY_VERSION 1u           /**< Current librdp_usb_policy version. */
 #define LIBRDP_LIMITS_VERSION 1u               /**< Current librdp_limits version. */
+#define LIBRDP_GATEWAY_CONFIG_VERSION 1u       /**< Current librdp_gateway_config version. */
 
 /**
  * @brief TLS certificate trust policy used by TLS and NLA security modes.
@@ -217,6 +218,45 @@ typedef struct librdp_credentials
  */
 typedef librdp_status (*librdp_credentials_provider)(librdp_credentials* credentials,
                                                     void* user_data);
+
+/**
+ * @brief Gateway transport mode.
+ *
+ * Gateway configuration is a transport-level setting. It is separate from RDP
+ * security mode: once the tunnel is established, the normal X.224, TLS, NLA,
+ * and activation sequence is used unchanged.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_gateway_mode
+{
+    LIBRDP_GATEWAY_DISABLED = 0,     /**< Connect directly to the target. */
+    LIBRDP_GATEWAY_HTTP_CONNECT = 1  /**< Tunnel the target TCP stream through an HTTP CONNECT gateway. */
+} librdp_gateway_mode;
+
+/**
+ * @brief Versioned gateway configuration.
+ *
+ * Initialize with librdp_gateway_config_init(). url is copied by
+ * librdp_settings_set_gateway_config() and must include an `http://` or
+ * `https://` scheme when mode is LIBRDP_GATEWAY_HTTP_CONNECT. When
+ * use_session_credentials is non-zero and username is NULL, the connection
+ * reuses the session credentials for gateway authentication.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_gateway_config
+{
+    uint32_t version;  /**< Struct version, LIBRDP_GATEWAY_CONFIG_VERSION. */
+    uint32_t size;     /**< Size of this struct in bytes. */
+    librdp_gateway_mode mode; /**< Gateway transport mode. */
+    const char* url;          /**< Gateway URL; copied on set, borrowed on get. */
+    const char* username;     /**< Optional gateway user name; copied on set, borrowed on get. */
+    const char* password;     /**< Optional gateway password; copied on set, borrowed on get and zeroized on clear. */
+    const char* domain;       /**< Optional gateway authentication domain; copied on set, borrowed on get. */
+    uint32_t timeout_ms;      /**< Gateway connect timeout in milliseconds, or zero for the default. */
+    int use_session_credentials; /**< Non-zero to reuse session credentials when gateway credentials are empty. */
+} librdp_gateway_config;
 
 /**
  * @brief Versioned policy for redirected filesystem drives.
@@ -481,6 +521,22 @@ LIBRDP_API librdp_status librdp_credentials_set(librdp_credentials* credentials,
                                                 const char* domain);
 
 /**
+ * @brief Initialize a gateway configuration descriptor.
+ *
+ * The initialized descriptor disables gateway use, clears all strings, sets
+ * timeout_ms to zero, and enables session-credential reuse.
+ *
+ * @param[out] config Caller-owned descriptor to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * config is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned memory.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_gateway_config_init(librdp_gateway_config* config);
+
+/**
  * @brief Initialize runtime limits with conservative defaults.
  *
  * Defaults match the current bounded implementation: dynamic channel messages
@@ -701,6 +757,49 @@ LIBRDP_API librdp_status librdp_settings_set_desktop_size(librdp_settings* setti
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_set_security_mode(librdp_settings* settings, librdp_security_mode mode);
+
+/**
+ * @brief Set or clear gateway transport configuration.
+ *
+ * Passing NULL restores the disabled default. For HTTP CONNECT mode the url
+ * must be non-empty and start with `http://` or `https://`. All string fields
+ * are copied; password storage is zeroized when replaced or cleared.
+ *
+ * @param[in,out] settings Settings object to update; must not be NULL.
+ * @param[in] config Gateway configuration to copy, or NULL to disable gateway use.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * settings, invalid metadata, invalid mode, malformed URL, or empty strings;
+ * LIBRDP_STATUS_NO_MEMORY when a string copy fails.
+ *
+ * @note Thread-safety: settings are not internally synchronized.
+ * @warning Gateway credentials are plaintext application input and must not be
+ * logged. Use HTTPS gateway URLs outside controlled local tests.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_set_gateway_config(librdp_settings* settings,
+                                                            const librdp_gateway_config* config);
+
+/**
+ * @brief Copy the current gateway configuration into a caller descriptor.
+ *
+ * The destination is initialized and then filled with borrowed string pointers
+ * owned by settings. They remain valid until settings is mutated or freed.
+ *
+ * @param[in] settings Settings object to query; must not be NULL.
+ * @param[out] config Destination descriptor; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments.
+ *
+ * @note Thread-safety: concurrent reads are safe only while no other thread
+ * mutates or frees settings.
+ * @warning The returned password pointer, when non-NULL, exposes sensitive
+ * process memory owned by settings.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_settings_get_gateway_config(const librdp_settings* settings,
+                                                            librdp_gateway_config* config);
 
 /**
  * @brief Initialize a TLS policy descriptor with strict defaults.
