@@ -7652,6 +7652,93 @@ static int test_workspace_fetch_http(void)
 }
 #endif
 
+/*
+ * Coverage: validates admin inventory object ownership and unsupported query
+ * status before the WinRM transport backend is compiled into the library.
+ */
+static int test_admin_lifecycle(void)
+{
+    librdp_admin_config config;
+    librdp_admin_session session;
+    librdp_admin* admin = NULL;
+
+    CHECK(librdp_admin_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_admin_session_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    CHECK(config.version == LIBRDP_ADMIN_CONFIG_VERSION);
+    CHECK(config.size == sizeof(config));
+    CHECK(config.transport == LIBRDP_ADMIN_TRANSPORT_WINRM);
+    CHECK(librdp_admin_new(NULL) == NULL);
+
+    config.endpoint_url = "https://admin.example.test/wsman";
+    config.username = "admin";
+    config.password = "secret";
+    config.domain = "domain";
+    admin = librdp_admin_new(&config);
+    CHECK(admin != NULL);
+    CHECK(librdp_admin_session_count(admin) == 0);
+    CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_admin_clear(admin) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_query_sessions(admin) == LIBRDP_STATUS_UNSUPPORTED);
+    librdp_admin_free(admin);
+
+    CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    admin = librdp_admin_new(&config);
+    CHECK(admin != NULL);
+    CHECK(librdp_admin_query_sessions(admin) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_admin_load_sessions_xml(admin, NULL, 0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    librdp_admin_free(admin);
+    return 0;
+}
+
+#ifdef RDP_HAVE_LIBXML2
+/*
+ * Coverage: parses synthetic management XML through libxml2 and verifies that
+ * failed parses do not destroy the last successful session inventory.
+ */
+static int test_admin_sessions_xml_parse(void)
+{
+    static const char xml[] =
+        "<Envelope><Body><Sessions>"
+        "<Session><SessionId>4</SessionId><UserName>Marco</UserName><Domain>LAB</Domain>"
+        "<State>Active</State><ClientName>client1</ClientName><WinStationName>rdp-tcp#1</WinStationName>"
+        "<ProtocolName>rdp</ProtocolName></Session>"
+        "<Win32_LogonSession><LogonId>999</LogonId><Status>OK</Status></Win32_LogonSession>"
+        "</Sessions></Body></Envelope>";
+    static const char malformed[] = "<Envelope><Session>";
+    librdp_admin_config config;
+    librdp_admin_session session;
+    librdp_admin* admin = NULL;
+
+    CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
+    admin = librdp_admin_new(&config);
+    CHECK(admin != NULL);
+    CHECK(librdp_admin_load_sessions_xml(admin, xml, sizeof(xml) - 1u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_count(admin) == 2u);
+
+    CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_OK);
+    CHECK(session.session_id == 4u);
+    CHECK(session.username && strcmp(session.username, "Marco") == 0);
+    CHECK(session.domain && strcmp(session.domain, "LAB") == 0);
+    CHECK(session.state && strcmp(session.state, "Active") == 0);
+    CHECK(session.client_name && strcmp(session.client_name, "client1") == 0);
+    CHECK(session.station_name && strcmp(session.station_name, "rdp-tcp#1") == 0);
+    CHECK(session.protocol_name && strcmp(session.protocol_name, "rdp") == 0);
+
+    CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_session_at(admin, 1, &session) == LIBRDP_STATUS_OK);
+    CHECK(session.logon_id == 999u);
+    CHECK(session.state && strcmp(session.state, "OK") == 0);
+
+    CHECK(librdp_admin_load_sessions_xml(admin, malformed, sizeof(malformed) - 1u) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(librdp_admin_session_count(admin) == 2u);
+    librdp_admin_free(admin);
+    return 0;
+}
+#endif
+
 int test_common(void)
 {
     if (test_trace() != 0)
@@ -7731,8 +7818,12 @@ int test_client_core(void)
         return 1;
     if (test_workspace_lifecycle() != 0)
         return 1;
+    if (test_admin_lifecycle() != 0)
+        return 1;
 #ifdef RDP_HAVE_LIBXML2
     if (test_workspace_xml_parse() != 0)
+        return 1;
+    if (test_admin_sessions_xml_parse() != 0)
         return 1;
 #endif
 #if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)

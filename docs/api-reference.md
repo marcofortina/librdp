@@ -17,6 +17,7 @@ return codes, and `@since` tags, use the Doxygen pages described in
 | Header | Purpose |
 | --- | --- |
 | `include/librdp/librdp.h` | Convenience umbrella header for all public API families. |
+| `include/librdp/admin.h` | Administration endpoint configuration and remote session inventory APIs. |
 | `include/librdp/client.h` | Compatibility client facade that owns settings and session objects. |
 | `include/librdp/error.h` | Stable `librdp_status` error model and status-string helper. |
 | `include/librdp/settings.h` | Session configuration, credentials, desktop size, security mode, features, and redirected devices. |
@@ -31,6 +32,8 @@ return codes, and `@since` tags, use the Doxygen pages described in
 | `include/librdp/workspace.h` | Workspace feed discovery and published resource inspection APIs. |
 
 ## Primary objects
+
+`librdp_admin` owns an administration endpoint configuration and the last parsed session inventory.
 
 `librdp_client` is the compatibility facade for applications that prefer client/client_config naming. It owns one settings object and one session object.
 

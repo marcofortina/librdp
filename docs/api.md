@@ -11,6 +11,7 @@ For end-to-end call ordering, see [Lifecycle](lifecycle.md). For standalone sour
 
 ## Object model
 
+- `librdp_admin` owns remote administration endpoint configuration and parsed session inventory.
 - `librdp_settings` owns connection settings, credentials, device configuration, and feature flags.
 - `librdp_session` owns the client protocol state, transport state, negotiated channels, and the active surface.
 - `librdp_surface` owns the framebuffer memory exposed to viewers.

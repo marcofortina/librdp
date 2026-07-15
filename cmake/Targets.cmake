@@ -26,6 +26,7 @@ set(LIBRDP_SOURCES
     src/client/session_usb.c
     src/client/session_video.c
     src/client/smartcard_backend.c
+    src/admin/admin.c
     src/channels/audio_format.c
     src/channels/audio_input.c
     src/channels/audio_output.c

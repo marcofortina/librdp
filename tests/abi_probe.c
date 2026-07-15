@@ -31,6 +31,10 @@ int main(void)
            sizeof(long),
            sizeof(size_t));
     printf("  \"types\": [\n");
+    ABI_TYPE_ENTRY("librdp_admin_ptr", librdp_admin*, ",");
+    ABI_TYPE_ENTRY("librdp_admin_transport", librdp_admin_transport, ",");
+    ABI_TYPE_ENTRY("librdp_admin_config", librdp_admin_config, ",");
+    ABI_TYPE_ENTRY("librdp_admin_session", librdp_admin_session, ",");
     ABI_TYPE_ENTRY("librdp_session_ptr", librdp_session*, ",");
     ABI_TYPE_ENTRY("librdp_client_ptr", librdp_client*, ",");
     ABI_TYPE_ENTRY("librdp_client_config", librdp_client_config, ",");

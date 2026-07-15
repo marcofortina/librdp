@@ -15,6 +15,7 @@ tags.
 [Open the generated Doxygen API reference](https://marcofortina.github.io/librdp/api/doxygen/html/index.html)
 
 Group pages: [umbrella](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__umbrella.html),
+[admin](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__admin.html),
 [client](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__client.html),
 [error](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__error.html),
 [settings](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__settings.html),
