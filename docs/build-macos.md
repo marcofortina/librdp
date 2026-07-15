@@ -5,7 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Build macOS
 
-macOS builds the portable core, tests, and examples. The X11 viewer is not part of the macOS build profile.
+macOS builds the portable core, tests, examples, and an optional native viewer.
+The X11 viewer is not part of the macOS build profile.
 
 ## Dependencies
 
@@ -27,6 +28,7 @@ cmake -S . -B build-macos -G Ninja \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=ON \
   -DLIBRDP_BUILD_X11_VIEWER=OFF \
+  -DLIBRDP_BUILD_MACOS_VIEWER=ON \
   -DLIBRDP_WITH_PIPEWIRE=OFF \
   -DLIBRDP_WITH_JPEG=OFF \
   -DLIBRDP_WITH_XSHM=OFF \
@@ -35,4 +37,5 @@ cmake --build build-macos --parallel
 ctest --test-dir build-macos --output-on-failure
 ```
 
-The disabled options are viewer-specific paths that require the X11 viewer profile.
+The disabled options are X11-viewer-specific paths. `librdp-macos-viewer`
+uses AppKit and the public client APIs.

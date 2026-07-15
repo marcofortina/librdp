@@ -29,6 +29,7 @@ librdp uses CMake to build the C library, unit tests, examples, optional fuzz ta
 - `LIBRDP_BUILD_TESTS=ON|OFF`: build unit tests and repository guardrails.
 - `LIBRDP_BUILD_FUZZ=ON|OFF`: build fuzz targets.
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
+- `LIBRDP_BUILD_MACOS_VIEWER=ON|OFF`: build the native macOS viewer.
 - `LIBRDP_BUILD_X11_ADMIN=ON|OFF`: build the X11 administration inventory tool.
 - `LIBRDP_BUILD_X11_WORKSPACE=ON|OFF`: build the X11 workspace feed launcher.
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
