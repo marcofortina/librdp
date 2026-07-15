@@ -19,21 +19,28 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def read_cmake_project() -> str:
+    parts = [read("CMakeLists.txt")]
+    for path in sorted((ROOT / "cmake").glob("*.cmake")):
+        parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def has_header(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")[:512]
     return "Copyright (C) 2026 Marco Fortina" in text and "SPDX-License-Identifier: AGPL-3.0-or-later" in text
 
 
-def cmake_examples() -> dict[str, str]:
-    return {match.group(1): match.group(2) for match in EXAMPLE_RE.finditer(read("CMakeLists.txt"))}
+def cmake_examples(cmake: str) -> dict[str, str]:
+    return {match.group(1): match.group(2) for match in EXAMPLE_RE.finditer(cmake)}
 
 
 def main() -> int:
     errors: list[str] = []
     examples_doc = read("docs/examples.md")
     build_doc = read("docs/build.md")
-    cmake = read("CMakeLists.txt")
-    examples = cmake_examples()
+    cmake = read_cmake_project()
+    examples = cmake_examples(cmake)
 
     if 'option(LIBRDP_BUILD_EXAMPLES "Build example programs" ON)' not in cmake:
         errors.append("CMake missing LIBRDP_BUILD_EXAMPLES option")

@@ -1,0 +1,332 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+set(LIBRDP_SOURCES
+    src/client/client.c
+    src/client/error.c
+    src/client/settings.c
+    src/client/session.c
+    src/client/session_activation.c
+    src/client/session_audio.c
+    src/client/session_camera.c
+    src/client/session_channels.c
+    src/client/session_clipboard.c
+    src/client/session_device.c
+    src/client/session_filesystem.c
+    src/client/session_gdi.c
+    src/client/session_graphics.c
+    src/client/session_graphics_pipeline.c
+    src/client/session_input.c
+    src/client/session_lifecycle.c
+    src/client/session_ports.c
+    src/client/session_printer.c
+    src/client/session_protocol_io.c
+    src/client/session_runtime.c
+    src/client/session_smartcard.c
+    src/client/session_usb.c
+    src/client/session_video.c
+    src/client/smartcard_backend.c
+    src/channels/audio_format.c
+    src/channels/audio_input.c
+    src/channels/audio_output.c
+    src/channels/auth_redirection.c
+    src/channels/composited_remoting.c
+    src/channels/core_input.c
+    src/channels/device_redirection.c
+    src/channels/desktop_composition.c
+    src/channels/display_control.c
+    src/channels/dynamic_channel.c
+    src/channels/echo_channel.c
+    src/channels/filesystem_redirection.c
+    src/channels/graphics_pipeline.c
+    src/channels/input_channel.c
+    src/channels/mouse_cursor.c
+    src/channels/multiparty.c
+    src/channels/port_redirection.c
+    src/channels/printer_redirection.c
+    src/channels/remote_programs.c
+    src/channels/pnp_redirection.c
+    src/channels/smartcard_redirection.c
+    src/channels/telemetry.c
+    src/channels/usb_redirection.c
+    src/channels/video_capture.c
+    src/channels/video_optimized.c
+    src/channels/video_redirection.c
+    src/channels/virtual_channel.c
+    src/channels/webauthn_channel.c
+    src/channels/xps_print.c
+    src/clipboard/clipboard.c
+    src/common/buffer.c
+    src/common/charset.c
+    src/common/stream.c
+    src/common/trace.c
+    src/graphics/avc.c
+    src/graphics/bitmap.c
+    src/graphics/clearcodec.c
+    src/graphics/gdi_orders.c
+    src/graphics/gdi_render.c
+    src/graphics/nscodec.c
+    src/graphics/planar.c
+    src/graphics/rfx_codec.c
+    src/graphics/rfx_stream.c
+    src/graphics/surface.c
+    src/graphics/surface_commands.c
+    src/input/input.c
+    src/licensing/licensing.c
+    src/nla/credssp.c
+    src/platform/socket.c
+    src/protocol/capabilities.c
+    src/protocol/bulk.c
+    src/protocol/fastpath.c
+    src/protocol/gcc.c
+    src/protocol/mcs.c
+    src/protocol/pointer.c
+    src/protocol/session_selection.c
+    src/protocol/slowpath.c
+    src/protocol/tpkt.c
+    src/protocol/x224.c
+    src/security/certificate.c
+    src/security/security.c
+    src/transport/tcp.c
+    src/transport/multitransport.c
+    src/transport/transport.c
+    src/transport/udp_transport.c
+)
+
+set(LIBRDP_BACKEND_SOURCES
+    src/client/printer_backend.c
+    src/client/usb_backend.c
+    src/client/webauthn_backend.c
+)
+
+add_library(librdp_objects OBJECT ${LIBRDP_SOURCES})
+add_library(librdp_backend_objects OBJECT ${LIBRDP_BACKEND_SOURCES})
+if(LIBRDP_LIBRARY_TYPE STREQUAL "AUTO")
+    if(BUILD_SHARED_LIBS)
+        set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+    else()
+        set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+    endif()
+elseif(LIBRDP_LIBRARY_TYPE STREQUAL "SHARED")
+    set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+elseif(LIBRDP_LIBRARY_TYPE STREQUAL "STATIC")
+    set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+elseif(BUILD_SHARED_LIBS)
+    set(LIBRDP_PRIMARY_LIBRARY_KIND SHARED)
+    set(LIBRDP_SECONDARY_LIBRARY_TARGET librdp_static)
+    set(LIBRDP_SECONDARY_LIBRARY_KIND STATIC)
+else()
+    set(LIBRDP_PRIMARY_LIBRARY_KIND STATIC)
+    set(LIBRDP_SECONDARY_LIBRARY_TARGET librdp_shared)
+    set(LIBRDP_SECONDARY_LIBRARY_KIND SHARED)
+endif()
+
+add_library(librdp ${LIBRDP_PRIMARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects> $<TARGET_OBJECTS:librdp_backend_objects>)
+set(LIBRDP_LIBRARY_TARGETS librdp)
+set(LIBRDP_SHARED_LIBRARY_TARGETS "")
+if(LIBRDP_PRIMARY_LIBRARY_KIND STREQUAL "SHARED")
+    list(APPEND LIBRDP_SHARED_LIBRARY_TARGETS librdp)
+endif()
+if(DEFINED LIBRDP_SECONDARY_LIBRARY_TARGET)
+    add_library(${LIBRDP_SECONDARY_LIBRARY_TARGET} ${LIBRDP_SECONDARY_LIBRARY_KIND} $<TARGET_OBJECTS:librdp_objects> $<TARGET_OBJECTS:librdp_backend_objects>)
+    set_target_properties(${LIBRDP_SECONDARY_LIBRARY_TARGET} PROPERTIES OUTPUT_NAME librdp)
+    list(APPEND LIBRDP_LIBRARY_TARGETS ${LIBRDP_SECONDARY_LIBRARY_TARGET})
+    if(LIBRDP_SECONDARY_LIBRARY_KIND STREQUAL "SHARED")
+        list(APPEND LIBRDP_SHARED_LIBRARY_TARGETS ${LIBRDP_SECONDARY_LIBRARY_TARGET})
+    endif()
+endif()
+
+function(librdp_configure_library_target target kind)
+    target_include_directories(${target}
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    )
+    set_target_properties(${target} PROPERTIES
+        C_VISIBILITY_PRESET hidden
+    )
+    if(kind STREQUAL "SHARED")
+        set_target_properties(${target} PROPERTIES
+            VERSION ${PROJECT_VERSION}
+            SOVERSION ${LIBRDP_ABI_VERSION}
+        )
+        if(APPLE)
+            set(LIBRDP_EXPORT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports)
+            target_link_options(${target} PRIVATE "LINKER:-exported_symbols_list,${LIBRDP_EXPORT_FILE}")
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_FILE})
+        elseif(UNIX)
+            set(LIBRDP_EXPORT_MAP ${CMAKE_CURRENT_SOURCE_DIR}/cmake/librdp.exports.map)
+            target_link_options(${target} PRIVATE "LINKER:--version-script=${LIBRDP_EXPORT_MAP}")
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${LIBRDP_EXPORT_MAP})
+        endif()
+    endif()
+    librdp_apply_system_definitions(${target})
+    target_link_libraries(${target} PUBLIC OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
+endfunction()
+
+function(librdp_link_library_targets)
+    foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
+        target_link_libraries(${target} PUBLIC ${ARGN})
+    endforeach()
+endfunction()
+
+function(librdp_apply_warning_options target)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+        if(LIBRDP_ENABLE_WERROR)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+function(librdp_apply_sanitizer_compile_options target)
+    if(LIBRDP_ENABLE_SANITIZERS)
+        target_compile_options(${target} PRIVATE -fsanitize=${LIBRDP_SANITIZER_FLAG_VALUE} -fno-omit-frame-pointer)
+    endif()
+endfunction()
+
+function(librdp_apply_sanitizer_link_options target)
+    if(NOT LIBRDP_ENABLE_SANITIZERS)
+        return()
+    endif()
+    get_target_property(target_type ${target} TYPE)
+    if(NOT target_type STREQUAL "STATIC_LIBRARY" AND NOT target_type STREQUAL "OBJECT_LIBRARY")
+        target_link_options(${target} PRIVATE -fsanitize=${LIBRDP_SANITIZER_FLAG_VALUE})
+    endif()
+endfunction()
+
+target_include_directories(librdp_objects
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_include_directories(librdp_backend_objects
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+librdp_apply_openssl_include_dirs(librdp_objects)
+librdp_apply_openssl_include_dirs(librdp_backend_objects)
+librdp_apply_iconv_include_dirs(librdp_objects)
+librdp_apply_iconv_include_dirs(librdp_backend_objects)
+
+set_target_properties(librdp_objects PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
+set_target_properties(librdp_backend_objects PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
+librdp_apply_system_definitions(librdp_objects)
+librdp_apply_system_definitions(librdp_backend_objects)
+librdp_apply_warning_options(librdp_objects)
+librdp_apply_warning_options(librdp_backend_objects)
+librdp_apply_sanitizer_compile_options(librdp_objects)
+librdp_apply_sanitizer_compile_options(librdp_backend_objects)
+foreach(target IN LISTS LIBRDP_LIBRARY_TARGETS)
+    if(target IN_LIST LIBRDP_SHARED_LIBRARY_TARGETS)
+        librdp_configure_library_target(${target} SHARED)
+    else()
+        librdp_configure_library_target(${target} STATIC)
+    endif()
+    librdp_apply_sanitizer_link_options(${target})
+endforeach()
+if(LIBRDP_FFMPEG_AVC_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_FFMPEG_AVC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_FFMPEG_AVC)
+endif()
+if(LIBRDP_OPENH264_AVC_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_OPENH264_AVC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_OPENH264_AVC)
+endif()
+if(LIBRDP_PCSC_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_PCSC=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_PCSC)
+    librdp_link_library_targets(PkgConfig::LIBRDP_PCSC)
+endif()
+if(LIBRDP_LIBUSB_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_LIBUSB=1)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_LIBUSB=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    librdp_link_library_targets(PkgConfig::LIBRDP_LIBUSB)
+endif()
+if(LIBRDP_FIDO2_FOUND)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_FIDO2=1)
+    target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_FIDO2)
+    librdp_link_library_targets(PkgConfig::LIBRDP_FIDO2)
+endif()
+if(LIBRDP_CBOR_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CBOR=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CBOR)
+    librdp_link_library_targets(PkgConfig::LIBRDP_CBOR)
+endif()
+if(LIBRDP_CUPS_FOUND)
+    target_compile_definitions(librdp_backend_objects PRIVATE RDP_HAVE_CUPS=1)
+    if(TARGET PkgConfig::LIBRDP_CUPS)
+        target_link_libraries(librdp_backend_objects PRIVATE PkgConfig::LIBRDP_CUPS)
+        librdp_link_library_targets(PkgConfig::LIBRDP_CUPS)
+    else()
+        target_include_directories(librdp_backend_objects PRIVATE ${LIBRDP_CUPS_INCLUDE_DIR})
+        target_link_libraries(librdp_backend_objects PRIVATE ${LIBRDP_CUPS_LIBRARY})
+        librdp_link_library_targets(${LIBRDP_CUPS_LIBRARY})
+    endif()
+endif()
+if(LIBRDP_ACL_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ACL=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ACL)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ACL)
+endif()
+if(LIBRDP_ATTR_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ATTR=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ATTR)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ATTR)
+endif()
+if(LIBRDP_ARCHIVE_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_ARCHIVE=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ARCHIVE)
+    librdp_link_library_targets(PkgConfig::LIBRDP_ARCHIVE)
+endif()
+
+function(librdp_link_internal_runtime target)
+    librdp_apply_system_definitions(${target})
+    librdp_apply_openssl_include_dirs(${target})
+    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
+    if(LIBRDP_FFMPEG_AVC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
+    endif()
+    if(LIBRDP_OPENH264_AVC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_OPENH264_AVC)
+    endif()
+    if(LIBRDP_PCSC_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_PCSC)
+    endif()
+    if(LIBRDP_LIBUSB_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBUSB)
+    endif()
+    if(LIBRDP_FIDO2_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FIDO2)
+    endif()
+    if(LIBRDP_CBOR_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CBOR)
+    endif()
+    if(LIBRDP_CUPS_FOUND)
+        if(TARGET PkgConfig::LIBRDP_CUPS)
+            target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CUPS)
+        else()
+            target_link_libraries(${target} PRIVATE ${LIBRDP_CUPS_LIBRARY})
+        endif()
+    endif()
+    if(LIBRDP_ACL_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ACL)
+    endif()
+    if(LIBRDP_ATTR_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ATTR)
+    endif()
+    if(LIBRDP_ARCHIVE_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ARCHIVE)
+    endif()
+endfunction()
