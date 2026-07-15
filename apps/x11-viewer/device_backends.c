@@ -318,50 +318,18 @@ static int x11_probe_smartcard(const char* source)
 }
 
 #ifdef LIBRDP_HAVE_LIBUSB
-static int x11_parse_pair(const char* text, unsigned int* first, unsigned int* second, int* decimal_only)
-{
-    char* end = NULL;
-    unsigned long a = 0;
-    unsigned long b = 0;
-    const char* separator = NULL;
-    const char* p = NULL;
-    int has_hex_alpha = 0;
-
-    if (!text || !first || !second || !decimal_only)
-        return 0;
-    separator = strchr(text, ':');
-    if (!separator || separator == text || separator[1] == '\0')
-        return 0;
-    for (p = text; *p; p++)
-    {
-        if ((*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F') || *p == 'x' || *p == 'X')
-            has_hex_alpha = 1;
-    }
-    a = strtoul(text, &end, has_hex_alpha ? 16 : 10);
-    if (end != separator)
-        return 0;
-    b = strtoul(separator + 1, &end, has_hex_alpha ? 16 : 10);
-    if (!end || *end != '\0' || a > 0xfffful || b > 0xfffful)
-        return 0;
-    *first = (unsigned int)a;
-    *second = (unsigned int)b;
-    *decimal_only = !has_hex_alpha;
-    return 1;
-}
-
 static int x11_probe_usb(const char* selector)
 {
     libusb_context* context = NULL;
     libusb_device** list = NULL;
     ssize_t count = 0;
     ssize_t i = 0;
-    unsigned int first = 0;
-    unsigned int second = 0;
-    int decimal_only = 0;
+    librdp_usb_selector_mode mode = LIBRDP_USB_SELECTOR_VID_PID;
+    uint32_t first = 0;
+    uint32_t second = 0;
     int found = 0;
-    int bus_mode = 0;
 
-    if (!x11_parse_pair(selector, &first, &second, &decimal_only))
+    if (librdp_usb_selector_parse(selector, &mode, &first, &second) != LIBRDP_STATUS_OK)
     {
         x11_trace_event(X11_TRACE_CLIENT,
                         "x11.usb.probe",
@@ -369,7 +337,6 @@ static int x11_probe_usb(const char* selector)
                         selector ? selector : "");
         return 0;
     }
-    bus_mode = decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
     if (libusb_init(&context) != 0)
     {
         x11_trace_event(X11_TRACE_CLIENT, "x11.usb.probe", "ok=0 selector=\"%s\" reason=init", selector);
@@ -386,7 +353,7 @@ static int x11_probe_usb(const char* selector)
     {
         libusb_device* device = list[i];
 
-        if (bus_mode)
+        if (mode == LIBRDP_USB_SELECTOR_BUS_DEV)
         {
             found = libusb_get_bus_number(device) == first && libusb_get_device_address(device) == second;
         }
@@ -403,7 +370,7 @@ static int x11_probe_usb(const char* selector)
                     "ok=%u selector=\"%s\" mode=%s devices=%d",
                     found ? 1u : 0u,
                     selector,
-                    bus_mode ? "busdev" : "vidpid",
+                    mode == LIBRDP_USB_SELECTOR_BUS_DEV ? "busdev" : "vidpid",
                     (int)count);
     libusb_free_device_list(list, 1);
     libusb_exit(context);

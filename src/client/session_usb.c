@@ -51,37 +51,6 @@ static uint32_t rdp_session_usb_next_message_id(librdp_session* session)
     return session->usb_message_id;
 }
 
-static int rdp_session_usb_parse_pair(const char* text, uint32_t* first, uint32_t* second, int* decimal_only)
-{
-    char* end = NULL;
-    unsigned long a = 0;
-    unsigned long b = 0;
-    const char* separator = NULL;
-    const char* p = NULL;
-    int has_hex_alpha = 0;
-
-    if (!text || !first || !second || !decimal_only)
-        return 0;
-    separator = strchr(text, ':');
-    if (!separator || separator == text || separator[1] == '\0')
-        return 0;
-    for (p = text; *p; p++)
-    {
-        if ((*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F') || *p == 'x' || *p == 'X')
-            has_hex_alpha = 1;
-    }
-    a = strtoul(text, &end, has_hex_alpha ? 16 : 10);
-    if (end != separator)
-        return 0;
-    b = strtoul(separator + 1, &end, has_hex_alpha ? 16 : 10);
-    if (!end || *end != '\0' || a > 0xfffful || b > 0xfffful)
-        return 0;
-    *first = (uint32_t)a;
-    *second = (uint32_t)b;
-    *decimal_only = !has_hex_alpha;
-    return 1;
-}
-
 static librdp_status rdp_session_usb_checked_format(char* out, size_t out_len, const char* fmt, unsigned a, unsigned b, unsigned c)
 {
     int written = 0;
@@ -92,14 +61,6 @@ static librdp_status rdp_session_usb_checked_format(char* out, size_t out_len, c
     if (written <= 0 || (size_t)written >= out_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
-}
-
-static int rdp_session_usb_pair_is_bus_mode(const char* selector,
-                                            uint32_t first,
-                                            uint32_t second,
-                                            int decimal_only)
-{
-    return selector && decimal_only && first <= 255u && second <= 255u && strlen(selector) <= 7u;
 }
 
 static librdp_status rdp_session_usb_multisz2(rdp_buffer* out, const char* first, const char* second);
@@ -113,9 +74,9 @@ static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
     const librdp_usb_policy* policy = NULL;
     rdp_usb_backend_open_request request;
     rdp_usb_backend_match match;
+    librdp_usb_selector_mode mode = LIBRDP_USB_SELECTOR_VID_PID;
     uint32_t first = 0;
     uint32_t second = 0;
-    int decimal_only = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !selector || !out)
@@ -123,15 +84,16 @@ static librdp_status rdp_session_usb_libusb_find(librdp_session* session,
     memset(out, 0, sizeof(*out));
     memset(&request, 0, sizeof(request));
     memset(&match, 0, sizeof(match));
-    if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = librdp_usb_selector_parse(selector, &mode, &first, &second);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     policy = rdp_settings_usb_policy_internal(session->settings);
     if (!policy)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     request.first = first;
     request.second = second;
     request.interface_id = interface_id;
-    request.bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
+    request.bus_mode = mode == LIBRDP_USB_SELECTOR_BUS_DEV;
     request.allow_hid = policy->allow_hid;
     request.allow_mass_storage = policy->allow_mass_storage;
     status = rdp_usb_backend_open_device(&session->usb_libusb, &request, out, &match);
@@ -247,10 +209,9 @@ static librdp_status rdp_session_usb_build_device_strings(const char* selector,
                                                           rdp_buffer* compatibility,
                                                           rdp_buffer* container)
 {
+    librdp_usb_selector_mode mode = LIBRDP_USB_SELECTOR_VID_PID;
     uint32_t first = 0;
     uint32_t second = 0;
-    int decimal_only = 0;
-    int bus_mode = 0;
     char instance_text[96];
     char hardware_first[96];
     char hardware_second[96];
@@ -259,10 +220,10 @@ static librdp_status rdp_session_usb_build_device_strings(const char* selector,
 
     if (!selector || !instance || !hardware || !compatibility || !container)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!rdp_session_usb_parse_pair(selector, &first, &second, &decimal_only))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    bus_mode = rdp_session_usb_pair_is_bus_mode(selector, first, second, decimal_only);
-    if (bus_mode)
+    status = librdp_usb_selector_parse(selector, &mode, &first, &second);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (mode == LIBRDP_USB_SELECTOR_BUS_DEV)
     {
         status = rdp_session_usb_checked_format(instance_text,
                                                 sizeof(instance_text),

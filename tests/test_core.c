@@ -4262,6 +4262,9 @@ static int test_settings_surface_input_session(void)
     librdp_drive_policy drive_policy_out;
     librdp_usb_policy usb_policy;
     librdp_usb_policy usb_policy_out;
+    librdp_usb_selector_mode usb_selector_mode = LIBRDP_USB_SELECTOR_VID_PID;
+    uint32_t usb_selector_first = 0;
+    uint32_t usb_selector_second = 0;
     librdp_limits limits;
     librdp_limits limits_out;
     librdp_metrics metrics;
@@ -4592,6 +4595,55 @@ static int test_settings_surface_input_session(void)
     CHECK(usb_policy_out.allow_hid == 1);
     CHECK(usb_policy_out.allow_mass_storage == 1);
     CHECK(usb_policy_out.max_transfer_ms > 0);
+    CHECK(librdp_usb_selector_parse(NULL,
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_usb_selector_parse("",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_usb_selector_parse("vid:pid=1234:5678",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_OK);
+    CHECK(usb_selector_mode == LIBRDP_USB_SELECTOR_VID_PID);
+    CHECK(usb_selector_first == 0x1234u);
+    CHECK(usb_selector_second == 0x5678u);
+    CHECK(librdp_usb_selector_parse("bus:dev=1:4",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_OK);
+    CHECK(usb_selector_mode == LIBRDP_USB_SELECTOR_BUS_DEV);
+    CHECK(usb_selector_first == 1u);
+    CHECK(usb_selector_second == 4u);
+    CHECK(librdp_usb_selector_parse("1:4",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_OK);
+    CHECK(usb_selector_mode == LIBRDP_USB_SELECTOR_BUS_DEV);
+    CHECK(librdp_usb_selector_parse("1234:5678",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_OK);
+    CHECK(usb_selector_mode == LIBRDP_USB_SELECTOR_VID_PID);
+    CHECK(usb_selector_first == 0x1234u);
+    CHECK(usb_selector_second == 0x5678u);
+    CHECK(librdp_usb_selector_parse("12ab:34cd",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_OK);
+    CHECK(usb_selector_mode == LIBRDP_USB_SELECTOR_VID_PID);
+    CHECK(usb_selector_first == 0x12abu);
+    CHECK(usb_selector_second == 0x34cdu);
+    CHECK(librdp_usb_selector_parse("bus:dev=256:1",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_usb_selector_parse("1:2:3",
+                                    &usb_selector_mode,
+                                    &usb_selector_first,
+                                    &usb_selector_second) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_serial_port_count(settings) == 0);
     CHECK(librdp_settings_add_serial_port(settings, "COM1:", "/dev/ttyS0") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_serial_port_count(settings) == 1);
@@ -4711,7 +4763,7 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_set_video_output_path(settings, "/tmp/video.bin") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_camera(settings, "device=/dev/video0") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_smartcard(settings, "pcsc") == LIBRDP_STATUS_OK);
-    CHECK(librdp_settings_add_usb_device(settings, "1234:5678") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_add_usb_device(settings, "vid:pid=1234:5678") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_add_pnp_device(settings,
                                          "LIBRDP\\PNP\\TEST_DEVICE",
                                          "LIBRDP\\PNP\\TEST",
@@ -4732,7 +4784,7 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_smartcard_source(settings, 0), "pcsc") == 0);
     CHECK(librdp_settings_smartcard_source(settings, 1) == NULL);
     CHECK(librdp_settings_usb_device_count(settings) == 1);
-    CHECK(strcmp(librdp_settings_usb_device_selector(settings, 0), "1234:5678") == 0);
+    CHECK(strcmp(librdp_settings_usb_device_selector(settings, 0), "vid:pid=1234:5678") == 0);
     CHECK(librdp_settings_usb_device_selector(settings, 1) == NULL);
     CHECK(librdp_settings_pnp_device_count(settings) == 1);
     CHECK(strcmp(librdp_settings_pnp_device_hardware_id(settings, 0), "LIBRDP\\PNP\\TEST_DEVICE") == 0);
@@ -4817,6 +4869,9 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_add_camera(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_smartcard(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_usb_device(settings, "") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_usb_device(settings, "vid:pid=") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_usb_device(settings, "bus:dev=1:ffff") == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(librdp_settings_add_usb_device(settings, "bad") == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_add_pnp_device(settings,
                                          "",
                                          "LIBRDP\\PNP\\BAD",
@@ -4939,7 +4994,7 @@ static int test_settings_surface_input_session(void)
     CHECK(strcmp(librdp_settings_video_output_path(copy), "/tmp/video.bin") == 0);
     CHECK(strcmp(librdp_settings_camera_source(copy, 0), "device=/dev/video0") == 0);
     CHECK(strcmp(librdp_settings_smartcard_source(copy, 0), "pcsc") == 0);
-    CHECK(strcmp(librdp_settings_usb_device_selector(copy, 0), "1234:5678") == 0);
+    CHECK(strcmp(librdp_settings_usb_device_selector(copy, 0), "vid:pid=1234:5678") == 0);
     CHECK(librdp_settings_pnp_device_count(copy) == 1);
     CHECK(strcmp(librdp_settings_pnp_device_hardware_id(copy, 0), "LIBRDP\\PNP\\TEST_DEVICE") == 0);
     CHECK(strcmp(librdp_settings_pnp_device_compatibility_id(copy, 0), "LIBRDP\\PNP\\TEST") == 0);

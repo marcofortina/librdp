@@ -559,6 +559,114 @@ static int rdp_settings_valid_text(const char* value)
     return length <= RDP_SETTINGS_TEXT_MAX;
 }
 
+static int rdp_settings_has_prefix(const char* text, const char* prefix)
+{
+    size_t prefix_len = 0;
+
+    if (!text || !prefix)
+        return 0;
+    prefix_len = strlen(prefix);
+    return strncmp(text, prefix, prefix_len) == 0;
+}
+
+/*
+ * Parse user-facing USB selectors once for settings, viewer probing, and
+ * backend dispatch. Explicit prefixes avoid ambiguity while the raw form keeps
+ * compatibility with existing command lines.
+ */
+librdp_status librdp_usb_selector_parse(const char* selector,
+                                        librdp_usb_selector_mode* mode,
+                                        uint32_t* first,
+                                        uint32_t* second)
+{
+    const char* pair = selector;
+    const char* separator = NULL;
+    const char* p = NULL;
+    char* end = NULL;
+    unsigned long a = 0;
+    unsigned long b = 0;
+    int has_hex_alpha = 0;
+    int explicit_bus = 0;
+    int explicit_vid = 0;
+    int base = 10;
+    librdp_usb_selector_mode parsed_mode = LIBRDP_USB_SELECTOR_VID_PID;
+
+    if (!selector || !selector[0])
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_settings_has_prefix(selector, "vid:pid="))
+    {
+        explicit_vid = 1;
+        pair = selector + strlen("vid:pid=");
+    }
+    else if (rdp_settings_has_prefix(selector, "bus:dev="))
+    {
+        explicit_bus = 1;
+        pair = selector + strlen("bus:dev=");
+    }
+    if (!pair[0])
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    separator = strchr(pair, ':');
+    if (!separator || separator == pair || separator[1] == '\0' || strchr(separator + 1, ':'))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (p = pair; *p; p++)
+    {
+        if ((*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F') || *p == 'x' || *p == 'X')
+            has_hex_alpha = 1;
+    }
+
+    base = (explicit_vid || has_hex_alpha) ? 16 : 10;
+    a = strtoul(pair, &end, base);
+    if (end != separator)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    b = strtoul(separator + 1, &end, base);
+    if (!end || *end != '\0')
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    if (explicit_bus)
+    {
+        if (has_hex_alpha || a > 255ul || b > 255ul)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        parsed_mode = LIBRDP_USB_SELECTOR_BUS_DEV;
+    }
+    else if (explicit_vid)
+    {
+        if (a > 0xfffful || b > 0xfffful)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        parsed_mode = LIBRDP_USB_SELECTOR_VID_PID;
+    }
+    else
+    {
+        if (!has_hex_alpha && a <= 255ul && b <= 255ul && strlen(pair) <= 7u)
+        {
+            parsed_mode = LIBRDP_USB_SELECTOR_BUS_DEV;
+        }
+        else
+        {
+            if (!has_hex_alpha)
+            {
+                a = strtoul(pair, &end, 16);
+                if (end != separator)
+                    return LIBRDP_STATUS_INVALID_ARGUMENT;
+                b = strtoul(separator + 1, &end, 16);
+                if (!end || *end != '\0')
+                    return LIBRDP_STATUS_INVALID_ARGUMENT;
+            }
+            if (a > 0xfffful || b > 0xfffful)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            parsed_mode = LIBRDP_USB_SELECTOR_VID_PID;
+        }
+    }
+
+    if (mode)
+        *mode = parsed_mode;
+    if (first)
+        *first = (uint32_t)a;
+    if (second)
+        *second = (uint32_t)b;
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_settings_hex_value(unsigned char value)
 {
     if (value >= (unsigned char)'0' && value <= (unsigned char)'9')
@@ -1368,6 +1476,8 @@ librdp_status librdp_settings_add_smartcard(librdp_settings* settings, const cha
 librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector)
 {
     if (!settings)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (librdp_usb_selector_parse(selector, NULL, NULL, NULL) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return rdp_settings_add_text(settings->usb_devices,
                                  &settings->usb_device_count,

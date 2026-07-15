@@ -241,6 +241,22 @@ typedef struct librdp_drive_policy
 } librdp_drive_policy;
 
 /**
+ * @brief Parsed USB selector addressing mode.
+ *
+ * USB selectors can address either a stable vendor/product pair or a transient
+ * bus/device address. Applications should prefer explicit prefixes when the
+ * meaning matters: `vid:pid=1234:5678` for vendor/product and `bus:dev=1:4`
+ * for bus/device.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_usb_selector_mode
+{
+    LIBRDP_USB_SELECTOR_VID_PID = 0, /**< Selector addresses USB vendor ID and product ID. */
+    LIBRDP_USB_SELECTOR_BUS_DEV = 1  /**< Selector addresses USB bus number and device address. */
+} librdp_usb_selector_mode;
+
+/**
  * @brief Versioned policy for redirected USB devices.
  *
  * The default initialized policy is default-deny outside explicit selectors:
@@ -1088,6 +1104,36 @@ LIBRDP_API librdp_status librdp_settings_add_smartcard(librdp_settings* settings
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_settings_add_usb_device(librdp_settings* settings, const char* selector);
+
+/**
+ * @brief Parse and classify a USB redirection selector.
+ *
+ * The selector string is borrowed for the duration of the call and is never
+ * retained. Accepted forms are `vid:pid=VVVV:PPPP`, `bus:dev=B:D`, and the
+ * legacy raw `A:B` form. Raw selectors keep the historical compatibility rule:
+ * decimal-only values up to 255 with a short textual form are treated as
+ * bus/device addresses; all other valid pairs are treated as vendor/product
+ * selectors and interpreted as hexadecimal vendor/product values.
+ *
+ * @param[in] selector USB selector to parse; must not be NULL or empty.
+ * @param[out] mode Receives the selector mode when non-NULL.
+ * @param[out] first Receives the vendor ID or bus number when non-NULL.
+ * @param[out] second Receives the product ID or device address when non-NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when the
+ * selector is NULL, empty, malformed, out of range, or an explicit bus/device
+ * selector contains values outside the USB bus/address range.
+ *
+ * @note Thread-safety: this function has no shared state and only writes
+ * caller-provided output pointers.
+ * @warning Bus/device selectors are host-topology dependent and can point to a
+ * different physical device after unplug, replug, or reboot.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_usb_selector_parse(const char* selector,
+                                                   librdp_usb_selector_mode* mode,
+                                                   uint32_t* first,
+                                                   uint32_t* second);
 
 /**
  * @brief Initialize a USB redirection policy with conservative defaults.

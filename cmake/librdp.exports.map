@@ -116,6 +116,7 @@ LIBRDP_0.1 {
         librdp_credentials_clear;
         librdp_credentials_set;
         librdp_drive_policy_init;
+        librdp_usb_selector_parse;
         librdp_usb_policy_init;
         librdp_settings_new;
         librdp_settings_clone;

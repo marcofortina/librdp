@@ -55,6 +55,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_credentials", librdp_credentials, ",");
     ABI_TYPE_ENTRY("librdp_credentials_provider", librdp_credentials_provider, ",");
     ABI_TYPE_ENTRY("librdp_drive_policy", librdp_drive_policy, ",");
+    ABI_TYPE_ENTRY("librdp_usb_selector_mode", librdp_usb_selector_mode, ",");
     ABI_TYPE_ENTRY("librdp_usb_policy", librdp_usb_policy, ",");
     ABI_TYPE_ENTRY("librdp_limits", librdp_limits, ",");
     ABI_TYPE_ENTRY("librdp_feature", librdp_feature, ",");
