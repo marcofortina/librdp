@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-name: build
+name: build-linux
 
 on:
   push:
@@ -17,12 +17,92 @@ env:
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
-  gcc-debug:
+  linux-gcc-full:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential cmake ninja-build pkg-config python3 doxygen graphviz
+          libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
+          libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
+          libacl1-dev libattr1-dev libarchive-dev libx11-dev libxcursor-dev
+          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
+          libpipewire-0.3-dev libjpeg-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v6
+        with:
+          path: build-linux-gcc-full
+          key: build-linux-gcc-full-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-linux-gcc-full -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=gcc
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=ON
+          -DLIBRDP_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build-linux-gcc-full -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-linux-gcc-full --output-on-failure
+
+  linux-clang-full:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz
+          libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
+          libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
+          libacl1-dev libattr1-dev libarchive-dev libx11-dev libxcursor-dev
+          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
+          libpipewire-0.3-dev libjpeg-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v6
+        with:
+          path: build-linux-clang-full
+          key: build-linux-clang-full-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-linux-clang-full -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DLIBRDP_BUILD_TESTS=ON
+          -DLIBRDP_BUILD_EXAMPLES=ON
+          -DLIBRDP_BUILD_X11_VIEWER=ON
+          -DLIBRDP_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build-linux-clang-full -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-linux-clang-full --output-on-failure
+
+  linux-core-no-viewer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: >
@@ -34,71 +114,36 @@ jobs:
           libacl1-dev libattr1-dev libarchive-dev
 
       - name: Cache build directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: build-gcc-debug
-          key: build-gcc-debug-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
+          path: build-linux-core-no-viewer
+          key: build-linux-core-no-viewer-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
 
       - name: Configure
         run: >
-          cmake -S . -B build-gcc-debug -G Ninja
+          cmake -S . -B build-linux-core-no-viewer -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER=gcc
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
           -DLIBRDP_BUILD_X11_VIEWER=OFF
           -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_JPEG=OFF
+          -DLIBRDP_WITH_XSHM=OFF
+          -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build
-        run: cmake --build build-gcc-debug -j$(nproc)
+        run: cmake --build build-linux-core-no-viewer -j$(nproc)
 
       - name: Test
-        run: ctest --test-dir build-gcc-debug --output-on-failure
+        run: ctest --test-dir build-linux-core-no-viewer --output-on-failure
 
-  clang-debug:
+  linux-core-no-backends:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz
-          libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
-          libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
-          libacl1-dev libattr1-dev libarchive-dev
-
-      - name: Cache build directory
-        uses: actions/cache@v4
-        with:
-          path: build-clang-debug
-          key: build-clang-debug-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**', 'scripts/**') }}
-
-      - name: Configure
-        run: >
-          cmake -S . -B build-clang-debug -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER=clang
-          -DLIBRDP_BUILD_TESTS=ON
-          -DLIBRDP_BUILD_EXAMPLES=ON
-          -DLIBRDP_BUILD_X11_VIEWER=OFF
-          -DLIBRDP_ENABLE_WERROR=ON
-
-      - name: Build
-        run: cmake --build build-clang-debug -j$(nproc)
-
-      - name: Test
-        run: ctest --test-dir build-clang-debug --output-on-failure
-
-  core-all-off:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: >
@@ -108,14 +153,14 @@ jobs:
           libssl-dev
 
       - name: Cache build directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: build-core-all-off
-          key: build-core-all-off-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
+          path: build-linux-core-no-backends
+          key: build-linux-core-no-backends-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
 
       - name: Configure
         run: >
-          cmake -S . -B build-core-all-off -G Ninja
+          cmake -S . -B build-linux-core-no-backends -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
@@ -137,17 +182,17 @@ jobs:
           -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build
-        run: cmake --build build-core-all-off -j$(nproc)
+        run: cmake --build build-linux-core-no-backends -j$(nproc)
 
       - name: Test
-        run: ctest --test-dir build-core-all-off --output-on-failure
+        run: ctest --test-dir build-linux-core-no-backends --output-on-failure
 
-  shared-export:
+  linux-shared-export:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: >
@@ -156,14 +201,14 @@ jobs:
           build-essential cmake ninja-build pkg-config python3 libssl-dev
 
       - name: Cache build directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: build-shared-export
-          key: build-shared-export-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
+          path: build-linux-shared-export
+          key: build-linux-shared-export-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'scripts/**') }}
 
       - name: Configure
         run: >
-          cmake -S . -B build-shared-export -G Ninja
+          cmake -S . -B build-linux-shared-export -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DBUILD_SHARED_LIBS=ON
           -DLIBRDP_LIBRARY_TYPE=BOTH
@@ -187,17 +232,17 @@ jobs:
           -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build shared library and ABI probe
-        run: cmake --build build-shared-export --target librdp test_abi_probe -j$(nproc)
+        run: cmake --build build-linux-shared-export --target librdp test_abi_probe -j$(nproc)
 
       - name: Check exported symbols and ABI baseline
-        run: ctest --test-dir build-shared-export -R '^(shared_symbol_visibility|abi_baseline)$' --output-on-failure
+        run: ctest --test-dir build-linux-shared-export -R '^(shared_symbol_visibility|abi_baseline)$' --output-on-failure
 
-  sanitizers:
+  linux-sanitizers:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: >
@@ -206,14 +251,14 @@ jobs:
           build-essential clang cmake ninja-build pkg-config python3 libssl-dev
 
       - name: Cache build directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: build-sanitizers
-          key: build-sanitizers-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**') }}
+          path: build-linux-sanitizers
+          key: build-linux-sanitizers-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**') }}
 
       - name: Configure
         run: >
-          cmake -S . -B build-sanitizers -G Ninja
+          cmake -S . -B build-linux-sanitizers -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_COMPILER=clang
           -DLIBRDP_BUILD_TESTS=ON
@@ -238,20 +283,20 @@ jobs:
           -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build
-        run: cmake --build build-sanitizers -j$(nproc)
+        run: cmake --build build-linux-sanitizers -j$(nproc)
 
       - name: Run sanitizer tests
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build-sanitizers -R '^(common|core|protocol|transport)$' --output-on-failure
+        run: ctest --test-dir build-linux-sanitizers -R '^(common|core|protocol|transport)$' --output-on-failure
 
-  fuzz-smoke:
+  linux-fuzz-smoke:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: >
@@ -260,14 +305,14 @@ jobs:
           build-essential clang cmake ninja-build pkg-config python3 libssl-dev
 
       - name: Cache build directory
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: build-fuzz-smoke
-          key: build-fuzz-smoke-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**') }}
+          path: build-linux-fuzz-smoke
+          key: build-linux-fuzz-smoke-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'include/**', 'src/**', 'tests/**', 'fuzz/**') }}
 
       - name: Configure
         run: >
-          cmake -S . -B build-fuzz-smoke -G Ninja
+          cmake -S . -B build-linux-fuzz-smoke -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_COMPILER=clang
           -DLIBRDP_BUILD_TESTS=OFF
@@ -291,7 +336,7 @@ jobs:
           -DLIBRDP_WITH_XRANDR=OFF
 
       - name: Build fuzz targets
-        run: cmake --build build-fuzz-smoke -j$(nproc)
+        run: cmake --build build-linux-fuzz-smoke -j$(nproc)
 
       - name: Run seed corpus smoke
-        run: ctest --test-dir build-fuzz-smoke -R 'seed_smoke$' --output-on-failure
+        run: ctest --test-dir build-linux-fuzz-smoke -R 'seed_smoke$' --output-on-failure
