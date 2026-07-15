@@ -219,6 +219,7 @@ static uint32_t rdp_session_port_apply_line_control(rdp_session_redirected_file*
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
 
+#if defined(TIOCM_DTR) || defined(TIOCM_RTS)
 static uint32_t rdp_session_port_set_modem_flag(rdp_session_redirected_file* port, int bit, int enabled)
 {
 #ifdef TIOCMGET
@@ -243,6 +244,7 @@ static uint32_t rdp_session_port_set_modem_flag(rdp_session_redirected_file* por
 #endif
     return RDP_DEVICE_REDIRECTION_STATUS_SUCCESS;
 }
+#endif
 
 static uint32_t rdp_session_port_modem_flags(rdp_session_redirected_file* port)
 {
@@ -280,13 +282,13 @@ static uint32_t rdp_session_port_set_modem_flags(rdp_session_redirected_file* po
 
 static uint32_t rdp_session_port_queue_depth(rdp_session_redirected_file* port, int output_queue)
 {
-    int count = 0;
-
     if (!port || port->fd < 0 || !isatty(port->fd))
         return 0;
     if (!output_queue)
     {
 #ifdef FIONREAD
+        int count = 0;
+
         if (ioctl(port->fd, FIONREAD, &count) == 0 && count > 0)
             return (uint32_t)count;
 #endif
@@ -294,6 +296,8 @@ static uint32_t rdp_session_port_queue_depth(rdp_session_redirected_file* port, 
     else
     {
 #ifdef TIOCOUTQ
+        int count = 0;
+
         if (ioctl(port->fd, TIOCOUTQ, &count) == 0 && count > 0)
             return (uint32_t)count;
 #endif
@@ -304,7 +308,9 @@ static uint32_t rdp_session_port_queue_depth(rdp_session_redirected_file* port, 
 static uint32_t rdp_session_port_serial_wait_events(rdp_session_redirected_file* port)
 {
     uint32_t events = RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY;
+#if defined(TIOCM_CTS) || defined(TIOCM_DSR) || defined(TIOCM_CAR) || defined(TIOCM_RNG)
     uint32_t modem_flags = 0;
+#endif
 
     if (!port)
         return 0;
@@ -312,7 +318,9 @@ static uint32_t rdp_session_port_serial_wait_events(rdp_session_redirected_file*
         events |= RDP_PORT_REDIRECTION_SERIAL_EV_RXCHAR;
     if (rdp_session_port_queue_depth(port, 1) > 0)
         events &= ~RDP_PORT_REDIRECTION_SERIAL_EV_TXEMPTY;
+#if defined(TIOCM_CTS) || defined(TIOCM_DSR) || defined(TIOCM_CAR) || defined(TIOCM_RNG)
     modem_flags = rdp_session_port_modem_flags(port);
+#endif
 #ifdef TIOCM_CTS
     if ((modem_flags & TIOCM_CTS) != 0)
         events |= RDP_PORT_REDIRECTION_SERIAL_EV_CTS;
@@ -1024,4 +1032,3 @@ librdp_status rdp_session_handle_port_io_request(librdp_session* session,
         }
     }
 }
-

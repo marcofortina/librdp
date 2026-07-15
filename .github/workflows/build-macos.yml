@@ -32,7 +32,7 @@ jobs:
         run: >
           cmake -S . -B build-macos-core-no-viewer -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
-          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          -DOpenSSL_DIR="$(brew --prefix openssl@3)/lib/cmake/OpenSSL"
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
           -DLIBRDP_BUILD_X11_VIEWER=OFF
@@ -65,7 +65,7 @@ jobs:
         run: >
           cmake -S . -B build-macos-core-no-backends -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
-          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          -DOpenSSL_DIR="$(brew --prefix openssl@3)/lib/cmake/OpenSSL"
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
           -DLIBRDP_BUILD_X11_VIEWER=OFF
