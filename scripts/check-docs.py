@@ -43,6 +43,7 @@ REQUIRED_MARKDOWN = (
     "docs/glossary.md",
     "docs/packaging.md",
     "docs/diagnostics.md",
+    "docs/viewer-cocoa.md",
     "docs/viewer-x11.md",
 )
 REQUIRED_FILES = REQUIRED_MARKDOWN + (
@@ -52,6 +53,7 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp.7",
     "docs/man/librdp-api.7",
     "docs/man/librdp-tracing.7",
+    "docs/man/librdp-cocoa-viewer.1",
     "docs/man/librdp-x11-viewer.1",
     "docs/man/librdp-x11-admin.1",
     "docs/man/librdp-x11-workspace.1",

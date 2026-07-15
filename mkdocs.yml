@@ -105,3 +105,4 @@ nav:
       - Fuzzing: fuzzing.md
   - Viewer:
       - X11 viewer: viewer-x11.md
+      - Cocoa viewer: viewer-cocoa.md

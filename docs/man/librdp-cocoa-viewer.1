@@ -1,0 +1,69 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-COCOA-VIEWER 1 "2026-07-15" "librdp 0.1.0" "User Commands"
+.SH NAME
+librdp-cocoa-viewer \- native macOS RDP client viewer for librdp
+.SH SYNOPSIS
+.B librdp-cocoa-viewer
+.B --target
+.I host
+[
+.I options
+]
+.SH DESCRIPTION
+.B librdp-cocoa-viewer
+is the native Cocoa frontend for exercising the public librdp client APIs on macOS. It uses AppKit and CoreGraphics for windowing, framebuffer presentation, input, cursor updates, clipboard access, and certificate prompts.
+.SH OPTIONS
+.TP
+.BI --target " host"
+Remote host name or address.
+.TP
+.BI --port " port"
+Remote TCP port. The default is 3389.
+.TP
+.BI --user " name"
+User name for authentication.
+.TP
+.BI --password " value"
+Password for authentication. Avoid placing credentials in shell history on shared systems.
+.TP
+.BI --domain " name"
+Authentication domain.
+.TP
+.BI --width " px"
+Initial desktop width.
+.TP
+.BI --height " px"
+Initial desktop height.
+.TP
+.BI --security " auto|rdp|tls|nla"
+Security negotiation mode.
+.TP
+.B --accept-tls-certificate
+Accept the presented TLS certificate for the current connection after printing certificate details to stderr.
+.SH ENVIRONMENT
+.TP
+.B LIBRDP_TRACE_CLIENT
+Enable client, viewer, surface, input, channel, audio, video, and backend trace events.
+.TP
+.B LIBRDP_TRACE_TRANSPORT
+Enable TCP, TLS, read, write, wait, timeout, and close trace events.
+.TP
+.B LIBRDP_TRACE_PROTOCOL
+Enable handshake, parser, PDU, capability, slow-path, fast-path, channel, and codec trace events.
+.TP
+.B LIBRDP_TRACE_LEVEL
+Set trace verbosity: error, warn, info, debug, trace, or the numeric values 0 through 4.
+.TP
+.B LIBRDP_TRACE_HEX_BYTES
+Set the maximum number of bytes emitted by bounded protocol hexdumps.
+.SH EXAMPLES
+.nf
+librdp-cocoa-viewer --target host --user user --password password --security nla
+
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-cocoa-viewer --target host --security nla
+.fi
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-api (7),
+.BR librdp-tracing (7)

@@ -100,6 +100,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
         PATTERN "requirements.txt" EXCLUDE
 )
 install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-viewer.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-admin.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-workspace.1

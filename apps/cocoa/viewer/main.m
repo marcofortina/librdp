@@ -24,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct macos_viewer_options
+typedef struct cocoa_viewer_options
 {
     const char* target;
     const char* username;
@@ -36,7 +36,7 @@ typedef struct macos_viewer_options
     librdp_security_mode security;
     int accept_tls_certificate;
     int show_help;
-} macos_viewer_options;
+} cocoa_viewer_options;
 
 @class CocoaViewerController;
 
@@ -49,6 +49,8 @@ typedef struct macos_viewer_options
 @property(nonatomic, strong) NSWindow* window;
 @property(nonatomic, strong) CocoaViewerView* view;
 @property(nonatomic, strong) NSTimer* timer;
+@property(nonatomic, strong) NSCursor* currentCursor;
+@property(nonatomic, assign) NSInteger pasteboardChangeCount;
 @property(nonatomic, assign) BOOL dirty;
 @property(nonatomic, assign) BOOL closed;
 - (id)initWithSession:(librdp_session*)session width:(uint32_t)width height:(uint32_t)height;
@@ -59,9 +61,12 @@ typedef struct macos_viewer_options
 - (void)sendMouseEvent:(NSEvent*)event button:(librdp_mouse_button)button state:(librdp_mouse_state)state;
 - (void)sendWheelEvent:(NSEvent*)event;
 - (void)sendKeyEvent:(NSEvent*)event pressed:(BOOL)pressed;
+- (void)applyPointerEvent:(const librdp_pointer_event*)pointer;
+- (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope;
+- (void)publishLocalPasteboardIfChanged;
 @end
 
-static void macos_viewer_usage(FILE* stream, const char* program)
+static void cocoa_viewer_usage(FILE* stream, const char* program)
 {
     fprintf(stream,
             "usage: %s --target host [--port port] [--user name] [--password value] "
@@ -70,7 +75,7 @@ static void macos_viewer_usage(FILE* stream, const char* program)
             program);
 }
 
-static int macos_viewer_need_value(int argc, int* index, const char* option)
+static int cocoa_viewer_need_value(int argc, int* index, const char* option)
 {
     if (*index + 1 < argc)
     {
@@ -81,7 +86,7 @@ static int macos_viewer_need_value(int argc, int* index, const char* option)
     return 0;
 }
 
-static int macos_viewer_parse_u16(const char* text, uint16_t* value)
+static int cocoa_viewer_parse_u16(const char* text, uint16_t* value)
 {
     char* end = NULL;
     unsigned long parsed = 0;
@@ -96,7 +101,7 @@ static int macos_viewer_parse_u16(const char* text, uint16_t* value)
     return 1;
 }
 
-static int macos_viewer_parse_size(const char* text, uint32_t* value)
+static int cocoa_viewer_parse_size(const char* text, uint32_t* value)
 {
     char* end = NULL;
     unsigned long parsed = 0;
@@ -111,7 +116,7 @@ static int macos_viewer_parse_size(const char* text, uint32_t* value)
     return 1;
 }
 
-static int macos_viewer_parse_security(const char* text, librdp_security_mode* mode)
+static int cocoa_viewer_parse_security(const char* text, librdp_security_mode* mode)
 {
     if (!text || !mode)
         return 0;
@@ -128,7 +133,7 @@ static int macos_viewer_parse_security(const char* text, librdp_security_mode* m
     return 1;
 }
 
-static int macos_viewer_parse_args(int argc, char** argv, macos_viewer_options* options)
+static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* options)
 {
     int i = 0;
 
@@ -145,50 +150,50 @@ static int macos_viewer_parse_args(int argc, char** argv, macos_viewer_options* 
             options->show_help = 1;
         else if (strcmp(argv[i], "--target") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
                 return 0;
             options->target = argv[i];
         }
         else if (strcmp(argv[i], "--port") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]) ||
-                !macos_viewer_parse_u16(argv[i], &options->port))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_u16(argv[i], &options->port))
                 return 0;
         }
         else if (strcmp(argv[i], "--user") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
                 return 0;
             options->username = argv[i];
         }
         else if (strcmp(argv[i], "--password") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
                 return 0;
             options->password = argv[i];
         }
         else if (strcmp(argv[i], "--domain") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
                 return 0;
             options->domain = argv[i];
         }
         else if (strcmp(argv[i], "--width") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]) ||
-                !macos_viewer_parse_size(argv[i], &options->width))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_size(argv[i], &options->width))
                 return 0;
         }
         else if (strcmp(argv[i], "--height") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]) ||
-                !macos_viewer_parse_size(argv[i], &options->height))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_size(argv[i], &options->height))
                 return 0;
         }
         else if (strcmp(argv[i], "--security") == 0)
         {
-            if (!macos_viewer_need_value(argc, &i, argv[i]) ||
-                !macos_viewer_parse_security(argv[i], &options->security))
+            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
+                !cocoa_viewer_parse_security(argv[i], &options->security))
                 return 0;
         }
         else if (strcmp(argv[i], "--accept-tls-certificate") == 0)
@@ -207,11 +212,11 @@ static int macos_viewer_parse_args(int argc, char** argv, macos_viewer_options* 
     return 1;
 }
 
-static librdp_tls_certificate_decision macos_viewer_tls_callback(
+static librdp_tls_certificate_decision cocoa_viewer_tls_callback(
     const librdp_tls_certificate_info* certificate,
     void* user_data)
 {
-    const macos_viewer_options* options = (const macos_viewer_options*)user_data;
+    const cocoa_viewer_options* options = (const cocoa_viewer_options*)user_data;
 
     if (!certificate || !options || !options->accept_tls_certificate)
         return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
@@ -223,7 +228,7 @@ static librdp_tls_certificate_decision macos_viewer_tls_callback(
     return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
 }
 
-static librdp_settings* macos_viewer_create_settings(macos_viewer_options* options)
+static librdp_settings* cocoa_viewer_create_settings(cocoa_viewer_options* options)
 {
     librdp_settings* settings = NULL;
     librdp_tls_policy tls_policy;
@@ -266,7 +271,7 @@ static librdp_settings* macos_viewer_create_settings(macos_viewer_options* optio
         }
         tls_policy.mode = LIBRDP_TLS_POLICY_TOFU;
         tls_policy.use_system_store = 1;
-        tls_policy.certificate_callback = macos_viewer_tls_callback;
+        tls_policy.certificate_callback = cocoa_viewer_tls_callback;
         tls_policy.certificate_callback_user_data = options;
         if (librdp_settings_set_tls_policy(settings, &tls_policy) != LIBRDP_STATUS_OK)
         {
@@ -277,7 +282,7 @@ static librdp_settings* macos_viewer_create_settings(macos_viewer_options* optio
     return settings;
 }
 
-static void macos_viewer_graphics_callback(librdp_session* session,
+static void cocoa_viewer_graphics_callback(librdp_session* session,
                                            const librdp_graphics_update* update,
                                            void* user_data)
 {
@@ -287,6 +292,33 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     if (!update || !controller)
         return;
     [controller markDirty];
+}
+
+static void cocoa_viewer_pointer_callback(librdp_session* session,
+                                          const librdp_event_envelope* envelope,
+                                          void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+    const librdp_pointer_event* pointer = NULL;
+
+    (void)session;
+    if (!controller || !envelope || envelope->type != LIBRDP_EVENT_POINTER ||
+        envelope->payload_size < sizeof(*pointer))
+        return;
+    pointer = (const librdp_pointer_event*)envelope->payload;
+    [controller applyPointerEvent:pointer];
+}
+
+static void cocoa_viewer_clipboard_callback(librdp_session* session,
+                                            const librdp_event_envelope* envelope,
+                                            void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    (void)session;
+    if (!controller || !envelope)
+        return;
+    [controller handleClipboardEnvelope:envelope];
 }
 
 @implementation CocoaViewerView
@@ -299,6 +331,13 @@ static void macos_viewer_graphics_callback(librdp_session* session,
 - (BOOL)acceptsFirstResponder
 {
     return YES;
+}
+
+- (void)resetCursorRects
+{
+    NSCursor* cursor = self.controller.currentCursor ? self.controller.currentCursor : [NSCursor arrowCursor];
+
+    [self addCursorRect:self.bounds cursor:cursor];
 }
 
 - (void)drawRect:(NSRect)dirtyRect
@@ -396,14 +435,26 @@ static void macos_viewer_graphics_callback(librdp_session* session,
 
 - (void)otherMouseDown:(NSEvent*)event
 {
-    librdp_mouse_button button = [event buttonNumber] == 2 ? LIBRDP_MOUSE_BUTTON_MIDDLE : LIBRDP_MOUSE_BUTTON_X1;
+    NSUInteger button_number = [event buttonNumber];
+    librdp_mouse_button button = LIBRDP_MOUSE_BUTTON_X2;
+
+    if (button_number == 2)
+        button = LIBRDP_MOUSE_BUTTON_MIDDLE;
+    else if (button_number == 3)
+        button = LIBRDP_MOUSE_BUTTON_X1;
 
     [self.controller sendMouseEvent:event button:button state:LIBRDP_MOUSE_PRESSED];
 }
 
 - (void)otherMouseUp:(NSEvent*)event
 {
-    librdp_mouse_button button = [event buttonNumber] == 2 ? LIBRDP_MOUSE_BUTTON_MIDDLE : LIBRDP_MOUSE_BUTTON_X1;
+    NSUInteger button_number = [event buttonNumber];
+    librdp_mouse_button button = LIBRDP_MOUSE_BUTTON_X2;
+
+    if (button_number == 2)
+        button = LIBRDP_MOUSE_BUTTON_MIDDLE;
+    else if (button_number == 3)
+        button = LIBRDP_MOUSE_BUTTON_X1;
 
     [self.controller sendMouseEvent:event button:button state:LIBRDP_MOUSE_RELEASED];
 }
@@ -421,6 +472,11 @@ static void macos_viewer_graphics_callback(librdp_session* session,
 - (void)keyUp:(NSEvent*)event
 {
     [self.controller sendKeyEvent:event pressed:NO];
+}
+
+- (void)flagsChanged:(NSEvent*)event
+{
+    (void)event;
 }
 
 @end
@@ -446,6 +502,8 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     [self.window setContentView:self.view];
     [self.window setAcceptsMouseMovedEvents:YES];
     [self.window center];
+    self.currentCursor = [NSCursor arrowCursor];
+    self.pasteboardChangeCount = [[NSPasteboard generalPasteboard] changeCount];
     return self;
 }
 
@@ -476,6 +534,7 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     (void)timer;
     if (!self.session || self.closed)
         return;
+    [self publishLocalPasteboardIfChanged];
     status = librdp_session_run_once(self.session, 0);
     if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_CLOSED)
         fprintf(stderr, "session dispatch failed: %s\n", librdp_status_string(status));
@@ -568,11 +627,206 @@ static void macos_viewer_graphics_callback(librdp_session* session,
     }
 }
 
+- (NSCursor*)hiddenCursor
+{
+    NSImage* image = [[NSImage alloc] initWithSize:NSMakeSize(1.0, 1.0)];
+
+    return [[NSCursor alloc] initWithImage:image hotSpot:NSMakePoint(0.0, 0.0)];
+}
+
+- (NSCursor*)cursorFromPointer:(const librdp_pointer_event*)pointer
+{
+    NSBitmapImageRep* rep = nil;
+    NSImage* image = nil;
+    uint8_t* destination = NULL;
+    uint16_t y = 0;
+
+    if (!pointer || !pointer->pixels || pointer->pixels_len == 0 || pointer->width == 0 || pointer->height == 0 ||
+        pointer->stride < (uint32_t)pointer->width * 4u ||
+        pointer->pixels_len < (size_t)pointer->stride * (size_t)pointer->height)
+        return [NSCursor arrowCursor];
+
+    rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                  pixelsWide:pointer->width
+                                                  pixelsHigh:pointer->height
+                                               bitsPerSample:8
+                                             samplesPerPixel:4
+                                                    hasAlpha:YES
+                                                    isPlanar:NO
+                                              colorSpaceName:NSDeviceRGBColorSpace
+                                                bitmapFormat:NSBitmapFormatAlphaFirst |
+                                                             NSBitmapFormatByteOrder32Little
+                                                 bytesPerRow:(NSInteger)pointer->stride
+                                                bitsPerPixel:32];
+    if (!rep)
+        return [NSCursor arrowCursor];
+    destination = [rep bitmapData];
+    if (!destination)
+        return [NSCursor arrowCursor];
+    for (y = 0; y < pointer->height; y++)
+    {
+        memcpy(destination + ((size_t)y * (size_t)pointer->stride),
+               pointer->pixels + ((size_t)y * (size_t)pointer->stride),
+               (size_t)pointer->stride);
+    }
+    image = [[NSImage alloc] initWithSize:NSMakeSize((CGFloat)pointer->width, (CGFloat)pointer->height)];
+    [image addRepresentation:rep];
+    return [[NSCursor alloc] initWithImage:image
+                                   hotSpot:NSMakePoint((CGFloat)pointer->hot_x, (CGFloat)pointer->hot_y)];
+}
+
+- (void)setCurrentCursor:(NSCursor*)cursor
+{
+    _currentCursor = cursor ? cursor : [NSCursor arrowCursor];
+    [_currentCursor set];
+    [self.window invalidateCursorRectsForView:self.view];
+}
+
+- (void)applyPointerEvent:(const librdp_pointer_event*)pointer
+{
+    if (!pointer)
+        return;
+    switch (pointer->update_type)
+    {
+        case LIBRDP_POINTER_UPDATE_DEFAULT:
+            [self setCurrentCursor:[NSCursor arrowCursor]];
+            break;
+        case LIBRDP_POINTER_UPDATE_HIDDEN:
+            [self setCurrentCursor:[self hiddenCursor]];
+            break;
+        case LIBRDP_POINTER_UPDATE_SHAPE:
+            [self setCurrentCursor:[self cursorFromPointer:pointer]];
+            break;
+        case LIBRDP_POINTER_UPDATE_POSITION:
+            break;
+    }
+}
+
+- (void)publishLocalPasteboardIfChanged
+{
+    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+    NSString* string = nil;
+    NSData* utf16 = nil;
+
+    if (!self.session || !pasteboard || [pasteboard changeCount] == self.pasteboardChangeCount)
+        return;
+    self.pasteboardChangeCount = [pasteboard changeCount];
+    string = [pasteboard stringForType:NSPasteboardTypeString];
+    if (!string)
+    {
+        (void)librdp_session_clipboard_clear(self.session);
+        return;
+    }
+    utf16 = [string dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    if (!utf16)
+        return;
+    (void)librdp_session_clipboard_set_data(self.session,
+                                            LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT,
+                                            [utf16 bytes],
+                                            [utf16 length]);
+}
+
+- (void)writeStringToPasteboard:(NSString*)string type:(NSPasteboardType)type
+{
+    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+
+    if (!pasteboard || !string)
+        return;
+    [pasteboard clearContents];
+    [pasteboard setString:string forType:type];
+    self.pasteboardChangeCount = [pasteboard changeCount];
+}
+
+- (void)writeDataToPasteboard:(NSData*)data type:(NSPasteboardType)type
+{
+    NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+
+    if (!pasteboard || !data)
+        return;
+    [pasteboard clearContents];
+    [pasteboard setData:data forType:type];
+    self.pasteboardChangeCount = [pasteboard changeCount];
+}
+
+- (void)handleRemoteFormats:(const librdp_clipboard_formats_event*)formats
+{
+    uint32_t i = 0;
+
+    if (!self.session || !formats || !formats->formats)
+        return;
+    for (i = 0; i < formats->count; i++)
+    {
+        uint32_t format_id = formats->formats[i].format_id;
+
+        if (format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT || format_id == LIBRDP_CLIPBOARD_FORMAT_TEXT ||
+            format_id == LIBRDP_CLIPBOARD_FORMAT_PNG || format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
+        {
+            (void)librdp_session_clipboard_request_data(self.session, format_id);
+            return;
+        }
+    }
+}
+
+- (void)handleRemoteClipboardData:(const librdp_clipboard_data_event*)data
+{
+    NSData* ns_data = nil;
+    NSString* string = nil;
+
+    if (!data || !data->ok || !data->data || data->data_len == 0)
+        return;
+    ns_data = [NSData dataWithBytes:data->data length:data->data_len];
+    if (!ns_data)
+        return;
+    if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
+    {
+        string = [[NSString alloc] initWithBytes:data->data
+                                          length:data->data_len
+                                        encoding:NSUTF16LittleEndianStringEncoding];
+        [self writeStringToPasteboard:string type:NSPasteboardTypeString];
+    }
+    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_TEXT)
+    {
+        string = [[NSString alloc] initWithData:ns_data encoding:NSUTF8StringEncoding];
+        if (!string)
+            string = [[NSString alloc] initWithData:ns_data encoding:NSISOLatin1StringEncoding];
+        [self writeStringToPasteboard:string type:NSPasteboardTypeString];
+    }
+    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
+    {
+        string = [[NSString alloc] initWithData:ns_data encoding:NSUTF8StringEncoding];
+        [self writeStringToPasteboard:string type:NSPasteboardTypeHTML];
+    }
+    else if (data->format_id == LIBRDP_CLIPBOARD_FORMAT_PNG)
+        [self writeDataToPasteboard:ns_data type:NSPasteboardTypePNG];
+}
+
+- (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope
+{
+    if (!envelope || !envelope->payload)
+        return;
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_CLIPBOARD_FORMATS:
+            if (envelope->payload_size >= sizeof(librdp_clipboard_formats_event))
+                [self handleRemoteFormats:(const librdp_clipboard_formats_event*)envelope->payload];
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_DATA:
+            if (envelope->payload_size >= sizeof(librdp_clipboard_data_event))
+                [self handleRemoteClipboardData:(const librdp_clipboard_data_event*)envelope->payload];
+            break;
+        case LIBRDP_EVENT_CLIPBOARD_REQUEST:
+            [self publishLocalPasteboardIfChanged];
+            break;
+        default:
+            break;
+    }
+}
+
 @end
 
 int main(int argc, char** argv)
 {
-    macos_viewer_options options;
+    cocoa_viewer_options options;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     CocoaViewerController* controller = nil;
@@ -581,17 +835,17 @@ int main(int argc, char** argv)
 
     @autoreleasepool
     {
-        if (!macos_viewer_parse_args(argc, argv, &options))
+        if (!cocoa_viewer_parse_args(argc, argv, &options))
         {
-            macos_viewer_usage(stderr, argv[0]);
+            cocoa_viewer_usage(stderr, argv[0]);
             return 2;
         }
         if (options.show_help)
         {
-            macos_viewer_usage(stdout, argv[0]);
+            cocoa_viewer_usage(stdout, argv[0]);
             return 0;
         }
-        settings = macos_viewer_create_settings(&options);
+        settings = cocoa_viewer_create_settings(&options);
         if (!settings)
         {
             fprintf(stderr, "failed to create settings\n");
@@ -611,7 +865,9 @@ int main(int argc, char** argv)
             librdp_session_free(session);
             return 1;
         }
-        librdp_session_set_graphics_update_callback(session, macos_viewer_graphics_callback, (__bridge void*)controller);
+        librdp_session_set_graphics_update_callback(session, cocoa_viewer_graphics_callback, (__bridge void*)controller);
+        librdp_session_set_pointer_callback(session, cocoa_viewer_pointer_callback, (__bridge void*)controller);
+        librdp_session_set_clipboard_callback(session, cocoa_viewer_clipboard_callback, (__bridge void*)controller);
         status = librdp_session_connect(session);
         if (status != LIBRDP_STATUS_OK)
         {
