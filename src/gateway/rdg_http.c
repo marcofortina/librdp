@@ -355,17 +355,6 @@ static size_t rdp_rdg_queue_read_copy(rdp_rdg_queue_node** head,
     return copied;
 }
 
-static void rdp_rdg_set_error_locked(rdp_rdg_http_context* context, librdp_status status)
-{
-    if (!context || status == LIBRDP_STATUS_OK)
-        return;
-    if (context->error == LIBRDP_STATUS_OK)
-        context->error = status;
-    pthread_cond_broadcast(&context->cond);
-    rdp_rdg_signal_pipe(context->event_pipe[1]);
-    rdp_rdg_signal_pipe(context->control_pipe[1]);
-}
-
 static int rdp_rdg_timed_wait_locked(rdp_rdg_http_context* context)
 {
     struct timespec deadline;
@@ -535,6 +524,18 @@ static librdp_status rdp_rdg_build_close_packet(rdp_buffer* body)
     return rdp_buffer_append_u32_le(body, 0u);
 }
 
+#ifdef RDP_HAVE_CURL
+static void rdp_rdg_set_error_locked(rdp_rdg_http_context* context, librdp_status status)
+{
+    if (!context || status == LIBRDP_STATUS_OK)
+        return;
+    if (context->error == LIBRDP_STATUS_OK)
+        context->error = status;
+    pthread_cond_broadcast(&context->cond);
+    rdp_rdg_signal_pipe(context->event_pipe[1]);
+    rdp_rdg_signal_pipe(context->control_pipe[1]);
+}
+
 static librdp_status rdp_rdg_control_enqueue_locked(rdp_rdg_http_context* context,
                                                     uint16_t type,
                                                     const uint8_t* payload,
@@ -640,6 +641,7 @@ static librdp_status rdp_rdg_parse_incoming_locked(rdp_rdg_http_context* context
     }
     return LIBRDP_STATUS_OK;
 }
+#endif
 
 static librdp_status rdp_rdg_receive_control(rdp_rdg_http_context* context,
                                              uint16_t expected_type,

@@ -31,7 +31,8 @@ jobs:
           build-essential cmake ninja-build pkg-config python3 doxygen graphviz
           libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
           libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
-          libacl1-dev libattr1-dev libarchive-dev libx11-dev libxcursor-dev
+          libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
+          libx11-dev libxcursor-dev
           libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
           libpipewire-0.3-dev libjpeg-dev
 
@@ -52,6 +53,22 @@ jobs:
           -DLIBRDP_BUILD_X11_ADMIN=ON
           -DLIBRDP_BUILD_X11_WORKSPACE=ON
           -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=ON
+          -DLIBRDP_WITH_OPENH264_AVC=ON
+          -DLIBRDP_WITH_PCSC=ON
+          -DLIBRDP_WITH_LIBUSB=ON
+          -DLIBRDP_WITH_FIDO2=ON
+          -DLIBRDP_WITH_CBOR=ON
+          -DLIBRDP_WITH_CUPS=ON
+          -DLIBRDP_WITH_ACL=ON
+          -DLIBRDP_WITH_ATTR=ON
+          -DLIBRDP_WITH_ARCHIVE=ON
+          -DLIBRDP_WITH_CURL=ON
+          -DLIBRDP_WITH_LIBXML2=ON
+          -DLIBRDP_WITH_PIPEWIRE=ON
+          -DLIBRDP_WITH_JPEG=ON
+          -DLIBRDP_WITH_XSHM=ON
+          -DLIBRDP_WITH_XRANDR=ON
 
       - name: Build
         run: cmake --build build-linux-gcc-full -j$(nproc)
@@ -73,7 +90,8 @@ jobs:
           build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz
           libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
           libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
-          libacl1-dev libattr1-dev libarchive-dev libx11-dev libxcursor-dev
+          libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
+          libx11-dev libxcursor-dev
           libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
           libpipewire-0.3-dev libjpeg-dev
 
@@ -94,6 +112,22 @@ jobs:
           -DLIBRDP_BUILD_X11_ADMIN=ON
           -DLIBRDP_BUILD_X11_WORKSPACE=ON
           -DLIBRDP_ENABLE_WERROR=ON
+          -DLIBRDP_WITH_FFMPEG_AVC=ON
+          -DLIBRDP_WITH_OPENH264_AVC=ON
+          -DLIBRDP_WITH_PCSC=ON
+          -DLIBRDP_WITH_LIBUSB=ON
+          -DLIBRDP_WITH_FIDO2=ON
+          -DLIBRDP_WITH_CBOR=ON
+          -DLIBRDP_WITH_CUPS=ON
+          -DLIBRDP_WITH_ACL=ON
+          -DLIBRDP_WITH_ATTR=ON
+          -DLIBRDP_WITH_ARCHIVE=ON
+          -DLIBRDP_WITH_CURL=ON
+          -DLIBRDP_WITH_LIBXML2=ON
+          -DLIBRDP_WITH_PIPEWIRE=ON
+          -DLIBRDP_WITH_JPEG=ON
+          -DLIBRDP_WITH_XSHM=ON
+          -DLIBRDP_WITH_XRANDR=ON
 
       - name: Build
         run: cmake --build build-linux-clang-full -j$(nproc)
@@ -115,7 +149,7 @@ jobs:
           build-essential cmake ninja-build pkg-config python3 doxygen graphviz
           libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
           libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
-          libacl1-dev libattr1-dev libarchive-dev
+          libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
 
       - name: Cache build directory
         uses: actions/cache@v6
@@ -184,6 +218,8 @@ jobs:
           -DLIBRDP_WITH_ACL=OFF
           -DLIBRDP_WITH_ATTR=OFF
           -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_CURL=OFF
+          -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
@@ -236,6 +272,8 @@ jobs:
           -DLIBRDP_WITH_ACL=OFF
           -DLIBRDP_WITH_ATTR=OFF
           -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_CURL=OFF
+          -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
@@ -289,6 +327,8 @@ jobs:
           -DLIBRDP_WITH_ACL=OFF
           -DLIBRDP_WITH_ATTR=OFF
           -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_CURL=OFF
+          -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
@@ -344,6 +384,8 @@ jobs:
           -DLIBRDP_WITH_ACL=OFF
           -DLIBRDP_WITH_ATTR=OFF
           -DLIBRDP_WITH_ARCHIVE=OFF
+          -DLIBRDP_WITH_CURL=OFF
+          -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
