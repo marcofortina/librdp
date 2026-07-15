@@ -3329,6 +3329,7 @@ static int start_handshake_server_full(uint16_t* port,
                         {
                             _exit(5);
                         }
+                        goto done_connection;
                     }
                     else if (dynamic_channel_scenario == DVC_SCENARIO_WEBAUTHN_CREATE_REJECT)
                     {

@@ -746,7 +746,7 @@ install(FILES
 function(librdp_link_internal_runtime target)
     librdp_apply_system_definitions(${target})
     librdp_apply_openssl_include_dirs(${target})
-    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES})
+    target_link_libraries(${target} PRIVATE librdp_objects librdp_backend_objects OpenSSL::SSL OpenSSL::Crypto ${LIBRDP_ICONV_LINK_LIBRARIES} Threads::Threads)
     if(LIBRDP_FFMPEG_AVC_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_FFMPEG_AVC)
     endif()
