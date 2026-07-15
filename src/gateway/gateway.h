@@ -37,5 +37,6 @@ typedef struct rdp_gateway_connect_config
 
 librdp_status rdp_gateway_connect_transport(rdp_transport* transport,
                                             const rdp_gateway_connect_config* config);
+librdp_status rdp_gateway_user_name(const char* domain, const char* username, char** out);
 
 #endif

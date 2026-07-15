@@ -55,9 +55,7 @@ or
 Select the gateway transport. The default is
 .BR http-connect .
 .B rdg-http
-selects Microsoft RD Gateway HTTP transport and requires an HTTPS gateway URL; the connection fails with
-.B LIBRDP_STATUS_UNSUPPORTED
-when the RDG runtime provider is not available.
+selects Microsoft RD Gateway HTTP transport, creates the RDG OUT/IN streams, and carries the target RDP connection through the negotiated RDG channel.
 .TP
 .BI --gateway-user " name"
 Gateway authentication user name. If omitted, the viewer reuses the session user name when gateway credential reuse is enabled.

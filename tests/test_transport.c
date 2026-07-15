@@ -28,6 +28,8 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #ifdef RDP_HAVE_CURL
@@ -77,6 +79,375 @@ static int test_gateway_proxy_listen(uint16_t* port)
     }
     *port = ntohs(addr.sin_port);
     return fd;
+}
+
+static int test_write_all_fd(int fd, const void* data, size_t length)
+{
+    const uint8_t* cursor = (const uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t wrote = write(fd, cursor + offset, length - offset);
+
+        if (wrote < 0 && errno == EINTR)
+            continue;
+        if (wrote <= 0)
+            return 0;
+        offset += (size_t)wrote;
+    }
+    return 1;
+}
+
+static int test_read_exact_fd(int fd, void* data, size_t length)
+{
+    uint8_t* cursor = (uint8_t*)data;
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        ssize_t got = read(fd, cursor + offset, length - offset);
+
+        if (got < 0 && errno == EINTR)
+            continue;
+        if (got <= 0)
+            return 0;
+        offset += (size_t)got;
+    }
+    return 1;
+}
+
+static int test_gateway_read_http_headers(int fd, char* request, size_t request_len)
+{
+    size_t used = 0;
+
+    if (!request || request_len == 0)
+        return 0;
+    while (used + 1u < request_len)
+    {
+        ssize_t got = read(fd, request + used, 1u);
+
+        if (got < 0 && errno == EINTR)
+            continue;
+        if (got <= 0)
+            return 0;
+        used += (size_t)got;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n"))
+            return 1;
+    }
+    return 0;
+}
+
+static void test_rdg_append_header(rdp_buffer* packet, uint16_t type, uint32_t length)
+{
+    (void)rdp_buffer_append_u16_le(packet, type);
+    (void)rdp_buffer_append_u16_le(packet, 0);
+    (void)rdp_buffer_append_u32_le(packet, length);
+}
+
+static int test_rdg_make_packet(uint16_t type, const rdp_buffer* body, rdp_buffer* packet)
+{
+    uint32_t length = 8u + (uint32_t)(body ? body->length : 0u);
+
+    rdp_buffer_init(packet);
+    test_rdg_append_header(packet, type, length);
+    if (body && body->length > 0 && rdp_buffer_append(packet, body->data, body->length) != LIBRDP_STATUS_OK)
+        return 0;
+    return 1;
+}
+
+static int test_rdg_write_chunk(int fd, const rdp_buffer* packet)
+{
+    char header[32];
+    int written = snprintf(header, sizeof(header), "%zx\r\n", packet ? packet->length : 0u);
+
+    if (written <= 0 || (size_t)written >= sizeof(header))
+        return 0;
+    if (!test_write_all_fd(fd, header, (size_t)written))
+        return 0;
+    if (packet && packet->length > 0 && !test_write_all_fd(fd, packet->data, packet->length))
+        return 0;
+    return test_write_all_fd(fd, "\r\n", 2u);
+}
+
+static int test_rdg_send_handshake_response(int out_fd)
+{
+    rdp_buffer body;
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&body);
+    (void)rdp_buffer_append_u32_le(&body, 0);
+    (void)rdp_buffer_append_u8(&body, 1);
+    (void)rdp_buffer_append_u8(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    ok = test_rdg_make_packet(0x0002u, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&body);
+    return ok;
+}
+
+static int test_rdg_send_tunnel_response(int out_fd)
+{
+    rdp_buffer body;
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&body);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    (void)rdp_buffer_append_u32_le(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0x0003u);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    (void)rdp_buffer_append_u32_le(&body, 6);
+    (void)rdp_buffer_append_u32_le(&body, 0);
+    ok = test_rdg_make_packet(0x0005u, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&body);
+    return ok;
+}
+
+static int test_rdg_send_auth_response(int out_fd)
+{
+    rdp_buffer body;
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&body);
+    (void)rdp_buffer_append_u32_le(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    ok = test_rdg_make_packet(0x0007u, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&body);
+    return ok;
+}
+
+static int test_rdg_send_channel_response(int out_fd)
+{
+    rdp_buffer body;
+    rdp_buffer packet;
+    int ok = 0;
+
+    rdp_buffer_init(&body);
+    (void)rdp_buffer_append_u32_le(&body, 0);
+    (void)rdp_buffer_append_u16_le(&body, 0x0001u);
+    (void)rdp_buffer_append_u16_le(&body, 0);
+    (void)rdp_buffer_append_u32_le(&body, 1);
+    ok = test_rdg_make_packet(0x0009u, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&body);
+    return ok;
+}
+
+static int test_rdg_send_data(int out_fd, const void* data, size_t length)
+{
+    rdp_buffer body;
+    rdp_buffer packet;
+    int ok = 0;
+
+    if (length > UINT16_MAX)
+        return 0;
+    rdp_buffer_init(&body);
+    (void)rdp_buffer_append_u16_le(&body, (uint16_t)length);
+    (void)rdp_buffer_append(&body, data, length);
+    ok = test_rdg_make_packet(0x000au, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    rdp_buffer_free(&packet);
+    rdp_buffer_free(&body);
+    return ok;
+}
+
+static uint16_t test_rdg_read_u16_le(const uint8_t* data)
+{
+    return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+static uint32_t test_rdg_read_u32_le(const uint8_t* data)
+{
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+}
+
+static int test_rdg_read_chunk(int fd, rdp_buffer* chunk)
+{
+    char line[32];
+    size_t used = 0;
+    unsigned long length = 0;
+    char* end = NULL;
+    char crlf[2];
+
+    rdp_buffer_init(chunk);
+    while (used + 1u < sizeof(line))
+    {
+        char c = '\0';
+
+        if (!test_read_exact_fd(fd, &c, 1u))
+            return 0;
+        line[used++] = c;
+        line[used] = '\0';
+        if (used >= 2u && line[used - 2u] == '\r' && line[used - 1u] == '\n')
+            break;
+    }
+    length = strtoul(line, &end, 16);
+    if (end == line || length > 65536ul)
+        return 0;
+    if (rdp_buffer_reserve(chunk, (size_t)length) != LIBRDP_STATUS_OK)
+        return 0;
+    chunk->length = (size_t)length;
+    if (length > 0 && !test_read_exact_fd(fd, chunk->data, (size_t)length))
+        return 0;
+    return test_read_exact_fd(fd, crlf, sizeof(crlf)) && crlf[0] == '\r' && crlf[1] == '\n';
+}
+
+static int test_rdg_process_packet(int out_fd, const uint8_t* packet, size_t packet_len, int* echoed)
+{
+    uint16_t type = 0;
+    uint32_t length = 0;
+    const uint8_t* payload = NULL;
+    size_t payload_len = 0;
+
+    if (!packet || packet_len < 8u || !echoed)
+        return 0;
+    type = test_rdg_read_u16_le(packet);
+    length = test_rdg_read_u32_le(packet + 4u);
+    if (length < 8u || (size_t)length > packet_len)
+        return 0;
+    payload = packet + 8u;
+    payload_len = (size_t)length - 8u;
+    if (type == 0x0001u)
+        return test_rdg_send_handshake_response(out_fd);
+    if (type == 0x0004u)
+        return test_rdg_send_tunnel_response(out_fd);
+    if (type == 0x0006u)
+        return test_rdg_send_auth_response(out_fd);
+    if (type == 0x0008u)
+        return test_rdg_send_channel_response(out_fd);
+    if (type == 0x000au)
+    {
+        uint16_t data_len = 0;
+
+        if (payload_len < 2u)
+            return 0;
+        data_len = test_rdg_read_u16_le(payload);
+        if ((size_t)data_len > payload_len - 2u || data_len != 4u || memcmp(payload + 2u, "ping", 4u) != 0)
+            return 0;
+        *echoed = 1;
+        return test_rdg_send_data(out_fd, "pong", 4u);
+    }
+    return type == 0x0010u;
+}
+
+static int test_rdg_server_loop(int in_fd, int out_fd)
+{
+    rdp_buffer incoming;
+    int echoed = 0;
+
+    rdp_buffer_init(&incoming);
+    while (!echoed)
+    {
+        rdp_buffer chunk;
+
+        if (!test_rdg_read_chunk(in_fd, &chunk))
+        {
+            rdp_buffer_free(&incoming);
+            return echoed;
+        }
+        if (rdp_buffer_append(&incoming, chunk.data, chunk.length) != LIBRDP_STATUS_OK)
+        {
+            rdp_buffer_free(&chunk);
+            rdp_buffer_free(&incoming);
+            return 0;
+        }
+        rdp_buffer_free(&chunk);
+        while (incoming.length >= 8u)
+        {
+            uint32_t packet_len = test_rdg_read_u32_le(incoming.data + 4u);
+
+            if (packet_len < 8u || packet_len > incoming.length)
+                break;
+            if (!test_rdg_process_packet(out_fd, incoming.data, packet_len, &echoed) ||
+                rdp_buffer_consume(&incoming, packet_len) != LIBRDP_STATUS_OK)
+            {
+                rdp_buffer_free(&incoming);
+                return 0;
+            }
+        }
+    }
+    for (;;)
+    {
+        rdp_buffer chunk;
+
+        if (!test_rdg_read_chunk(in_fd, &chunk))
+            break;
+        rdp_buffer_free(&chunk);
+    }
+    rdp_buffer_free(&incoming);
+    return 1;
+}
+
+static int test_gateway_rdg_http_child(int listen_fd)
+{
+    char request[2048];
+    int out_fd = -1;
+    int in_fd = -1;
+    const char response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n";
+    int ok = 0;
+    int i = 0;
+
+    for (i = 0; i < 2 && ok == 0; i++)
+    {
+        int client = accept(listen_fd, NULL, NULL);
+
+        if (client < 0 || !test_gateway_read_http_headers(client, request, sizeof(request)))
+        {
+            if (client >= 0)
+                close(client);
+            break;
+        }
+        if (strstr(request, "RDG_OUT_DATA "))
+        {
+            if (out_fd >= 0)
+            {
+                close(client);
+                break;
+            }
+            out_fd = client;
+        }
+        else if (strstr(request, "RDG_IN_DATA "))
+        {
+            if (in_fd >= 0)
+            {
+                close(client);
+                break;
+            }
+            in_fd = client;
+        }
+        else
+        {
+            close(client);
+            break;
+        }
+        if (!test_write_all_fd(client, response, sizeof(response) - 1u))
+            break;
+        if (i == 1)
+            ok = 1;
+    }
+    if (ok && in_fd >= 0 && out_fd >= 0)
+        ok = test_rdg_server_loop(in_fd, out_fd);
+    else
+        ok = 0;
+
+    if (in_fd >= 0)
+        close(in_fd);
+    if (out_fd >= 0)
+        close(out_fd);
+    return ok ? 0 : 1;
 }
 
 /*
@@ -162,9 +533,6 @@ static int test_gateway_connect_transport(void)
     TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
     return 0;
 #else
-    config.mode = LIBRDP_GATEWAY_RDG_HTTP;
-    config.gateway_url = "https://gateway.example.com/rdg";
-    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
     config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     listen_fd = test_gateway_proxy_listen(&port);
     TCHECK(listen_fd >= 0);
@@ -184,6 +552,39 @@ static int test_gateway_connect_transport(void)
     config.username = "gateway-user";
     config.password = "gateway-secret";
     config.domain = "DOMAIN";
+    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_write_all(&transport, "ping", 4u) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_peek(&transport, data, sizeof(data), &got) == LIBRDP_STATUS_OK);
+    TCHECK(got == sizeof(data));
+    TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
+    TCHECK(rdp_transport_read_exact(&transport, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
+    rdp_transport_close(&transport);
+    TCHECK(waitpid(child, &child_status, 0) == child);
+    TCHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+
+    listen_fd = test_gateway_proxy_listen(&port);
+    TCHECK(listen_fd >= 0);
+    child = fork();
+    TCHECK(child >= 0);
+    if (child == 0)
+    {
+        int rc = test_gateway_rdg_http_child(listen_fd);
+
+        close(listen_fd);
+        _exit(rc == 0 ? 0 : 1);
+    }
+    close(listen_fd);
+    listen_fd = -1;
+    rdp_transport_init(&transport);
+    TCHECK(snprintf(gateway_url,
+                    sizeof(gateway_url),
+                    "http://127.0.0.1:%u/remoteDesktopGateway/",
+                    (unsigned)port) > 0);
+    config.gateway_url = gateway_url;
+    config.mode = LIBRDP_GATEWAY_RDG_HTTP;
+    config.timeout_ms = 5000u;
     TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_write_all(&transport, "ping", 4u) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);

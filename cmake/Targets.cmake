@@ -73,6 +73,7 @@ set(LIBRDP_SOURCES
     src/graphics/surface.c
     src/graphics/surface_commands.c
     src/gateway/gateway.c
+    src/gateway/rdg_http.c
     src/input/input.c
     src/licensing/licensing.c
     src/nla/credssp.c

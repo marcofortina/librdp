@@ -232,18 +232,17 @@ typedef enum librdp_gateway_mode
 {
     LIBRDP_GATEWAY_DISABLED = 0,     /**< Connect directly to the target. */
     LIBRDP_GATEWAY_HTTP_CONNECT = 1, /**< Tunnel the target TCP stream through an HTTP CONNECT gateway. */
-    LIBRDP_GATEWAY_RDG_HTTP = 2      /**< Use Microsoft RD Gateway HTTP transport when available. */
+    LIBRDP_GATEWAY_RDG_HTTP = 2      /**< Use Microsoft RD Gateway HTTP transport. */
 } librdp_gateway_mode;
 
 /**
  * @brief Versioned gateway configuration.
  *
  * Initialize with librdp_gateway_config_init(). url is copied by
- * librdp_settings_set_gateway_config() and must include an `http://` or
- * `https://` scheme when mode is LIBRDP_GATEWAY_HTTP_CONNECT or
- * LIBRDP_GATEWAY_RDG_HTTP. RD Gateway HTTP transport is distinct from generic
- * HTTP CONNECT proxying and fails with LIBRDP_STATUS_UNSUPPORTED when the
- * runtime provider is not compiled or not complete for the selected platform.
+ * librdp_settings_set_gateway_config(). HTTP CONNECT mode accepts `http://`
+ * and `https://` gateway URLs; RD Gateway HTTP mode requires `https://`.
+ * RD Gateway HTTP transport is distinct from generic HTTP CONNECT proxying and
+ * uses the RDG OUT/IN HTTP streams before RDP bytes are exchanged.
  * When
  * use_session_credentials is non-zero and username is NULL, the connection
  * reuses the session credentials for gateway authentication.
