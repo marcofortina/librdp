@@ -1,0 +1,146 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: build-openbsd
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openbsd-core-no-viewer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test in OpenBSD
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg_add cmake ninja libiconv
+            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
+            if [ -z "${pkgconf_package}" ]; then
+              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
+            fi
+            if [ -n "${pkgconf_package}" ]; then
+              pkg_add "${pkgconf_package}"
+            fi
+            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_package}"
+            test -n "${python_package}"
+            pkg_add "${openssl_package}" "${python_package}"
+            if ! command -v python3 >/dev/null 2>&1; then
+              for candidate in /usr/local/bin/python3.*; do
+                if [ -x "${candidate}" ]; then
+                  ln -sf "${candidate}" /usr/local/bin/python3
+                  break
+                fi
+              done
+            fi
+            for package in ffmpeg openh264 pcsc-lite libusb1 libfido2 libcbor cups libarchive; do
+              pkg_add "${package}" || true
+            done
+          run: |
+            openssl_config="$(find /usr/local/lib -path '*/cmake/OpenSSL/OpenSSLConfig.cmake' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_config}"
+            openssl_cmake_dir="${openssl_config%/OpenSSLConfig.cmake}"
+            test -f "${openssl_cmake_dir}/OpenSSLConfigVersion.cmake"
+            openssl_header="$(find /usr/local -path '*/include/eopenssl*/openssl/types.h' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_header}"
+            export OPENSSL_INCLUDE_DIR="${openssl_header%/openssl/types.h}"
+            cmake -S . -B build-openbsd-core-no-viewer -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
+              -DOpenSSL_DIR="${openssl_cmake_dir}" \
+              -DOPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DLIBRDP_OPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DCMAKE_PREFIX_PATH=/usr/local \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=ON \
+              -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_ENABLE_WERROR=ON \
+              -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_JPEG=OFF \
+              -DLIBRDP_WITH_XSHM=OFF \
+              -DLIBRDP_WITH_XRANDR=OFF
+            cmake --build build-openbsd-core-no-viewer --parallel
+            ctest --test-dir build-openbsd-core-no-viewer --output-on-failure
+
+  openbsd-core-no-backends:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test in OpenBSD
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg_add cmake ninja libiconv
+            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
+            if [ -z "${pkgconf_package}" ]; then
+              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
+            fi
+            if [ -n "${pkgconf_package}" ]; then
+              pkg_add "${pkgconf_package}"
+            fi
+            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_package}"
+            test -n "${python_package}"
+            pkg_add "${openssl_package}" "${python_package}"
+            if ! command -v python3 >/dev/null 2>&1; then
+              for candidate in /usr/local/bin/python3.*; do
+                if [ -x "${candidate}" ]; then
+                  ln -sf "${candidate}" /usr/local/bin/python3
+                  break
+                fi
+              done
+            fi
+          run: |
+            openssl_config="$(find /usr/local/lib -path '*/cmake/OpenSSL/OpenSSLConfig.cmake' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_config}"
+            openssl_cmake_dir="${openssl_config%/OpenSSLConfig.cmake}"
+            test -f "${openssl_cmake_dir}/OpenSSLConfigVersion.cmake"
+            openssl_header="$(find /usr/local -path '*/include/eopenssl*/openssl/types.h' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_header}"
+            export OPENSSL_INCLUDE_DIR="${openssl_header%/openssl/types.h}"
+            cmake -S . -B build-openbsd-core-no-backends -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
+              -DOpenSSL_DIR="${openssl_cmake_dir}" \
+              -DOPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DLIBRDP_OPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DCMAKE_PREFIX_PATH=/usr/local \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=ON \
+              -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_ENABLE_WERROR=ON \
+              -DLIBRDP_WITH_FFMPEG_AVC=OFF \
+              -DLIBRDP_WITH_OPENH264_AVC=OFF \
+              -DLIBRDP_WITH_PCSC=OFF \
+              -DLIBRDP_WITH_LIBUSB=OFF \
+              -DLIBRDP_WITH_FIDO2=OFF \
+              -DLIBRDP_WITH_CBOR=OFF \
+              -DLIBRDP_WITH_CUPS=OFF \
+              -DLIBRDP_WITH_ACL=OFF \
+              -DLIBRDP_WITH_ATTR=OFF \
+              -DLIBRDP_WITH_ARCHIVE=OFF \
+              -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_JPEG=OFF \
+              -DLIBRDP_WITH_XSHM=OFF \
+              -DLIBRDP_WITH_XRANDR=OFF
+            cmake --build build-openbsd-core-no-backends --parallel
+            ctest --test-dir build-openbsd-core-no-backends --output-on-failure
