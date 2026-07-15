@@ -52,6 +52,8 @@ librdp is a C client library for building RDP viewers and integration tools on U
 - [librdp-api(7)](man/librdp-api.7)
 - [librdp-tracing(7)](man/librdp-tracing.7)
 - [librdp-workspace(7)](man/librdp-workspace.7)
+- [librdp-cocoa-admin(1)](man/librdp-cocoa-admin.1)
+- [librdp-cocoa-workspace(1)](man/librdp-cocoa-workspace.1)
 - [librdp-cocoa-viewer(1)](man/librdp-cocoa-viewer.1)
 - [librdp-x11-admin(1)](man/librdp-x11-admin.1)
 - [librdp-x11-workspace(1)](man/librdp-x11-workspace.1)

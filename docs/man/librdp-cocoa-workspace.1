@@ -1,0 +1,60 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-COCOA-WORKSPACE 1 "2026-07-15" "librdp 0.1.0" "User Commands"
+.SH NAME
+librdp-cocoa-workspace \- native macOS workspace feed launcher for librdp
+.SH SYNOPSIS
+.B librdp-cocoa-workspace
+.B --feed
+.I url
+[
+.I options
+]
+.SH DESCRIPTION
+.B librdp-cocoa-workspace
+fetches an RDS workspace feed through the public workspace API, prints the published resources, and displays a Cocoa summary window unless
+.B --no-window
+is supplied. With
+.B --launch
+it starts the selected resource through a viewer executable.
+.SH OPTIONS
+.TP
+.BI --feed " url"
+Workspace feed URL.
+.TP
+.BI --user " name"
+Feed user name.
+.TP
+.BI --password " value"
+Feed password. Avoid placing credentials in shell history on shared systems.
+.TP
+.BI --password-env " name"
+Read the feed password from an environment variable.
+.TP
+.BI --domain " name"
+Authentication domain.
+.TP
+.BI --timeout " ms"
+Feed timeout in milliseconds.
+.TP
+.BI --select " id|index|title|alias"
+Select a published resource. Required when the feed contains multiple resources and
+.B --launch
+is used.
+.TP
+.BI --viewer " path"
+Viewer executable. The default is
+.BR librdp-cocoa-viewer .
+.TP
+.BI --security " auto|rdp|tls|nla"
+Security mode passed to the viewer.
+.TP
+.B --launch
+Launch the selected resource.
+.TP
+.B --no-window
+Run only as a command-line tool.
+.SH SEE ALSO
+.BR librdp-cocoa-viewer (1),
+.BR librdp-workspace (7),
+.BR librdp-api (7)

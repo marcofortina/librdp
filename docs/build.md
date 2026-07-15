@@ -32,6 +32,8 @@ librdp uses CMake to build the C library, unit tests, examples, optional fuzz ta
 - `LIBRDP_BUILD_COCOA_VIEWER=ON|OFF`: build the native Cocoa viewer.
 - `LIBRDP_BUILD_X11_ADMIN=ON|OFF`: build the X11 administration inventory tool.
 - `LIBRDP_BUILD_X11_WORKSPACE=ON|OFF`: build the X11 workspace feed launcher.
+- `LIBRDP_BUILD_COCOA_ADMIN=ON|OFF`: build the native Cocoa administration inventory tool.
+- `LIBRDP_BUILD_COCOA_WORKSPACE=ON|OFF`: build the native Cocoa workspace feed launcher.
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 - `LIBRDP_ABI_VERSION=<n>`: shared-library ABI version used as `SOVERSION`.
 - `LIBRDP_LIBRARY_TYPE=AUTO|STATIC|SHARED|BOTH`: choose the library artifacts to build. `AUTO` preserves the standard CMake `BUILD_SHARED_LIBS` behavior.

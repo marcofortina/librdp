@@ -53,6 +53,8 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp.7",
     "docs/man/librdp-api.7",
     "docs/man/librdp-tracing.7",
+    "docs/man/librdp-cocoa-admin.1",
+    "docs/man/librdp-cocoa-workspace.1",
     "docs/man/librdp-cocoa-viewer.1",
     "docs/man/librdp-x11-viewer.1",
     "docs/man/librdp-x11-admin.1",

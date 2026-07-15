@@ -29,6 +29,8 @@ cmake -S . -B build-macos -G Ninja \
   -DLIBRDP_BUILD_EXAMPLES=ON \
   -DLIBRDP_BUILD_X11_VIEWER=OFF \
   -DLIBRDP_BUILD_COCOA_VIEWER=ON \
+  -DLIBRDP_BUILD_COCOA_ADMIN=ON \
+  -DLIBRDP_BUILD_COCOA_WORKSPACE=ON \
   -DLIBRDP_WITH_PIPEWIRE=OFF \
   -DLIBRDP_WITH_JPEG=OFF \
   -DLIBRDP_WITH_XSHM=OFF \
@@ -37,5 +39,5 @@ cmake --build build-macos --parallel
 ctest --test-dir build-macos --output-on-failure
 ```
 
-The disabled options are X11-viewer-specific paths. `librdp-cocoa-viewer`
-uses AppKit and the public client APIs.
+The disabled options are X11-viewer-specific paths. The Cocoa viewer, admin,
+and workspace tools use AppKit and the public librdp APIs.
