@@ -1,0 +1,60 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-X11-ADMIN 1 "2026-07-15" "librdp 0.1.0" "User Commands"
+.SH NAME
+librdp-x11-admin \- query and display RDS session inventory
+.SH SYNOPSIS
+.B librdp-x11-admin
+.BI --endpoint " url"
+.RI [ options ]
+.SH DESCRIPTION
+.B librdp-x11-admin
+queries a WinRM administration endpoint through the public librdp Admin API and
+prints the returned session inventory. By default it also opens a small X11
+window containing the same inventory. Use
+.B --no-window
+for scripts, CI jobs, and non-interactive checks.
+.SH OPTIONS
+.TP
+.BI --endpoint " url"
+WinRM endpoint URL, for example
+.BR http://host:5985/wsman
+or
+.BR https://host:5986/wsman .
+.TP
+.BI --user " name"
+Endpoint user name.
+.TP
+.BI --password " value"
+Endpoint password.
+.TP
+.BI --password-env " name"
+Read the endpoint password from the named environment variable.
+.TP
+.BI --domain " name"
+Authentication domain.
+.TP
+.BI --resource-uri " uri"
+WinRM resource URI to enumerate. If omitted, the default targets logon session
+inventory.
+.TP
+.BI --timeout " ms"
+Connection and request timeout in milliseconds.
+.TP
+.B --insecure-lab
+Disable TLS certificate verification for explicitly controlled lab endpoints.
+Do not use this option for production endpoints.
+.TP
+.B --no-window
+Do not open an X11 window; print the inventory and exit.
+.TP
+.B -h, --help
+Print usage.
+.SH EXAMPLES
+.nf
+librdp-x11-admin --endpoint http://server:5985/wsman --user Marco --password-env RDS_PASSWORD --no-window
+librdp-x11-admin --endpoint https://server:5986/wsman --user Marco --domain LAB
+.fi
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-api (7)

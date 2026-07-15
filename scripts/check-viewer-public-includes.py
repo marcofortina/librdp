@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Reject private core headers from the X11 viewer source tree."""
+"""Reject private core headers from X11 application source trees."""
 
 from __future__ import annotations
 
@@ -12,7 +12,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VIEWER_ROOT = ROOT / "apps" / "x11-viewer"
+APP_ROOTS = (
+    ROOT / "apps" / "x11-admin",
+    ROOT / "apps" / "x11-viewer",
+)
 PRIVATE_PREFIXES = (
     "channels/",
     "client/",
@@ -32,11 +35,11 @@ INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]")
 
 
 def checked_files() -> list[Path]:
-    return sorted(
-        path
-        for path in VIEWER_ROOT.rglob("*")
-        if path.is_file() and path.suffix in {".c", ".h"}
-    )
+    files: list[Path] = []
+    for root in APP_ROOTS:
+        if root.exists():
+            files.extend(path for path in root.rglob("*") if path.is_file() and path.suffix in {".c", ".h"})
+    return sorted(files)
 
 
 def main() -> int:
@@ -51,11 +54,11 @@ def main() -> int:
             if include.startswith("../") or include.startswith("src/") or include.startswith(PRIVATE_PREFIXES):
                 failures.append(f"{rel}:{line_no}: private include {include!r}")
     if failures:
-        print("error: X11 viewer must include only public librdp headers and viewer-local headers")
+        print("error: X11 apps must include only public librdp headers and app-local headers")
         for failure in failures:
             print(failure)
         return 1
-    print("X11 viewer public include guardrail passed.")
+    print("X11 app public include guardrail passed.")
     return 0
 
 

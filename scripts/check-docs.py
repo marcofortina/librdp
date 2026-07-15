@@ -53,6 +53,7 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp-api.7",
     "docs/man/librdp-tracing.7",
     "docs/man/librdp-x11-viewer.1",
+    "docs/man/librdp-x11-admin.1",
 )
 FORBIDDEN_DOCS = (
     "docs/roadmap.md",
@@ -176,12 +177,19 @@ def viewer_source_options() -> set[str]:
     return set(VIEWER_OPTION_RE.findall(source))
 
 
+def admin_source_options() -> set[str]:
+    return set(VIEWER_OPTION_RE.findall(read("apps/x11-admin/main.c")))
+
+
 def documented_options(path: str) -> set[str]:
     return set(DOC_OPTION_RE.findall(read(path))) - NON_VIEWER_OPTIONS
 
 
 def cmake_options() -> set[str]:
-    return set(CMAKE_OPTION_RE.findall(read("CMakeLists.txt")))
+    source = read("CMakeLists.txt")
+    for path in sorted((ROOT / "cmake").glob("*.cmake")):
+        source += "\n" + path.read_text(encoding="utf-8")
+    return set(CMAKE_OPTION_RE.findall(source))
 
 
 def documented_cmake_options() -> set[str]:
@@ -190,7 +198,10 @@ def documented_cmake_options() -> set[str]:
 
 
 def fuzz_targets() -> dict[str, str]:
-    return {match.group(1): match.group(2) for match in FUZZER_RE.finditer(read("CMakeLists.txt"))}
+    source = read("CMakeLists.txt")
+    for path in sorted((ROOT / "cmake").glob("*.cmake")):
+        source += "\n" + path.read_text(encoding="utf-8")
+    return {match.group(1): match.group(2) for match in FUZZER_RE.finditer(source)}
 
 
 def validate_protocol_rows(errors: list[str]) -> None:
@@ -227,6 +238,16 @@ def validate_viewer_options(errors: list[str]) -> None:
         errors.append(f"viewer option missing from docs/man/librdp-x11-viewer.1: {option}")
     for option in sorted((viewer_doc | manpage) - source):
         errors.append(f"documented viewer option not present in source: {option}")
+
+
+def validate_admin_options(errors: list[str]) -> None:
+    source = admin_source_options()
+    manpage = documented_options("docs/man/librdp-x11-admin.1")
+
+    for option in sorted(source - manpage):
+        errors.append(f"admin option missing from docs/man/librdp-x11-admin.1: {option}")
+    for option in sorted(manpage - source):
+        errors.append(f"documented admin option not present in source: {option}")
 
 
 def validate_cmake_options(errors: list[str]) -> None:
@@ -472,6 +493,7 @@ def main() -> int:
 
     validate_protocol_rows(errors)
     validate_viewer_options(errors)
+    validate_admin_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)
     validate_manpages(errors)

@@ -43,6 +43,9 @@ Video capture media and sample response APIs.
 .TP
 .B <librdp/workspace.h>
 Workspace feed discovery and published resource inspection APIs.
+.TP
+.B <librdp/admin.h>
+WinRM administration endpoint configuration and remote session inventory APIs.
 .SH OWNERSHIP
 Settings own copied configuration values. Sessions own protocol state and active surfaces. Event payloads are borrowed. Applications must copy event data that must outlive the callback.
 .SH ERRORS
@@ -71,4 +74,5 @@ presents surface invalidations, sends input or feature responses, disconnects, a
 .BR librdp (7),
 .BR librdp-tracing (7),
 .BR librdp-workspace (7),
+.BR librdp-x11-admin (1),
 .BR librdp-x11-viewer (1)

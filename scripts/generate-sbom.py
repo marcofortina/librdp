@@ -44,6 +44,7 @@ BUILD_OPTIONS = (
     "LIBRDP_BUILD_EXAMPLES",
     "LIBRDP_BUILD_FUZZ",
     "LIBRDP_BUILD_TESTS",
+    "LIBRDP_BUILD_X11_ADMIN",
     "LIBRDP_BUILD_X11_VIEWER",
     "LIBRDP_ENABLE_SANITIZERS",
     "LIBRDP_ENABLE_WERROR",
@@ -51,6 +52,7 @@ BUILD_OPTIONS = (
 )
 ARTIFACT_PATTERNS = (
     "liblibrdp*",
+    "librdp-x11-admin",
     "librdp-x11-viewer",
     "librdp-example-*",
     "test_*",

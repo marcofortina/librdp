@@ -101,6 +101,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
 )
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-admin.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
 install(FILES

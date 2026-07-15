@@ -38,6 +38,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_BUILD_X11_ADMIN=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
               -DLIBRDP_WITH_PIPEWIRE=OFF \
               -DLIBRDP_WITH_JPEG=OFF \
@@ -67,6 +68,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_BUILD_X11_ADMIN=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
               -DLIBRDP_WITH_FFMPEG_AVC=OFF \
               -DLIBRDP_WITH_OPENH264_AVC=OFF \

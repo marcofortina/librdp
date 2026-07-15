@@ -5,7 +5,7 @@
 librdp \- C client library for RDP viewers and integration tools
 .SH DESCRIPTION
 .B librdp
-is a C client library for building RDP viewers and integration tools on Unix-like systems. The library exposes opaque settings, session, event, surface, input, clipboard, audio, video, and channel APIs.
+is a C client library for building RDP viewers and integration tools on Unix-like systems. The library exposes opaque settings, session, event, surface, input, clipboard, audio, video, channel, workspace, and administration APIs.
 .P
 The core library is platform-neutral. Host windowing, media, device, authenticator, and clipboard integration belong to applications or viewer backends.
 .SH OBJECTS
@@ -24,6 +24,9 @@ Callback-delivered event object. Payloads are borrowed and valid only until the 
 .TP
 .B librdp_workspace
 Workspace feed object owning copied feed configuration and parsed published resources.
+.TP
+.B librdp_admin
+Administration inventory object owning copied WinRM endpoint configuration and parsed remote session entries.
 .SH LIFECYCLE
 A typical application allocates settings, configures them, creates a session, registers an event callback, connects, repeatedly calls
 .BR librdp_session_run_once (),
@@ -55,4 +58,5 @@ Entry point for generated per-symbol API documentation.
 .BR librdp-api (7),
 .BR librdp-tracing (7),
 .BR librdp-workspace (7),
+.BR librdp-x11-admin (1),
 .BR librdp-x11-viewer (1)
