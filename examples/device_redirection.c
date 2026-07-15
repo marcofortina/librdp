@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: device redirection settings example.
+ * Invariants: policies are initialized before use and local device exposure is
+ * opt-in through explicit settings.
+ * Ownership: settings own copied drive and policy values after setters return.
+ * Threading: single-threaded configuration only.
+ * Trust boundary: host paths and USB selectors remain local application input.
+ */
 
 #include <stdio.h>
 

@@ -106,6 +106,11 @@ static int cocoa_admin_init(cocoa_admin_options* options)
            librdp_admin_action_init(&options->action) == LIBRDP_STATUS_OK;
 }
 
+/*
+ * Parse and validate only local administration CLI policy at the application
+ * boundary. Destructive actions require an explicit confirmation flag here
+ * before any network request can be built.
+ */
 static int cocoa_admin_parse_args(int argc, char** argv, cocoa_admin_options* options)
 {
     int i = 0;

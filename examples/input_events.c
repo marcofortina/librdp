@@ -2,6 +2,15 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: keyboard and mouse input API example.
+ * Invariants: input events are initialized before submission and sent only
+ * through the public session API.
+ * Ownership: session owns queued protocol state; stack event structs are
+ * borrowed only during each call.
+ * Threading: single-threaded API exercise.
+ * Trust boundary: no platform event source is trusted or parsed here.
+ */
 
 #include <stdio.h>
 

@@ -2,6 +2,15 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: media feature settings example.
+ * Invariants: each feature is explicitly enabled before backend readiness is
+ * queried, and no media payload is captured or played.
+ * Ownership: settings own copied backend selector strings after setters return.
+ * Threading: single-threaded configuration only.
+ * Trust boundary: backend availability is reported as capability state, not as
+ * proof that a remote server negotiated the feature.
+ */
 
 #include <stdio.h>
 

@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: custom poll loop example.
+ * Invariants: pollfds and timeout are obtained from the session immediately
+ * before dispatch and are not retained across iterations.
+ * Ownership: session owns descriptors; the caller owns only the stack copy.
+ * Threading: single-threaded event loop.
+ * Trust boundary: readiness notifications are treated as hints before dispatch.
+ */
 
 #include <poll.h>
 #include <stdio.h>

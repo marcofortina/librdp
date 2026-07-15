@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: clipboard data API example.
+ * Invariants: sample payloads are bounded constants and session ownership is
+ * released on every exit path.
+ * Ownership: settings and session objects are caller-owned until freed.
+ * Threading: single-threaded setup only.
+ * Trust boundary: no remote clipboard data is consumed by this example.
+ */
 
 #include <stdint.h>
 #include <stdio.h>

@@ -101,6 +101,11 @@ static int cocoa_workspace_init(cocoa_workspace_options* options)
     return 1;
 }
 
+/*
+ * Parse workspace feed options without contacting the feed. The selected
+ * resource and launch command are validated later after the public workspace
+ * API exposes bounded resource fields.
+ */
 static int cocoa_workspace_parse_args(int argc, char** argv, cocoa_workspace_options* options)
 {
     int i = 0;

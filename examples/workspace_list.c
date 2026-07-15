@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: workspace feed parsing example.
+ * Invariants: local feed files are read into bounded memory and resources are
+ * accessed only through public borrowed views.
+ * Ownership: the workspace owns parsed resource strings until freed.
+ * Threading: single-threaded file load and parse.
+ * Trust boundary: workspace XML and embedded RDP file text are untrusted input.
+ */
 
 #include <librdp/librdp.h>
 

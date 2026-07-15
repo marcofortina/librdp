@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: dynamic channel API example.
+ * Invariants: a static channel is registered before session creation and the
+ * dynamic handle is closed before the session is released.
+ * Ownership: settings own copied channel names; session owns channel handles.
+ * Threading: single-threaded API exercise.
+ * Trust boundary: no remote channel payload is parsed in this example.
+ */
 
 #include <stdio.h>
 

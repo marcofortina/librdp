@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: surface blit example.
+ * Invariants: source stride and rectangle bounds are validated by the public
+ * surface API before the framebuffer is inspected.
+ * Ownership: the surface owns framebuffer memory until freed.
+ * Threading: single-threaded pixel update.
+ * Trust boundary: sample pixels are local constants, not remote decoder input.
+ */
 
 #include <stdint.h>
 #include <stdio.h>

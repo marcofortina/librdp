@@ -2,6 +2,14 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: minimal session construction example.
+ * Invariants: settings are completed before session creation and the borrowed
+ * surface pointer is not used after the session is freed.
+ * Ownership: settings are caller-owned until session creation copies them.
+ * Threading: single-threaded setup only.
+ * Trust boundary: no network connection is attempted by this example.
+ */
 
 #include <stdio.h>
 

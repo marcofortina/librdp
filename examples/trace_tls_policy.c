@@ -2,6 +2,15 @@
  * Copyright (C) 2026 Marco Fortina
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+/*
+ * Module: trace sink and TLS policy example.
+ * Invariants: certificate and trace callbacks print metadata only and do not
+ * retain borrowed callback pointers.
+ * Ownership: settings own copied policy structures after setters return.
+ * Threading: callbacks run from the session dispatch context.
+ * Trust boundary: certificate fields and trace records are remote or runtime
+ * inputs and are treated as borrowed, read-only data.
+ */
 
 #include <stdio.h>
 

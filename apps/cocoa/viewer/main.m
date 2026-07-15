@@ -183,6 +183,11 @@ static const char* cocoa_viewer_rail_value(const char* text)
     return text + sizeof(prefix) - 1u;
 }
 
+/*
+ * Parse viewer launch policy into borrowed command-line views. Credentials and
+ * gateway settings are copied later by public settings setters, so this phase
+ * only validates syntax and option combinations.
+ */
 static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* options)
 {
     int i = 0;
