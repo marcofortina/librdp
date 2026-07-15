@@ -15,6 +15,7 @@
 
 #include "common/buffer.h"
 #include "common/trace.h"
+#include "gateway/gateway.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"
 #include "transport/tcp.h"
@@ -29,6 +30,9 @@
 
 #include <poll.h>
 #include <signal.h>
+#ifdef RDP_HAVE_CURL
+#include <netinet/in.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +49,147 @@
             return 1;                                                                                                  \
         }                                                                                                              \
     } while (0)
+
+#ifdef RDP_HAVE_CURL
+static int test_gateway_proxy_listen(uint16_t* port)
+{
+    struct sockaddr_in addr;
+    socklen_t addr_len = (socklen_t)sizeof(addr);
+    int fd = -1;
+    int one = 1;
+
+    if (!port)
+        return -1;
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+        getsockname(fd, (struct sockaddr*)&addr, &addr_len) != 0 ||
+        listen(fd, 1) != 0)
+    {
+        close(fd);
+        return -1;
+    }
+    *port = ntohs(addr.sin_port);
+    return fd;
+}
+
+/*
+ * Fixture: minimal local HTTP CONNECT proxy used to exercise the curl-backed
+ * gateway transport without a remote network dependency or real credentials.
+ */
+static int test_gateway_proxy_child(int listen_fd)
+{
+    char request[1024];
+    size_t used = 0;
+    int client = -1;
+    const char response[] = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    char tunnel[4];
+
+    client = accept(listen_fd, NULL, NULL);
+    if (client < 0)
+        return 1;
+    while (used + 1u < sizeof(request))
+    {
+        ssize_t got = read(client, request + used, sizeof(request) - used - 1u);
+
+        if (got <= 0)
+        {
+            close(client);
+            return 1;
+        }
+        used += (size_t)got;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n"))
+            break;
+    }
+    if (!strstr(request, "CONNECT 127.0.0.1:3390 HTTP/"))
+    {
+        close(client);
+        return 1;
+    }
+    if (write(client, response, sizeof(response) - 1u) != (ssize_t)(sizeof(response) - 1u))
+    {
+        close(client);
+        return 1;
+    }
+    if (read(client, tunnel, sizeof(tunnel)) != (ssize_t)sizeof(tunnel) ||
+        memcmp(tunnel, "ping", sizeof(tunnel)) != 0)
+    {
+        close(client);
+        return 1;
+    }
+    if (write(client, "pong", 4u) != 4)
+    {
+        close(client);
+        return 1;
+    }
+    close(client);
+    return 0;
+}
+#endif
+
+static int test_gateway_connect_transport(void)
+{
+    rdp_transport transport;
+    rdp_gateway_connect_config config;
+#ifdef RDP_HAVE_CURL
+    char gateway_url[64];
+    char data[4];
+    size_t got = 0;
+    uint16_t port = 0;
+    int listen_fd = -1;
+    pid_t child = -1;
+    int child_status = 0;
+#endif
+
+    memset(&config, 0, sizeof(config));
+    config.gateway_url = "http://127.0.0.1:1";
+    config.target_host = "127.0.0.1";
+    config.target_port = 3390;
+    config.timeout_ms = 1000u;
+    rdp_transport_init(&transport);
+#ifndef RDP_HAVE_CURL
+    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_UNSUPPORTED);
+    return 0;
+#else
+    listen_fd = test_gateway_proxy_listen(&port);
+    TCHECK(listen_fd >= 0);
+    child = fork();
+    TCHECK(child >= 0);
+    if (child == 0)
+    {
+        int rc = test_gateway_proxy_child(listen_fd);
+
+        close(listen_fd);
+        _exit(rc == 0 ? 0 : 1);
+    }
+    close(listen_fd);
+    listen_fd = -1;
+    TCHECK(snprintf(gateway_url, sizeof(gateway_url), "http://127.0.0.1:%u", (unsigned)port) > 0);
+    config.gateway_url = gateway_url;
+    config.username = "gateway-user";
+    config.password = "gateway-secret";
+    config.domain = "DOMAIN";
+    TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_write_all(&transport, "ping", 4u) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_peek(&transport, data, sizeof(data), &got) == LIBRDP_STATUS_OK);
+    TCHECK(got == sizeof(data));
+    TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
+    TCHECK(rdp_transport_read_exact(&transport, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
+    rdp_transport_close(&transport);
+    TCHECK(waitpid(child, &child_status, 0) == child);
+    TCHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+#endif
+}
 
 static int capture_stderr_fn(void (*fn)(void*), void* user_data, char* out, size_t out_len)
 {
@@ -1014,6 +1159,7 @@ int test_transport(void)
 
     TCHECK(test_udp_transport_protocols() == 0);
     TCHECK(test_multitransport_protocol() == 0);
+    TCHECK(test_gateway_connect_transport() == 0);
 
     TCHECK(rdp_socket_close(-1) == 0);
     TCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);

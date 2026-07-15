@@ -71,6 +71,7 @@ set(LIBRDP_SOURCES
     src/graphics/rfx_stream.c
     src/graphics/surface.c
     src/graphics/surface_commands.c
+    src/gateway/gateway.c
     src/input/input.c
     src/licensing/licensing.c
     src/nla/credssp.c
@@ -290,6 +291,11 @@ if(LIBRDP_ARCHIVE_FOUND)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_ARCHIVE)
     librdp_link_library_targets(PkgConfig::LIBRDP_ARCHIVE)
 endif()
+if(LIBRDP_CURL_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CURL=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CURL)
+    librdp_link_library_targets(PkgConfig::LIBRDP_CURL)
+endif()
 
 function(librdp_link_internal_runtime target)
     librdp_apply_system_definitions(${target})
@@ -328,5 +334,8 @@ function(librdp_link_internal_runtime target)
     endif()
     if(LIBRDP_ARCHIVE_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_ARCHIVE)
+    endif()
+    if(LIBRDP_CURL_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CURL)
     endif()
 endfunction()

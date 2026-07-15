@@ -49,10 +49,14 @@ typedef struct rdp_transport
     SSL_CTX* tls_context;
     SSL* tls;
     int tls_active;
+    void* curl_easy;
+    int curl_active;
+    int curl_socket;
 } rdp_transport;
 
 void rdp_transport_init(rdp_transport* transport);
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd);
+void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, int fd);
 librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms);
 librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host);
 librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, const rdp_transport_tls_config* config);

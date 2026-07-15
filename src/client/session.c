@@ -64,6 +64,7 @@
 #include "graphics/rfx_codec.h"
 #include "graphics/rfx_stream.h"
 #include "graphics/surface_commands.h"
+#include "gateway/gateway.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "platform/socket.h"
@@ -3156,18 +3157,45 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
 
-    status = rdp_transport_connect(&session->transport,
-                                   librdp_settings_target(session->settings),
-                                   librdp_settings_port(session->settings),
-                                   5000);
+    if (rdp_settings_gateway_mode_internal(session->settings) == LIBRDP_GATEWAY_HTTP_CONNECT)
+    {
+        rdp_gateway_connect_config gateway_config;
+        const char* gateway_username = rdp_settings_gateway_username_internal(session->settings);
+        const char* gateway_password = rdp_settings_gateway_password_internal(session->settings);
+        const char* gateway_domain = rdp_settings_gateway_domain_internal(session->settings);
+
+        memset(&gateway_config, 0, sizeof(gateway_config));
+        if (!gateway_username && rdp_settings_gateway_use_session_credentials_internal(session->settings))
+        {
+            gateway_username = credential_username;
+            gateway_password = credential_password;
+            gateway_domain = credential_domain;
+        }
+        gateway_config.gateway_url = rdp_settings_gateway_url_internal(session->settings);
+        gateway_config.target_host = librdp_settings_target(session->settings);
+        gateway_config.target_port = librdp_settings_port(session->settings);
+        gateway_config.username = gateway_username;
+        gateway_config.password = gateway_password;
+        gateway_config.domain = gateway_domain;
+        gateway_config.timeout_ms = rdp_settings_gateway_timeout_ms_internal(session->settings);
+        status = rdp_gateway_connect_transport(&session->transport, &gateway_config);
+    }
+    else
+        status = rdp_transport_connect(&session->transport,
+                                       librdp_settings_target(session->settings),
+                                       librdp_settings_port(session->settings),
+                                       5000);
     if (status != LIBRDP_STATUS_OK)
     {
+        const int via_gateway =
+            rdp_settings_gateway_mode_internal(session->settings) == LIBRDP_GATEWAY_HTTP_CONNECT;
+
         rdp_session_set_last_error(session,
                                    status,
                                    errno,
                                    LIBRDP_ERROR_COMPONENT_TRANSPORT,
-                                   "transport.tcp.connect",
-                                   "tcp connect failed");
+                                   via_gateway ? "transport.gateway.connect" : "transport.tcp.connect",
+                                   via_gateway ? "gateway connect failed" : "tcp connect failed");
         goto fail;
     }
 

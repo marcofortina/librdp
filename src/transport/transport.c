@@ -29,6 +29,10 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#ifdef RDP_HAVE_CURL
+#include <curl/curl.h>
+#endif
+
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
@@ -45,6 +49,9 @@ void rdp_transport_init(rdp_transport* transport)
     transport->tls_context = NULL;
     transport->tls = NULL;
     transport->tls_active = 0;
+    transport->curl_easy = NULL;
+    transport->curl_active = 0;
+    transport->curl_socket = -1;
 }
 
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
@@ -54,6 +61,18 @@ void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
     rdp_transport_close(transport);
     transport->fd = fd;
     transport->owns_fd = owns_fd;
+}
+
+void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, int fd)
+{
+    if (!transport)
+        return;
+    rdp_transport_close(transport);
+    transport->fd = fd;
+    transport->owns_fd = 0;
+    transport->curl_easy = curl_easy;
+    transport->curl_active = curl_easy ? 1 : 0;
+    transport->curl_socket = fd;
 }
 
 librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms)
@@ -500,12 +519,50 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Peek at pending transport bytes without consuming them. The curl gateway path
+ * uses the active socket directly because curl's receive API has no
+ * non-destructive peek; direct TCP and TLS keep their native peek semantics.
+ * All paths return AGAIN for transient readiness races and never modify caller
+ * buffers after protocol-level EOF.
+ */
 librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t length, size_t* read_len)
 {
     ssize_t rc = 0;
 
     if (!transport || transport->fd < 0 || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+#ifdef RDP_HAVE_CURL
+    if (transport->curl_active)
+    {
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.peek.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        rc = recv(transport->fd, data, length, MSG_PEEK);
+        if (rc == 0)
+        {
+            rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.gateway.eof", "length=0");
+            return LIBRDP_STATUS_CLOSED;
+        }
+        if (rc < 0)
+        {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                return LIBRDP_STATUS_AGAIN;
+            return LIBRDP_STATUS_IO_ERROR;
+        }
+        if (read_len)
+            *read_len = (size_t)rc;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.peek.done",
+                              "read=%llu",
+                              (unsigned long long)rc);
+        return LIBRDP_STATUS_OK;
+    }
+#endif
 
     if (transport->tls_active)
     {
@@ -558,12 +615,50 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Read bytes from the active transport backend. The function normalizes TCP,
+ * TLS, and curl tunnel retry behavior into librdp_status values while preserving
+ * ownership of the underlying handle inside rdp_transport. EOF is reported as a
+ * closed transport before any caller state is committed.
+ */
 librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t length, size_t* read_len)
 {
     ssize_t rc = 0;
 
     if (!transport || transport->fd < 0 || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+#ifdef RDP_HAVE_CURL
+    if (transport->curl_active)
+    {
+        CURLcode code = CURLE_OK;
+        size_t curl_read = 0;
+
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.read.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        code = curl_easy_recv((CURL*)transport->curl_easy, data, length, &curl_read);
+        if (code == CURLE_AGAIN)
+            return LIBRDP_STATUS_AGAIN;
+        if (code != CURLE_OK)
+            return LIBRDP_STATUS_IO_ERROR;
+        if (curl_read == 0 && length > 0)
+        {
+            rdp_trace_event(RDP_TRACE_TRANSPORT, "transport.gateway.eof", "length=0");
+            return LIBRDP_STATUS_CLOSED;
+        }
+        if (read_len)
+            *read_len = curl_read;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.read.done",
+                              "read=%llu",
+                              (unsigned long long)curl_read);
+        return LIBRDP_STATUS_OK;
+    }
+#endif
 
     if (transport->tls_active)
     {
@@ -616,6 +711,12 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Write bytes to the active transport backend. TCP uses MSG_NOSIGNAL when
+ * available, TLS delegates record handling to OpenSSL, and gateway traffic uses
+ * curl's connected socket wrapper. Partial writes are reported through
+ * written_len so higher layers can keep wire ordering explicit.
+ */
 librdp_status rdp_transport_write(rdp_transport* transport, const void* data, size_t length, size_t* written_len)
 {
     ssize_t rc = 0;
@@ -623,6 +724,33 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
 
     if (!transport || transport->fd < 0 || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+#ifdef RDP_HAVE_CURL
+    if (transport->curl_active)
+    {
+        CURLcode code = CURLE_OK;
+        size_t curl_written = 0;
+
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.write.start",
+                              "length=%llu",
+                              (unsigned long long)length);
+        code = curl_easy_send((CURL*)transport->curl_easy, data, length, &curl_written);
+        if (code == CURLE_AGAIN)
+            return LIBRDP_STATUS_AGAIN;
+        if (code != CURLE_OK)
+            return LIBRDP_STATUS_IO_ERROR;
+        if (written_len)
+            *written_len = curl_written;
+        rdp_trace_event_level(RDP_TRACE_TRANSPORT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "transport.gateway.write.done",
+                              "written=%llu",
+                              (unsigned long long)curl_written);
+        return LIBRDP_STATUS_OK;
+    }
+#endif
 
 #ifdef MSG_NOSIGNAL
     flags = MSG_NOSIGNAL;
@@ -752,6 +880,13 @@ void rdp_transport_close(rdp_transport* transport)
     transport->tls = NULL;
     transport->tls_context = NULL;
     transport->tls_active = 0;
+#ifdef RDP_HAVE_CURL
+    if (transport->curl_easy)
+        curl_easy_cleanup((CURL*)transport->curl_easy);
+#endif
+    transport->curl_easy = NULL;
+    transport->curl_active = 0;
+    transport->curl_socket = -1;
     if (transport->fd >= 0 && transport->owns_fd)
         rdp_socket_close(transport->fd);
     transport->fd = -1;
