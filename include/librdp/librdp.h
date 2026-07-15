@@ -28,6 +28,7 @@
 #include <librdp/error.h>
 #include <librdp/event.h>
 #include <librdp/input.h>
+#include <librdp/server.h>
 #include <librdp/session.h>
 #include <librdp/settings.h>
 #include <librdp/surface.h>

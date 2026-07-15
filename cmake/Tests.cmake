@@ -84,6 +84,15 @@ if(LIBRDP_BUILD_TESTS)
     target_compile_definitions(test_transport PRIVATE LIBRDP_TEST_TRANSPORT_MAIN)
     librdp_configure_test_executable(test_transport)
 
+    add_executable(test_server tests/test_server.c)
+    target_include_directories(test_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(test_server PRIVATE librdp)
+    librdp_apply_warning_options(test_server)
+    librdp_apply_sanitizer_compile_options(test_server)
+    librdp_apply_sanitizer_link_options(test_server)
+
     add_executable(test_interop_smoke tests/interop_smoke.c)
     target_include_directories(test_interop_smoke PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -138,17 +147,18 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_interop_smoke test_optional_backend_probe test_viewer_backends test_viewer_cli test_abi_probe
+        DEPENDS test_common test_core test_protocol test_transport test_server test_interop_smoke test_optional_backend_probe test_viewer_backends test_viewer_cli test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME transport COMMAND test_transport)
+    add_test(NAME server COMMAND test_server)
     add_test(NAME interop_smoke COMMAND test_interop_smoke)
     add_test(NAME viewer_backends COMMAND test_viewer_backends)
     add_test(NAME viewer_cli COMMAND test_viewer_cli)
-    set_tests_properties(common transport PROPERTIES TIMEOUT 30)
+    set_tests_properties(common transport server PROPERTIES TIMEOUT 30)
     set_tests_properties(core PROPERTIES TIMEOUT 60)
     set_tests_properties(protocol PROPERTIES TIMEOUT 90)
     set_tests_properties(viewer_backends viewer_cli PROPERTIES TIMEOUT 30)

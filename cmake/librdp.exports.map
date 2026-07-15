@@ -32,6 +32,9 @@ LIBRDP_0.1 {
         librdp_client_disconnect;
         librdp_client_state;
         librdp_client_lifecycle;
+        librdp_server_config_init;
+        librdp_server_new;
+        librdp_server_free;
         librdp_limits_init;
         librdp_metrics_init;
         librdp_echo_stats_init;
