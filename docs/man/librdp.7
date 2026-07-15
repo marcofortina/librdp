@@ -21,6 +21,9 @@ Framebuffer surface object exposing BGRA pixel data to viewers.
 .TP
 .B librdp_event
 Callback-delivered event object. Payloads are borrowed and valid only until the callback returns.
+.TP
+.B librdp_workspace
+Workspace feed object owning copied feed configuration and parsed published resources.
 .SH LIFECYCLE
 A typical application allocates settings, configures them, creates a session, registers an event callback, connects, repeatedly calls
 .BR librdp_session_run_once (),
@@ -51,4 +54,5 @@ Entry point for generated per-symbol API documentation.
 .SH SEE ALSO
 .BR librdp-api (7),
 .BR librdp-tracing (7),
+.BR librdp-workspace (7),
 .BR librdp-x11-viewer (1)

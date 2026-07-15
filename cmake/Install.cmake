@@ -107,5 +107,6 @@ install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp.7
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-api.7
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-tracing.7
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-workspace.7
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man7
 )

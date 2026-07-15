@@ -20,6 +20,7 @@ The repository also ships standalone examples that are compiled by CMake when `L
 | `librdp-example-device-redirection` | `examples/device_redirection.c` | Configures drive, printer, serial, parallel, USB, and PNP device settings and policies. |
 | `librdp-example-media-devices` | `examples/media_devices.c` | Configures audio, video, camera, smartcard, and WebAuthn feature backends. |
 | `librdp-example-trace-tls-policy` | `examples/trace_tls_policy.c` | Installs a trace callback and TLS certificate policy callback. |
+| `librdp-example-workspace-list` | `examples/workspace_list.c` | Loads a workspace feed from HTTP(S) or XML and lists published resources. |
 
 ## Minimal session
 

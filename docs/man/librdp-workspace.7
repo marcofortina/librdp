@@ -1,0 +1,56 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-WORKSPACE 7 "2026-07-15" "librdp 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+librdp-workspace \- workspace feed discovery with librdp
+.SH DESCRIPTION
+The workspace API loads Remote Desktop workspace feeds and exposes published desktop or RemoteApp resources through borrowed resource views.
+.P
+The API is independent from a live RDP session. Applications can fetch a feed over HTTP(S) with
+.BR librdp_workspace_fetch ()
+or parse XML obtained by another component with
+.BR librdp_workspace_load_xml ().
+.SH OBJECTS
+.TP
+.B librdp_workspace_config
+Versioned configuration. The feed URL, username, password, and domain are copied during workspace creation. Password storage is cleared when the workspace is freed.
+.TP
+.B librdp_workspace
+Opaque handle that owns the copied configuration and parsed resources.
+.TP
+.B librdp_workspace_resource
+Borrowed view of one resource. String pointers remain valid until the next workspace fetch, XML load, clear, or free operation.
+.SH FUNCTIONS
+.TP
+.B librdp_workspace_config_init()
+Initializes a configuration with default timeout and NULL optional strings.
+.TP
+.B librdp_workspace_new()
+Creates a workspace handle from a configuration.
+.TP
+.B librdp_workspace_fetch()
+Fetches the configured HTTP(S) feed and parses resources. It returns
+.B LIBRDP_STATUS_UNSUPPORTED
+when the HTTP or XML backend is not compiled.
+.TP
+.B librdp_workspace_load_xml()
+Parses caller-provided XML bytes. It returns
+.B LIBRDP_STATUS_UNSUPPORTED
+when XML parsing support is not compiled.
+.TP
+.B librdp_workspace_resource_count()
+Returns the number of parsed resources.
+.TP
+.B librdp_workspace_resource_at()
+Copies a borrowed view of one parsed resource into a caller-owned structure.
+.SH SECURITY
+Workspace feed data is untrusted input. Applications should validate launch metadata and apply their own policy before starting an RDP session from feed contents.
+.P
+Feed credentials must not be logged. Trace events for workspace fetches report redacted metadata only.
+.SH EXAMPLE
+The
+.B librdp-example-workspace-list
+example loads a feed URL or XML file and prints the normalized resource list.
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-api (7)

@@ -15,6 +15,7 @@ For end-to-end call ordering, see [Lifecycle](lifecycle.md). For standalone sour
 - `librdp_session` owns the client protocol state, transport state, negotiated channels, and the active surface.
 - `librdp_surface` owns the framebuffer memory exposed to viewers.
 - `librdp_event` is a callback-delivered view of session changes, graphics, pointer updates, clipboard data, channel activity, audio, and video events.
+- `librdp_workspace` owns a workspace feed configuration and parsed published resource list.
 
 Sessions clone settings at construction time. After `librdp_session_new()`, later mutations to the source settings object do not affect the session.
 
@@ -211,3 +212,29 @@ else if (status != LIBRDP_STATUS_OK)
 ```
 
 Avoid logging credentials or clipboard contents when reporting errors. Use trace categories for protocol and transport diagnostics.
+
+## Workspace feeds
+
+Workspace APIs are independent from an active RDP session. Applications can fetch an HTTP(S) feed with `librdp_workspace_fetch()` or load XML already obtained by another component with `librdp_workspace_load_xml()`.
+
+```c
+librdp_workspace_config config;
+librdp_workspace_config_init(&config);
+config.feed_url = "https://workspace.example.test/feed";
+
+librdp_workspace* workspace = librdp_workspace_new(&config);
+if (workspace && librdp_workspace_fetch(workspace) == LIBRDP_STATUS_OK)
+{
+    size_t count = librdp_workspace_resource_count(workspace);
+    for (size_t i = 0; i < count; i++)
+    {
+        librdp_workspace_resource resource;
+        librdp_workspace_resource_init(&resource);
+        if (librdp_workspace_resource_at(workspace, i, &resource) == LIBRDP_STATUS_OK)
+            show_resource(resource.title, resource.alias);
+    }
+}
+librdp_workspace_free(workspace);
+```
+
+Resource strings are borrowed from the workspace and become invalid after `fetch`, `load_xml`, `clear`, or `free`.
