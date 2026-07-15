@@ -52,6 +52,8 @@ void rdp_transport_init(rdp_transport* transport)
     transport->curl_easy = NULL;
     transport->curl_active = 0;
     transport->curl_socket = -1;
+    transport->backend_context = NULL;
+    transport->backend_ops = NULL;
 }
 
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd)
@@ -73,6 +75,17 @@ void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, i
     transport->curl_easy = curl_easy;
     transport->curl_active = curl_easy ? 1 : 0;
     transport->curl_socket = fd;
+}
+
+void rdp_transport_attach_backend(rdp_transport* transport,
+                                  void* context,
+                                  const rdp_transport_backend_ops* ops)
+{
+    if (!transport)
+        return;
+    rdp_transport_close(transport);
+    transport->backend_context = context;
+    transport->backend_ops = ops;
 }
 
 librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms)
@@ -483,7 +496,11 @@ librdp_status rdp_transport_wait(rdp_transport* transport, int timeout_ms, short
     struct pollfd pfd;
     int rc = 0;
 
-    if (!transport || transport->fd < 0 || timeout_ms < 0)
+    if (!transport || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (transport->backend_ops && transport->backend_ops->wait)
+        return transport->backend_ops->wait(transport->backend_context, timeout_ms, events, revents);
+    if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     pfd.fd = transport->fd;
@@ -530,7 +547,11 @@ librdp_status rdp_transport_peek(rdp_transport* transport, void* data, size_t le
 {
     ssize_t rc = 0;
 
-    if (!transport || transport->fd < 0 || (!data && length > 0))
+    if (!transport || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (transport->backend_ops && transport->backend_ops->peek)
+        return transport->backend_ops->peek(transport->backend_context, data, length, read_len);
+    if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
@@ -625,7 +646,11 @@ librdp_status rdp_transport_read(rdp_transport* transport, void* data, size_t le
 {
     ssize_t rc = 0;
 
-    if (!transport || transport->fd < 0 || (!data && length > 0))
+    if (!transport || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (transport->backend_ops && transport->backend_ops->read)
+        return transport->backend_ops->read(transport->backend_context, data, length, read_len);
+    if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
@@ -722,7 +747,11 @@ librdp_status rdp_transport_write(rdp_transport* transport, const void* data, si
     ssize_t rc = 0;
     int flags = 0;
 
-    if (!transport || transport->fd < 0 || (!data && length > 0))
+    if (!transport || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (transport->backend_ops && transport->backend_ops->write)
+        return transport->backend_ops->write(transport->backend_context, data, length, written_len);
+    if (transport->fd < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
 #ifdef RDP_HAVE_CURL
@@ -869,6 +898,10 @@ void rdp_transport_close(rdp_transport* transport)
 {
     if (!transport)
         return;
+    if (transport->backend_ops && transport->backend_ops->close)
+        transport->backend_ops->close(transport->backend_context);
+    transport->backend_context = NULL;
+    transport->backend_ops = NULL;
     if (transport->tls)
     {
         SSL_set_quiet_shutdown(transport->tls, 1);

@@ -42,6 +42,15 @@ typedef struct rdp_transport_tls_config
     void* certificate_callback_user_data;
 } rdp_transport_tls_config;
 
+typedef struct rdp_transport_backend_ops
+{
+    librdp_status (*wait)(void* context, int timeout_ms, short events, short* revents);
+    librdp_status (*peek)(void* context, void* data, size_t length, size_t* read_len);
+    librdp_status (*read)(void* context, void* data, size_t length, size_t* read_len);
+    librdp_status (*write)(void* context, const void* data, size_t length, size_t* written_len);
+    void (*close)(void* context);
+} rdp_transport_backend_ops;
+
 typedef struct rdp_transport
 {
     int fd;
@@ -52,11 +61,16 @@ typedef struct rdp_transport
     void* curl_easy;
     int curl_active;
     int curl_socket;
+    void* backend_context;
+    const rdp_transport_backend_ops* backend_ops;
 } rdp_transport;
 
 void rdp_transport_init(rdp_transport* transport);
 void rdp_transport_attach_fd(rdp_transport* transport, int fd, int owns_fd);
 void rdp_transport_attach_curl_easy(rdp_transport* transport, void* curl_easy, int fd);
+void rdp_transport_attach_backend(rdp_transport* transport,
+                                  void* context,
+                                  const rdp_transport_backend_ops* ops);
 librdp_status rdp_transport_connect(rdp_transport* transport, const char* host, uint16_t port, int timeout_ms);
 librdp_status rdp_transport_start_tls(rdp_transport* transport, const char* host);
 librdp_status rdp_transport_start_tls_with_config(rdp_transport* transport, const rdp_transport_tls_config* config);
