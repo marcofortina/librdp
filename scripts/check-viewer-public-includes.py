@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOTS = (
     ROOT / "apps" / "x11-admin",
     ROOT / "apps" / "x11-viewer",
+    ROOT / "apps" / "x11-workspace",
 )
 PRIVATE_PREFIXES = (
     "channels/",

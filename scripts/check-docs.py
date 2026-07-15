@@ -54,6 +54,7 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp-tracing.7",
     "docs/man/librdp-x11-viewer.1",
     "docs/man/librdp-x11-admin.1",
+    "docs/man/librdp-x11-workspace.1",
 )
 FORBIDDEN_DOCS = (
     "docs/roadmap.md",
@@ -181,6 +182,11 @@ def admin_source_options() -> set[str]:
     return set(VIEWER_OPTION_RE.findall(read("apps/x11-admin/main.c")))
 
 
+def workspace_source_options() -> set[str]:
+    forwarded_viewer_options = {"--target", "--rail"}
+    return set(VIEWER_OPTION_RE.findall(read("apps/x11-workspace/main.c"))) - forwarded_viewer_options
+
+
 def documented_options(path: str) -> set[str]:
     return set(DOC_OPTION_RE.findall(read(path))) - NON_VIEWER_OPTIONS
 
@@ -248,6 +254,16 @@ def validate_admin_options(errors: list[str]) -> None:
         errors.append(f"admin option missing from docs/man/librdp-x11-admin.1: {option}")
     for option in sorted(manpage - source):
         errors.append(f"documented admin option not present in source: {option}")
+
+
+def validate_workspace_options(errors: list[str]) -> None:
+    source = workspace_source_options()
+    manpage = documented_options("docs/man/librdp-x11-workspace.1")
+
+    for option in sorted(source - manpage):
+        errors.append(f"workspace option missing from docs/man/librdp-x11-workspace.1: {option}")
+    for option in sorted(manpage - source):
+        errors.append(f"documented workspace option not present in source: {option}")
 
 
 def validate_cmake_options(errors: list[str]) -> None:
@@ -494,6 +510,7 @@ def main() -> int:
     validate_protocol_rows(errors)
     validate_viewer_options(errors)
     validate_admin_options(errors)
+    validate_workspace_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)
     validate_manpages(errors)

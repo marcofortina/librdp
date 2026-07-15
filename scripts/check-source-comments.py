@@ -17,6 +17,7 @@ CHECKED_ROOTS = (
     Path("src"),
     Path("apps/x11-admin"),
     Path("apps/x11-viewer"),
+    Path("apps/x11-workspace"),
 )
 CHECKED_SUFFIXES = {".c"}
 MIN_LARGE_FUNCTION_LINES = 120
