@@ -5,26 +5,29 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # API Reference
 
-This document is a hand-written map of the public C API. The function-level reference is produced from Doxygen comments in `include/librdp/*.h`.
+This page maps the public C API by header, object family, and application role.
 
-The published entry point for generated per-symbol pages is `docs/generated-api.md`.
+For call ordering and integration patterns, use `api.md` and
+`programmers-reference.md`. For function signatures, parameters, ownership,
+return codes, and `@since` tags, use the Doxygen pages described in
+`generated-api.md`.
 
 ## Header map
 
-| Header | Purpose | Generated group |
-| --- | --- | --- |
-| `include/librdp/librdp.h` | Convenience umbrella header for all public API families. | [Umbrella Header](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__umbrella.html) |
-| `include/librdp/client.h` | Compatibility client facade that owns settings and session objects. | [Client API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__client.html) |
-| `include/librdp/error.h` | Stable `librdp_status` error model and status-string helper. | [Error API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__error.html) |
-| `include/librdp/settings.h` | Session configuration, credentials, desktop size, security mode, features, and redirected devices. | [Settings API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__settings.html) |
-| `include/librdp/session.h` | Session lifecycle, event callback registration, connection loop, resize, display layout, refresh, and input send APIs. | [Session API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__session.html) |
-| `include/librdp/event.h` | Event discriminator and callback payload structures. | [Event API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__event.html) |
-| `include/librdp/surface.h` | BGRA framebuffer surface allocation, resize, blit, metadata, and pixel access. | [Surface API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__surface.html) |
-| `include/librdp/input.h` | Keyboard, mouse, touch, and pen public event structures and flags. | [Input API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__input.html) |
-| `include/librdp/clipboard.h` | Clipboard format publication, data requests, file publication, and file-content requests. | [Clipboard API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__clipboard.html) |
-| `include/librdp/channel.h` | Application-owned dynamic virtual channel send and close APIs. | [Dynamic Channel API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__channel.html) |
-| `include/librdp/audio.h` | Audio format structure and audio input response/send APIs. | [Audio API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__audio.html) |
-| `include/librdp/video.h` | Video capture media description and sample/error response APIs. | [Video API](https://marcofortina.github.io/librdp/api/doxygen/html/group__librdp__video.html) |
+| Header | Purpose |
+| --- | --- |
+| `include/librdp/librdp.h` | Convenience umbrella header for all public API families. |
+| `include/librdp/client.h` | Compatibility client facade that owns settings and session objects. |
+| `include/librdp/error.h` | Stable `librdp_status` error model and status-string helper. |
+| `include/librdp/settings.h` | Session configuration, credentials, desktop size, security mode, features, and redirected devices. |
+| `include/librdp/session.h` | Session lifecycle, event callback registration, connection loop, resize, display layout, refresh, and input send APIs. |
+| `include/librdp/event.h` | Event discriminator and callback payload structures. |
+| `include/librdp/surface.h` | BGRA framebuffer surface allocation, resize, blit, metadata, and pixel access. |
+| `include/librdp/input.h` | Keyboard, mouse, touch, and pen public event structures and flags. |
+| `include/librdp/clipboard.h` | Clipboard format publication, data requests, file publication, and file-content requests. |
+| `include/librdp/channel.h` | Application-owned dynamic virtual channel send and close APIs. |
+| `include/librdp/audio.h` | Audio format structure and audio input response/send APIs. |
+| `include/librdp/video.h` | Video capture media description and sample/error response APIs. |
 
 ## Primary objects
 
@@ -129,18 +132,4 @@ Public functions return `librdp_status` where failure is possible. Asynchronous 
 
 Use `librdp_status_string()` for stable diagnostic tokens. Do not use status strings as a substitute for branch logic.
 
-## Doxygen reference
-
-Doxygen reads `include/librdp` and this API reference page. HTML output is written to `build/doxygen/html/index.html`; XML output is written to `build/doxygen/xml`.
-
-The generated reference contains the per-symbol pages for every public API:
-
-- [Open generated API documentation](https://marcofortina.github.io/librdp/api/doxygen/html/index.html)
-
-Build the local HTML reference with:
-
-```sh
-cmake --build build --target docs-api
-```
-
-The Doxygen guardrail fails on undocumented public API or documentation errors.
+Detailed per-symbol pages are generated by Doxygen from the public headers.

@@ -86,7 +86,4 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 scripts/check-docs.py
 scripts/check-license-headers.py .
-git grep -n -i "forbidden-string-placeholder" -- . ':!build' ':!build-fuzz' ':!build-fuzz-clang'
 ```
-
-Use the repository-specific forbidden-string check required by the project policy before every commit.

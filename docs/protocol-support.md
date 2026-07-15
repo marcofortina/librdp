@@ -5,9 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Protocol Support
 
-This document maps RDP protocol areas to implementation modules, public surfaces, host backends, and parser or codec test entry points.
-
-Rows describe behavior ownership, not release status. A protocol appears here when it has source modules, packet-facing tests or fuzz targets, and a documented public API or backend integration point.
+This document maps RDP protocol areas to implementation modules, public surfaces, host backends, and packet-facing tests or fuzz targets.
 
 ## Core, graphics, and transport
 
@@ -79,12 +77,3 @@ Rows describe behavior ownership, not release status. A protocol appears here wh
 | MS-RDPEDC | Desktop composition packet parsing and serialization | `src/channels/desktop_composition.c` | `LIBRDP_FEATURE_DESKTOP_COMPOSITION`, `fuzz/desktop_composition_fuzzer.c` |
 | MS-RDPEPS | Protocol selection and session selection packet handling | `src/protocol/session_selection.c` | `fuzz/session_selection_fuzzer.c` |
 | MS-RDPEWA | WebAuthn redirection behavior | `src/channels/webauthn_channel.c` | `librdp_settings_set_webauthn_provider()`, libfido2 or controlled mock provider, `fuzz/webauthn_channel_fuzzer.c` |
-
-## Row rule
-
-A protocol row belongs in this document when:
-
-- the packet or channel path has a named module;
-- malformed input is routed through bounded parser, decoder, or dispatcher logic;
-- unit tests or fuzz targets exercise the packet-facing behavior;
-- optional backend behavior is documented in [Backends](backends.md).

@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Programmer's Reference Manual
 
-This manual describes how to build an application on top of librdp. It complements the API reference and examples.
+This manual describes how to structure an application on top of librdp. It focuses on event-loop integration, callback ownership, backend policy, and viewer responsibilities rather than enumerating every public function.
 
 For protocol-facing sequence diagrams expressed as ordered call flows, see [Lifecycle](lifecycle.md).
 

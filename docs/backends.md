@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 The core library keeps host-specific work behind public settings and viewer or application backends. Optional system libraries enable richer behavior but are not required for the core build.
 
-This page is the backend map. The operational contract for each backend is in [Backend guide](backend-guide.md).
+The operational contract for each backend is in [Backend guide](backend-guide.md).
 
 ## Backend matrix
 
@@ -131,13 +131,11 @@ build/librdp-x11-viewer --target host --telemetry
 build/librdp-x11-viewer --target host --multitransport
 ```
 
-`--telemetry` requests telemetry packet support status. The core reports the
-feature as parser-only unless an application supplies a privacy-safe runtime
-path.
+`--telemetry` enables telemetry channel probing only when the application
+supplies a privacy-safe runtime path.
 
-`--multitransport` requests multitransport packet support status. The core
-does not negotiate a side transport unless a runtime transport provider is
-available.
+`--multitransport` enables multitransport probing only when a runtime transport
+provider is available.
 
 These flags configure the public settings object and route packet behavior through the corresponding channel modules.
 

@@ -903,9 +903,9 @@ LIBRDP_API librdp_status librdp_settings_add_printer(librdp_settings* settings,
  * Feature flags control whether optional protocol channels or viewer-backed
  * features are advertised or used later by a session. feature may be a bitmask
  * containing one or more known librdp_feature values. Unknown bits are
- * rejected so parser-only or unavailable protocols cannot be made visible as
- * enabled by mistake. Enabling a feature requests it; backend availability is
- * reported separately by librdp_settings_get_feature_status().
+ * rejected so unavailable protocol paths cannot be made visible as enabled by
+ * mistake. Enabling a feature requests it; backend availability is reported
+ * separately by librdp_settings_get_feature_status().
  *
  * @param[in,out] settings Settings object to update; must not be NULL.
  * @param[in] feature Feature bitmask to change; must contain only known

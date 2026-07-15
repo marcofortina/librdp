@@ -16,10 +16,10 @@ librdp is a C client library for building RDP viewers and integration tools on U
 - [Build OpenBSD](build-openbsd.md)
 - [Build NetBSD](build-netbsd.md)
 - [Build Solaris](build-solaris.md)
-- [API guide](api.md)
-- [API reference](api-reference.md)
-- [Generated API documentation](generated-api.md)
-- [Programmer's reference](programmers-reference.md)
+- [API guide](api.md) for the usual session, event, surface, input, and channel flow.
+- [Programmer's reference](programmers-reference.md) for application architecture and integration rules.
+- [API reference](api-reference.md) for the public header map and object model.
+- [Generated API documentation](generated-api.md) for Doxygen per-symbol pages.
 - [Examples](examples.md)
 - [X11 viewer](viewer-x11.md)
 
@@ -54,7 +54,7 @@ librdp is a C client library for building RDP viewers and integration tools on U
 
 ## Doxygen HTML
 
-The generated Doxygen API reference is published with per-symbol pages for public functions, structs, enums, macros, parameters, return values, ownership notes, threading notes, and examples when present.
+The generated Doxygen reference is built from `include/librdp/*.h` and contains the detailed per-symbol API pages.
 
 - [Open generated API documentation](https://marcofortina.github.io/librdp/api/doxygen/html/index.html)
 
