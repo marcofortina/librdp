@@ -452,6 +452,12 @@ static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* 
     return 1;
 }
 
+/*
+ * Apply feature-oriented CLI arguments after the base connection settings have
+ * been created. This pass crosses the local CLI trust boundary, writes directly
+ * into librdp_settings, and relies on public validation for selector syntax,
+ * ownership copies, feature state, and per-setting limit checks.
+ */
 static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_viewer_options* options)
 {
     int i = 1;
@@ -646,6 +652,12 @@ static librdp_tls_certificate_decision cocoa_viewer_tls_callback(
     return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
 }
 
+/*
+ * Build the public settings object consumed by the session. All strings
+ * accepted from Cocoa CLI parsing are copied by librdp setters before this
+ * function returns; certificate callbacks retain only the startup options
+ * object for the lifetime of the connection attempt.
+ */
 static librdp_settings* cocoa_viewer_create_settings(cocoa_viewer_options* options)
 {
     librdp_settings* settings = NULL;

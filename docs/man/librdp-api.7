@@ -46,6 +46,9 @@ Workspace feed discovery and published resource inspection APIs.
 .TP
 .B <librdp/admin.h>
 WinRM administration endpoint configuration and remote session inventory APIs.
+.TP
+.B <librdp/server.h>
+Server listener and accepted-peer lifecycle APIs.
 .SH OWNERSHIP
 Settings own copied configuration values. Sessions own protocol state and active surfaces. Event payloads are borrowed. Applications must copy event data that must outlive the callback.
 .SH ERRORS
@@ -72,6 +75,7 @@ registers an event callback, connects, drives
 presents surface invalidations, sends input or feature responses, disconnects, and frees owned objects.
 .SH SEE ALSO
 .BR librdp (7),
+.BR librdp-server (7),
 .BR librdp-tracing (7),
 .BR librdp-workspace (7),
 .BR librdp-x11-admin (1),

@@ -30,7 +30,7 @@ return codes, and `@since` tags, use the Doxygen pages described in
 | `include/librdp/audio.h` | Audio format structure and audio input response/send APIs. |
 | `include/librdp/video.h` | Video capture media description and sample/error response APIs. |
 | `include/librdp/workspace.h` | Workspace feed discovery and published resource inspection APIs. |
-| `include/librdp/server.h` | Server-side listener, peer, and minimal negotiation lifecycle APIs. |
+| `include/librdp/server.h` | Server-side listener, peer, MCS/GCC, and activation lifecycle APIs. |
 
 ## Primary objects
 
@@ -46,7 +46,7 @@ return codes, and `@since` tags, use the Doxygen pages described in
 
 `librdp_event` is a borrowed callback payload. Its active union member is selected by `librdp_event_type`.
 
-`librdp_server` owns server-side listener configuration and accepts `librdp_server_peer` handles for the current minimal negotiation runtime.
+`librdp_server` owns server-side listener configuration and accepts `librdp_server_peer` handles. Each peer is driven through X.224, MCS/GCC, channel join, and activation states by the application.
 
 ## Settings API
 
@@ -139,7 +139,7 @@ Workspace APIs fetch or load remote workspace feeds and expose published desktop
 
 ## Server API
 
-Server APIs create a loopback-capable listener, accept one peer at a time, and drive the initial TPKT/X.224 negotiation boundary. Full desktop server activation is not part of the current public server runtime.
+Server APIs create a listener, accept peer handles, and drive the server-side negotiation and activation lifecycle. Applications own the desktop model, graphics production, channels, resource policy, and input handling layered above an active peer.
 
 ## Error model
 

@@ -344,6 +344,12 @@ static int test_server_loopback_negotiation_failure(void)
     return 0;
 }
 
+/*
+ * Drives one in-process client/server pair through the server activation path.
+ * The sequence catches truncated or misordered X.224/MCS/GCC wrapping,
+ * channel-join accounting, Demand Active framing, and Confirm Active state
+ * transition regressions without requiring a real desktop server.
+ */
 static int test_server_loopback_standard_activation_sequence(void)
 {
     static const uint8_t request[] = {

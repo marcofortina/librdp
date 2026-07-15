@@ -12,6 +12,7 @@ For end-to-end call ordering, see [Lifecycle](lifecycle.md). For standalone sour
 ## Object model
 
 - `librdp_admin` owns remote administration endpoint configuration and parsed session inventory.
+- `librdp_server` owns listener configuration and accepts peer handles for server-side negotiation.
 - `librdp_settings` owns connection settings, credentials, device configuration, and feature flags.
 - `librdp_session` owns the client protocol state, transport state, negotiated channels, and the active surface.
 - `librdp_surface` owns the framebuffer memory exposed to viewers.
@@ -239,3 +240,32 @@ librdp_workspace_free(workspace);
 ```
 
 Resource strings are borrowed from the workspace and become invalid after `fetch`, `load_xml`, `clear`, or `free`.
+
+## Server Listener
+
+Server APIs are independent from client sessions. Applications create a
+`librdp_server`, listen on a configured bind address and port, accept
+`librdp_server_peer` handles, and drive each peer with
+`librdp_server_peer_run_once()`.
+
+```c
+librdp_server_config config;
+librdp_server_config_init(&config);
+config.bind_address = "127.0.0.1";
+config.port = 3390;
+
+librdp_server* server = librdp_server_new(&config);
+if (server && librdp_server_listen(server) == LIBRDP_STATUS_OK)
+{
+    librdp_server_peer* peer = librdp_server_accept(server, 1000);
+    while (peer && librdp_server_peer_run_once(peer, 50) == LIBRDP_STATUS_OK)
+    {
+    }
+    librdp_server_peer_free(peer);
+}
+librdp_server_free(server);
+```
+
+The server API drives transport negotiation and activation state. Applications
+own the desktop model, graphics production, channels, security policy, and
+resource access above the active peer.

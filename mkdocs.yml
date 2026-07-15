@@ -89,6 +89,7 @@ nav:
       - Generated API docs: generated-api.md
       - Programmer's reference: programmers-reference.md
       - Examples: examples.md
+      - Server API: server.md
       - ABI and versioning: abi-versioning.md
   - Architecture and protocols:
       - Architecture: architecture.md
@@ -106,3 +107,6 @@ nav:
   - Viewer:
       - X11 viewer: viewer-x11.md
       - Cocoa viewer: viewer-cocoa.md
+  - Tools:
+      - Administration tools: admin.md
+      - Workspace feeds: workspace.md

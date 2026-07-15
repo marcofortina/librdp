@@ -1,0 +1,62 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-SERVER 7 "2026-07-16" "librdp 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+librdp-server \- embeddable RDP listener and peer state machine
+.SH DESCRIPTION
+The librdp server API is declared in
+.BR <librdp/server.h> .
+It allows applications to create a listening socket, accept peers, and drive
+the server-side negotiation and activation state machine with
+.BR librdp_server_peer_run_once ().
+.P
+The application owns security policy, desktop model, graphics production,
+input handling, channels, and resource access. The library owns the listener,
+peer transport, MCS/GCC state, and activation sequencing for each peer handle.
+.SH OBJECTS
+.TP
+.B librdp_server_config
+Versioned listener configuration. Strings are copied when the server object is
+created.
+.TP
+.B librdp_server
+Opaque listener handle.
+.TP
+.B librdp_server_peer
+Opaque accepted-peer handle.
+.SH LIFECYCLE
+A typical server application initializes
+.BR librdp_server_config ,
+creates a server with
+.BR librdp_server_new (),
+starts listening with
+.BR librdp_server_listen (),
+accepts peers with
+.BR librdp_server_accept (),
+drives each peer with
+.BR librdp_server_peer_run_once (),
+and frees each handle with
+.BR librdp_server_peer_free ()
+and
+.BR librdp_server_free ().
+.SH STATES
+Peer states include listening setup, X.224 negotiation, MCS connection,
+domain ready, user attached, channel joining, activation, active, closing, and
+closed. Use
+.BR librdp_server_peer_get_state ()
+to observe the current state.
+.SH THREADING
+Server and peer handles are not internally synchronized. Applications should
+drive each peer from one owner thread or provide external locking.
+.SH SECURITY
+Do not expose a listener on an untrusted network without an explicit
+authentication and TLS policy. Trace output is redacted by default and must not
+be used for credentials or raw user payloads.
+.SH EXAMPLE
+.nf
+build/librdp-example-server-listener --bind 127.0.0.1 --port 3390
+.fi
+.SH SEE ALSO
+.BR librdp (7),
+.BR librdp-api (7),
+.BR librdp-tracing (7)

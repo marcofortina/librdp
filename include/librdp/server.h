@@ -16,7 +16,7 @@ extern "C" {
 
 /**
  * @defgroup librdp_server Server API
- * @brief Minimal server-side listener and peer lifecycle primitives.
+ * @brief Server-side listener, peer negotiation, and activation primitives.
  * @{
  */
 
@@ -95,7 +95,7 @@ typedef struct librdp_server_config
  * @brief Initialize a server configuration with safe defaults.
  *
  * Defaults bind to loopback on an ephemeral port, use a small listen backlog,
- * and reserve a 1024x768 desktop size for future server activation work.
+ * and reserve a 1024x768 desktop size for activation.
  *
  * @param[out] config Caller-owned config object; must not be NULL.
  *
@@ -207,7 +207,7 @@ LIBRDP_API librdp_status librdp_server_accept(librdp_server* server,
                                               librdp_server_peer** peer);
 
 /**
- * @brief Drive one minimal server-side peer iteration.
+ * @brief Drive one server-side peer iteration.
  *
  * The current implementation processes the initial TPKT/X.224 connection
  * request and, for Standard RDP requests, validates the following MCS
