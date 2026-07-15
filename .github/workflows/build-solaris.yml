@@ -1,0 +1,87 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: build-solaris
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  solaris-core-no-viewer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test in Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc-14"
+          usesh: true
+          prepare: |
+            export PATH=/opt/csw/bin:/usr/gnu/bin:/usr/bin:/usr/sbin:${PATH}
+            pkgutil -y -i cmake pkgconfig openssl3 python3 || true
+            command -v cmake
+          run: |
+            export PATH=/opt/csw/bin:/usr/gnu/bin:/usr/bin:/usr/sbin:${PATH}
+            cmake -S . -B build-solaris-core-no-viewer \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_PREFIX_PATH=/opt/csw \
+              -DOPENSSL_ROOT_DIR=/opt/csw \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=OFF \
+              -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_ENABLE_WERROR=OFF
+            cmake --build build-solaris-core-no-viewer --parallel
+            ctest --test-dir build-solaris-core-no-viewer -R '^(common|core|protocol|transport)$' --output-on-failure
+
+  solaris-core-no-backends:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test in Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc-14"
+          usesh: true
+          prepare: |
+            export PATH=/opt/csw/bin:/usr/gnu/bin:/usr/bin:/usr/sbin:${PATH}
+            pkgutil -y -i cmake pkgconfig openssl3 python3 || true
+            command -v cmake
+          run: |
+            export PATH=/opt/csw/bin:/usr/gnu/bin:/usr/bin:/usr/sbin:${PATH}
+            cmake -S . -B build-solaris-core-no-backends \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_PREFIX_PATH=/opt/csw \
+              -DOPENSSL_ROOT_DIR=/opt/csw \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=OFF \
+              -DLIBRDP_BUILD_X11_VIEWER=OFF \
+              -DLIBRDP_ENABLE_WERROR=OFF \
+              -DLIBRDP_WITH_FFMPEG_AVC=OFF \
+              -DLIBRDP_WITH_OPENH264_AVC=OFF \
+              -DLIBRDP_WITH_PCSC=OFF \
+              -DLIBRDP_WITH_LIBUSB=OFF \
+              -DLIBRDP_WITH_FIDO2=OFF \
+              -DLIBRDP_WITH_CBOR=OFF \
+              -DLIBRDP_WITH_CUPS=OFF \
+              -DLIBRDP_WITH_ACL=OFF \
+              -DLIBRDP_WITH_ATTR=OFF \
+              -DLIBRDP_WITH_ARCHIVE=OFF \
+              -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_JPEG=OFF \
+              -DLIBRDP_WITH_XSHM=OFF \
+              -DLIBRDP_WITH_XRANDR=OFF
+            cmake --build build-solaris-core-no-backends --parallel
+            ctest --test-dir build-solaris-core-no-backends -R '^(common|core|protocol|transport)$' --output-on-failure
