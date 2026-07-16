@@ -35,6 +35,7 @@
 #include "channels/virtual_channel.h"
 #include "channels/video_redirection.h"
 #include "channels/webauthn_channel.h"
+#include "graphics/gdi_backend.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "licensing/licensing.h"
@@ -7706,6 +7707,146 @@ static int test_filesystem_information_class_coverage(void)
     return 0;
 }
 
+static int append_gdiplus_record(rdp_buffer* stream, uint16_t type, uint16_t flags, const rdp_buffer* payload)
+{
+    size_t size = 0;
+
+    if (!stream || !payload || payload->length > UINT32_MAX - 12u)
+        return 0;
+    size = payload->length + 12u;
+    return rdp_buffer_append_u16_le(stream, type) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(stream, flags) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(stream, (uint32_t)size) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(stream, (uint32_t)payload->length) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append(stream, payload->data, payload->length) == LIBRDP_STATUS_OK;
+}
+
+static int append_gdiplus_continued_object_record(rdp_buffer* stream,
+                                                  uint16_t flags,
+                                                  uint32_t total_object_size,
+                                                  const rdp_buffer* payload)
+{
+    size_t size = 0;
+
+    if (!stream || !payload || payload->length > UINT32_MAX - 16u)
+        return 0;
+    size = payload->length + 16u;
+    return rdp_buffer_append_u16_le(stream, 0x4008u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(stream, (uint16_t)(flags | 0x8000u)) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(stream, (uint32_t)size) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(stream, total_object_size) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(stream, (uint32_t)payload->length) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append(stream, payload->data, payload->length) == LIBRDP_STATUS_OK;
+}
+
+/*
+ * Coverage: exercises EMF+ object-table solid brushes, continued object
+ * records, and solid pens referenced by vector draw records.
+ */
+static int test_gdiplus_object_table_solid_brush_and_pen(void)
+{
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    const uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(16, 16, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff112233u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0103u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40400000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40800000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40a00000u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0x0000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_continued_object_record(&stream, 0x0105u, 12u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffaabbccu) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0105u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 5u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x41200000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x3f800000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40000000u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0x0000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x3f800000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff445566u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0204u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 4u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x3f800000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x41400000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x40800000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x41400000u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x400du, 0x0000u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 7u);
+    CHECK(rasterized == 3u);
+    CHECK(unsupported == 0u);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    CHECK(pixels != NULL);
+    CHECK(stride >= 16u * 4u);
+    CHECK(pixels[(3u * stride) + (2u * 4u)] == 0x33u);
+    CHECK(pixels[(3u * stride) + (2u * 4u) + 1u] == 0x22u);
+    CHECK(pixels[(3u * stride) + (2u * 4u) + 2u] == 0x11u);
+    CHECK(pixels[(1u * stride) + (10u * 4u)] == 0xccu);
+    CHECK(pixels[(1u * stride) + (10u * 4u) + 1u] == 0xbbu);
+    CHECK(pixels[(1u * stride) + (10u * 4u) + 2u] == 0xaau);
+    CHECK(pixels[(12u * stride) + (1u * 4u)] == 0x66u);
+    CHECK(pixels[(12u * stride) + (1u * 4u) + 1u] == 0x55u);
+    CHECK(pixels[(12u * stride) + (1u * 4u) + 2u] == 0x44u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
 /*
  * Coverage: validates that complex GDI alternate secondary orders have a
  * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes
@@ -8567,6 +8708,8 @@ int test_client_core(void)
     if (test_filesystem_information_class_coverage() != 0)
         return 1;
     if (test_printer_file_backend_job_lifecycle() != 0)
+        return 1;
+    if (test_gdiplus_object_table_solid_brush_and_pen() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;
