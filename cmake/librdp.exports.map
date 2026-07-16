@@ -43,6 +43,7 @@ LIBRDP_0.1 {
         librdp_server_peer_get_state;
         librdp_server_input_event_init;
         librdp_server_static_channel_info_init;
+        librdp_server_dynamic_channel_info_init;
         librdp_server_event_init;
         librdp_server_status_init;
         librdp_server_metrics_init;
@@ -57,6 +58,8 @@ LIBRDP_0.1 {
         librdp_server_peer_dispatch_pending;
         librdp_server_peer_static_channel_count;
         librdp_server_peer_static_channel_at;
+        librdp_server_peer_dynamic_channel_count;
+        librdp_server_peer_dynamic_channel_at;
         librdp_server_peer_get_feature_status;
         librdp_server_peer_get_metrics;
         librdp_server_peer_reset_metrics;
@@ -67,6 +70,8 @@ LIBRDP_0.1 {
         librdp_server_peer_surface_blit_bgra32;
         librdp_server_peer_surface_present;
         librdp_server_peer_send_channel_data;
+        librdp_server_peer_send_dynamic_channel_data;
+        librdp_server_peer_close_dynamic_channel;
         librdp_server_peer_close;
         librdp_server_peer_free;
         librdp_limits_init;

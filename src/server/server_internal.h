@@ -25,6 +25,20 @@
 
 #include <openssl/types.h>
 
+#define RDP_SERVER_MAX_DYNAMIC_CHANNELS 64u
+#define RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u
+
+typedef struct rdp_server_dynamic_channel
+{
+    uint32_t channel_id;
+    uint8_t channel_id_bytes;
+    uint8_t priority;
+    uint8_t open;
+    char name[RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY];
+    rdp_buffer fragment;
+    uint32_t fragment_expected;
+} rdp_server_dynamic_channel;
+
 struct librdp_server
 {
     char* bind_address;
@@ -67,10 +81,14 @@ struct librdp_server_peer
     uint8_t standard_security_ready;
     short pending_revents;
     uint16_t advertised_channel_count;
+    uint16_t dynamic_channel_static_index;
+    uint32_t dynamic_channel_count;
     uint16_t joined_channel_count;
     rdp_gcc_channel_definition advertised_channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
+    uint8_t dynamic_channels_ready;
+    rdp_server_dynamic_channel dynamic_channels[RDP_SERVER_MAX_DYNAMIC_CHANNELS];
     uint8_t confirm_active_seen;
     uint8_t licensing_done;
     uint8_t client_info_seen;

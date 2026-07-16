@@ -268,6 +268,11 @@ librdp_status rdp_dynamic_channel_parse_capabilities(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (parsed.version >= 2u)
     {
+        if (rdp_stream_remaining(&stream) == 0)
+        {
+            *capabilities = parsed;
+            return LIBRDP_STATUS_OK;
+        }
         if (rdp_stream_remaining(&stream) != 8u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         if (rdp_stream_read_u16_le(&stream, &parsed.priority_charge[0]) != LIBRDP_STATUS_OK ||

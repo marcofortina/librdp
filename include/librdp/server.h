@@ -26,11 +26,13 @@ extern "C" {
 #define LIBRDP_SERVER_CONFIG_VERSION 1u /**< Current librdp_server_config version. */
 #define LIBRDP_SERVER_INPUT_EVENT_VERSION 1u /**< Current librdp_server_input_event version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_static_channel_info version. */
+#define LIBRDP_SERVER_DYNAMIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_dynamic_channel_info version. */
 #define LIBRDP_SERVER_CHANNEL_EVENT_VERSION 1u /**< Current librdp_server_channel_event version. */
 #define LIBRDP_SERVER_EVENT_VERSION 1u /**< Current librdp_server_event version. */
 #define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
+#define LIBRDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u /**< Dynamic-channel name storage including NUL. */
 #define LIBRDP_SERVER_PHASE_CAPACITY 32u /**< Server status phase storage including NUL. */
 #define LIBRDP_SERVER_MESSAGE_CAPACITY 128u /**< Server status message storage including NUL. */
 
@@ -150,6 +152,40 @@ typedef struct librdp_server_static_channel_info
 } librdp_server_static_channel_info;
 
 /**
+ * @brief Server-side dynamic virtual-channel metadata.
+ *
+ * Dynamic channel IDs are negotiated inside the drdynvc static channel and are
+ * valid only while open is non-zero. name is copied and NUL-terminated.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_dynamic_channel_info
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_DYNAMIC_CHANNEL_INFO_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    uint32_t channel_id; /**< Dynamic virtual-channel identifier. */
+    uint8_t priority;    /**< Negotiated DVC priority class. */
+    int open;            /**< Non-zero while the dynamic channel is open. */
+    char name[LIBRDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY]; /**< NUL-terminated dynamic-channel name. */
+} librdp_server_dynamic_channel_info;
+
+/**
+ * @brief Server channel callback event kind.
+ *
+ * Static-channel payloads and dynamic-channel lifecycle/data notifications use
+ * the same callback but different payload fields.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_channel_event_type
+{
+    LIBRDP_SERVER_CHANNEL_EVENT_STATIC_DATA = 1,  /**< Static virtual-channel payload. */
+    LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_OPEN = 2, /**< Dynamic virtual channel opened. */
+    LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA = 3, /**< Dynamic virtual-channel payload. */
+    LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE = 4 /**< Dynamic virtual channel closed. */
+} librdp_server_channel_event_type;
+
+/**
  * @brief Server-side static virtual-channel data event.
  *
  * name and data are borrowed and valid only until the channel callback
@@ -166,6 +202,9 @@ typedef struct librdp_server_channel_event
     size_t name_len;     /**< Length in bytes of name, excluding the NUL terminator. */
     const uint8_t* data; /**< Borrowed channel payload; may be NULL when data_len is zero. */
     size_t data_len;     /**< Length in bytes of data. */
+    librdp_server_channel_event_type type; /**< Static or dynamic channel event kind. */
+    uint32_t dynamic_channel_id; /**< Dynamic channel ID for dynamic events, otherwise zero. */
+    uint8_t dynamic_priority; /**< Dynamic channel priority for dynamic events, otherwise zero. */
 } librdp_server_channel_event;
 
 /**
@@ -256,6 +295,10 @@ typedef struct librdp_server_metrics
     uint64_t static_channel_out; /**< Static-channel payloads sent by public server APIs. */
     uint64_t static_channel_bytes_in; /**< Static-channel payload bytes received. */
     uint64_t static_channel_bytes_out; /**< Static-channel payload bytes sent. */
+    uint64_t dynamic_channel_in; /**< Dynamic-channel payloads delivered to the channel callback. */
+    uint64_t dynamic_channel_out; /**< Dynamic-channel payloads sent by public server APIs. */
+    uint64_t dynamic_channel_bytes_in; /**< Dynamic-channel payload bytes received. */
+    uint64_t dynamic_channel_bytes_out; /**< Dynamic-channel payload bytes sent. */
     uint64_t surface_updates; /**< Dirty rectangles sent from the server framebuffer. */
     uint64_t feature_rejections; /**< Feature requests rejected because no server runtime exists. */
     uint64_t limits_rejected; /**< Inputs rejected by explicit size, count, or geometry limits. */
@@ -368,6 +411,19 @@ LIBRDP_API librdp_status librdp_server_input_event_init(librdp_server_input_even
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_static_channel_info_init(librdp_server_static_channel_info* info);
+
+/**
+ * @brief Initialize server dynamic-channel metadata.
+ *
+ * @param[out] info Caller-owned metadata object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * info is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_dynamic_channel_info_init(librdp_server_dynamic_channel_info* info);
 
 /**
  * @brief Initialize a server runtime event value.
@@ -770,6 +826,35 @@ LIBRDP_API librdp_status librdp_server_peer_static_channel_at(const librdp_serve
                                                               librdp_server_static_channel_info* info);
 
 /**
+ * @brief Return the number of currently known dynamic virtual channels.
+ *
+ * @param[in] peer Peer to query, or NULL.
+ *
+ * @return Number of dynamic channels known to the peer; zero when peer is NULL.
+ *
+ * @note Thread-safety: read from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API uint32_t librdp_server_peer_dynamic_channel_count(const librdp_server_peer* peer);
+
+/**
+ * @brief Copy one dynamic virtual-channel metadata entry.
+ *
+ * @param[in] peer Peer that owns the DVC table; must not be NULL.
+ * @param[in] index Zero-based dynamic-channel table index.
+ * @param[out] info Caller-owned metadata object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or out-of-range index.
+ *
+ * @note Thread-safety: read from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_dynamic_channel_at(const librdp_server_peer* peer,
+                                                               uint32_t index,
+                                                               librdp_server_dynamic_channel_info* info);
+
+/**
  * @brief Query runtime readiness for one optional feature on a peer.
  *
  * The returned status starts from the feature requests copied from the server
@@ -980,6 +1065,46 @@ LIBRDP_API librdp_status librdp_server_peer_send_channel_data(librdp_server_peer
                                                               uint16_t channel_id,
                                                               const void* data,
                                                               size_t data_len);
+
+/**
+ * @brief Send data on an open dynamic virtual channel.
+ *
+ * data is borrowed only for the call duration and copied into a drdynvc packet
+ * before the function returns. Large payloads are fragmented.
+ *
+ * @param[in,out] peer Peer that owns the dynamic channel; must not be NULL.
+ * @param[in] dynamic_channel_id Open dynamic channel identifier.
+ * @param[in] data Borrowed payload bytes; may be NULL only when data_len is 0.
+ * @param[in] data_len Number of bytes to send.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * peer, unknown/closed channel, or invalid payload; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; LIBRDP_STATUS_LIMIT_EXCEEDED when the payload exceeds
+ * the server DVC limit; transport errors for send failures.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* peer,
+                                                                      uint32_t dynamic_channel_id,
+                                                                      const void* data,
+                                                                      size_t data_len);
+
+/**
+ * @brief Close an open dynamic virtual channel from the server side.
+ *
+ * @param[in,out] peer Peer that owns the dynamic channel; must not be NULL.
+ * @param[in] dynamic_channel_id Open dynamic channel identifier.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * peer or unknown channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE;
+ * transport errors for send failures.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer,
+                                                                  uint32_t dynamic_channel_id);
 
 /**
  * @brief Return the current peer state.

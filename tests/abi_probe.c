@@ -47,6 +47,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_input_type", librdp_server_input_type, ",");
     ABI_TYPE_ENTRY("librdp_server_input_event", librdp_server_input_event, ",");
     ABI_TYPE_ENTRY("librdp_server_static_channel_info", librdp_server_static_channel_info, ",");
+    ABI_TYPE_ENTRY("librdp_server_dynamic_channel_info", librdp_server_dynamic_channel_info, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_event", librdp_server_channel_event, ",");
     ABI_TYPE_ENTRY("librdp_server_event_type", librdp_server_event_type, ",");
     ABI_TYPE_ENTRY("librdp_server_event", librdp_server_event, ",");

@@ -19,6 +19,7 @@
 #include "common/buffer.h"
 #include "common/stream.h"
 #include "common/trace.h"
+#include "channels/dynamic_channel.h"
 #include "graphics/bitmap.h"
 #include "licensing/licensing.h"
 #include "platform/socket.h"
@@ -57,6 +58,7 @@
 #define RDP_SERVER_NEGOTIATION_FAILURE_HYBRID_REQUIRED 0x00000005u
 #define RDP_SERVER_INITIAL_READ_MAX 65535u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
+#define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
      (uint32_t)LIBRDP_FEATURE_VIDEO | (uint32_t)LIBRDP_FEATURE_CAMERA |                                              \
@@ -91,6 +93,18 @@ static int rdp_server_valid_single_feature(librdp_feature feature)
     uint32_t value = (uint32_t)feature;
 
     return rdp_server_valid_feature_mask(feature) && (value & (value - 1u)) == 0;
+}
+
+static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+        rdp_buffer_free(&peer->dynamic_channels[i].fragment);
+    memset(peer->dynamic_channels, 0, sizeof(peer->dynamic_channels));
+    peer->dynamic_channel_count = 0;
+    peer->dynamic_channel_static_index = UINT16_MAX;
+    peer->dynamic_channels_ready = 0;
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -186,6 +200,16 @@ librdp_status librdp_server_static_channel_info_init(librdp_server_static_channe
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(info, 0, sizeof(*info));
     info->version = LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION;
+    info->size = (uint32_t)sizeof(*info);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_dynamic_channel_info_init(librdp_server_dynamic_channel_info* info)
+{
+    if (!info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(info, 0, sizeof(*info));
+    info->version = LIBRDP_SERVER_DYNAMIC_CHANNEL_INFO_VERSION;
     info->size = (uint32_t)sizeof(*info);
     return LIBRDP_STATUS_OK;
 }
@@ -582,6 +606,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->requested_features = server->requested_features;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
+    rdp_server_dynamic_channels_reset(accepted);
     if (server->server_name)
     {
         accepted->server_name = rdp_server_strdup_bounded(server->server_name);
@@ -1164,6 +1189,7 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
         peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;
         peer->advertised_channel_count = client_data.channel_count;
+        rdp_server_dynamic_channels_reset(peer);
         memset(peer->advertised_channels, 0, sizeof(peer->advertised_channels));
         memset(peer->advertised_channel_ids, 0, sizeof(peer->advertised_channel_ids));
         memset(peer->advertised_channel_joined, 0, sizeof(peer->advertised_channel_joined));
@@ -1172,6 +1198,9 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
             peer->advertised_channels[channel_index] = client_data.channels[channel_index];
             peer->advertised_channel_ids[channel_index] =
                 (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u + channel_index);
+            if (memcmp(client_data.channels[channel_index].name, "drdynvc", 7u) == 0 &&
+                client_data.channels[channel_index].name[7] == '\0')
+                peer->dynamic_channel_static_index = channel_index;
         }
         server_config.version = client_data.version ? client_data.version : RDP_GCC_CLIENT_VERSION_5;
         server_config.selected_protocol = peer->selected_protocol;
@@ -1379,6 +1408,61 @@ static void rdp_server_copy_channel_name(char output[LIBRDP_SERVER_STATIC_CHANNE
     memset(output, 0, LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY);
     if (length > 0)
         memcpy(output, name, length);
+}
+
+static uint16_t rdp_server_dynamic_static_channel_id(const librdp_server_peer* peer)
+{
+    if (!peer || peer->dynamic_channel_static_index >= peer->advertised_channel_count)
+        return 0;
+    return peer->advertised_channel_ids[peer->dynamic_channel_static_index];
+}
+
+static rdp_server_dynamic_channel* rdp_server_find_dynamic_channel(librdp_server_peer* peer, uint32_t channel_id)
+{
+    if (!peer)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        if (peer->dynamic_channels[i].open && peer->dynamic_channels[i].channel_id == channel_id)
+            return &peer->dynamic_channels[i];
+    }
+    return NULL;
+}
+
+static rdp_server_dynamic_channel* rdp_server_allocate_dynamic_channel(librdp_server_peer* peer)
+{
+    if (!peer)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        if (!peer->dynamic_channels[i].open)
+            return &peer->dynamic_channels[i];
+    }
+    return NULL;
+}
+
+static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
+                                                  const rdp_server_dynamic_channel* channel,
+                                                  librdp_server_channel_event_type type,
+                                                  const uint8_t* data,
+                                                  size_t data_len)
+{
+    librdp_server_channel_event event;
+
+    if (!peer || !channel || !peer->channel_callback)
+        return;
+    memset(&event, 0, sizeof(event));
+    event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
+    event.size = (uint32_t)sizeof(event);
+    event.type = type;
+    event.channel_id = rdp_server_dynamic_static_channel_id(peer);
+    event.dynamic_channel_id = channel->channel_id;
+    event.dynamic_priority = channel->priority;
+    event.name = channel->name;
+    event.name_len = strlen(channel->name);
+    event.data = data;
+    event.data_len = data_len;
+    peer->channel_callback(peer, &event, peer->channel_callback_user_data);
 }
 
 static void rdp_server_emit_input(librdp_server_peer* peer, const librdp_server_input_event* event)
@@ -1915,6 +1999,40 @@ librdp_status librdp_server_peer_static_channel_at(const librdp_server_peer* pee
     return LIBRDP_STATUS_OK;
 }
 
+uint32_t librdp_server_peer_dynamic_channel_count(const librdp_server_peer* peer)
+{
+    return peer ? peer->dynamic_channel_count : 0;
+}
+
+librdp_status librdp_server_peer_dynamic_channel_at(const librdp_server_peer* peer,
+                                                    uint32_t index,
+                                                    librdp_server_dynamic_channel_info* info)
+{
+    uint32_t seen = 0;
+
+    if (!peer || !info)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (librdp_server_dynamic_channel_info_init(info) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        const rdp_server_dynamic_channel* channel = &peer->dynamic_channels[i];
+
+        if (!channel->open)
+            continue;
+        if (seen == index)
+        {
+            info->channel_id = channel->channel_id;
+            info->priority = channel->priority;
+            info->open = 1;
+            rdp_server_copy_token(info->name, sizeof(info->name), channel->name);
+            return LIBRDP_STATUS_OK;
+        }
+        seen++;
+    }
+    return LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 uint32_t librdp_server_peer_desktop_width(const librdp_server_peer* peer)
 {
     return peer ? peer->width : 0;
@@ -2053,6 +2171,341 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
                                  "server.channel.send",
                                  "static channel send failed");
     rdp_buffer_free(&mcs);
+    return status;
+}
+
+static librdp_status rdp_server_send_dynamic_packet(librdp_server_peer* peer, const rdp_buffer* packet)
+{
+    uint16_t static_channel_id = rdp_server_dynamic_static_channel_id(peer);
+
+    if (!peer || !packet || static_channel_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return librdp_server_peer_send_channel_data(peer, static_channel_id, packet->data, packet->length);
+}
+
+/*
+ * Sends application payload on a negotiated dynamic virtual channel.
+ * The function fragments oversized messages into DVC DATA_FIRST/DATA PDUs
+ * while preserving one logical metrics event for the caller-visible send.
+ */
+librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* peer,
+                                                           uint32_t dynamic_channel_id,
+                                                           const void* data,
+                                                           size_t data_len)
+{
+    rdp_server_dynamic_channel* channel = NULL;
+    const uint8_t* bytes = (const uint8_t*)data;
+    rdp_buffer packet;
+    size_t offset = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (data_len > RDP_SERVER_DYNAMIC_MESSAGE_MAX)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    channel = rdp_server_find_dynamic_channel(peer, dynamic_channel_id);
+    if (!channel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    rdp_buffer_init(&packet);
+    if (data_len <= RDP_DYNAMIC_CHANNEL_SINGLE_MESSAGE_LIMIT)
+    {
+        status = rdp_dynamic_channel_write_data(&packet,
+                                                dynamic_channel_id,
+                                                channel->channel_id_bytes,
+                                                data,
+                                                data_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_dynamic_packet(peer, &packet);
+    }
+    else
+    {
+        size_t first_capacity = RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE -
+                                rdp_dynamic_channel_data_first_pdu_header_size(channel->channel_id_bytes,
+                                                                               (uint32_t)data_len);
+        size_t data_capacity = RDP_DYNAMIC_CHANNEL_MAX_PDU_SIZE -
+                               rdp_dynamic_channel_data_pdu_header_size(channel->channel_id_bytes);
+        size_t chunk = data_len < first_capacity ? data_len : first_capacity;
+
+        if (first_capacity == 0 || data_capacity == 0 || data_len > UINT32_MAX)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_data_first(&packet,
+                                                          dynamic_channel_id,
+                                                          channel->channel_id_bytes,
+                                                          (uint32_t)data_len,
+                                                          bytes,
+                                                          chunk);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_dynamic_packet(peer, &packet);
+        offset = chunk;
+        while (status == LIBRDP_STATUS_OK && offset < data_len)
+        {
+            chunk = data_len - offset < data_capacity ? data_len - offset : data_capacity;
+            packet.length = 0;
+            status = rdp_dynamic_channel_write_data(&packet,
+                                                    dynamic_channel_id,
+                                                    channel->channel_id_bytes,
+                                                    bytes + offset,
+                                                    chunk);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_server_send_dynamic_packet(peer, &packet);
+            offset += chunk;
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_server_metric_add(&peer->metrics.dynamic_channel_out, 1u);
+        rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_out, (uint64_t)data_len);
+    }
+    else
+        rdp_server_record_status(peer,
+                                 status,
+                                 rdp_server_component_for_status(status),
+                                 "server.dvc.send",
+                                 "dynamic channel send failed");
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer, uint32_t dynamic_channel_id)
+{
+    rdp_server_dynamic_channel* channel = NULL;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    channel = rdp_server_find_dynamic_channel(peer, dynamic_channel_id);
+    if (!channel)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    status = rdp_dynamic_channel_write_close(&packet, dynamic_channel_id, channel->channel_id_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_packet(peer, &packet);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        channel->open = 0;
+        peer->dynamic_channel_count--;
+        rdp_buffer_free(&channel->fragment);
+        rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
+    }
+    else
+        rdp_server_record_status(peer,
+                                 status,
+                                 rdp_server_component_for_status(status),
+                                 "server.dvc.close",
+                                 "dynamic channel close failed");
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* peer,
+                                                         rdp_server_dynamic_channel* channel,
+                                                         const uint8_t* data,
+                                                         size_t data_len)
+{
+    if (!peer || !channel || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_server_metric_add(&peer->metrics.dynamic_channel_in, 1u);
+    rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_in, (uint64_t)data_len);
+    rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA, data, data_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
+                                                      const uint8_t* data,
+                                                      size_t data_len)
+{
+    rdp_dynamic_channel_create_request request;
+    rdp_server_dynamic_channel* channel = NULL;
+    rdp_buffer response;
+    uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    memset(&request, 0, sizeof(request));
+    rdp_buffer_init(&response);
+    status = rdp_dynamic_channel_parse_create_request(data, data_len, &request);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (status == LIBRDP_STATUS_OK && request.name_len >= RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY)
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (status == LIBRDP_STATUS_OK && rdp_server_find_dynamic_channel(peer, request.channel_id))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        channel = rdp_server_allocate_dynamic_channel(peer);
+        if (!channel)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    if (status != LIBRDP_STATUS_OK)
+        status_code = RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    if (rdp_dynamic_channel_write_create_response(&response,
+                                                  request.channel_id,
+                                                  request.channel_id_bytes ? request.channel_id_bytes : 1u,
+                                                  status_code) == LIBRDP_STATUS_OK)
+        (void)rdp_server_send_dynamic_packet(peer, &response);
+    if (status == LIBRDP_STATUS_OK && channel)
+    {
+        memset(channel, 0, sizeof(*channel));
+        channel->channel_id = request.channel_id;
+        channel->channel_id_bytes = request.channel_id_bytes;
+        channel->priority = request.priority;
+        channel->open = 1;
+        memcpy(channel->name, request.name, request.name_len);
+        channel->name[request.name_len] = '\0';
+        rdp_buffer_init(&channel->fragment);
+        peer->dynamic_channel_count++;
+        rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_OPEN, NULL, 0);
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.dvc.create",
+                        "channel_id=%u name_len=%u",
+                        request.channel_id,
+                        (unsigned)request.name_len);
+    }
+    rdp_buffer_free(&response);
+    return status;
+}
+
+static librdp_status rdp_server_dynamic_handle_data_first(librdp_server_peer* peer,
+                                                          const uint8_t* data,
+                                                          size_t data_len)
+{
+    rdp_dynamic_channel_data_first_pdu pdu;
+    rdp_server_dynamic_channel* channel = NULL;
+    librdp_status status = rdp_dynamic_channel_parse_data_first(data, data_len, &pdu);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    channel = rdp_server_find_dynamic_channel(peer, pdu.channel_id);
+    if (!channel || channel->fragment.length != 0 || pdu.total_length < pdu.data_len ||
+        pdu.total_length > RDP_SERVER_DYNAMIC_MESSAGE_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    channel->fragment_expected = pdu.total_length;
+    status = rdp_buffer_append(&channel->fragment, pdu.data, pdu.data_len);
+    if (status == LIBRDP_STATUS_OK && channel->fragment.length == channel->fragment_expected)
+    {
+        status = rdp_server_dynamic_emit_reassembled(peer,
+                                                     channel,
+                                                     channel->fragment.data,
+                                                     channel->fragment.length);
+        channel->fragment.length = 0;
+        channel->fragment_expected = 0;
+    }
+    return status;
+}
+
+static librdp_status rdp_server_dynamic_handle_data(librdp_server_peer* peer,
+                                                    const uint8_t* data,
+                                                    size_t data_len)
+{
+    rdp_dynamic_channel_data_pdu pdu;
+    rdp_server_dynamic_channel* channel = NULL;
+    librdp_status status = rdp_dynamic_channel_parse_data(data, data_len, &pdu);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    channel = rdp_server_find_dynamic_channel(peer, pdu.channel_id);
+    if (!channel)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (channel->fragment.length == 0)
+        return rdp_server_dynamic_emit_reassembled(peer, channel, pdu.data, pdu.data_len);
+    if (channel->fragment.length > (size_t)channel->fragment_expected || pdu.data_len == 0 ||
+        pdu.data_len > (size_t)channel->fragment_expected - channel->fragment.length)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_append(&channel->fragment, pdu.data, pdu.data_len);
+    if (status == LIBRDP_STATUS_OK && channel->fragment.length == channel->fragment_expected)
+    {
+        status = rdp_server_dynamic_emit_reassembled(peer,
+                                                     channel,
+                                                     channel->fragment.data,
+                                                     channel->fragment.length);
+        channel->fragment.length = 0;
+        channel->fragment_expected = 0;
+    }
+    return status;
+}
+
+static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
+                                                     const uint8_t* data,
+                                                     size_t data_len)
+{
+    rdp_dynamic_channel_close_pdu pdu;
+    rdp_server_dynamic_channel* channel = NULL;
+    librdp_status status = rdp_dynamic_channel_parse_close(data, data_len, &pdu);
+
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    channel = rdp_server_find_dynamic_channel(peer, pdu.channel_id);
+    if (!channel)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    channel->open = 0;
+    peer->dynamic_channel_count--;
+    rdp_buffer_free(&channel->fragment);
+    rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_handle_dynamic_channel_message(librdp_server_peer* peer,
+                                                               const uint8_t* data,
+                                                               size_t data_len)
+{
+    rdp_dynamic_channel_header header;
+    rdp_buffer response;
+    librdp_status status = rdp_dynamic_channel_parse_header(data, data_len, &header);
+
+    if (!peer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&response);
+    if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES)
+    {
+        rdp_dynamic_channel_capabilities caps;
+
+        status = rdp_dynamic_channel_parse_capabilities(data, data_len, &caps);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_capabilities_response(
+                &response,
+                rdp_dynamic_channel_select_version(caps.version));
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_dynamic_packet(peer, &response);
+        if (status == LIBRDP_STATUS_OK)
+            peer->dynamic_channels_ready = 1;
+    }
+    else if (!peer->dynamic_channels_ready)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CREATE)
+        status = rdp_server_dynamic_handle_create(peer, data, data_len);
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA_FIRST)
+        status = rdp_server_dynamic_handle_data_first(peer, data, data_len);
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_DATA)
+        status = rdp_server_dynamic_handle_data(peer, data, data_len);
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_CLOSE)
+        status = rdp_server_dynamic_handle_close(peer, data, data_len);
+    else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST)
+    {
+        rdp_dynamic_channel_soft_sync_request request;
+
+        status = rdp_dynamic_channel_parse_soft_sync_request(data, data_len, &request);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_soft_sync_response(&response, NULL, 0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_dynamic_packet(peer, &response);
+    }
+    else
+        status = LIBRDP_STATUS_UNSUPPORTED;
+    if (status != LIBRDP_STATUS_OK)
+        rdp_server_record_status(peer,
+                                 status,
+                                 rdp_server_component_for_status(status),
+                                 "server.dvc.dispatch",
+                                 "dynamic channel dispatch failed");
+    rdp_buffer_free(&response);
     return status;
 }
 
@@ -2342,6 +2795,8 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
         if (!rdp_server_static_channel_index(peer, request.channel_id, &channel_index) ||
             !peer->advertised_channel_joined[channel_index])
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else if (channel_index == peer->dynamic_channel_static_index)
+            status = rdp_server_handle_dynamic_channel_message(peer, runtime_payload, runtime_payload_len);
         else
         {
             rdp_server_metric_add(&peer->metrics.static_channel_in, 1u);
@@ -2355,6 +2810,7 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
                 memset(&event, 0, sizeof(event));
                 event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
                 event.size = (uint32_t)sizeof(event);
+                event.type = LIBRDP_SERVER_CHANNEL_EVENT_STATIC_DATA;
                 event.channel_id = request.channel_id;
                 event.name = name;
                 event.name_len = strlen(name);
@@ -2652,6 +3108,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
         SSL_CTX_free(peer->tls_context);
     EVP_PKEY_free(peer->standard_private_key);
     rdp_security_standard_clear(&peer->standard_security);
+    rdp_server_dynamic_channels_reset(peer);
     if (peer->fd >= 0)
         rdp_socket_close(peer->fd);
     rdp_buffer_free(&peer->input);
