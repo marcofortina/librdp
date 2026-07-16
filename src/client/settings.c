@@ -836,22 +836,25 @@ static int rdp_settings_feature_backend_ready(const librdp_settings* settings, l
             return 1;
         case LIBRDP_FEATURE_ECHO:
             return 1;
+        case LIBRDP_FEATURE_TELEMETRY:
+            return 1;
+        case LIBRDP_FEATURE_MULTITRANSPORT:
+            return 1;
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
+            return 1;
+        case LIBRDP_FEATURE_UDP_TRANSPORT:
+            return 1;
+        case LIBRDP_FEATURE_UDP2_TRANSPORT:
+            return 1;
+        case LIBRDP_FEATURE_GEOMETRY_TRACKING:
+            return 1;
+        case LIBRDP_FEATURE_MULTIPARTY:
+            return 1;
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
             return 1;
         default:
             return 0;
     }
-}
-
-static int rdp_settings_feature_parser_only(librdp_feature feature)
-{
-    return feature == LIBRDP_FEATURE_TELEMETRY ||
-           feature == LIBRDP_FEATURE_MULTITRANSPORT ||
-           feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION ||
-           feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
-           feature == LIBRDP_FEATURE_UDP2_TRANSPORT ||
-           feature == LIBRDP_FEATURE_GEOMETRY_TRACKING ||
-           feature == LIBRDP_FEATURE_MULTIPARTY;
 }
 
 librdp_settings* librdp_settings_new(void)
@@ -1597,11 +1600,6 @@ librdp_status librdp_settings_get_feature_status(const librdp_settings* settings
     if (!status->requested)
     {
         status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
-        return LIBRDP_STATUS_OK;
-    }
-    if (rdp_settings_feature_parser_only(feature))
-    {
-        status->reason = LIBRDP_FEATURE_REASON_PARSER_ONLY;
         return LIBRDP_STATUS_OK;
     }
     status->backend_ready = rdp_settings_feature_backend_ready(settings, feature) ? 1 : 0;

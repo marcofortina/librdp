@@ -25,6 +25,7 @@ void rdp_session_video_redirection_reset(librdp_session* session)
     session->video_redirection_ready = 0;
     session->video_redirection_capabilities_sent = 0;
     session->video_redirection_rim_sent = 0;
+    session->video_geometry_update_count = 0;
     memset(session->video_streams, 0, sizeof(session->video_streams));
 }
 
@@ -1147,6 +1148,7 @@ librdp_status rdp_session_handle_video_redirection_message(librdp_session* sessi
                             info.window_state,
                             info.width,
                             info.height);
+            session->video_geometry_update_count++;
             break;
         }
         case RDP_VIDEO_REDIRECTION_FUNC_ON_PLAYBACK_RATE_CHANGED:
@@ -1220,4 +1222,3 @@ int rdp_session_video_runtime_active(const librdp_session* session)
     }
     return 0;
 }
-

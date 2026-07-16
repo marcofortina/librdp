@@ -29,11 +29,13 @@
 #include "channels/graphics_pipeline.h"
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
+#include "channels/multiparty.h"
 #include "channels/pnp_redirection.h"
 #include "channels/port_redirection.h"
 #include "channels/printer_redirection.h"
 #include "channels/remote_programs.h"
 #include "channels/smartcard_redirection.h"
+#include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
 #include "channels/video_capture.h"
 #include "channels/video_optimized.h"
@@ -125,7 +127,7 @@
 #define RDP_SESSION_CLIPBOARD_MAX_LOCAL_FILES 64u
 #define RDP_SESSION_CLIPBOARD_MAX_PENDING_FILE_REQUESTS 64u
 #define RDP_SESSION_CLIPBOARD_FILE_RANGE_MAX (4u * 1024u * 1024u)
-#define RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED 0
+#define RDP_SESSION_MULTITRANSPORT_RUNTIME_SUPPORTED 1
 #define RDP_SESSION_ECHO_CHANNEL_NAME RDP_ECHO_CHANNEL_NAME
 #define RDP_SESSION_DISPLAY_CONTROL_NAME RDP_DISPLAY_CONTROL_CHANNEL_NAME
 #define RDP_SESSION_CORE_INPUT_NAME RDP_CORE_INPUT_CHANNEL_NAME
@@ -353,6 +355,7 @@ typedef struct rdp_session_static_channel
     uint16_t channel_id;
     uint32_t flags;
     uint8_t active;
+    uint8_t joined;
     uint8_t fragmenting;
     uint32_t fragment_expected;
     rdp_buffer fragment;
@@ -724,10 +727,20 @@ struct librdp_session
     uint32_t usb_message_id;
     uint32_t usb_request_completion_interface_id;
     uint32_t usb_device_count_sent;
+    uint32_t telemetry_channel_id;
+    uint8_t telemetry_channel_id_bytes;
+    uint8_t telemetry_ready;
+    uint16_t multiparty_channel_id;
+    uint8_t multiparty_joined;
+    uint8_t desktop_composition_active;
+    uint32_t video_geometry_update_count;
     rdp_license_client_state license_state;
     rdp_license_crypto_context license_crypto;
     uint8_t multitransport_negotiated;
     uint32_t multitransport_flags;
+    uint8_t multitransport_udp_active;
+    uint8_t multitransport_udp2_active;
+    uint32_t multitransport_soft_sync_count;
     rdp_graphics_decompressor graphics_decompressor;
     rdp_graphics_decompressor bulk_rdp8_decompressor;
     rdp_bulk_decompressor bulk_decompressor;

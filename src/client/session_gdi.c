@@ -3797,6 +3797,16 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
             return status;
         return rdp_session_gdi_stream_bitmap_next(session, &stream_next);
     }
+    if (header->order_type == RDP_GDI_ALTSEC_COMPDESK_FIRST)
+    {
+        session->desktop_composition_active = 1;
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.desktop_composition.order",
+                              "payload_len=%u",
+                              (unsigned)header->payload_len);
+        return LIBRDP_STATUS_OK;
+    }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
                           "rdp.gdi.altsec.rejected",

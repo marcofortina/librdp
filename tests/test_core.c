@@ -27,17 +27,22 @@
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
 #include "channels/filesystem_redirection.h"
+#include "channels/multiparty.h"
 #include "channels/printer_redirection.h"
+#include "channels/telemetry.h"
 #include "channels/virtual_channel.h"
+#include "channels/video_redirection.h"
 #include "channels/webauthn_channel.h"
 #include "graphics/gdi_orders.h"
 #include "input/input.h"
 #include "licensing/licensing.h"
+#include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/pointer.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
+#include "transport/udp_transport.h"
 #include "security/security.h"
 
 #include <errno.h>
@@ -85,10 +90,14 @@
 #define DVC_SCENARIO_AUTH_REDIRECTION_CREATE_REJECT 19
 #define DVC_SCENARIO_DISPLAY_CONTROL_CREATE_REJECT 20
 #define DVC_SCENARIO_WEBAUTHN_RP_ID_DENIED 21
+#define DVC_SCENARIO_TELEMETRY_RUNTIME 22
+#define DVC_SCENARIO_MULTIPARTY_RUNTIME 23
+#define DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME 24
 
 #define GDI_SCENARIO_NORMAL 0
 #define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
 #define GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION 2
+#define GDI_SCENARIO_DESKTOP_COMPOSITION 3
 
 #define LICENSE_SCENARIO_NONE 0
 #define LICENSE_SCENARIO_NEW 1
@@ -694,13 +703,17 @@ static int append_gcc_block(rdp_buffer* buffer, uint16_t type, const rdp_buffer*
  * blocks and certificate bytes. It validates handshake parsers, length fields,
  * and encrypted-path setup without using a real server.
  */
-static int build_server_connect_response(rdp_buffer* out, int encrypted, int extra_static_channel)
+static int build_server_connect_response(rdp_buffer* out,
+                                         int encrypted,
+                                         int extra_static_channel,
+                                         int multitransport)
 {
     static const uint8_t oid[] = {5, 0, 20, 124, 0, 1};
     static const uint8_t key[] = {'M', 'c', 'D', 'n'};
     rdp_buffer core;
     rdp_buffer security;
     rdp_buffer network;
+    rdp_buffer multitransport_block;
     rdp_buffer blocks;
     rdp_buffer gcc;
     rdp_buffer content;
@@ -711,6 +724,7 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted, int ext
     rdp_buffer_init(&core);
     rdp_buffer_init(&security);
     rdp_buffer_init(&network);
+    rdp_buffer_init(&multitransport_block);
     rdp_buffer_init(&blocks);
     rdp_buffer_init(&gcc);
     rdp_buffer_init(&content);
@@ -747,6 +761,16 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted, int ext
                  rdp_buffer_append_u16_le(&network, 1006) == LIBRDP_STATUS_OK;
         if (ok)
             ok = append_gcc_block(&blocks, 0x0c03u, &network);
+    }
+    if (ok && multitransport)
+    {
+        ok = rdp_buffer_append_u32_le(&multitransport_block,
+                                      RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                          RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                                          RDP_GCC_MULTITRANSPORT_UDP_PREFERRED |
+                                          RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP) ==
+                 LIBRDP_STATUS_OK &&
+             append_gcc_block(&blocks, RDP_GCC_SC_MULTITRANSPORT, &multitransport_block);
     }
 
     if (ok)
@@ -790,6 +814,7 @@ static int build_server_connect_response(rdp_buffer* out, int encrypted, int ext
     rdp_buffer_free(&content);
     rdp_buffer_free(&gcc);
     rdp_buffer_free(&blocks);
+    rdp_buffer_free(&multitransport_block);
     rdp_buffer_free(&network);
     rdp_buffer_free(&security);
     rdp_buffer_free(&core);
@@ -1363,6 +1388,15 @@ static int build_gdi_unsupported_altsec_update_packet(rdp_buffer* out)
                                                1);
 }
 
+static int build_gdi_desktop_composition_update_packet(rdp_buffer* out)
+{
+    static const uint8_t compdesk_first[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_COMPDESK_FIRST << 2u) | RDP_GDI_TS_SECONDARY)
+    };
+
+    return build_gdi_update_packet_from_orders(out, compdesk_first, sizeof(compdesk_first), 1);
+}
+
 static int build_set_error_info_packet(rdp_buffer* out, uint32_t error_info)
 {
     rdp_buffer payload;
@@ -1525,6 +1559,18 @@ static int build_application_static_channel_last_packet(rdp_buffer* out)
                                                 1006);
 }
 
+static int build_multiparty_static_channel_packet(rdp_buffer* out)
+{
+    rdp_buffer payload;
+    int ok = 0;
+
+    rdp_buffer_init(&payload);
+    ok = rdp_multiparty_write_filter_state(&payload, RDP_MULTIPARTY_FILTER_ENABLED) == LIBRDP_STATUS_OK &&
+         build_static_channel_packet(out, &payload, 1006);
+    rdp_buffer_free(&payload);
+    return ok;
+}
+
 static int build_dynamic_channel_create_named_packet(rdp_buffer* out, const char* name)
 {
     rdp_buffer payload;
@@ -1568,6 +1614,16 @@ static int build_dynamic_channel_create_display_control_packet(rdp_buffer* out)
     return build_dynamic_channel_create_named_packet(out, "Microsoft::Windows::RDS::DisplayControl");
 }
 
+static int build_dynamic_channel_create_telemetry_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_create_named_packet(out, RDP_TELEMETRY_DVC_CHANNEL_NAME);
+}
+
+static int build_dynamic_channel_create_video_redirection_packet(rdp_buffer* out)
+{
+    return build_dynamic_channel_create_named_packet(out, RDP_VIDEO_REDIRECTION_CHANNEL_NAME);
+}
+
 static int build_dynamic_channel_data_first_packet(rdp_buffer* out)
 {
     static const uint8_t data[] = {'a', 'b', 'c', 'd'};
@@ -1603,6 +1659,50 @@ static int build_dynamic_channel_data_payload_packet(rdp_buffer* out, const uint
     ok = rdp_dynamic_channel_write_data(&payload, 7, 1, data, data_len) == LIBRDP_STATUS_OK &&
          build_static_channel_packet(out, &payload, 1004);
     rdp_buffer_free(&payload);
+    return ok;
+}
+
+static int build_dynamic_channel_telemetry_packet(rdp_buffer* out)
+{
+    rdp_buffer telemetry;
+    int ok = 0;
+
+    rdp_buffer_init(&telemetry);
+    ok = rdp_telemetry_write_metrics(&telemetry, 10u, 20u, 30u, 40u) == LIBRDP_STATUS_OK &&
+         build_dynamic_channel_data_payload_packet(out, telemetry.data, telemetry.length);
+    rdp_buffer_free(&telemetry);
+    return ok;
+}
+
+static int build_dynamic_channel_geometry_packet(rdp_buffer* out)
+{
+    static const uint8_t presentation_id[16] = {
+        0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+        0x18u, 0x19u, 0x1au, 0x1bu, 0x1cu, 0x1du, 0x1eu, 0x1fu
+    };
+    rdp_video_redirection_geometry_info info;
+    rdp_buffer geometry;
+    rdp_buffer update;
+    int ok = 0;
+
+    memset(&info, 0, sizeof(info));
+    info.video_window_id = 1u;
+    info.window_state = RDP_VIDEO_REDIRECTION_WINDOW_NEW;
+    info.width = 320u;
+    info.height = 200u;
+    rdp_buffer_init(&geometry);
+    rdp_buffer_init(&update);
+    ok = rdp_video_redirection_write_geometry_info(&geometry, &info) == LIBRDP_STATUS_OK &&
+         rdp_video_redirection_write_geometry_update(&update,
+                                                     1u,
+                                                     presentation_id,
+                                                     geometry.data,
+                                                     (uint32_t)geometry.length,
+                                                     NULL,
+                                                     0) == LIBRDP_STATUS_OK &&
+         build_dynamic_channel_data_payload_packet(out, update.data, update.length);
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&geometry);
     return ok;
 }
 
@@ -1825,13 +1925,19 @@ static int parse_client_dynamic_channel_payload(const uint8_t* input,
     return rdp_virtual_channel_parse_packet(channel_payload, channel_payload_len, packet) == LIBRDP_STATUS_OK;
 }
 
-static int read_soft_sync_response_fd(int fd, uint8_t* input, size_t capacity, uint16_t expected_channel_id)
+static int read_soft_sync_response_fd(int fd,
+                                      uint8_t* input,
+                                      size_t capacity,
+                                      uint16_t expected_channel_id,
+                                      uint32_t expected_tunnel_count,
+                                      uint32_t expected_tunnel_type)
 {
     for (size_t attempt = 0; attempt < 8u; attempt++)
     {
         size_t input_len = 0;
         rdp_virtual_channel_packet response_packet;
         rdp_dynamic_channel_soft_sync_response soft_sync_response;
+        uint32_t tunnel_type = 0;
 
         if (!read_tpkt_fd(fd, input, capacity, &input_len))
             return 0;
@@ -1843,7 +1949,16 @@ static int read_soft_sync_response_fd(int fd, uint8_t* input, size_t capacity, u
         if (rdp_dynamic_channel_parse_soft_sync_response(response_packet.payload,
                                                         response_packet.payload_len,
                                                         &soft_sync_response) == LIBRDP_STATUS_OK)
-            return soft_sync_response.tunnel_count == 0;
+        {
+            if (soft_sync_response.tunnel_count != expected_tunnel_count)
+                return 0;
+            if (expected_tunnel_count == 0)
+                return 1;
+            return rdp_dynamic_channel_soft_sync_response_get_tunnel(&soft_sync_response,
+                                                                     0,
+                                                                     &tunnel_type) == LIBRDP_STATUS_OK &&
+                   tunnel_type == expected_tunnel_type;
+        }
     }
     return 0;
 }
@@ -2851,7 +2966,8 @@ static int start_handshake_server_full(uint16_t* port,
         return 0;
     if (gdi_scenario != GDI_SCENARIO_NORMAL &&
         gdi_scenario != GDI_SCENARIO_UNSUPPORTED_ALTSEC &&
-        gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION)
+        gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
+        gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION)
         return 0;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -2937,6 +3053,7 @@ static int start_handshake_server_full(uint16_t* port,
             rdp_buffer clipboard_file_response;
             rdp_buffer static_first;
             rdp_buffer static_last;
+            rdp_buffer multiparty_static;
             rdp_buffer error_update;
             int client = accept(fd, NULL, NULL);
 
@@ -2958,10 +3075,14 @@ static int start_handshake_server_full(uint16_t* port,
             rdp_buffer_init(&clipboard_file_response);
             rdp_buffer_init(&static_first);
             rdp_buffer_init(&static_last);
+            rdp_buffer_init(&multiparty_static);
             rdp_buffer_init(&error_update);
             if (client < 0)
                 _exit(6);
-            if (!build_server_connect_response(&mcs_response, encrypted, extra_static_channel))
+            if (!build_server_connect_response(&mcs_response,
+                                               encrypted,
+                                               extra_static_channel,
+                                               dynamic_channel_scenario == DVC_SCENARIO_SOFT_SYNC_TUNNEL_REQUEST))
                 _exit(1);
             (void)read_tpkt_fd(client, input, sizeof(input), &input_len);
             (void)write_exact_fd(client, response, sizeof(response));
@@ -3035,11 +3156,13 @@ static int start_handshake_server_full(uint16_t* port,
                         !write_exact_fd(client, bitmap_update.data, bitmap_update.length) ||
                         !((gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC) ?
                               build_gdi_unsupported_altsec_update_packet(&gdi_orders_update) :
-                              build_gdi_orders_update_packet(&gdi_orders_update)) ||
+                              ((gdi_scenario == GDI_SCENARIO_DESKTOP_COMPOSITION) ?
+                                   build_gdi_desktop_composition_update_packet(&gdi_orders_update) :
+                                   build_gdi_orders_update_packet(&gdi_orders_update))) ||
                         !write_exact_fd(client, gdi_orders_update.data, gdi_orders_update.length) ||
-                        (gdi_scenario == GDI_SCENARIO_NORMAL &&
-                         extra_static_channel &&
+                        (gdi_scenario == GDI_SCENARIO_NORMAL && extra_static_channel &&
                          dynamic_channel_scenario != DVC_SCENARIO_RDPDR_PRINTER_JOB &&
+                         dynamic_channel_scenario != DVC_SCENARIO_MULTIPARTY_RUNTIME &&
                          (!build_application_static_channel_first_packet(&static_first) ||
                           !write_exact_fd(client, static_first.data, static_first.length) ||
                           !build_application_static_channel_last_packet(&static_last) ||
@@ -3049,6 +3172,15 @@ static int start_handshake_server_full(uint16_t* port,
                     }
                     if (gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC)
                         goto done_connection;
+                    if (dynamic_channel_scenario == DVC_SCENARIO_MULTIPARTY_RUNTIME)
+                    {
+                        if (!extra_static_channel ||
+                            !build_multiparty_static_channel_packet(&multiparty_static) ||
+                            !write_exact_fd(client, multiparty_static.data, multiparty_static.length))
+                        {
+                            _exit(5);
+                        }
+                    }
                     if (clipboard_scenario == CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES)
                     {
                         if (!extra_static_channel ||
@@ -3164,22 +3296,43 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         if (!build_dynamic_channel_soft_sync_tunnel_request_packet(&dvc_soft_sync) ||
                             !write_exact_fd(client, dvc_soft_sync.data, dvc_soft_sync.length) ||
-                            !read_soft_sync_response_fd(client, input, sizeof(input), 1004))
+                            !read_soft_sync_response_fd(client,
+                                                        input,
+                                                        sizeof(input),
+                                                        1004,
+                                                        1u,
+                                                        RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE))
                         {
                             _exit(5);
                         }
                     }
-                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
-                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT)
-                    {
-                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
-                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
-                        {
-                            _exit(5);
-                        }
-                    }
-                    else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_VALIDATE ||
-                             dynamic_channel_scenario == DVC_SCENARIO_ECHO_PING ||
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_CAPS_REJECT_LAYOUT ||
+	                             dynamic_channel_scenario == DVC_SCENARIO_DISPLAY_CONTROL_ACCEPT_LAYOUT)
+	                    {
+	                        if (!build_dynamic_channel_create_display_control_packet(&dvc_create) ||
+	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_TELEMETRY_RUNTIME)
+	                    {
+	                        if (!build_dynamic_channel_create_telemetry_packet(&dvc_create) ||
+	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
+	                    {
+	                        if (!build_dynamic_channel_create_video_redirection_packet(&dvc_create) ||
+	                            !write_exact_fd(client, dvc_create.data, dvc_create.length))
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_ECHO_VALIDATE ||
+	                             dynamic_channel_scenario == DVC_SCENARIO_ECHO_PING ||
                              dynamic_channel_scenario == DVC_SCENARIO_ECHO_TIMEOUT ||
                              dynamic_channel_scenario == DVC_SCENARIO_ECHO_LATE_RESPONSE)
                     {
@@ -3194,23 +3347,39 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         _exit(5);
                     }
-                    if (dynamic_channel_scenario == DVC_SCENARIO_CLIENT_FRAGMENT_SEND)
-                    {
-                        if (!read_client_dynamic_create_response_fd(client, input, sizeof(input), 1004, 7) ||
-                            !read_client_fragmented_dynamic_payload_fd(client,
-                                                                       input,
+	                    if (dynamic_channel_scenario == DVC_SCENARIO_CLIENT_FRAGMENT_SEND)
+	                    {
+	                        if (!read_client_dynamic_create_response_fd(client, input, sizeof(input), 1004, 7) ||
+	                            !read_client_fragmented_dynamic_payload_fd(client,
+	                                                                       input,
                                                                        sizeof(input),
                                                                        1004,
                                                                        7,
                                                                        LIBRDP_CHANNEL_PRIORITY_HIGH,
                                                                        3600u) ||
                             !read_client_dynamic_close_fd(client, input, sizeof(input), 1004, 7))
-                        {
-                            _exit(5);
-                        }
-                    }
-                    else if (dynamic_channel_scenario == DVC_SCENARIO_DUPLICATE_CREATE)
-                    {
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_TELEMETRY_RUNTIME)
+	                    {
+	                        if (!build_dynamic_channel_telemetry_packet(&dvc_data) ||
+	                            !write_exact_fd(client, dvc_data.data, dvc_data.length))
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME)
+	                    {
+	                        if (!build_dynamic_channel_geometry_packet(&dvc_data) ||
+	                            !write_exact_fd(client, dvc_data.data, dvc_data.length))
+	                        {
+	                            _exit(5);
+	                        }
+	                    }
+	                    else if (dynamic_channel_scenario == DVC_SCENARIO_DUPLICATE_CREATE)
+	                    {
                         if (!write_exact_fd(client, dvc_create.data, dvc_create.length))
                             _exit(5);
                     }
@@ -3384,6 +3553,7 @@ done_connection:
             rdp_buffer_free(&error_update);
             rdp_buffer_free(&static_last);
             rdp_buffer_free(&static_first);
+            rdp_buffer_free(&multiparty_static);
             rdp_buffer_free(&clipboard_file_response);
             rdp_buffer_free(&clipboard_data_response);
             rdp_buffer_free(&dvc_close);
@@ -4710,38 +4880,38 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_TELEMETRY,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_MULTITRANSPORT,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_UDP_TRANSPORT,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_UDP2_TRANSPORT,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_GEOMETRY_TRACKING,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_MULTIPARTY,
                                              &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     CHECK(librdp_settings_get_feature_status(settings,
                                              LIBRDP_FEATURE_DISPLAY_CONTROL,
                                              &feature_status) == LIBRDP_STATUS_OK);
@@ -4956,45 +5126,45 @@ static int test_settings_surface_input_session(void)
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_TELEMETRY,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_MULTITRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_UDP_TRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_UDP2_TRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_GEOMETRY_TRACKING,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_MULTIPARTY,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
     CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_DISPLAY_CONTROL,
                                             &feature_status) == LIBRDP_STATUS_OK);
@@ -5181,6 +5351,7 @@ static int test_settings_surface_input_session(void)
     librdp_session_free(session);
     session = NULL;
     CHECK(librdp_settings_set_limits(settings, NULL) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTIPARTY, 0) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_credentials_provider(settings,
                                                    on_credentials_provider,
@@ -5970,26 +6141,35 @@ static int test_dynamic_channel_empty_compressed_fragments(void)
 }
 
 /*
- * Coverage: validates that a DVC soft-sync tunnel request falls back to TCP
- * when the multitransport runtime is parser-only. It catches accidental
- * negotiation of RDPEUDP/RDPEMT paths that cannot create a real side transport.
+ * Coverage: validates that a DVC soft-sync tunnel request selects UDP only
+ * when multitransport and UDP are explicitly requested. It also exercises the
+ * app-owned UDP2 datagram path so feature status reflects real runtime wiring,
+ * not packet helpers alone.
  */
-static int test_dynamic_channel_soft_sync_runtime_fallback(void)
+static int test_dynamic_channel_soft_sync_runtime(void)
 {
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     librdp_feature_status feature_status;
+    rdp_buffer udp2_packet;
+    rdp_buffer udp2_wire;
+    uint8_t udp2_response[64];
+    size_t udp2_response_len = 0;
     uint16_t test_port = 0;
     pid_t server_pid = -1;
     int child_status = 0;
     librdp_status status = LIBRDP_STATUS_OK;
     size_t i = 0;
 
+    rdp_buffer_init(&udp2_packet);
+    rdp_buffer_init(&udp2_wire);
     settings = librdp_settings_new();
     CHECK(settings != NULL);
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_UDP_TRANSPORT, 1) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, LIBRDP_FEATURE_UDP2_TRANSPORT, 1) == LIBRDP_STATUS_OK);
     CHECK(start_handshake_server_multi(&test_port,
                                        &server_pid,
                                        0,
@@ -6011,10 +6191,37 @@ static int test_dynamic_channel_soft_sync_runtime_fallback(void)
     CHECK(librdp_session_get_feature_status(session,
                                             LIBRDP_FEATURE_MULTITRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
-    CHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
-    CHECK(!feature_status.negotiated && !feature_status.active);
-    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_UDP_TRANSPORT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
+    CHECK(rdp_udp2_write_data_packet(&udp2_packet, 4u, 7u, "abc", 3u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_udp2_wrap_packet(&udp2_wire,
+                               udp2_packet.data,
+                               udp2_packet.length,
+                               RDP_UDP2_PACKET_TYPE_DATA) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_process_udp2_datagram(session,
+                                               udp2_wire.data,
+                                               udp2_wire.length,
+                                               udp2_response,
+                                               sizeof(udp2_response),
+                                               &udp2_response_len) == LIBRDP_STATUS_OK);
+    CHECK(udp2_response_len > 0);
+    CHECK(librdp_session_get_feature_status(session,
+                                            LIBRDP_FEATURE_UDP2_TRANSPORT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+
+    rdp_buffer_free(&udp2_wire);
+    rdp_buffer_free(&udp2_packet);
     librdp_session_free(session);
     librdp_settings_free(settings);
     CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
@@ -6023,14 +6230,97 @@ static int test_dynamic_channel_soft_sync_runtime_fallback(void)
 }
 
 /*
- * Coverage: locks down protocols whose packet parser is implemented but whose
- * runtime is intentionally not exposed without a real channel or transport
- * provider. It catches accidental backend-ready, negotiated, or active status
- * transitions caused by wiring parser-only helpers into feature negotiation.
+ * Coverage: drives optional feature runtimes through the session dispatcher
+ * instead of accepting settings-level readiness. It catches regressions where a
+ * protocol can be parsed but no channel, order, or transport path makes it
+ * negotiated and active.
  */
-static int test_parser_only_feature_runtime_gates(void)
+static int run_optional_feature_runtime_scenario(librdp_feature feature,
+                                                 int extra_static_channel,
+                                                 int dynamic_channel_scenario,
+                                                 int gdi_scenario)
 {
-    static const librdp_feature parser_only_features[] = {
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status feature_status;
+    uint16_t test_port = 0;
+    pid_t server_pid = -1;
+    int child_status = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int active = 0;
+    size_t i = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_enable_feature(settings, feature, 1) == LIBRDP_STATUS_OK);
+    CHECK(start_handshake_server_full(&test_port,
+                                      &server_pid,
+                                      0,
+                                      0,
+                                      extra_static_channel,
+                                      0,
+                                      1,
+                                      dynamic_channel_scenario,
+                                      gdi_scenario,
+                                      0,
+                                      CLIPBOARD_SCENARIO_NONE));
+    CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
+    for (i = 0; i < 8u && !active; i++)
+    {
+        status = librdp_session_run_once(session, 1000);
+        if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_CLOSED)
+            break;
+        CHECK(librdp_session_get_feature_status(session, feature, &feature_status) == LIBRDP_STATUS_OK);
+        active = feature_status.active != 0;
+    }
+    CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_CLOSED);
+    CHECK(librdp_session_get_feature_status(session, feature, &feature_status) == LIBRDP_STATUS_OK);
+    CHECK(feature_status.requested && feature_status.built && feature_status.backend_ready);
+    CHECK(feature_status.negotiated && feature_status.active);
+    CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
+    CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+static int test_optional_feature_runtime_paths(void)
+{
+    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_TELEMETRY,
+                                                0,
+                                                DVC_SCENARIO_TELEMETRY_RUNTIME,
+                                                GDI_SCENARIO_NORMAL) == 0);
+    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_MULTIPARTY,
+                                                1,
+                                                DVC_SCENARIO_MULTIPARTY_RUNTIME,
+                                                GDI_SCENARIO_NORMAL) == 0);
+    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+                                                0,
+                                                DVC_SCENARIO_NORMAL,
+                                                GDI_SCENARIO_DESKTOP_COMPOSITION) == 0);
+    CHECK(run_optional_feature_runtime_scenario(LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                                0,
+                                                DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME,
+                                                GDI_SCENARIO_NORMAL) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: ensures feature bits with runtime implementations are backend
+ * ready in settings but remain not-negotiated on a fresh session. It catches
+ * accidental active status without a channel, transport, or activated session.
+ */
+static int test_feature_runtime_gates(void)
+{
+    static const librdp_feature runtime_features[] = {
         LIBRDP_FEATURE_TELEMETRY,
         LIBRDP_FEATURE_MULTITRANSPORT,
         LIBRDP_FEATURE_DESKTOP_COMPOSITION,
@@ -6046,28 +6336,28 @@ static int test_parser_only_feature_runtime_gates(void)
     settings = librdp_settings_new();
     CHECK(settings != NULL);
 
-    for (size_t i = 0; i < sizeof(parser_only_features) / sizeof(parser_only_features[0]); i++)
+    for (size_t i = 0; i < sizeof(runtime_features) / sizeof(runtime_features[0]); i++)
     {
-        CHECK(librdp_settings_enable_feature(settings, parser_only_features[i], 1) == LIBRDP_STATUS_OK);
-        CHECK(librdp_settings_get_feature_status(settings, parser_only_features[i], &status) ==
+        CHECK(librdp_settings_enable_feature(settings, runtime_features[i], 1) == LIBRDP_STATUS_OK);
+        CHECK(librdp_settings_get_feature_status(settings, runtime_features[i], &status) ==
               LIBRDP_STATUS_OK);
-        CHECK(status.feature == parser_only_features[i]);
+        CHECK(status.feature == runtime_features[i]);
         CHECK(status.requested && status.built);
-        CHECK(!status.backend_ready && !status.negotiated && !status.active);
-        CHECK(status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+        CHECK(status.backend_ready && !status.negotiated && !status.active);
+        CHECK(status.reason == LIBRDP_FEATURE_REASON_NONE);
     }
 
     session = librdp_session_new(settings);
     CHECK(session != NULL);
 
-    for (size_t i = 0; i < sizeof(parser_only_features) / sizeof(parser_only_features[0]); i++)
+    for (size_t i = 0; i < sizeof(runtime_features) / sizeof(runtime_features[0]); i++)
     {
-        CHECK(librdp_session_get_feature_status(session, parser_only_features[i], &status) ==
+        CHECK(librdp_session_get_feature_status(session, runtime_features[i], &status) ==
               LIBRDP_STATUS_OK);
-        CHECK(status.feature == parser_only_features[i]);
+        CHECK(status.feature == runtime_features[i]);
         CHECK(status.requested && status.built);
-        CHECK(!status.backend_ready && !status.negotiated && !status.active);
-        CHECK(status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+        CHECK(status.backend_ready && !status.negotiated && !status.active);
+        CHECK(status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     }
 
     librdp_session_free(session);
@@ -7172,7 +7462,7 @@ static int test_printer_file_backend_job_lifecycle(void)
  * Coverage: validates that recognized but non-rendered GDI alternate
  * secondary orders are treated as protocol errors at session runtime instead
  * of being silently accepted. This catches capability/runtime drift where
- * parser-only GDI+ or window composition packets would otherwise look
+ * unsupported GDI+ or window composition packets would otherwise look
  * successfully rendered.
  */
 static int test_gdi_unsupported_altsec_order(void)
@@ -7995,9 +8285,11 @@ int test_client_core(void)
         return 1;
     if (test_dynamic_channel_empty_compressed_fragments() != 0)
         return 1;
-    if (test_dynamic_channel_soft_sync_runtime_fallback() != 0)
+    if (test_dynamic_channel_soft_sync_runtime() != 0)
         return 1;
-    if (test_parser_only_feature_runtime_gates() != 0)
+    if (test_optional_feature_runtime_paths() != 0)
+        return 1;
+    if (test_feature_runtime_gates() != 0)
         return 1;
     if (test_echo_channel_auto_response() != 0)
         return 1;

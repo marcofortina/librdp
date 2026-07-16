@@ -290,6 +290,7 @@ static int rdp_session_dynamic_channel_is_internal_name(const char* name)
            strcmp(name, RDP_SESSION_AUTH_REDIRECTION_NAME) == 0 ||
            strcmp(name, RDP_SESSION_WEBAUTHN_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_SESSION_USB_REDIRECTION_CHANNEL_NAME) == 0 ||
+           strcmp(name, RDP_TELEMETRY_DVC_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_COMPOSITED_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) == 0 ||
            strcmp(name, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) == 0 ||
@@ -313,6 +314,11 @@ static int rdp_session_dynamic_channel_request_name_equals(const rdp_dynamic_cha
         return 0;
     name_len = strlen(name);
     return request->name_len == name_len && memcmp(request->name, name, name_len) == 0;
+}
+
+static int rdp_session_dynamic_request_is_tsmf(const rdp_dynamic_channel_create_request* request)
+{
+    return rdp_session_dynamic_channel_request_name_equals(request, RDP_VIDEO_REDIRECTION_CHANNEL_NAME);
 }
 
 static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channel_create_request* request,
@@ -339,6 +345,8 @@ static int rdp_session_dynamic_channel_optional_feature(const rdp_dynamic_channe
         *feature = LIBRDP_FEATURE_CAMERA;
     else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_AUDIO_INPUT_CHANNEL_NAME))
         *feature = LIBRDP_FEATURE_AUDIO_INPUT;
+    else if (rdp_session_dynamic_channel_request_name_equals(request, RDP_TELEMETRY_DVC_CHANNEL_NAME))
+        *feature = LIBRDP_FEATURE_TELEMETRY;
     else
         return 0;
     return 1;
@@ -358,6 +366,9 @@ uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
     if (rdp_session_dynamic_channel_requires_credssp(request) &&
         (!session || !session->credssp_security_ready))
         return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    if (rdp_session_dynamic_request_is_tsmf(request) && session &&
+        rdp_session_feature_ready_for_negotiation(session, LIBRDP_FEATURE_GEOMETRY_TRACKING))
+        return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     if (!rdp_session_dynamic_channel_optional_feature(request, &feature))
         return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     memset(&feature_status, 0, sizeof(feature_status));
@@ -368,6 +379,8 @@ uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
     if (!feature_status.requested || !feature_status.backend_ready ||
         feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY)
         return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    if (rdp_session_dynamic_request_is_tsmf(request))
+        return RDP_DYNAMIC_CHANNEL_STATUS_OK;
     return RDP_DYNAMIC_CHANNEL_STATUS_OK;
 }
 
@@ -700,6 +713,12 @@ librdp_status rdp_session_static_channel_configure(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Reassembles static virtual channel fragments and validates protocol-owned
+ * static channels before publishing application data. Fragment state is kept on
+ * the channel entry, and any malformed or oversized fragment discards the partial
+ * buffer so the next PDU starts from a known boundary.
+ */
 librdp_status rdp_session_handle_static_channel(librdp_session* session,
                                                        rdp_session_static_channel* entry,
                                                        const rdp_virtual_channel_packet* packet)
@@ -718,6 +737,21 @@ librdp_status rdp_session_handle_static_channel(librdp_session* session,
         entry->fragment_expected = 0;
         rdp_buffer_free(&entry->fragment);
         rdp_buffer_init(&entry->fragment);
+        if (strcmp(entry->name, RDP_MULTIPARTY_CHANNEL_NAME) == 0)
+        {
+            rdp_multiparty_message message;
+
+            if (rdp_multiparty_parse_message(packet->payload, packet->payload_len, &message) !=
+                LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            session->multiparty_joined = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.multiparty.pdu",
+                            "channel_id=%u type=%u payload_len=%u",
+                            entry->channel_id,
+                            message.type,
+                            (unsigned)packet->payload_len);
+        }
         rdp_session_emit_channel_payload(session,
                                          entry->channel_id,
                                          entry->name,
@@ -748,6 +782,21 @@ librdp_status rdp_session_handle_static_channel(librdp_session* session,
     {
         if (entry->fragment.length != (size_t)entry->fragment_expected)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (strcmp(entry->name, RDP_MULTIPARTY_CHANNEL_NAME) == 0)
+        {
+            rdp_multiparty_message message;
+
+            if (rdp_multiparty_parse_message(entry->fragment.data, entry->fragment.length, &message) !=
+                LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            session->multiparty_joined = 1;
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.multiparty.pdu",
+                            "channel_id=%u type=%u payload_len=%u",
+                            entry->channel_id,
+                            message.type,
+                            (unsigned)entry->fragment.length);
+        }
         rdp_session_emit_channel_payload(session,
                                          entry->channel_id,
                                          entry->name,
@@ -1245,5 +1294,3 @@ const librdp_error* librdp_session_last_error(const librdp_session* session)
 {
     return session ? &session->last_error : NULL;
 }
-
-

@@ -932,6 +932,49 @@ LIBRDP_API librdp_status librdp_session_notify_poll(librdp_session* session,
 LIBRDP_API librdp_status librdp_session_dispatch_pending(librdp_session* session);
 
 /**
+ * @brief Process one UDP2 side-transport datagram for an active client session.
+ *
+ * The application owns the UDP socket, gateway tunnel, or platform transport
+ * and passes received UDP2 datagrams here after multitransport negotiation.
+ * The core validates the UDP2 wrapper and packet, updates session feature
+ * state, and writes an ACK datagram for data packets into the caller-provided
+ * response buffer. The response buffer remains caller-owned and response_len
+ * receives either bytes written or the required size when the buffer is too
+ * small.
+ *
+ * @param[in,out] session Active session that negotiated multitransport; must
+ * not be NULL.
+ * @param[in] datagram Borrowed UDP2 wire datagram; must not be NULL.
+ * @param[in] datagram_len Number of bytes in datagram; must be non-zero.
+ * @param[out] response Caller-owned response buffer. May be NULL only when
+ * response_capacity is zero.
+ * @param[in] response_capacity Number of bytes available in response.
+ * @param[out] response_len Number of response bytes written, or required bytes
+ * when response_capacity is too small; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when the datagram is accepted;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL pointers, empty datagrams, or an
+ * inconsistent response buffer; LIBRDP_STATUS_STATE when the session is not
+ * ACTIVE or is called from the wrong owner thread; LIBRDP_STATUS_UNSUPPORTED
+ * when UDP2 was not requested or multitransport was not negotiated;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when response is too small;
+ * LIBRDP_STATUS_PROTOCOL_ERROR for malformed UDP2 datagrams; allocation
+ * errors from temporary packet buffers.
+ *
+ * @note Thread-safety: call from the serialized session-driving context. This
+ * API does not create sockets or worker threads.
+ * @warning UDP2 payloads may contain redirected channel traffic. Do not log
+ * datagram bodies outside the redacted librdp trace path.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_session_process_udp2_datagram(librdp_session* session,
+                                                              const void* datagram,
+                                                              size_t datagram_len,
+                                                              void* response,
+                                                              size_t response_capacity,
+                                                              size_t* response_len);
+
+/**
  * @brief Return the next timeout required by the session event loop.
  *
  * The value is suitable for poll(2). A value of -1 means the current session

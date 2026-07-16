@@ -165,6 +165,7 @@ LIBRDP_0.1 {
         librdp_session_last_error;
         librdp_session_clear_last_error;
         librdp_session_get_feature_status;
+        librdp_session_process_udp2_datagram;
         librdp_session_get_surface;
         librdp_error_info_init;
         librdp_error_copy_info;

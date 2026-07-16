@@ -161,6 +161,7 @@ _librdp_session_get_lifecycle
 _librdp_session_last_error
 _librdp_session_clear_last_error
 _librdp_session_get_feature_status
+_librdp_session_process_udp2_datagram
 _librdp_session_get_surface
 _librdp_error_info_init
 _librdp_error_copy_info

@@ -136,6 +136,7 @@
     "librdp_session_get_metrics",
     "librdp_session_get_next_timeout",
     "librdp_session_get_pollfds",
+    "librdp_session_process_udp2_datagram",
     "librdp_session_get_state",
     "librdp_session_get_surface",
     "librdp_session_last_error",
