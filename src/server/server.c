@@ -137,9 +137,7 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
 
 static int rdp_server_feature_parser_only(librdp_feature feature)
 {
-    return feature == LIBRDP_FEATURE_MULTITRANSPORT ||
-           feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
-           feature == LIBRDP_FEATURE_UDP2_TRANSPORT;
+    return feature == LIBRDP_FEATURE_UDP2_TRANSPORT;
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -162,9 +160,9 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
         case LIBRDP_FEATURE_GEOMETRY_TRACKING:
-            return 1;
         case LIBRDP_FEATURE_MULTITRANSPORT:
         case LIBRDP_FEATURE_UDP_TRANSPORT:
+            return 1;
         case LIBRDP_FEATURE_UDP2_TRANSPORT:
         default:
             return 0;
@@ -2238,6 +2236,26 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         server_config.early_capability_flags = client_data.early_capability_flags;
         server_config.mcs_channel_id = (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID;
         server_config.channel_count = client_data.channel_count;
+        peer->multitransport_negotiated = 0;
+        peer->multitransport_udp_active = 0;
+        peer->multitransport_udp2_active = 0;
+        peer->multitransport_flags = 0;
+        if (client_data.has_multitransport &&
+            (peer->requested_features & (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT) != 0 &&
+            (peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT) != 0)
+        {
+            uint32_t flags = client_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS;
+
+            if ((flags & (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) ==
+                (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL))
+            {
+                server_config.enable_multitransport = 1;
+                server_config.multitransport_flags =
+                    flags | RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP;
+                peer->multitransport_negotiated = 1;
+                peer->multitransport_flags = server_config.multitransport_flags;
+            }
+        }
         if (rdp_server_uses_standard_security(peer))
         {
             status = rdp_server_prepare_standard_security(peer);
@@ -3443,6 +3461,71 @@ static int rdp_server_dynamic_channel_open_named(librdp_server_peer* peer,
     return rdp_server_name_equals(channel->name, strlen(channel->name), expected_name);
 }
 
+static int rdp_server_tunnel_type_present(const uint32_t* tunnel_types, uint32_t tunnel_count, uint32_t tunnel_type)
+{
+    if (!tunnel_types)
+        return 0;
+    for (uint32_t i = 0; i < tunnel_count; i++)
+    {
+        if (tunnel_types[i] == tunnel_type)
+            return 1;
+    }
+    return 0;
+}
+
+static int rdp_server_soft_sync_channels_open(librdp_server_peer* peer,
+                                              const rdp_dynamic_channel_soft_sync_channel_list* list)
+{
+    if (!peer || !list)
+        return 0;
+    for (uint16_t i = 0; i < list->channel_count; i++)
+    {
+        uint32_t channel_id = 0;
+
+        if (rdp_dynamic_channel_soft_sync_channel_list_get_id(list, i, &channel_id) != LIBRDP_STATUS_OK ||
+            !rdp_server_find_dynamic_channel(peer, channel_id))
+            return 0;
+    }
+    return 1;
+}
+
+static librdp_status rdp_server_select_soft_sync_tunnels(librdp_server_peer* peer,
+                                                         const rdp_dynamic_channel_soft_sync_request* request,
+                                                         uint32_t* tunnel_types,
+                                                         uint32_t tunnel_capacity,
+                                                         uint32_t* tunnel_count)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !request || !tunnel_types || !tunnel_count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *tunnel_count = 0;
+    if (!peer->multitransport_negotiated ||
+        (peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT) == 0)
+        return LIBRDP_STATUS_OK;
+    for (uint16_t i = 0; i < request->tunnel_count && status == LIBRDP_STATUS_OK; i++)
+    {
+        rdp_dynamic_channel_soft_sync_channel_list list;
+
+        status = rdp_dynamic_channel_soft_sync_request_get_list(request, i, &list);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        if (!rdp_server_soft_sync_channels_open(peer, &list))
+            continue;
+        if (list.tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE &&
+            list.tunnel_type != RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_LOSSY)
+            continue;
+        if (!rdp_server_tunnel_type_present(tunnel_types, *tunnel_count, list.tunnel_type))
+        {
+            if (*tunnel_count >= tunnel_capacity)
+                return LIBRDP_STATUS_LIMIT_EXCEEDED;
+            tunnel_types[*tunnel_count] = list.tunnel_type;
+            (*tunnel_count)++;
+        }
+    }
+    return status;
+}
+
 static librdp_status rdp_server_send_static_named_buffer(librdp_server_peer* peer,
                                                         uint16_t channel_id,
                                                         const char* expected_name,
@@ -4065,6 +4148,14 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Dispatches the drdynvc control stream after the static channel is joined.
+ * Capability negotiation must complete before create/data/close/soft-sync
+ * commands are accepted; application payload is emitted only after DVC
+ * fragmentation is reassembled and extension headers validate. Soft-Sync
+ * tunnel responses are intentionally limited to already-open dynamic channel
+ * IDs so the server never advertises a side transport for unknown state.
+ */
 static librdp_status rdp_server_handle_dynamic_channel_message(librdp_server_peer* peer,
                                                                const uint8_t* data,
                                                                size_t data_len)
@@ -4114,12 +4205,25 @@ static librdp_status rdp_server_handle_dynamic_channel_message(librdp_server_pee
     else if (header.command == RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST)
     {
         rdp_dynamic_channel_soft_sync_request request;
+        uint32_t tunnel_types[2];
+        uint32_t tunnel_count = 0;
 
+        memset(tunnel_types, 0, sizeof(tunnel_types));
         status = rdp_dynamic_channel_parse_soft_sync_request(data, data_len, &request);
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_dynamic_channel_write_soft_sync_response(&response, NULL, 0);
+            status = rdp_server_select_soft_sync_tunnels(peer,
+                                                         &request,
+                                                         tunnel_types,
+                                                         (uint32_t)(sizeof(tunnel_types) / sizeof(tunnel_types[0])),
+                                                         &tunnel_count);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_dynamic_channel_write_soft_sync_response(&response,
+                                                                  tunnel_count > 0 ? tunnel_types : NULL,
+                                                                  tunnel_count);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_server_send_dynamic_packet(peer, &response);
+        if (status == LIBRDP_STATUS_OK && tunnel_count > 0)
+            peer->multitransport_udp_active = 1;
     }
     else
         status = LIBRDP_STATUS_UNSUPPORTED;
@@ -4827,6 +4931,18 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
         case LIBRDP_FEATURE_MULTIPARTY:
             negotiated = rdp_server_peer_static_channel_joined_named(peer, RDP_MULTIPARTY_CHANNEL_NAME);
             break;
+        case LIBRDP_FEATURE_MULTITRANSPORT:
+            rdp_server_finish_peer_feature_status(status,
+                                                  peer->multitransport_negotiated,
+                                                  peer->multitransport_negotiated &&
+                                                      (peer->multitransport_udp_active ||
+                                                       peer->multitransport_udp2_active));
+            return;
+        case LIBRDP_FEATURE_UDP_TRANSPORT:
+            rdp_server_finish_peer_feature_status(status,
+                                                  peer->multitransport_negotiated,
+                                                  peer->multitransport_udp_active);
+            return;
         default:
             return;
     }

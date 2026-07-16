@@ -105,6 +105,10 @@ struct librdp_server_peer
     uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t dynamic_channels_ready;
+    uint8_t multitransport_negotiated;
+    uint8_t multitransport_udp_active;
+    uint8_t multitransport_udp2_active;
+    uint32_t multitransport_flags;
     rdp_server_dynamic_channel dynamic_channels[RDP_SERVER_MAX_DYNAMIC_CHANNELS];
     uint8_t confirm_active_seen;
     uint8_t licensing_done;

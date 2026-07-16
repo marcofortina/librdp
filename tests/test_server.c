@@ -202,8 +202,6 @@ static int test_server_new_validates_metadata(void)
 static int test_server_parser_only_feature_gates(void)
 {
     static const librdp_feature parser_only_features[] = {
-        LIBRDP_FEATURE_MULTITRANSPORT,
-        LIBRDP_FEATURE_UDP_TRANSPORT,
         LIBRDP_FEATURE_UDP2_TRANSPORT
     };
     librdp_server_config config;
@@ -643,6 +641,10 @@ static int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
     config.requested_protocols = RDP_X224_PROTOCOL_STANDARD;
     config.client_name = "server-test";
     config.enable_dynamic_channels = 1;
+    config.enable_multitransport = 1;
+    config.multitransport_flags = RDP_GCC_MULTITRANSPORT_UDP_FECR |
+                                  RDP_GCC_MULTITRANSPORT_UDP_FECL |
+                                  RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
     config.extra_channels = extra_channels;
     config.extra_channel_count = 4;
     if (rdp_gcc_write_client_data_blocks(&gcc_blocks, &config) == LIBRDP_STATUS_OK &&
@@ -1460,6 +1462,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_dynamic_channel_create_response dvc_create_response;
     rdp_dynamic_channel_data_pdu dvc_data_response;
     rdp_dynamic_channel_close_pdu dvc_close;
+    rdp_dynamic_channel_soft_sync_response soft_sync_response;
     rdp_clipboard_packet clipboard_packet;
     rdp_clipboard_capabilities clipboard_capabilities;
     rdp_echo_channel_pdu echo_response;
@@ -1552,6 +1555,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_MULTIPARTY, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_DESKTOP_COMPOSITION, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_GEOMETRY_TRACKING, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_UDP_TRANSPORT, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_get_feature_status(server,
                                             LIBRDP_FEATURE_ECHO,
                                             &feature_status) == LIBRDP_STATUS_OK);
@@ -1573,6 +1578,16 @@ static int test_server_loopback_standard_activation_sequence(void)
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_get_feature_status(server,
                                             LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    SCHECK(librdp_server_get_feature_status(server,
+                                            LIBRDP_FEATURE_MULTITRANSPORT,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    SCHECK(librdp_server_get_feature_status(server,
+                                            LIBRDP_FEATURE_UDP_TRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
     SCHECK(feature_status.requested && feature_status.backend_ready &&
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
@@ -1646,6 +1661,14 @@ static int test_server_loopback_standard_activation_sequence(void)
                                             gcc_response.user_data_len,
                                             &server_data) == LIBRDP_STATUS_OK);
     SCHECK(server_data.has_core && server_data.has_security && server_data.has_network);
+    SCHECK(server_data.has_multitransport);
+    SCHECK((server_data.multitransport_flags &
+            (RDP_GCC_MULTITRANSPORT_UDP_FECR |
+             RDP_GCC_MULTITRANSPORT_UDP_FECL |
+             RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP)) ==
+           (RDP_GCC_MULTITRANSPORT_UDP_FECR |
+            RDP_GCC_MULTITRANSPORT_UDP_FECL |
+            RDP_GCC_MULTITRANSPORT_SOFTSYNC_TCP_TO_UDP));
     SCHECK(server_data.encryption_method == RDP_SECURITY_METHOD_128BIT);
     SCHECK(server_data.encryption_level == 3);
     SCHECK(server_data.server_random_len == RDP_SECURITY_CLIENT_RANDOM_LEN);
@@ -2061,6 +2084,64 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_dynamic_channel_info_init(&dynamic_info) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_dynamic_channel_at(peer, 0, &dynamic_info) == LIBRDP_STATUS_OK);
     SCHECK(dynamic_info.channel_id == 7 && dynamic_info.open && strcmp(dynamic_info.name, "APPDVC") == 0);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_MULTITRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           !feature_status.active && feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_UDP_TRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated &&
+           !feature_status.active && feature_status.reason == LIBRDP_FEATURE_REASON_NOT_ACTIVE);
+
+    dvc_packet.length = 0;
+    SCHECK(rdp_buffer_append_u8(&dvc_packet,
+                                (uint8_t)(RDP_DYNAMIC_CHANNEL_CMD_SOFT_SYNC_REQUEST << 4)) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u8(&dvc_packet, 0) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 18u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u16_le(&dvc_packet,
+                                    RDP_DYNAMIC_CHANNEL_SOFT_SYNC_TCP_FLUSHED |
+                                        RDP_DYNAMIC_CHANNEL_SOFT_SYNC_CHANNEL_LIST_PRESENT) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u16_le(&dvc_packet, 1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_buffer_append_u32_le(&dvc_packet, 7u) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_channel_payload(client_fd,
+                                            attach_confirm.user_id,
+                                            dynamic_static_channel_id,
+                                            &dvc_packet));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &dvc_payload,
+                                                &dvc_payload_len));
+    SCHECK(response_channel_id == dynamic_static_channel_id);
+    SCHECK(rdp_dynamic_channel_parse_soft_sync_response(dvc_payload,
+                                                       dvc_payload_len,
+                                                       &soft_sync_response) == LIBRDP_STATUS_OK);
+    SCHECK(soft_sync_response.tunnel_count == 1);
+    {
+        uint32_t tunnel_type = 0;
+
+        SCHECK(rdp_dynamic_channel_soft_sync_response_get_tunnel(&soft_sync_response,
+                                                                 0,
+                                                                 &tunnel_type) == LIBRDP_STATUS_OK);
+        SCHECK(tunnel_type == RDP_DYNAMIC_CHANNEL_TUNNEL_UDP_RELIABLE);
+    }
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_MULTITRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_UDP_TRANSPORT,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
     dvc_packet.length = 0;
     SCHECK(rdp_dynamic_channel_write_data(&dvc_packet, 7, 1, "ping", 4) == LIBRDP_STATUS_OK);

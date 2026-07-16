@@ -555,6 +555,11 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
         (!config->server_random || !config->server_certificate || config->server_random_len == 0 ||
          config->server_certificate_len == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (config->enable_multitransport &&
+        ((config->multitransport_flags & ~RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS) != 0 ||
+         (config->multitransport_flags &
+          (RDP_GCC_MULTITRANSPORT_UDP_FECR | RDP_GCC_MULTITRANSPORT_UDP_FECL)) == 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&payload);
     status = rdp_buffer_append_u32_le(&payload,
@@ -594,6 +599,12 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
         status = rdp_buffer_append_u16_le(&payload, (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u + i));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_SC_NETWORK, &payload);
+
+    payload.length = 0;
+    if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
+        status = rdp_buffer_append_u32_le(&payload, config->multitransport_flags);
+    if (status == LIBRDP_STATUS_OK && config->enable_multitransport)
+        status = rdp_gcc_write_block(buffer, RDP_GCC_SC_MULTITRANSPORT, &payload);
 
     rdp_buffer_free(&payload);
     return status;

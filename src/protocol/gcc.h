@@ -163,6 +163,8 @@ typedef struct rdp_gcc_server_config
     uint32_t server_certificate_len;
     uint16_t mcs_channel_id;
     uint16_t channel_count;
+    uint8_t enable_multitransport;
+    uint32_t multitransport_flags;
 } rdp_gcc_server_config;
 
 librdp_status rdp_gcc_write_client_data_blocks(rdp_buffer* buffer, const rdp_gcc_client_config* config);
