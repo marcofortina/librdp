@@ -191,6 +191,45 @@ static int test_server_new_validates_metadata(void)
     return 0;
 }
 
+/*
+ * Coverage: locks down server feature gates for protocol parsers that are
+ * available to validate packets but are not wired to a complete server
+ * transport/runtime. It prevents future negotiation code from presenting
+ * parser coverage as active extension support.
+ */
+static int test_server_parser_only_feature_gates(void)
+{
+    static const librdp_feature parser_only_features[] = {
+        LIBRDP_FEATURE_MULTITRANSPORT,
+        LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+        LIBRDP_FEATURE_UDP_TRANSPORT,
+        LIBRDP_FEATURE_UDP2_TRANSPORT,
+        LIBRDP_FEATURE_GEOMETRY_TRACKING
+    };
+    librdp_server_config config;
+    librdp_feature_status feature_status;
+    librdp_server* server = NULL;
+
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+
+    for (size_t i = 0; i < sizeof(parser_only_features) / sizeof(parser_only_features[0]); i++)
+    {
+        SCHECK(librdp_server_enable_feature(server, parser_only_features[i], 1) == LIBRDP_STATUS_OK);
+        SCHECK(librdp_server_get_feature_status(server,
+                                                parser_only_features[i],
+                                                &feature_status) == LIBRDP_STATUS_OK);
+        SCHECK(feature_status.feature == parser_only_features[i]);
+        SCHECK(feature_status.requested && feature_status.built && !feature_status.backend_ready);
+        SCHECK(!feature_status.negotiated && !feature_status.active);
+        SCHECK(feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY);
+    }
+
+    librdp_server_free(server);
+    return 0;
+}
+
 static int test_server_new_copies_strings(void)
 {
     librdp_server_config config;
@@ -2371,6 +2410,8 @@ int main(void)
     if (test_server_config_defaults() != 0)
         return 1;
     if (test_server_new_validates_metadata() != 0)
+        return 1;
+    if (test_server_parser_only_feature_gates() != 0)
         return 1;
     if (test_server_new_copies_strings() != 0)
         return 1;
