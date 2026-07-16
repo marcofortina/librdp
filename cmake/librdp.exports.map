@@ -74,6 +74,7 @@ LIBRDP_0.1 {
         librdp_server_peer_send_channel_data;
         librdp_server_peer_open_dynamic_channel;
         librdp_server_peer_send_dynamic_channel_data;
+        librdp_server_peer_process_udp2_datagram;
         librdp_server_peer_send_static_extension_data;
         librdp_server_peer_send_dynamic_extension_data;
         librdp_server_peer_send_clipboard_monitor_ready;

@@ -51,6 +51,7 @@
     "librdp_server_peer_get_state",
     "librdp_server_peer_notify_poll",
     "librdp_server_peer_open_dynamic_channel",
+    "librdp_server_peer_process_udp2_datagram",
     "librdp_server_peer_reset_metrics",
     "librdp_server_peer_run_once",
     "librdp_server_peer_send_channel_data",

@@ -666,7 +666,7 @@ LIBRDP_API librdp_status librdp_server_enable_feature(librdp_server* server,
  *
  * The function reports the requested state configured on the server object and
  * whether a server-side runtime and backend are available for the feature.
- * Client-only or parser-only features are never reported as active by this
+ * Features without a server-side runtime are never reported as active by this
  * server API.
  *
  * @param[in] server Server listener to query; must not be NULL.
@@ -1242,6 +1242,48 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_ser
                                                                       uint32_t dynamic_channel_id,
                                                                       const void* data,
                                                                       size_t data_len);
+
+/**
+ * @brief Process one UDP2 side-transport datagram for an active peer.
+ *
+ * The application owns the UDP socket or gateway tunnel and passes each
+ * received UDP2 datagram to this function after multitransport negotiation.
+ * The datagram is validated, decoded, and, when it carries data, acknowledged
+ * into the caller-provided response buffer. The response buffer remains
+ * caller-owned and response_len receives either the number of bytes written or
+ * the required size when the buffer is too small.
+ *
+ * @param[in,out] peer Active peer that negotiated multitransport; must not be
+ * NULL.
+ * @param[in] datagram Borrowed UDP2 wire datagram; must not be NULL.
+ * @param[in] datagram_len Number of bytes in datagram; must be non-zero.
+ * @param[out] response Caller-owned response buffer. May be NULL only when
+ * response_capacity is zero; in that case data packets report the required
+ * size through response_len and return LIBRDP_STATUS_LIMIT_EXCEEDED.
+ * @param[in] response_capacity Number of bytes available in response.
+ * @param[out] response_len Number of response bytes written, or required bytes
+ * when the response buffer is too small; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when the datagram is accepted;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL pointers, empty datagrams, or an
+ * inconsistent response buffer; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; LIBRDP_STATUS_UNSUPPORTED when UDP2 was not requested or
+ * multitransport was not negotiated; LIBRDP_STATUS_LIMIT_EXCEEDED when the
+ * response buffer is too small; LIBRDP_STATUS_PROTOCOL_ERROR for malformed
+ * UDP2 datagrams; allocation errors if temporary buffers cannot be grown.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. This API
+ * does not create sockets or threads.
+ * @warning UDP2 data payloads can contain redirected channel traffic. Keep
+ * traces redacted and avoid logging datagram bodies outside librdp.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_process_udp2_datagram(librdp_server_peer* peer,
+                                                                  const void* datagram,
+                                                                  size_t datagram_len,
+                                                                  void* response,
+                                                                  size_t response_capacity,
+                                                                  size_t* response_len);
 
 /**
  * @brief Send a validated payload on a joined static extension channel.

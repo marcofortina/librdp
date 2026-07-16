@@ -52,6 +52,7 @@
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
 #include "security/security.h"
+#include "transport/udp_transport.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -137,7 +138,8 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
 
 static int rdp_server_feature_parser_only(librdp_feature feature)
 {
-    return feature == LIBRDP_FEATURE_UDP2_TRANSPORT;
+    (void)feature;
+    return 0;
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -162,8 +164,8 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
         case LIBRDP_FEATURE_GEOMETRY_TRACKING:
         case LIBRDP_FEATURE_MULTITRANSPORT:
         case LIBRDP_FEATURE_UDP_TRANSPORT:
-            return 1;
         case LIBRDP_FEATURE_UDP2_TRANSPORT:
+            return 1;
         default:
             return 0;
     }
@@ -2242,7 +2244,8 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         peer->multitransport_flags = 0;
         if (client_data.has_multitransport &&
             (peer->requested_features & (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT) != 0 &&
-            (peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT) != 0)
+            (peer->requested_features &
+             ((uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT | (uint32_t)LIBRDP_FEATURE_UDP2_TRANSPORT)) != 0)
         {
             uint32_t flags = client_data.multitransport_flags & RDP_GCC_MULTITRANSPORT_SERVER_KNOWN_FLAGS;
 
@@ -3432,6 +3435,94 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
                                  "server.dvc.send",
                                  "dynamic channel send failed");
     rdp_buffer_free(&packet);
+    return status;
+}
+
+/*
+ * Processes one application-owned UDP2 side-transport datagram.
+ * The core validates the wrapper and packet, marks UDP2 active only after a
+ * complete valid datagram, and returns an ACK datagram for data packets. Socket
+ * ownership remains outside the server object so embedders can integrate UDP2
+ * with their own transport loop, firewall policy, or gateway binding.
+ */
+librdp_status librdp_server_peer_process_udp2_datagram(librdp_server_peer* peer,
+                                                       const void* datagram,
+                                                       size_t datagram_len,
+                                                       void* response,
+                                                       size_t response_capacity,
+                                                       size_t* response_len)
+{
+    rdp_buffer packet_bytes;
+    rdp_buffer ack_packet;
+    rdp_buffer ack_wire;
+    rdp_udp2_prefix prefix;
+    rdp_udp2_packet packet;
+    rdp_udp2_packet_kind kind = RDP_UDP2_PACKET_KIND_CONTROL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !datagram || datagram_len == 0 || !response_len ||
+        (!response && response_capacity > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *response_len = 0;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if ((peer->requested_features & (uint32_t)LIBRDP_FEATURE_UDP2_TRANSPORT) == 0 ||
+        !peer->multitransport_negotiated)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    rdp_buffer_init(&packet_bytes);
+    rdp_buffer_init(&ack_packet);
+    rdp_buffer_init(&ack_wire);
+    memset(&prefix, 0, sizeof(prefix));
+    memset(&packet, 0, sizeof(packet));
+
+    status = rdp_udp2_unwrap_packet(&packet_bytes, datagram, datagram_len, &prefix);
+    if (status == LIBRDP_STATUS_OK && prefix.packet_type == RDP_UDP2_PACKET_TYPE_DATA)
+        status = rdp_udp2_parse_packet(packet_bytes.data, packet_bytes.length, &packet);
+    if (status == LIBRDP_STATUS_OK && prefix.packet_type == RDP_UDP2_PACKET_TYPE_DATA)
+        status = rdp_udp2_classify_packet(&packet, &kind);
+    if (status == LIBRDP_STATUS_OK &&
+        (kind == RDP_UDP2_PACKET_KIND_DATA || kind == RDP_UDP2_PACKET_KIND_DATA_WITH_ACK))
+    {
+        status = rdp_udp2_write_ack_packet(&ack_packet,
+                                           packet.header.log_window_size,
+                                           packet.data_sequence_number,
+                                           0,
+                                           0,
+                                           NULL,
+                                           0,
+                                           0);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_udp2_wrap_packet(&ack_wire,
+                                          ack_packet.data,
+                                          ack_packet.length,
+                                          RDP_UDP2_PACKET_TYPE_DATA);
+    }
+    if (status == LIBRDP_STATUS_OK && ack_wire.length > response_capacity)
+    {
+        *response_len = ack_wire.length;
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (ack_wire.length > 0)
+            memcpy(response, ack_wire.data, ack_wire.length);
+        *response_len = ack_wire.length;
+        peer->multitransport_udp2_active = 1;
+        rdp_server_metric_add(&peer->metrics.pdu_in, 1u);
+        if (ack_wire.length > 0)
+            rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        rdp_server_record_status(peer,
+                                 status,
+                                 rdp_server_component_for_status(status),
+                                 "server.udp2.datagram",
+                                 "UDP2 datagram processing failed");
+
+    rdp_buffer_free(&ack_wire);
+    rdp_buffer_free(&ack_packet);
+    rdp_buffer_free(&packet_bytes);
     return status;
 }
 
@@ -4942,6 +5033,11 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
             rdp_server_finish_peer_feature_status(status,
                                                   peer->multitransport_negotiated,
                                                   peer->multitransport_udp_active);
+            return;
+        case LIBRDP_FEATURE_UDP2_TRANSPORT:
+            rdp_server_finish_peer_feature_status(status,
+                                                  peer->multitransport_negotiated,
+                                                  peer->multitransport_udp2_active);
             return;
         default:
             return;
