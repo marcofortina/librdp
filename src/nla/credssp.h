@@ -86,9 +86,43 @@ typedef struct rdp_ntlm_authenticate_result
     uint8_t session_key[16];
 } rdp_ntlm_authenticate_result;
 
+typedef struct rdp_ntlm_negotiate
+{
+    uint32_t flags;
+    const uint8_t* domain;
+    size_t domain_len;
+    const uint8_t* workstation;
+    size_t workstation_len;
+} rdp_ntlm_negotiate;
+
+typedef struct rdp_ntlm_authenticate
+{
+    uint32_t flags;
+    const uint8_t* lm_response;
+    size_t lm_response_len;
+    const uint8_t* nt_response;
+    size_t nt_response_len;
+    const uint8_t* domain;
+    size_t domain_len;
+    const uint8_t* username;
+    size_t username_len;
+    const uint8_t* workstation;
+    size_t workstation_len;
+    const uint8_t* encrypted_session_key;
+    size_t encrypted_session_key_len;
+} rdp_ntlm_authenticate;
+
 librdp_status rdp_credssp_begin(bool enabled, rdp_credssp_state* state);
 librdp_status rdp_credssp_write_ntlm_negotiate(rdp_buffer* buffer, const char* workstation, const char* domain);
+uint32_t rdp_credssp_default_ntlm_challenge_flags(void);
+librdp_status rdp_credssp_parse_ntlm_negotiate(const void* data,
+                                               size_t length,
+                                               rdp_ntlm_negotiate* negotiate);
+librdp_status rdp_credssp_write_ntlm_challenge(rdp_buffer* buffer, const rdp_ntlm_challenge* challenge);
 librdp_status rdp_credssp_write_spnego_ntlm_negotiate(rdp_buffer* buffer,
+                                                      const uint8_t* ntlm_token,
+                                                      size_t ntlm_token_len);
+librdp_status rdp_credssp_write_spnego_ntlm_challenge(rdp_buffer* buffer,
                                                       const uint8_t* ntlm_token,
                                                       size_t ntlm_token_len);
 librdp_status rdp_credssp_write_ntlm_authenticate(rdp_buffer* buffer,
@@ -125,8 +159,24 @@ librdp_status rdp_credssp_extract_ntlm_challenge(const void* token,
 librdp_status rdp_credssp_parse_ntlm_challenge(const void* data,
                                                size_t length,
                                                rdp_ntlm_challenge* challenge);
+librdp_status rdp_credssp_extract_ntlm_message(const void* token,
+                                               size_t token_len,
+                                               uint32_t message_type,
+                                               const uint8_t** ntlm,
+                                               size_t* ntlm_len);
+librdp_status rdp_credssp_parse_ntlm_authenticate(const void* data,
+                                                  size_t length,
+                                                  rdp_ntlm_authenticate* authenticate);
+librdp_status rdp_credssp_verify_ntlm_authenticate(const void* data,
+                                                   size_t length,
+                                                   const rdp_ntlm_challenge* challenge,
+                                                   const char* expected_username,
+                                                   const char* password,
+                                                   rdp_ntlm_authenticate_result* result);
 librdp_status rdp_credssp_ntlm_security_init(rdp_ntlm_security_context* context,
                                              const rdp_ntlm_authenticate_result* authenticate);
+librdp_status rdp_credssp_ntlm_server_security_init(rdp_ntlm_security_context* context,
+                                                    const rdp_ntlm_authenticate_result* authenticate);
 librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
                                     const void* data,
                                     size_t length,
@@ -148,6 +198,19 @@ librdp_status rdp_credssp_verify_public_key_hash(rdp_ntlm_security_context* cont
                                                  size_t public_key_len,
                                                  const void* encrypted,
                                                  size_t encrypted_len);
+librdp_status rdp_credssp_verify_client_public_key_hash(rdp_ntlm_security_context* context,
+                                                        const void* client_nonce,
+                                                        size_t client_nonce_len,
+                                                        const void* public_key,
+                                                        size_t public_key_len,
+                                                        const void* encrypted,
+                                                        size_t encrypted_len);
+librdp_status rdp_credssp_encrypt_server_public_key_hash(rdp_ntlm_security_context* context,
+                                                         const void* client_nonce,
+                                                         size_t client_nonce_len,
+                                                         const void* public_key,
+                                                         size_t public_key_len,
+                                                         rdp_buffer* encrypted);
 librdp_status rdp_credssp_write_password_credentials(rdp_buffer* buffer,
                                                      const char* domain,
                                                      const char* username,
@@ -157,5 +220,8 @@ librdp_status rdp_credssp_encrypt_password_credentials(rdp_ntlm_security_context
                                                        const char* username,
                                                        const char* password,
                                                        rdp_buffer* encrypted);
+librdp_status rdp_credssp_decrypt_password_credentials(rdp_ntlm_security_context* context,
+                                                       const void* encrypted,
+                                                       size_t encrypted_len);
 
 #endif

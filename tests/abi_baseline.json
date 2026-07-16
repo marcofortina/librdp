@@ -254,7 +254,7 @@
       {"name":"librdp_server_ptr","size":8,"align":8},
       {"name":"librdp_server_peer_ptr","size":8,"align":8},
       {"name":"librdp_server_peer_state","size":4,"align":4},
-      {"name":"librdp_server_config","size":72,"align":8},
+      {"name":"librdp_server_config","size":96,"align":8},
       {"name":"librdp_server_input_type","size":4,"align":4},
       {"name":"librdp_server_input_event","size":32,"align":4},
       {"name":"librdp_server_static_channel_info","size":32,"align":4},

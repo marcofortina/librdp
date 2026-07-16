@@ -2051,6 +2051,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer x509_chain;
     rdp_buffer generated_server_certificate;
     rdp_buffer ntlm_negotiate;
+    rdp_buffer ntlm_challenge_written;
+    rdp_buffer spnego_challenge_written;
     rdp_buffer ntlm_authenticate;
     rdp_buffer spnego_negotiate;
     rdp_buffer spnego_authenticate;
@@ -2058,6 +2060,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer ntlm_unwrapped;
     rdp_buffer pub_key_auth;
     rdp_buffer server_pub_key_auth;
+    rdp_buffer client_sequence_pub_key_auth;
+    rdp_buffer server_sequence_pub_key_auth;
+    rdp_buffer client_sequence_auth_info;
     rdp_buffer ts_credentials;
     rdp_buffer auth_info;
     rdp_buffer ts_request;
@@ -2094,9 +2099,14 @@ static int test_path_security_license_channels(void)
     rdp_credssp_ts_request parsed_ts;
     rdp_ntlm_challenge ntlm_challenge;
     rdp_ntlm_challenge ntlm_v2_challenge;
+    rdp_ntlm_authenticate parsed_ntlm_authenticate;
     rdp_ntlm_authenticate_result ntlm_auth_result;
+    rdp_ntlm_authenticate_result server_auth_result;
+    rdp_ntlm_authenticate_result failed_auth_result;
     rdp_ntlm_security_context ntlm_security;
     rdp_ntlm_security_context server_security;
+    rdp_ntlm_security_context client_sequence_security;
+    rdp_ntlm_security_context server_sequence_security;
     const uint8_t* extracted_ntlm = NULL;
     size_t extracted_ntlm_len = 0;
     uint8_t server_hash[32];
@@ -2166,6 +2176,14 @@ static int test_path_security_license_channels(void)
     const uint8_t standard_cipher2[] = {0x68, 0xec, 0x7e, 0xa5, 0xf2, 0x04, 0xad, 0x55};
     const uint8_t standard_update_cipher[] = {0xc6, 0x08, 0x84, 0xfe};
 
+    memset(&parsed_ntlm_authenticate, 0, sizeof(parsed_ntlm_authenticate));
+    memset(&ntlm_auth_result, 0, sizeof(ntlm_auth_result));
+    memset(&server_auth_result, 0, sizeof(server_auth_result));
+    memset(&failed_auth_result, 0, sizeof(failed_auth_result));
+    memset(&ntlm_security, 0, sizeof(ntlm_security));
+    memset(&server_security, 0, sizeof(server_security));
+    memset(&client_sequence_security, 0, sizeof(client_sequence_security));
+    memset(&server_sequence_security, 0, sizeof(server_sequence_security));
     rdp_buffer_init(&security);
     rdp_buffer_init(&send_data);
     rdp_buffer_init(&encrypted);
@@ -2208,6 +2226,8 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&x509_chain);
     rdp_buffer_init(&generated_server_certificate);
     rdp_buffer_init(&ntlm_negotiate);
+    rdp_buffer_init(&ntlm_challenge_written);
+    rdp_buffer_init(&spnego_challenge_written);
     rdp_buffer_init(&ntlm_authenticate);
     rdp_buffer_init(&spnego_negotiate);
     rdp_buffer_init(&spnego_authenticate);
@@ -2215,6 +2235,9 @@ static int test_path_security_license_channels(void)
     rdp_buffer_init(&ntlm_unwrapped);
     rdp_buffer_init(&pub_key_auth);
     rdp_buffer_init(&server_pub_key_auth);
+    rdp_buffer_init(&client_sequence_pub_key_auth);
+    rdp_buffer_init(&server_sequence_pub_key_auth);
+    rdp_buffer_init(&client_sequence_auth_info);
     rdp_buffer_init(&ts_credentials);
     rdp_buffer_init(&auth_info);
     rdp_buffer_init(&ts_request);
@@ -9520,6 +9543,24 @@ static int test_path_security_license_channels(void)
     ntlm_v2_challenge.target_name_len = sizeof(ntlm_v2_target_name);
     ntlm_v2_challenge.target_info = ntlm_v2_target_info;
     ntlm_v2_challenge.target_info_len = sizeof(ntlm_v2_target_info);
+    PCHECK(rdp_credssp_write_ntlm_challenge(&ntlm_challenge_written, &ntlm_v2_challenge) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_parse_ntlm_challenge(ntlm_challenge_written.data,
+                                            ntlm_challenge_written.length,
+                                            &ntlm_challenge) == LIBRDP_STATUS_OK);
+    PCHECK(ntlm_challenge.flags == ntlm_v2_challenge.flags);
+    PCHECK(memcmp(ntlm_challenge.server_challenge,
+                  ntlm_v2_challenge.server_challenge,
+                  sizeof(ntlm_challenge.server_challenge)) == 0);
+    PCHECK(rdp_credssp_write_spnego_ntlm_challenge(&spnego_challenge_written,
+                                                   ntlm_challenge_written.data,
+                                                   ntlm_challenge_written.length) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_extract_ntlm_challenge(spnego_challenge_written.data,
+                                              spnego_challenge_written.length,
+                                              &extracted_ntlm,
+                                              &extracted_ntlm_len) == LIBRDP_STATUS_OK);
+    PCHECK(extracted_ntlm_len == ntlm_challenge_written.length);
     ntlm_auth_status = rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
                                                            &ntlm_v2_challenge,
                                                            "user",
@@ -9562,6 +9603,25 @@ static int test_path_security_license_channels(void)
                       sizeof(ntlm_v2_expected_encrypted_key)) == 0);
         PCHECK(memcmp(ntlm_auth_result.session_key, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) == 0);
         PCHECK(memcmp(ntlm_authenticate.data + key_offset, ntlm_v2_session_key, sizeof(ntlm_v2_session_key)) != 0);
+        PCHECK(rdp_credssp_parse_ntlm_authenticate(ntlm_authenticate.data,
+                                                   ntlm_authenticate.length,
+                                                   &parsed_ntlm_authenticate) == LIBRDP_STATUS_OK);
+        PCHECK(parsed_ntlm_authenticate.nt_response_len == nt_len);
+        PCHECK(rdp_credssp_verify_ntlm_authenticate(ntlm_authenticate.data,
+                                                    ntlm_authenticate.length,
+                                                    &ntlm_v2_challenge,
+                                                    "USER",
+                                                    "SecREt01",
+                                                    &server_auth_result) == LIBRDP_STATUS_OK);
+        PCHECK(memcmp(server_auth_result.session_key,
+                      ntlm_v2_session_key,
+                      sizeof(ntlm_v2_session_key)) == 0);
+        PCHECK(rdp_credssp_verify_ntlm_authenticate(ntlm_authenticate.data,
+                                                    ntlm_authenticate.length,
+                                                    &ntlm_v2_challenge,
+                                                    "other",
+                                                    "SecREt01",
+                                                    &failed_auth_result) == LIBRDP_STATUS_PROTOCOL_ERROR);
         PCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
                                                           ntlm_authenticate.data,
                                                           ntlm_authenticate.length) == LIBRDP_STATUS_OK);
@@ -9628,6 +9688,45 @@ static int test_path_security_license_channels(void)
         PCHECK(test_read_u32_le(auth_info.data + 12) == 2);
         PCHECK(memcmp(auth_info.data + 16, ts_credentials.data, ts_credentials.length < 8u ? ts_credentials.length : 8u) !=
                0);
+        PCHECK(rdp_credssp_ntlm_security_init(&client_sequence_security, &ntlm_auth_result) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_server_security_init(&server_sequence_security, &server_auth_result) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_encrypt_public_key_hash(&client_sequence_security,
+                                                   credssp_client_nonce,
+                                                   sizeof(credssp_client_nonce),
+                                                   credssp_public_key,
+                                                   sizeof(credssp_public_key),
+                                                   &client_sequence_pub_key_auth) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_verify_client_public_key_hash(&server_sequence_security,
+                                                         credssp_client_nonce,
+                                                         sizeof(credssp_client_nonce),
+                                                         credssp_public_key,
+                                                         sizeof(credssp_public_key),
+                                                         client_sequence_pub_key_auth.data,
+                                                         client_sequence_pub_key_auth.length) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_encrypt_server_public_key_hash(&server_sequence_security,
+                                                          credssp_client_nonce,
+                                                          sizeof(credssp_client_nonce),
+                                                          credssp_public_key,
+                                                          sizeof(credssp_public_key),
+                                                          &server_sequence_pub_key_auth) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_verify_public_key_hash(&client_sequence_security,
+                                                  credssp_client_nonce,
+                                                  sizeof(credssp_client_nonce),
+                                                  credssp_public_key,
+                                                  sizeof(credssp_public_key),
+                                                  server_sequence_pub_key_auth.data,
+                                                  server_sequence_pub_key_auth.length) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_encrypt_password_credentials(&client_sequence_security,
+                                                        "DOMAIN",
+                                                        "user",
+                                                        "SecREt01",
+                                                        &client_sequence_auth_info) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_decrypt_password_credentials(&server_sequence_security,
+                                                        client_sequence_auth_info.data,
+                                                        client_sequence_auth_info.length) == LIBRDP_STATUS_OK);
     }
     rdp_buffer_free(&nla_request);
     rdp_buffer_free(&dyn_response);
@@ -9637,13 +9736,18 @@ static int test_path_security_license_channels(void)
     rdp_buffer_free(&ts_request);
     rdp_buffer_free(&auth_info);
     rdp_buffer_free(&ts_credentials);
+    rdp_buffer_free(&client_sequence_auth_info);
+    rdp_buffer_free(&server_sequence_pub_key_auth);
+    rdp_buffer_free(&client_sequence_pub_key_auth);
     rdp_buffer_free(&server_pub_key_auth);
     rdp_buffer_free(&pub_key_auth);
     rdp_buffer_free(&ntlm_unwrapped);
     rdp_buffer_free(&ntlm_wrapped);
     rdp_buffer_free(&spnego_authenticate);
+    rdp_buffer_free(&spnego_challenge_written);
     rdp_buffer_free(&spnego_negotiate);
     rdp_buffer_free(&ntlm_authenticate);
+    rdp_buffer_free(&ntlm_challenge_written);
     rdp_buffer_free(&ntlm_negotiate);
     rdp_buffer_free(&x509_chain);
     rdp_buffer_free(&generated_server_certificate);
@@ -9651,6 +9755,10 @@ static int test_path_security_license_channels(void)
     rdp_clearcodec_context_free(&clear_context);
     rdp_nscodec_context_free(&nscodec_context);
     rdp_graphics_decompressor_free(&graphics_decompressor);
+    OPENSSL_cleanse(&failed_auth_result, sizeof(failed_auth_result));
+    OPENSSL_cleanse(&server_auth_result, sizeof(server_auth_result));
+    OPENSSL_cleanse(&client_sequence_security, sizeof(client_sequence_security));
+    OPENSSL_cleanse(&server_sequence_security, sizeof(server_sequence_security));
     rdp_buffer_free(&graphics_reset_pdu);
     rdp_buffer_free(&nscodec_capability_buffer);
     rdp_buffer_free(&nscodec_pixels);

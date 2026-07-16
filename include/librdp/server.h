@@ -81,7 +81,8 @@ typedef enum librdp_server_peer_state
     LIBRDP_SERVER_PEER_ACTIVATING = 10,  /**< Demand Active was sent and client activation PDUs are pending. */
     LIBRDP_SERVER_PEER_ACTIVE = 11,      /**< Client confirmed activation and the peer is ready for runtime PDUs. */
     LIBRDP_SERVER_PEER_LICENSING = 12,   /**< Server licensing completion was sent before activation. */
-    LIBRDP_SERVER_PEER_TLS_HANDSHAKING = 13 /**< TLS transport handshake is in progress after X.224. */
+    LIBRDP_SERVER_PEER_TLS_HANDSHAKING = 13, /**< TLS transport handshake is in progress after X.224. */
+    LIBRDP_SERVER_PEER_NLA_AUTHENTICATING = 14 /**< CredSSP/NLA exchange is in progress over TLS. */
 } librdp_server_peer_state;
 
 /**
@@ -368,6 +369,9 @@ typedef struct librdp_server_config
     librdp_security_mode security_mode; /**< Server security policy; STANDARD is the default. */
     const char* tls_certificate_path; /**< PEM certificate path for TLS/NLA modes; copied on creation. */
     const char* tls_private_key_path; /**< PEM private-key path for TLS/NLA modes; copied on creation. */
+    const char* nla_domain; /**< Optional NLA account domain; copied on creation and may be NULL. */
+    const char* nla_username; /**< Required username for NLA mode; copied on creation. */
+    const char* nla_password; /**< Required password for NLA mode; copied and cleansed on release. */
 } librdp_server_config;
 
 /**

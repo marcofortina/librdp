@@ -18,6 +18,7 @@
 #define RDP_SERVER_INTERNAL_H
 
 #include "common/buffer.h"
+#include "nla/credssp.h"
 #include "protocol/gcc.h"
 #include "security/security.h"
 
@@ -45,6 +46,9 @@ struct librdp_server
     char* server_name;
     char* tls_certificate_path;
     char* tls_private_key_path;
+    char* nla_domain;
+    char* nla_username;
+    char* nla_password;
     int listen_fd;
     uint16_t port;
     uint16_t local_port;
@@ -69,16 +73,28 @@ struct librdp_server_peer
     char* server_name;
     char* tls_certificate_path;
     char* tls_private_key_path;
+    char* nla_domain;
+    char* nla_username;
+    char* nla_password;
     uint32_t requested_features;
     librdp_security_mode security_mode;
     SSL_CTX* tls_context;
     SSL* tls;
     EVP_PKEY* standard_private_key;
     rdp_standard_security_context standard_security;
+    rdp_ntlm_security_context credssp_security;
     rdp_buffer standard_certificate;
+    rdp_buffer credssp_target_name;
+    rdp_buffer credssp_target_info;
     uint8_t standard_server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    uint8_t credssp_server_challenge[8];
+    uint8_t credssp_client_nonce[32];
     uint8_t tls_active;
     uint8_t standard_security_ready;
+    uint8_t credssp_stage;
+    uint8_t credssp_client_nonce_ready;
+    uint8_t credssp_security_ready;
+    uint8_t nla_authenticated;
     short pending_revents;
     uint16_t advertised_channel_count;
     uint16_t dynamic_channel_static_index;

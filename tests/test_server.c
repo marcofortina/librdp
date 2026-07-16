@@ -18,6 +18,7 @@
 #include "channels/dynamic_channel.h"
 #include "graphics/bitmap.h"
 #include "licensing/licensing.h"
+#include "nla/credssp.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
@@ -30,6 +31,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <poll.h>
@@ -73,6 +75,9 @@ static int test_server_config_defaults(void)
     SCHECK(config.security_mode == LIBRDP_SECURITY_STANDARD);
     SCHECK(config.tls_certificate_path == NULL);
     SCHECK(config.tls_private_key_path == NULL);
+    SCHECK(config.nla_domain == NULL);
+    SCHECK(config.nla_username == NULL);
+    SCHECK(config.nla_password == NULL);
     SCHECK(librdp_server_input_event_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_input_event_init(&input_event) == LIBRDP_STATUS_OK);
     SCHECK(input_event.version == LIBRDP_SERVER_INPUT_EVENT_VERSION);
@@ -131,6 +136,18 @@ static int test_server_new_validates_metadata(void)
     config.security_mode = LIBRDP_SECURITY_TLS;
     config.tls_certificate_path = "server.pem";
     SCHECK(librdp_server_new(&config) == NULL);
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.security_mode = LIBRDP_SECURITY_NLA;
+    config.tls_certificate_path = "server.pem";
+    config.tls_private_key_path = "server.key";
+    SCHECK(librdp_server_new(&config) == NULL);
+    config.nla_username = "user";
+    SCHECK(librdp_server_new(&config) == NULL);
+    config.nla_password = "pass";
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    librdp_server_free(server);
+    server = NULL;
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     server = librdp_server_new(&config);
     SCHECK(server != NULL);
@@ -347,6 +364,81 @@ static int test_server_tls_write_all(SSL* tls, const uint8_t* data, size_t lengt
         offset += (size_t)written;
     }
     return 1;
+}
+
+static int test_server_tls_read_credssp(SSL* tls, rdp_buffer* packet)
+{
+    uint8_t header[6];
+    size_t header_len = 2u;
+    size_t payload_len = 0;
+    size_t total = 0;
+    int read_len = 0;
+
+    if (!tls || !packet)
+        return 0;
+    read_len = SSL_read(tls, header, 2);
+    if (read_len != 2 || header[0] != 0x30u)
+        return 0;
+    if ((header[1] & 0x80u) == 0)
+        payload_len = header[1];
+    else
+    {
+        size_t length_len = header[1] & 0x7fu;
+
+        if (length_len == 0 || length_len > 4u)
+            return 0;
+        read_len = SSL_read(tls, header + 2u, (int)length_len);
+        if (read_len != (int)length_len)
+            return 0;
+        header_len += length_len;
+        for (size_t i = 0; i < length_len; i++)
+            payload_len = (payload_len << 8) | header[2u + i];
+    }
+    total = header_len + payload_len;
+    if (total > 1048576u || rdp_buffer_append(packet, header, header_len) != LIBRDP_STATUS_OK)
+        return 0;
+    if (rdp_buffer_reserve(packet, total) != LIBRDP_STATUS_OK)
+        return 0;
+    while (packet->length < total)
+    {
+        size_t remaining = total - packet->length;
+        int chunk = remaining > (size_t)INT32_MAX ? INT32_MAX : (int)remaining;
+
+        read_len = SSL_read(tls, packet->data + packet->length, chunk);
+        if (read_len <= 0)
+            return 0;
+        packet->length += (size_t)read_len;
+    }
+    return 1;
+}
+
+static int test_server_tls_public_key(SSL* tls, rdp_buffer* public_key)
+{
+    X509* certificate = NULL;
+    EVP_PKEY* key = NULL;
+    unsigned char* cursor = NULL;
+    int encoded_len = 0;
+    int written = 0;
+
+    if (!tls || !public_key)
+        return 0;
+    certificate = SSL_get1_peer_certificate(tls);
+    if (!certificate)
+        return 0;
+    key = X509_get_pubkey(certificate);
+    X509_free(certificate);
+    if (!key)
+        return 0;
+    encoded_len = i2d_PublicKey(key, NULL);
+    if (encoded_len > 0 && rdp_buffer_reserve(public_key, (size_t)encoded_len) == LIBRDP_STATUS_OK)
+    {
+        cursor = public_key->data;
+        written = i2d_PublicKey(key, &cursor);
+        if (written == encoded_len)
+            public_key->length = (size_t)written;
+    }
+    EVP_PKEY_free(key);
+    return public_key->length > 0;
 }
 
 typedef struct test_server_runtime_context
@@ -922,6 +1014,274 @@ static int test_server_loopback_tls_handshake(void)
 }
 
 /*
+ * Fixture: performs the complete server-side NLA exchange over a loopback TLS
+ * transport, then sends one MCS Connect-Initial. It catches NLA negotiation
+ * downgrades, NTLMv2 verification failures, public-key binding sequence bugs,
+ * and accidental attempts to parse CredSSP as TPKT.
+ */
+static int test_server_loopback_nla_handshake(void)
+{
+    uint8_t response[65536];
+    uint8_t client_nonce[32];
+    rdp_buffer request;
+    rdp_buffer reply;
+    rdp_buffer x224_request;
+    rdp_buffer mcs_initial;
+    rdp_buffer ntlm_negotiate;
+    rdp_buffer spnego_negotiate;
+    rdp_buffer ntlm_authenticate;
+    rdp_buffer spnego_authenticate;
+    rdp_buffer tls_public_key;
+    rdp_buffer pub_key_auth;
+    rdp_buffer auth_info;
+    rdp_tpkt tpkt;
+    rdp_x224_connection_confirm confirm;
+    rdp_credssp_ts_request ts_response;
+    rdp_credssp_ts_request auth_response;
+    rdp_credssp_ts_request pub_key_response;
+    rdp_ntlm_challenge ntlm_challenge;
+    rdp_ntlm_authenticate_result auth_result;
+    rdp_ntlm_security_context ntlm_security;
+    SSL_CTX* client_context = NULL;
+    SSL* client_tls = NULL;
+    const uint8_t* ntlm_token = NULL;
+    size_t ntlm_token_len = 0;
+    char cert_path[128];
+    char key_path[128];
+    int client_fd = -1;
+    int response_len = 0;
+    int tls_ready = 0;
+    librdp_server_config config;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0;
+
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&reply);
+    rdp_buffer_init(&x224_request);
+    rdp_buffer_init(&mcs_initial);
+    rdp_buffer_init(&ntlm_negotiate);
+    rdp_buffer_init(&spnego_negotiate);
+    rdp_buffer_init(&ntlm_authenticate);
+    rdp_buffer_init(&spnego_authenticate);
+    rdp_buffer_init(&tls_public_key);
+    rdp_buffer_init(&pub_key_auth);
+    rdp_buffer_init(&auth_info);
+    memset(&auth_result, 0, sizeof(auth_result));
+    memset(&ntlm_security, 0, sizeof(ntlm_security));
+    for (size_t i = 0; i < sizeof(client_nonce); i++)
+        client_nonce[i] = (uint8_t)i;
+    memset(cert_path, 0, sizeof(cert_path));
+    memset(key_path, 0, sizeof(key_path));
+
+    SCHECK(test_server_make_tls_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)));
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.bind_address = "127.0.0.1";
+    config.security_mode = LIBRDP_SECURITY_NLA;
+    config.tls_certificate_path = cert_path;
+    config.tls_private_key_path = key_path;
+    config.server_name = "unit-server";
+    config.nla_domain = "DOMAIN";
+    config.nla_username = "Marco";
+    config.nla_password = "Welcome1";
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    SCHECK(librdp_server_listen(server) == LIBRDP_STATUS_OK);
+    port = librdp_server_local_port(server);
+    SCHECK(port != 0);
+    client_fd = test_server_connect_loopback(port);
+    SCHECK(client_fd >= 0);
+    SCHECK(test_server_set_nonblocking(client_fd));
+    SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
+    SCHECK(peer != NULL);
+
+    SCHECK(rdp_x224_build_connection_request(&x224_request, NULL, RDP_X224_PROTOCOL_NLA) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_tpkt_write(&request, x224_request.data, x224_request.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_all(client_fd, request.data, request.length));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_TLS_HANDSHAKING);
+    response_len = test_server_read_response(client_fd, response, sizeof(response));
+    SCHECK(response_len > 0);
+    SCHECK(rdp_tpkt_parse(response, (size_t)response_len, &tpkt) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_x224_parse_connection_confirm(tpkt.payload, tpkt.payload_len, &confirm) == LIBRDP_STATUS_OK);
+    SCHECK(confirm.negotiation.present);
+    SCHECK(confirm.negotiation.selected_protocol == RDP_X224_PROTOCOL_NLA);
+
+    client_context = SSL_CTX_new(TLS_client_method());
+    SCHECK(client_context != NULL);
+    SSL_CTX_set_verify(client_context, SSL_VERIFY_NONE, NULL);
+    client_tls = SSL_new(client_context);
+    SCHECK(client_tls != NULL);
+    SCHECK(SSL_set_fd(client_tls, client_fd) == 1);
+    for (int attempt = 0; attempt < 100 && !tls_ready; attempt++)
+    {
+        int rc = SSL_connect(client_tls);
+
+        if (rc == 1)
+            tls_ready = 1;
+        else
+        {
+            int error = SSL_get_error(client_tls, rc);
+
+            SCHECK(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+        }
+        status = librdp_server_peer_run_once(peer, 0);
+        SCHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
+        if (librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_NLA_AUTHENTICATING && tls_ready)
+            break;
+    }
+    SCHECK(tls_ready);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_NLA_AUTHENTICATING);
+    SCHECK(test_server_tls_public_key(client_tls, &tls_public_key));
+
+    request.length = 0;
+    SCHECK(rdp_credssp_write_ntlm_negotiate(&ntlm_negotiate, "librdp", "DOMAIN") ==
+           LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_write_spnego_ntlm_negotiate(&spnego_negotiate,
+                                                   ntlm_negotiate.data,
+                                                   ntlm_negotiate.length) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_write_ts_request(&request,
+                                        6,
+                                        spnego_negotiate.data,
+                                        spnego_negotiate.length,
+                                        NULL,
+                                        0,
+                                        NULL,
+                                        0,
+                                        client_nonce,
+                                        sizeof(client_nonce)) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_write_all(client_tls, request.data, request.length));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_read_credssp(client_tls, &reply));
+    SCHECK(rdp_credssp_parse_ts_request(reply.data, reply.length, &ts_response) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_extract_ntlm_challenge(ts_response.nego_token,
+                                              ts_response.nego_token_len,
+                                              &ntlm_token,
+                                              &ntlm_token_len) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_parse_ntlm_challenge(ntlm_token, ntlm_token_len, &ntlm_challenge) ==
+           LIBRDP_STATUS_OK);
+
+    SCHECK(rdp_credssp_write_ntlm_authenticate(&ntlm_authenticate,
+                                               &ntlm_challenge,
+                                               "Marco",
+                                               "Welcome1",
+                                               "DOMAIN",
+                                               "librdp",
+                                               0,
+                                               NULL,
+                                               NULL,
+                                               &auth_result) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
+                                                      ntlm_authenticate.data,
+                                                      ntlm_authenticate.length) == LIBRDP_STATUS_OK);
+    request.length = 0;
+    SCHECK(rdp_credssp_write_ts_request(&request,
+                                        ts_response.version,
+                                        spnego_authenticate.data,
+                                        spnego_authenticate.length,
+                                        NULL,
+                                        0,
+                                        NULL,
+                                        0,
+                                        client_nonce,
+                                        sizeof(client_nonce)) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_write_all(client_tls, request.data, request.length));
+    reply.length = 0;
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_read_credssp(client_tls, &reply));
+    SCHECK(rdp_credssp_parse_ts_request(reply.data, reply.length, &auth_response) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_ntlm_security_init(&ntlm_security, &auth_result) == LIBRDP_STATUS_OK);
+
+    SCHECK(rdp_credssp_encrypt_public_key_hash(&ntlm_security,
+                                               client_nonce,
+                                               sizeof(client_nonce),
+                                               tls_public_key.data,
+                                               tls_public_key.length,
+                                               &pub_key_auth) == LIBRDP_STATUS_OK);
+    request.length = 0;
+    SCHECK(rdp_credssp_write_ts_request(&request,
+                                        auth_response.version,
+                                        NULL,
+                                        0,
+                                        NULL,
+                                        0,
+                                        pub_key_auth.data,
+                                        pub_key_auth.length,
+                                        client_nonce,
+                                        sizeof(client_nonce)) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_write_all(client_tls, request.data, request.length));
+    reply.length = 0;
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_read_credssp(client_tls, &reply));
+    SCHECK(rdp_credssp_parse_ts_request(reply.data, reply.length, &pub_key_response) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_credssp_verify_public_key_hash(&ntlm_security,
+                                              client_nonce,
+                                              sizeof(client_nonce),
+                                              tls_public_key.data,
+                                              tls_public_key.length,
+                                              pub_key_response.pub_key_auth,
+                                              pub_key_response.pub_key_auth_len) == LIBRDP_STATUS_OK);
+
+    SCHECK(rdp_credssp_encrypt_password_credentials(&ntlm_security,
+                                                    "DOMAIN",
+                                                    "Marco",
+                                                    "Welcome1",
+                                                    &auth_info) == LIBRDP_STATUS_OK);
+    request.length = 0;
+    SCHECK(rdp_credssp_write_ts_request(&request,
+                                        pub_key_response.version,
+                                        NULL,
+                                        0,
+                                        auth_info.data,
+                                        auth_info.length,
+                                        NULL,
+                                        0,
+                                        client_nonce,
+                                        sizeof(client_nonce)) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_tls_write_all(client_tls, request.data, request.length));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_X224_CONFIRMED);
+
+    SCHECK(test_server_build_client_mcs_connect_initial(&mcs_initial));
+    SCHECK(test_server_tls_write_all(client_tls, mcs_initial.data, mcs_initial.length));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    response_len = SSL_read(client_tls, response, sizeof(response));
+    SCHECK(response_len > 0);
+    SCHECK(rdp_tpkt_parse(response, (size_t)response_len, &tpkt) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_MCS_CONNECTED);
+
+    SSL_free(client_tls);
+    SSL_CTX_free(client_context);
+    OPENSSL_cleanse(&ntlm_security, sizeof(ntlm_security));
+    OPENSSL_cleanse(&auth_result, sizeof(auth_result));
+    rdp_buffer_free(&auth_info);
+    rdp_buffer_free(&pub_key_auth);
+    rdp_buffer_free(&tls_public_key);
+    rdp_buffer_free(&spnego_authenticate);
+    rdp_buffer_free(&ntlm_authenticate);
+    rdp_buffer_free(&spnego_negotiate);
+    rdp_buffer_free(&ntlm_negotiate);
+    rdp_buffer_free(&mcs_initial);
+    rdp_buffer_free(&x224_request);
+    rdp_buffer_free(&reply);
+    rdp_buffer_free(&request);
+    librdp_server_peer_free(peer);
+    librdp_server_close(server);
+    librdp_server_free(server);
+    close(client_fd);
+    unlink(cert_path);
+    unlink(key_path);
+    return 0;
+}
+
+/*
  * Drives one in-process client/server pair through the server activation path.
  * The sequence catches truncated or misordered X.224/MCS/GCC wrapping,
  * channel-join accounting, Demand Active framing, and Confirm Active state
@@ -1435,6 +1795,8 @@ int main(void)
     if (test_server_loopback_negotiation_failure() != 0)
         return 1;
     if (test_server_loopback_tls_handshake() != 0)
+        return 1;
+    if (test_server_loopback_nla_handshake() != 0)
         return 1;
     if (test_server_loopback_standard_activation_sequence() != 0)
         return 1;
