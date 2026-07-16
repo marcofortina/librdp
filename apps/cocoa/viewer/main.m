@@ -18,6 +18,9 @@
 #import <Cocoa/Cocoa.h>
 #include <librdp/librdp.h>
 
+#include "cocoa_media.h"
+
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
@@ -36,6 +39,10 @@ typedef struct cocoa_viewer_options
     const char* gateway_username;
     const char* gateway_password;
     const char* gateway_domain;
+    const char* audio_output_device;
+    const char* audio_input_device;
+    const char* video_output_path;
+    const char* camera_source;
     int argc;
     char** argv;
     uint16_t port;
@@ -49,8 +56,15 @@ typedef struct cocoa_viewer_options
     int accept_tls_certificate;
     int tls_prompt_certificate;
     int tls_accept_any_certificate;
+    int audio_output_requested;
+    int audio_input_requested;
+    int video_requested;
+    int camera_requested;
     int show_help;
 } cocoa_viewer_options;
+
+#define COCOA_AUDIO_OUTPUT_FORMATS_MAX 16u
+#define COCOA_AUDIO_INPUT_BUFFER_BYTES 16384u
 
 @class CocoaViewerController;
 
@@ -59,18 +73,42 @@ typedef struct cocoa_viewer_options
 @end
 
 @interface CocoaViewerController : NSObject
+{
+    librdp_audio_format _audioOutputFormats[COCOA_AUDIO_OUTPUT_FORMATS_MAX];
+    uint8_t _audioInputBuffer[COCOA_AUDIO_INPUT_BUFFER_BYTES];
+}
 @property(nonatomic, assign) librdp_session* session;
 @property(nonatomic, strong) NSWindow* window;
 @property(nonatomic, strong) CocoaViewerView* view;
 @property(nonatomic, strong) NSTimer* timer;
 @property(nonatomic, strong) NSCursor* currentCursor;
+@property(nonatomic, assign) cocoa_audio_backend* audio;
+@property(nonatomic, assign) cocoa_camera_source* camera;
+@property(nonatomic, assign) FILE* videoOutputFile;
+@property(nonatomic, assign) const char* audioOutputDevice;
+@property(nonatomic, assign) const char* audioInputDevice;
+@property(nonatomic, assign) const char* cameraSource;
+@property(nonatomic, assign) uint32_t audioOutputFormatCount;
+@property(nonatomic, assign) uint32_t audioOutputCurrentFormat;
+@property(nonatomic, assign) size_t audioInputChunk;
 @property(nonatomic, assign) NSInteger pasteboardChangeCount;
 @property(nonatomic, assign) BOOL dirty;
 @property(nonatomic, assign) BOOL closed;
+@property(nonatomic, assign) BOOL audioOutputRequested;
+@property(nonatomic, assign) BOOL audioInputRequested;
+@property(nonatomic, assign) BOOL audioInputActive;
+@property(nonatomic, assign) BOOL videoRequested;
+@property(nonatomic, assign) BOOL cameraRequested;
 - (id)initWithSession:(librdp_session*)session width:(uint32_t)width height:(uint32_t)height;
+- (BOOL)configureMediaWithOptions:(const cocoa_viewer_options*)options;
+- (void)shutdownMedia;
 - (void)start;
 - (void)markDirty;
 - (void)driveSession:(NSTimer*)timer;
+- (void)pumpAudioInput;
+- (void)handleAudioEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope;
+- (void)handleVideoEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope;
+- (void)handleChannelEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope;
 - (void)sendResizeForView;
 - (void)sendMouseEvent:(NSEvent*)event button:(librdp_mouse_button)button state:(librdp_mouse_state)state;
 - (void)sendWheelEvent:(NSEvent*)event;
@@ -91,7 +129,7 @@ static void cocoa_viewer_usage(FILE* stream, const char* program)
             "[--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] "
             "[--serial name=path] [--parallel name=path] [--printer name=driver=path] "
             "[--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] "
-            "[--camera device=name] [--smartcard [pcsc|source]] [--usb vid:pid|bus:dev] "
+            "[--camera file=path] [--smartcard [pcsc|source]] [--usb vid:pid|bus:dev] "
             "[--pnp] [--webauthn [fido2|mock|provider]] [--webauthn-rp-id id] "
             "[--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n",
             program);
@@ -499,6 +537,8 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
 
             if (!device)
                 device = value ? value : "coreaudio";
+            options->audio_output_requested = 1;
+            options->audio_output_device = device;
             if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 1) != LIBRDP_STATUS_OK ||
                 librdp_settings_set_audio_output_device(settings, device) != LIBRDP_STATUS_OK)
                 return 0;
@@ -510,6 +550,8 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
 
             if (!device)
                 device = value ? value : "coreaudio";
+            options->audio_input_requested = 1;
+            options->audio_input_device = device;
             if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_INPUT, 1) != LIBRDP_STATUS_OK ||
                 librdp_settings_set_audio_input_device(settings, device) != LIBRDP_STATUS_OK)
                 return 0;
@@ -525,6 +567,8 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
             path = cocoa_viewer_value_after_prefix(value, "file=");
             if (!path)
                 path = value;
+            options->video_requested = 1;
+            options->video_output_path = path;
             if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_VIDEO, 1) != LIBRDP_STATUS_OK ||
                 librdp_settings_set_video_output_path(settings, path) != LIBRDP_STATUS_OK)
                 return 0;
@@ -535,6 +579,8 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
                 librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) != LIBRDP_STATUS_OK ||
                 librdp_settings_add_camera(settings, argv[i]) != LIBRDP_STATUS_OK)
                 return 0;
+            options->camera_requested = 1;
+            options->camera_source = argv[i];
         }
         else if (strcmp(argv[i], "--smartcard") == 0)
         {
@@ -593,6 +639,12 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
         {
             if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) != LIBRDP_STATUS_OK)
                 return 0;
+        }
+        else if (strcmp(argv[i], "--tls-prompt-cert") == 0 ||
+                 strcmp(argv[i], "--tls-accept-any-cert") == 0 ||
+                 strcmp(argv[i], "--accept-tls-certificate") == 0 ||
+                 strcmp(argv[i], "--gateway-no-session-credentials") == 0)
+        {
         }
         else if (strcmp(argv[i], "--webauthn-rp-id") != 0 &&
                  (strcmp(argv[i], "--target") == 0 || strcmp(argv[i], "--port") == 0 ||
@@ -787,41 +839,57 @@ static void cocoa_viewer_audio_callback(librdp_session* session,
                                         const librdp_event_envelope* envelope,
                                         void* user_data)
 {
-    (void)user_data;
-    if (!session || !envelope)
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    if (!controller || !session || !envelope)
         return;
-    switch (envelope->type)
-    {
-        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
-            (void)librdp_session_audio_input_open_reply(session, LIBRDP_AUDIO_INPUT_RESULT_FAIL);
-            break;
-        default:
-            break;
-    }
+    [controller handleAudioEnvelope:session envelope:envelope];
 }
 
 static void cocoa_viewer_video_callback(librdp_session* session,
                                         const librdp_event_envelope* envelope,
                                         void* user_data)
 {
-    const librdp_video_capture_sample_request_event* request = NULL;
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
 
-    (void)user_data;
-    if (!session || !envelope)
+    if (!controller || !session || !envelope)
         return;
-    switch (envelope->type)
+    [controller handleVideoEnvelope:session envelope:envelope];
+}
+
+static void cocoa_viewer_channel_callback(librdp_session* session,
+                                          const librdp_event_envelope* envelope,
+                                          void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    if (!controller || !session || !envelope)
+        return;
+    [controller handleChannelEnvelope:session envelope:envelope];
+}
+
+static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len, const char* needle)
+{
+    size_t needle_len = 0;
+
+    if (!name || !needle)
+        return 0;
+    needle_len = strlen(needle);
+    if (needle_len == 0 || needle_len > name_len)
+        return 0;
+    for (size_t i = 0; i + needle_len <= name_len; i++)
     {
-        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
-            if (envelope->payload_size < sizeof(*request))
-                return;
-            request = (const librdp_video_capture_sample_request_event*)envelope->payload;
-            (void)librdp_session_video_capture_send_error(session,
-                                                          request->stream_index,
-                                                          LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED);
-            break;
-        default:
-            break;
+        size_t j = 0;
+
+        for (j = 0; j < needle_len; j++)
+        {
+            if (tolower((unsigned char)name[i + j]) != tolower((unsigned char)needle[j]))
+                break;
+        }
+        if (j == needle_len)
+            return 1;
     }
+    return 0;
 }
 
 @implementation CocoaViewerView
@@ -1017,7 +1085,63 @@ static void cocoa_viewer_video_callback(librdp_session* session,
     [self.window center];
     self.currentCursor = [NSCursor arrowCursor];
     self.pasteboardChangeCount = [[NSPasteboard generalPasteboard] changeCount];
+    self.audioOutputCurrentFormat = UINT32_MAX;
     return self;
+}
+
+- (BOOL)configureMediaWithOptions:(const cocoa_viewer_options*)options
+{
+    if (!options)
+        return NO;
+    self.audioOutputRequested = options->audio_output_requested ? YES : NO;
+    self.audioInputRequested = options->audio_input_requested ? YES : NO;
+    self.videoRequested = options->video_requested ? YES : NO;
+    self.cameraRequested = options->camera_requested ? YES : NO;
+    self.audioOutputDevice = options->audio_output_device ? options->audio_output_device : "coreaudio";
+    self.audioInputDevice = options->audio_input_device ? options->audio_input_device : "coreaudio";
+    self.cameraSource = options->camera_source;
+    self.audioOutputCurrentFormat = UINT32_MAX;
+    if (self.audioOutputRequested || self.audioInputRequested)
+    {
+        self.audio = cocoa_audio_backend_new();
+        if (!self.audio)
+            return NO;
+    }
+    if (self.videoRequested && options->video_output_path)
+    {
+        self.videoOutputFile = fopen(options->video_output_path, "ab");
+        if (!self.videoOutputFile)
+            return NO;
+    }
+    if (self.cameraRequested)
+    {
+        self.camera = cocoa_camera_source_new();
+        if (!self.camera)
+            return NO;
+    }
+    return YES;
+}
+
+- (void)shutdownMedia
+{
+    if (self.audio)
+    {
+        cocoa_audio_backend_free(self.audio);
+        self.audio = NULL;
+    }
+    if (self.camera)
+    {
+        cocoa_camera_source_free(self.camera);
+        self.camera = NULL;
+    }
+    if (self.videoOutputFile)
+    {
+        fclose(self.videoOutputFile);
+        self.videoOutputFile = NULL;
+    }
+    self.audioInputActive = NO;
+    self.audioInputChunk = 0;
+    self.audioOutputCurrentFormat = UINT32_MAX;
 }
 
 - (void)start
@@ -1039,6 +1163,188 @@ static void cocoa_viewer_video_callback(librdp_session* session,
     [self.view setNeedsDisplay:YES];
 }
 
+- (size_t)audioInputChunkForOpen:(const librdp_audio_input_open_event*)open
+{
+    size_t chunk = 0;
+
+    if (!open || open->format.block_align == 0)
+        return 0;
+    chunk = (size_t)open->frames_per_packet * open->format.block_align;
+    if (chunk == 0)
+        chunk = open->format.block_align;
+    if (chunk > COCOA_AUDIO_INPUT_BUFFER_BYTES)
+    {
+        chunk = COCOA_AUDIO_INPUT_BUFFER_BYTES -
+                (COCOA_AUDIO_INPUT_BUFFER_BYTES % open->format.block_align);
+        if (chunk == 0)
+            chunk = open->format.block_align;
+    }
+    return chunk;
+}
+
+- (void)storeAudioOutputFormats:(const librdp_audio_output_formats_event*)formats
+{
+    uint32_t count = 0;
+
+    self.audioOutputFormatCount = 0;
+    self.audioOutputCurrentFormat = UINT32_MAX;
+    memset(_audioOutputFormats, 0, sizeof(_audioOutputFormats));
+    if (!formats || !formats->formats || formats->count == 0)
+        return;
+    count = formats->count > COCOA_AUDIO_OUTPUT_FORMATS_MAX ?
+        COCOA_AUDIO_OUTPUT_FORMATS_MAX :
+        formats->count;
+    memcpy(_audioOutputFormats, formats->formats, sizeof(_audioOutputFormats[0]) * count);
+    self.audioOutputFormatCount = count;
+}
+
+- (BOOL)selectAudioOutputFormat:(uint32_t)formatNo
+{
+    if (!self.audioOutputRequested || !self.audio)
+        return NO;
+    if (formatNo >= self.audioOutputFormatCount)
+        return NO;
+    if (self.audioOutputCurrentFormat == formatNo)
+        return YES;
+    if (!cocoa_audio_backend_start_output(self.audio, &_audioOutputFormats[formatNo], self.audioOutputDevice))
+        return NO;
+    self.audioOutputCurrentFormat = formatNo;
+    return YES;
+}
+
+- (void)pumpAudioInput
+{
+    size_t bytes = 0;
+
+    if (!self.audioInputActive || !self.audio || !self.session || self.audioInputChunk == 0)
+        return;
+    bytes = cocoa_audio_backend_read_input(self.audio, _audioInputBuffer, self.audioInputChunk);
+    if (bytes == 0)
+        return;
+    if (librdp_session_audio_input_send_data(self.session, _audioInputBuffer, bytes) != LIBRDP_STATUS_OK)
+        self.audioInputActive = NO;
+}
+
+- (void)handleAudioEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope
+{
+    if (!session || !envelope)
+        return;
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_AUDIO_OUTPUT_FORMATS:
+            if (envelope->payload_size >= sizeof(librdp_audio_output_formats_event))
+            {
+                [self storeAudioOutputFormats:(const librdp_audio_output_formats_event*)envelope->payload];
+                if (self.audioOutputFormatCount > 0)
+                    (void)[self selectAudioOutputFormat:0];
+            }
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_DATA:
+            if (envelope->payload_size >= sizeof(librdp_audio_output_data_event))
+            {
+                const librdp_audio_output_data_event* data =
+                    (const librdp_audio_output_data_event*)envelope->payload;
+
+                if ([self selectAudioOutputFormat:data->format_no])
+                    (void)cocoa_audio_backend_write_output(self.audio, data->data, data->data_len);
+            }
+            break;
+        case LIBRDP_EVENT_AUDIO_OUTPUT_CLOSE:
+            if (self.audio)
+                cocoa_audio_backend_stop_output(self.audio);
+            self.audioOutputCurrentFormat = UINT32_MAX;
+            break;
+        case LIBRDP_EVENT_AUDIO_INPUT_OPEN:
+            if (envelope->payload_size >= sizeof(librdp_audio_input_open_event))
+            {
+                const librdp_audio_input_open_event* open =
+                    (const librdp_audio_input_open_event*)envelope->payload;
+                int ok = 0;
+
+                self.audioInputActive = NO;
+                self.audioInputChunk = [self audioInputChunkForOpen:open];
+                if (self.audioInputRequested && self.audio && self.audioInputChunk > 0)
+                    ok = cocoa_audio_backend_start_input(self.audio, &open->format, self.audioInputDevice);
+                (void)librdp_session_audio_input_open_reply(session,
+                                                            ok ? LIBRDP_AUDIO_INPUT_RESULT_OK :
+                                                                 LIBRDP_AUDIO_INPUT_RESULT_FAIL);
+                self.audioInputActive = ok ? YES : NO;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)handleVideoEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope
+{
+    if (!session || !envelope)
+        return;
+    switch (envelope->type)
+    {
+        case LIBRDP_EVENT_VIDEO_CAPTURE_OPEN:
+            if (envelope->payload_size >= sizeof(librdp_video_capture_open_event) &&
+                self.cameraRequested && self.camera && self.cameraSource)
+            {
+                const librdp_video_capture_open_event* open =
+                    (const librdp_video_capture_open_event*)envelope->payload;
+
+                (void)cocoa_camera_source_start(self.camera, self.cameraSource, &open->media);
+            }
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_SAMPLE_REQUEST:
+            if (envelope->payload_size >= sizeof(librdp_video_capture_sample_request_event))
+            {
+                const librdp_video_capture_sample_request_event* request =
+                    (const librdp_video_capture_sample_request_event*)envelope->payload;
+                uint8_t* sample = NULL;
+                size_t sampleLen = 0;
+                int sampleResult = 0;
+
+                if (self.cameraRequested && self.camera)
+                    sampleResult = cocoa_camera_source_read_sample(self.camera, &sample, &sampleLen);
+                if (sampleResult == 1)
+                    (void)librdp_session_video_capture_send_sample(session,
+                                                                   request->stream_index,
+                                                                   sample,
+                                                                   sampleLen);
+                else
+                    (void)librdp_session_video_capture_send_error(
+                        session,
+                        request->stream_index,
+                        sampleResult == 0 ? LIBRDP_VIDEO_CAPTURE_ERROR_NOT_SUPPORTED :
+                                            LIBRDP_VIDEO_CAPTURE_ERROR_UNEXPECTED);
+                free(sample);
+            }
+            break;
+        case LIBRDP_EVENT_VIDEO_CAPTURE_CLOSE:
+            if (self.camera)
+                cocoa_camera_source_stop(self.camera);
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)handleChannelEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope
+{
+    const librdp_channel_data_event* event = NULL;
+
+    (void)session;
+    if (!envelope || envelope->type != LIBRDP_EVENT_CHANNEL_DATA ||
+        envelope->payload_size < sizeof(*event))
+        return;
+    event = (const librdp_channel_data_event*)envelope->payload;
+    if (self.videoOutputFile &&
+        (cocoa_viewer_channel_name_contains(event->name, event->name_len, "video") ||
+         cocoa_viewer_channel_name_contains(event->name, event->name_len, "tsmf")) &&
+        event->data_len > 0)
+    {
+        (void)fwrite(event->data, 1, event->data_len, self.videoOutputFile);
+        fflush(self.videoOutputFile);
+    }
+}
+
 - (void)driveSession:(NSTimer*)timer
 {
     librdp_status status = LIBRDP_STATUS_OK;
@@ -1048,6 +1354,7 @@ static void cocoa_viewer_video_callback(librdp_session* session,
     if (!self.session || self.closed)
         return;
     [self publishLocalPasteboardIfChanged];
+    [self pumpAudioInput];
     status = librdp_session_run_once(self.session, 0);
     if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_CLOSED)
         fprintf(stderr, "session dispatch failed: %s\n", librdp_status_string(status));
@@ -1390,8 +1697,16 @@ int main(int argc, char** argv)
             librdp_session_free(session);
             return 1;
         }
+        if (![controller configureMediaWithOptions:&options])
+        {
+            fprintf(stderr, "failed to configure media backends\n");
+            [controller shutdownMedia];
+            librdp_session_free(session);
+            return 1;
+        }
         librdp_session_set_graphics_update_callback(session, cocoa_viewer_graphics_callback, (__bridge void*)controller);
         librdp_session_set_pointer_callback(session, cocoa_viewer_pointer_callback, (__bridge void*)controller);
+        librdp_session_set_channel_callback(session, cocoa_viewer_channel_callback, (__bridge void*)controller);
         librdp_session_set_clipboard_callback(session, cocoa_viewer_clipboard_callback, (__bridge void*)controller);
         librdp_session_set_audio_callback(session, cocoa_viewer_audio_callback, (__bridge void*)controller);
         librdp_session_set_video_callback(session, cocoa_viewer_video_callback, (__bridge void*)controller);
@@ -1399,6 +1714,7 @@ int main(int argc, char** argv)
         if (status != LIBRDP_STATUS_OK)
         {
             fprintf(stderr, "connect failed: %s\n", librdp_status_string(status));
+            [controller shutdownMedia];
             librdp_session_free(session);
             return 1;
         }
@@ -1406,6 +1722,7 @@ int main(int argc, char** argv)
         [controller start];
         [NSApp run];
         (void)librdp_session_disconnect(session);
+        [controller shutdownMedia];
         librdp_session_free(session);
         exit_code = 0;
     }

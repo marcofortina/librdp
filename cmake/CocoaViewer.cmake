@@ -7,8 +7,11 @@ if(LIBRDP_BUILD_COCOA_VIEWER)
     endif()
     enable_language(OBJC)
     find_library(LIBRDP_COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(LIBRDP_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(LIBRDP_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     add_executable(librdp-cocoa-viewer
         apps/cocoa/viewer/main.m
+        apps/cocoa/viewer/cocoa_media.m
     )
     target_include_directories(librdp-cocoa-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -16,6 +19,8 @@ if(LIBRDP_BUILD_COCOA_VIEWER)
     target_link_libraries(librdp-cocoa-viewer PRIVATE
         librdp
         ${LIBRDP_COCOA_FRAMEWORK}
+        ${LIBRDP_AUDIOTOOLBOX_FRAMEWORK}
+        ${LIBRDP_COREFOUNDATION_FRAMEWORK}
     )
     librdp_apply_system_definitions(librdp-cocoa-viewer)
     librdp_apply_warning_options(librdp-cocoa-viewer)
