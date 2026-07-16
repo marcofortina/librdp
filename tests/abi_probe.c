@@ -48,9 +48,13 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_input_event", librdp_server_input_event, ",");
     ABI_TYPE_ENTRY("librdp_server_static_channel_info", librdp_server_static_channel_info, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_event", librdp_server_channel_event, ",");
+    ABI_TYPE_ENTRY("librdp_server_event_type", librdp_server_event_type, ",");
+    ABI_TYPE_ENTRY("librdp_server_event", librdp_server_event, ",");
+    ABI_TYPE_ENTRY("librdp_server_status", librdp_server_status, ",");
     ABI_TYPE_ENTRY("librdp_server_metrics", librdp_server_metrics, ",");
     ABI_TYPE_ENTRY("librdp_server_input_callback", librdp_server_input_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_callback", librdp_server_channel_callback, ",");
+    ABI_TYPE_ENTRY("librdp_server_event_callback", librdp_server_event_callback, ",");
     ABI_TYPE_ENTRY("librdp_settings_ptr", librdp_settings*, ",");
     ABI_TYPE_ENTRY("librdp_surface_ptr", librdp_surface*, ",");
     ABI_TYPE_ENTRY("librdp_event_callback", librdp_event_callback, ",");

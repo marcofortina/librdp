@@ -36,6 +36,10 @@ accepts peers with
 .BR librdp_server_accept (),
 drives each peer with
 .BR librdp_server_peer_run_once (),
+observes runtime state and errors with
+.BR librdp_server_peer_set_event_callback ()
+and
+.BR librdp_server_peer_get_last_status (),
 updates the peer surface with
 .BR librdp_server_peer_desktop_width (),
 .BR librdp_server_peer_desktop_height (),
@@ -52,6 +56,12 @@ domain ready, user attached, channel joining, activation, active, closing, and
 closed. Use
 .BR librdp_server_peer_get_state ()
 to observe the current state.
+.SH EVENTS AND STATUS
+Peer runtime events are delivered synchronously from the call that changes
+state, accepts a surface update, completes a static-channel join, or records a
+redacted error. Use
+.BR librdp_server_peer_get_last_status ()
+for a stable snapshot after a failed peer operation.
 .SH THREADING
 Server and peer handles are not internally synchronized. Applications should
 drive each peer from one owner thread or provide external locking.

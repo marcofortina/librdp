@@ -98,13 +98,22 @@ static int test_contains_bytes(const uint8_t* data, size_t data_len, const char*
     return 0;
 }
 
+/*
+ * Covers TPKT/X.224 framing variants that influence security negotiation and
+ * server activation. The fixture keeps standard no-negotiation, explicit
+ * standard negotiation, TLS/NLA negotiation, malformed TPKT length, and X.224
+ * data wrapping in one sequence so parser offsets and selectedProtocol handling
+ * cannot drift independently.
+ */
 static int test_tpkt_x224(void)
 {
     rdp_buffer x224;
     rdp_buffer standard_x224;
+    rdp_buffer standard_confirm;
     rdp_buffer x224_data;
     rdp_buffer packet;
     rdp_tpkt parsed;
+    rdp_x224_connection_request request;
     rdp_x224_connection_confirm confirm;
     const uint8_t* mcs_payload = NULL;
     size_t mcs_payload_len = 0;
@@ -121,10 +130,16 @@ static int test_tpkt_x224(void)
         0x02, 0x00, 0x08, 0x00,
         0x01, 0x00, 0x00, 0x00
     };
+    const uint8_t cr_standard_negotiation[] = {
+        0x0e, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x08, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
     const uint8_t bad_tpkt[] = {0x03, 0x00, 0x00, 0x03};
 
     rdp_buffer_init(&x224);
     rdp_buffer_init(&standard_x224);
+    rdp_buffer_init(&standard_confirm);
     rdp_buffer_init(&x224_data);
     rdp_buffer_init(&packet);
 
@@ -132,6 +147,20 @@ static int test_tpkt_x224(void)
            LIBRDP_STATUS_OK);
     PCHECK(standard_x224.length == 7);
     PCHECK(standard_x224.data[0] == 6 && standard_x224.data[1] == 0xe0);
+    PCHECK(rdp_x224_parse_connection_request(cr_standard_negotiation,
+                                             sizeof(cr_standard_negotiation),
+                                             &request) == LIBRDP_STATUS_OK);
+    PCHECK(request.negotiation.present);
+    PCHECK(request.requested_protocols == RDP_X224_PROTOCOL_STANDARD);
+    PCHECK(rdp_x224_build_connection_confirm_ex(&standard_confirm,
+                                                RDP_X224_PROTOCOL_STANDARD,
+                                                true) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_tpkt_parse(standard_confirm.data, standard_confirm.length, &parsed) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_x224_parse_connection_confirm(parsed.payload,
+                                             parsed.payload_len,
+                                             &confirm) == LIBRDP_STATUS_OK);
+    PCHECK(confirm.negotiation.present);
+    PCHECK(confirm.negotiation.selected_protocol == RDP_X224_PROTOCOL_STANDARD);
 
     PCHECK(rdp_x224_build_connection_request(&x224, "user", RDP_X224_PROTOCOL_TLS | RDP_X224_PROTOCOL_NLA) ==
            LIBRDP_STATUS_OK);
@@ -186,6 +215,7 @@ static int test_tpkt_x224(void)
 
     rdp_buffer_free(&packet);
     rdp_buffer_free(&x224_data);
+    rdp_buffer_free(&standard_confirm);
     rdp_buffer_free(&standard_x224);
     rdp_buffer_free(&x224);
     return 0;

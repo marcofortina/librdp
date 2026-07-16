@@ -63,6 +63,9 @@ librdp_status rdp_x224_parse_connection_request(const void* payload,
                                                 size_t payload_len,
                                                 rdp_x224_connection_request* request);
 librdp_status rdp_x224_build_connection_confirm(rdp_buffer* buffer, uint32_t selected_protocol);
+librdp_status rdp_x224_build_connection_confirm_ex(rdp_buffer* buffer,
+                                                   uint32_t selected_protocol,
+                                                   bool include_negotiation);
 librdp_status rdp_x224_build_negotiation_failure(rdp_buffer* buffer, uint32_t failure_code);
 librdp_status rdp_x224_parse_connection_confirm(const void* payload, size_t payload_len, rdp_x224_connection_confirm* confirm);
 librdp_status rdp_x224_wrap_data(rdp_buffer* buffer, const void* payload, size_t payload_len);

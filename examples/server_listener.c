@@ -33,6 +33,8 @@ typedef struct server_listener_peer_context
 {
     uint64_t input_events;
     uint64_t channel_events;
+    uint64_t runtime_events;
+    uint64_t error_events;
     int surface_presented;
 } server_listener_peer_context;
 
@@ -189,6 +191,35 @@ static void server_listener_channel_callback(librdp_server_peer* peer,
            (unsigned)event->data_len);
 }
 
+static void server_listener_event_callback(librdp_server_peer* peer,
+                                           const librdp_server_event* event,
+                                           void* user_data)
+{
+    server_listener_peer_context* context = (server_listener_peer_context*)user_data;
+
+    (void)peer;
+    if (!context || !event)
+        return;
+    context->runtime_events++;
+    if (event->type == LIBRDP_SERVER_EVENT_STATE_CHANGED)
+        printf("event state old=%d new=%d\n", (int)event->old_state, (int)event->new_state);
+    else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
+    {
+        context->error_events++;
+        printf("event error status=%s phase=%s\n",
+               librdp_status_name(event->status),
+               event->phase ? event->phase : "");
+    }
+    else if (event->type == LIBRDP_SERVER_EVENT_SURFACE)
+        printf("event surface x=%u y=%u width=%u height=%u\n",
+               event->x,
+               event->y,
+               event->width,
+               event->height);
+    else if (event->type == LIBRDP_SERVER_EVENT_CHANNEL_JOINED)
+        printf("event channel_joined id=%u\n", event->channel_id);
+}
+
 static int server_listener_build_desktop(uint8_t* pixels, uint32_t width, uint32_t height)
 {
     if (!pixels || width == 0 || height == 0)
@@ -290,7 +321,18 @@ static int server_listener_run_peer(librdp_server_peer* peer,
         if (status == LIBRDP_STATUS_TIMEOUT && context && context->surface_presented)
             return 0;
         if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
+        {
+            librdp_server_status last_status;
+
+            if (librdp_server_status_init(&last_status) == LIBRDP_STATUS_OK &&
+                librdp_server_peer_get_last_status(peer, &last_status) == LIBRDP_STATUS_OK)
+                fprintf(stderr,
+                        "last_status status=%s phase=%s message=%s\n",
+                        librdp_status_name(last_status.status),
+                        last_status.phase,
+                        last_status.message);
             return status == LIBRDP_STATUS_UNSUPPORTED ? 3 : 2;
+        }
     }
     return librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CLOSED ? 0 : 2;
 }
@@ -340,11 +382,15 @@ int main(int argc, char** argv)
     }
     (void)librdp_server_peer_set_input_callback(peer, server_listener_input_callback, &peer_context);
     (void)librdp_server_peer_set_channel_callback(peer, server_listener_channel_callback, &peer_context);
+    (void)librdp_server_peer_set_event_callback(peer, server_listener_event_callback, &peer_context);
     rc = server_listener_run_peer(peer, &options, &peer_context);
-    printf("summary inputs=%llu channels=%llu surface=%d\n",
+    printf("summary inputs=%llu channels=%llu runtime_events=%llu errors=%llu surface=%d\n",
            (unsigned long long)peer_context.input_events,
            (unsigned long long)peer_context.channel_events,
+           (unsigned long long)peer_context.runtime_events,
+           (unsigned long long)peer_context.error_events,
            peer_context.surface_presented);
+    (void)librdp_server_peer_close(peer);
     librdp_server_peer_free(peer);
     librdp_server_free(server);
     return rc;

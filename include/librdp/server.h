@@ -27,8 +27,12 @@ extern "C" {
 #define LIBRDP_SERVER_INPUT_EVENT_VERSION 1u /**< Current librdp_server_input_event version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_static_channel_info version. */
 #define LIBRDP_SERVER_CHANNEL_EVENT_VERSION 1u /**< Current librdp_server_channel_event version. */
+#define LIBRDP_SERVER_EVENT_VERSION 1u /**< Current librdp_server_event version. */
+#define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
+#define LIBRDP_SERVER_PHASE_CAPACITY 32u /**< Server status phase storage including NUL. */
+#define LIBRDP_SERVER_MESSAGE_CAPACITY 128u /**< Server status message storage including NUL. */
 
 /**
  * @brief Opaque server listener handle.
@@ -164,6 +168,71 @@ typedef struct librdp_server_channel_event
 } librdp_server_channel_event;
 
 /**
+ * @brief Server event discriminator.
+ *
+ * Events are synchronous notifications emitted from public server calls on the
+ * same thread that drives the listener or peer. Payload fields in
+ * librdp_server_event are selected by this value.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_event_type
+{
+    LIBRDP_SERVER_EVENT_NONE = 0,          /**< No event payload is active. */
+    LIBRDP_SERVER_EVENT_STATE_CHANGED = 1, /**< Peer state changed. */
+    LIBRDP_SERVER_EVENT_ERROR = 2,         /**< A peer runtime boundary recorded an error. */
+    LIBRDP_SERVER_EVENT_SURFACE = 3,       /**< A surface resize or dirty rectangle was accepted. */
+    LIBRDP_SERVER_EVENT_CHANNEL_JOINED = 4 /**< A static channel completed MCS join. */
+} librdp_server_event_type;
+
+/**
+ * @brief Server runtime event payload.
+ *
+ * Events are stack-owned by the library and valid only until the event
+ * callback returns. phase and message are borrowed immutable tokens for the
+ * callback duration only; copy them if they are needed later.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_event
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_EVENT_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    librdp_server_event_type type; /**< Event kind. */
+    librdp_server_peer_state old_state; /**< Previous peer state for state-change events. */
+    librdp_server_peer_state new_state; /**< Current peer state for state-change events. */
+    librdp_status status; /**< Status associated with error events, otherwise LIBRDP_STATUS_OK. */
+    librdp_error_component component; /**< Component associated with status. */
+    const char* phase; /**< Borrowed phase token; may be NULL. */
+    const char* message; /**< Borrowed redacted message; may be NULL. */
+    uint16_t channel_id; /**< Static channel identifier for channel events. */
+    uint32_t x;          /**< Surface rectangle x coordinate for surface events. */
+    uint32_t y;          /**< Surface rectangle y coordinate for surface events. */
+    uint32_t width;      /**< Surface or desktop width in pixels for surface events. */
+    uint32_t height;     /**< Surface or desktop height in pixels for surface events. */
+} librdp_server_event;
+
+/**
+ * @brief Versioned snapshot of the last server peer status.
+ *
+ * The struct is fully owned by the caller. phase and message are copied into
+ * fixed-size arrays and always NUL-terminated on success, so the snapshot does
+ * not borrow from the peer.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_status
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_STATUS_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    librdp_status status; /**< Last recorded status, or LIBRDP_STATUS_OK. */
+    librdp_error_component component; /**< Component that recorded status. */
+    librdp_server_peer_state state; /**< Peer state observed when status was recorded. */
+    char phase[LIBRDP_SERVER_PHASE_CAPACITY]; /**< NUL-terminated phase token. */
+    char message[LIBRDP_SERVER_MESSAGE_CAPACITY]; /**< NUL-terminated redacted message. */
+} librdp_server_status;
+
+/**
  * @brief Versioned server-side metrics snapshot.
  *
  * Metrics are monotonic for one peer until librdp_server_peer_reset_metrics()
@@ -217,6 +286,19 @@ typedef void (*librdp_server_input_callback)(librdp_server_peer* peer,
 typedef void (*librdp_server_channel_callback)(librdp_server_peer* peer,
                                                const librdp_server_channel_event* event,
                                                void* user_data);
+
+/**
+ * @brief Server-side runtime event callback.
+ *
+ * Called synchronously from public server functions on the same serialized
+ * server/peer owner thread. The event pointer and borrowed strings are valid
+ * only until the callback returns.
+ *
+ * @since 0.1.0
+ */
+typedef void (*librdp_server_event_callback)(librdp_server_peer* peer,
+                                             const librdp_server_event* event,
+                                             void* user_data);
 
 /**
  * @brief Versioned server listener configuration.
@@ -282,6 +364,32 @@ LIBRDP_API librdp_status librdp_server_input_event_init(librdp_server_input_even
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_static_channel_info_init(librdp_server_static_channel_info* info);
+
+/**
+ * @brief Initialize a server runtime event value.
+ *
+ * @param[out] event Caller-owned event object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * event is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_event_init(librdp_server_event* event);
+
+/**
+ * @brief Initialize a server status snapshot.
+ *
+ * @param[out] status Caller-owned status object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * status is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_status_init(librdp_server_status* status);
 
 /**
  * @brief Initialize a server metrics snapshot.
@@ -606,6 +714,28 @@ LIBRDP_API librdp_status librdp_server_peer_set_channel_callback(librdp_server_p
                                                                  void* user_data);
 
 /**
+ * @brief Register the callback for server runtime events.
+ *
+ * Passing NULL disables the callback. The callback runs synchronously from the
+ * public call that changes state, records an error, accepts a surface update,
+ * or completes a static-channel join.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque application pointer passed back to callback;
+ * may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
+                                                               librdp_server_event_callback callback,
+                                                               void* user_data);
+
+/**
  * @brief Return the number of static channels advertised by the client.
  *
  * @param[in] peer Peer to query, or NULL.
@@ -689,6 +819,25 @@ LIBRDP_API librdp_status librdp_server_peer_get_metrics(const librdp_server_peer
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_peer_reset_metrics(librdp_server_peer* peer);
+
+/**
+ * @brief Copy the last recorded peer runtime status.
+ *
+ * status must be initialized with librdp_server_status_init(). The function
+ * copies all fields into caller-owned storage and does not expose borrowed
+ * pointers.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[in,out] status Initialized destination status; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments or invalid status metadata.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_last_status(const librdp_server_peer* peer,
+                                                            librdp_server_status* status);
 
 /**
  * @brief Return the current peer desktop width.
@@ -839,6 +988,23 @@ LIBRDP_API librdp_status librdp_server_peer_send_channel_data(librdp_server_peer
  * @since 0.1.0
  */
 LIBRDP_API librdp_server_peer_state librdp_server_peer_get_state(const librdp_server_peer* peer);
+
+/**
+ * @brief Close a peer transport without freeing the peer handle.
+ *
+ * The call is idempotent. It moves the peer to LIBRDP_SERVER_PEER_CLOSED,
+ * emits a state event when appropriate, and leaves metrics/status available
+ * until librdp_server_peer_free().
+ *
+ * @param[in,out] peer Peer to close; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_close(librdp_server_peer* peer);
 
 /**
  * @brief Close and free a server-side peer.

@@ -65,6 +65,13 @@ Input and static-channel callbacks are installed with
 client can be queried with `librdp_server_peer_static_channel_count()` and
 `librdp_server_peer_static_channel_at()`.
 
+Runtime events are installed with `librdp_server_peer_set_event_callback()`.
+They report peer state changes, accepted surface updates, static-channel joins,
+and redacted error records. Applications that need a durable diagnostic record
+can copy `librdp_server_status` with `librdp_server_peer_get_last_status()`.
+`librdp_server_peer_close()` closes the peer transport while keeping the handle
+valid for final status and metrics queries.
+
 ## Example Listener
 
 ```sh
@@ -72,8 +79,8 @@ build/librdp-example-server-listener --bind 127.0.0.1 --port 3390 --width 1024 -
 ```
 
 The example accepts one peer, drives activation, sends a generated BGRA desktop
-surface, prints input events, and lists static channels using only public server
-APIs.
+surface, prints input/runtime events, and lists static channels using only
+public server APIs.
 
 ## Threading And Ownership
 

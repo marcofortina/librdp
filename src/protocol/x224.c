@@ -132,7 +132,7 @@ librdp_status rdp_x224_parse_connection_request(const void* payload,
             rdp_stream_read_u16_le(&negotiation, &request->negotiation.length) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u32_le(&negotiation, &request->requested_protocols) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (neg_type != 1u || request->negotiation.length != 8u || request->requested_protocols == 0)
+        if (neg_type != 1u || request->negotiation.length != 8u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         request->negotiation.present = true;
         request->negotiation.type = neg_type;
@@ -170,9 +170,16 @@ static librdp_status rdp_x224_build_confirm_payload(rdp_buffer* payload,
 
 librdp_status rdp_x224_build_connection_confirm(rdp_buffer* buffer, uint32_t selected_protocol)
 {
+    return rdp_x224_build_connection_confirm_ex(buffer, selected_protocol, selected_protocol != RDP_X224_PROTOCOL_STANDARD);
+}
+
+librdp_status rdp_x224_build_connection_confirm_ex(rdp_buffer* buffer,
+                                                   uint32_t selected_protocol,
+                                                   bool include_negotiation)
+{
     rdp_buffer payload;
     librdp_status status = LIBRDP_STATUS_OK;
-    uint8_t type = selected_protocol == RDP_X224_PROTOCOL_STANDARD ? 0u : 2u;
+    uint8_t type = include_negotiation ? 2u : 0u;
 
     if (!buffer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;

@@ -139,7 +139,7 @@ Workspace APIs fetch or load remote workspace feeds and expose published desktop
 
 ## Server API
 
-Server APIs create a listener, accept peer handles, and drive the server-side negotiation and activation lifecycle. Applications own the desktop model, graphics production, channels, resource policy, and input handling layered above an active peer.
+Server APIs create a listener, accept peer handles, drive the server-side negotiation and activation lifecycle, and expose peer runtime events, status snapshots, metrics, static-channel delivery, and BGRA surface updates. Applications own the desktop model, resource policy, and input handling layered above an active peer.
 
 ## Error model
 

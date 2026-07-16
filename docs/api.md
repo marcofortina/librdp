@@ -270,5 +270,6 @@ librdp_server_free(server);
 ```
 
 The server API drives transport negotiation, activation state, runtime input,
-static-channel delivery, and BGRA surface updates. Applications own security
-policy and the desktop model above the active peer.
+static-channel delivery, BGRA surface updates, runtime events, metrics, and
+redacted status snapshots. Applications own security policy and the desktop
+model above the active peer.

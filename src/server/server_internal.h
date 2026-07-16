@@ -68,6 +68,9 @@ struct librdp_server_peer
     void* input_callback_user_data;
     librdp_server_channel_callback channel_callback;
     void* channel_callback_user_data;
+    librdp_server_event_callback event_callback;
+    void* event_callback_user_data;
+    librdp_server_status last_status;
     librdp_server_metrics metrics;
     rdp_buffer input;
 };
