@@ -8,8 +8,10 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <poll.h>
 
 #include <librdp/error.h>
+#include <librdp/settings.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +27,7 @@ extern "C" {
 #define LIBRDP_SERVER_INPUT_EVENT_VERSION 1u /**< Current librdp_server_input_event version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_static_channel_info version. */
 #define LIBRDP_SERVER_CHANNEL_EVENT_VERSION 1u /**< Current librdp_server_channel_event version. */
+#define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
 
 /**
@@ -161,6 +164,35 @@ typedef struct librdp_server_channel_event
 } librdp_server_channel_event;
 
 /**
+ * @brief Versioned server-side metrics snapshot.
+ *
+ * Metrics are monotonic for one peer until librdp_server_peer_reset_metrics()
+ * is called. They count server runtime observations only: accepted packets,
+ * emitted PDUs, static-channel traffic, input callbacks, framebuffer updates,
+ * feature-gating rejections, and detected error/limit paths.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_metrics
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_METRICS_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    uint64_t bytes_read; /**< Bytes read from the peer socket by the server runtime. */
+    uint64_t bytes_written; /**< Bytes written to the peer socket by the server runtime. */
+    uint64_t pdu_in; /**< Top-level client packets accepted by the server runtime. */
+    uint64_t pdu_out; /**< Top-level server packets sent by the server runtime. */
+    uint64_t input_events; /**< Client input/control events delivered to the input callback. */
+    uint64_t static_channel_in; /**< Static-channel payloads delivered to the channel callback. */
+    uint64_t static_channel_out; /**< Static-channel payloads sent by public server APIs. */
+    uint64_t static_channel_bytes_in; /**< Static-channel payload bytes received. */
+    uint64_t static_channel_bytes_out; /**< Static-channel payload bytes sent. */
+    uint64_t surface_updates; /**< Dirty rectangles sent from the server framebuffer. */
+    uint64_t feature_rejections; /**< Feature requests rejected because no server runtime exists. */
+    uint64_t limits_rejected; /**< Inputs rejected by explicit size, count, or geometry limits. */
+    uint64_t errors; /**< Runtime errors observed at the public server boundary. */
+} librdp_server_metrics;
+
+/**
  * @brief Server-side input callback.
  *
  * Called synchronously from librdp_server_peer_run_once() on the thread driving
@@ -252,6 +284,19 @@ LIBRDP_API librdp_status librdp_server_input_event_init(librdp_server_input_even
 LIBRDP_API librdp_status librdp_server_static_channel_info_init(librdp_server_static_channel_info* info);
 
 /**
+ * @brief Initialize a server metrics snapshot.
+ *
+ * @param[out] metrics Caller-owned metrics object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metrics is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_metrics_init(librdp_server_metrics* metrics);
+
+/**
  * @brief Create a server listener object from a versioned config.
  *
  * The config object is borrowed only for the duration of this call; strings
@@ -325,6 +370,81 @@ LIBRDP_API void librdp_server_close(librdp_server* server);
 LIBRDP_API uint16_t librdp_server_local_port(const librdp_server* server);
 
 /**
+ * @brief Enable or disable a known optional server feature request.
+ *
+ * This function records application intent before peers are accepted. The
+ * server runtime never advertises a feature unless a real server-side runtime
+ * path is present; unsupported feature requests are visible through
+ * librdp_server_get_feature_status() with backend availability kept false, and
+ * inherited by future peers. Existing peers keep the request set copied when
+ * they were accepted.
+ *
+ * @param[in,out] server Server listener to update; must not be NULL.
+ * @param[in] feature Feature bitmask containing only known librdp_feature bits
+ * and at least one bit.
+ * @param[in] enabled Non-zero to request the feature, zero to clear it.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * server, zero feature, or unknown feature bits; LIBRDP_STATUS_STATE when the
+ * listener is already open and peers may inherit inconsistent configuration.
+ *
+ * @note Thread-safety: call from the serialized server owner context before
+ * librdp_server_listen().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_enable_feature(librdp_server* server,
+                                                      librdp_feature feature,
+                                                      int enabled);
+
+/**
+ * @brief Query local server readiness for one optional feature.
+ *
+ * The function reports the requested state configured on the server object and
+ * whether a server-side runtime and backend are available for the feature.
+ * Client-only or parser-only features are never reported as active by this
+ * server API.
+ *
+ * @param[in] server Server listener to query; must not be NULL.
+ * @param[in] feature Single known librdp_feature value to query; bitmasks with
+ * multiple bits, zero, and unknown bits are rejected.
+ * @param[out] status Destination status object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers, zero features, multiple feature bits, or unknown feature bits.
+ *
+ * @note Thread-safety: call from the serialized server owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_get_feature_status(const librdp_server* server,
+                                                          librdp_feature feature,
+                                                          librdp_feature_status* status);
+
+/**
+ * @brief Return the POSIX poll descriptor for an open listener.
+ *
+ * Call with fds set to NULL and capacity set to 0 to query the required
+ * descriptor count. Applications can poll the returned descriptor and then
+ * call librdp_server_accept() with a zero timeout when readable.
+ *
+ * @param[in] server Listening server; must not be NULL.
+ * @param[out] fds Destination array for poll descriptors; may be NULL only
+ * when capacity is 0.
+ * @param[in] capacity Number of entries available in fds.
+ * @param[out] count Required descriptor count; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * server/count or insufficient capacity; LIBRDP_STATUS_STATE when the listener
+ * is not open.
+ *
+ * @note Thread-safety: call from the serialized server owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_get_pollfds(librdp_server* server,
+                                                   struct pollfd* fds,
+                                                   size_t capacity,
+                                                   size_t* count);
+
+/**
  * @brief Accept one pending peer from the listener.
  *
  * The listener must be open. The returned peer owns its socket and must be
@@ -376,6 +496,72 @@ LIBRDP_API librdp_status librdp_server_accept(librdp_server* server,
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_ms);
+
+/**
+ * @brief Return the POSIX poll descriptor for a server-side peer.
+ *
+ * The descriptor remains owned by the peer and must not be closed by the
+ * caller. Call with fds set to NULL and capacity set to 0 to query the
+ * required descriptor count.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[out] fds Destination array for poll descriptors; may be NULL only
+ * when capacity is 0.
+ * @param[in] capacity Number of entries available in fds.
+ * @param[out] count Required descriptor count; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * peer/count or insufficient capacity; LIBRDP_STATUS_STATE when the peer is
+ * already closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_pollfds(librdp_server_peer* peer,
+                                                        struct pollfd* fds,
+                                                        size_t capacity,
+                                                        size_t* count);
+
+/**
+ * @brief Notify a peer about poll results collected by the application.
+ *
+ * Applications that drive their own event loop call
+ * librdp_server_peer_get_pollfds(), pass those descriptors to poll(2), copy
+ * revents back into the same array, and call this function before
+ * librdp_server_peer_dispatch_pending().
+ *
+ * @param[in,out] peer Peer to notify; must not be NULL.
+ * @param[in] fds Descriptor array previously obtained from
+ * librdp_server_peer_get_pollfds(); must not be NULL when count is non-zero.
+ * @param[in] count Number of descriptors in fds.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * inputs, unknown descriptors, or zero count; LIBRDP_STATUS_STATE when the
+ * peer is already closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_notify_poll(librdp_server_peer* peer,
+                                                        const struct pollfd* fds,
+                                                        size_t count);
+
+/**
+ * @brief Dispatch peer work made ready by librdp_server_peer_notify_poll().
+ *
+ * If no readiness is pending, this function returns immediately. Otherwise it
+ * processes the same packet path as librdp_server_peer_run_once() without
+ * performing another blocking poll.
+ *
+ * @param[in,out] peer Peer to drive; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or idle pending state; status values
+ * propagated by the peer packet dispatch path on error.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer);
 
 /**
  * @brief Register the callback for client input and activation control events.
@@ -448,6 +634,61 @@ LIBRDP_API uint32_t librdp_server_peer_static_channel_count(const librdp_server_
 LIBRDP_API librdp_status librdp_server_peer_static_channel_at(const librdp_server_peer* peer,
                                                               uint32_t index,
                                                               librdp_server_static_channel_info* info);
+
+/**
+ * @brief Query runtime readiness for one optional feature on a peer.
+ *
+ * The returned status starts from the feature requests copied from the server
+ * object at accept time, then adds peer-observed negotiation and active state
+ * for server runtimes that exist. Unsupported features keep backend_ready,
+ * negotiated, and active clear even if the client advertised a related static
+ * channel.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[in] feature Single known librdp_feature value to query; bitmasks with
+ * multiple bits, zero, and unknown bits are rejected.
+ * @param[out] status Destination status object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers, zero features, multiple feature bits, or unknown feature bits.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_feature_status(const librdp_server_peer* peer,
+                                                               librdp_feature feature,
+                                                               librdp_feature_status* status);
+
+/**
+ * @brief Copy server-side peer metrics into caller storage.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[out] metrics Initialized metrics object; must not be NULL and must
+ * have valid version and size metadata.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers or invalid metrics metadata.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_metrics(const librdp_server_peer* peer,
+                                                        librdp_server_metrics* metrics);
+
+/**
+ * @brief Reset server-side peer metrics to zero.
+ *
+ * Version and size metadata are retained in the peer-owned metrics object.
+ *
+ * @param[in,out] peer Peer whose metrics should be reset; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_reset_metrics(librdp_server_peer* peer);
 
 /**
  * @brief Return the current peer desktop width.

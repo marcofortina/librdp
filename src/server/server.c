@@ -50,6 +50,64 @@
 #define RDP_SERVER_MAX_DESKTOP_SIZE 8192u
 #define RDP_SERVER_NEGOTIATION_FAILURE_SSL_NOT_ALLOWED 0x00000002u
 #define RDP_SERVER_INITIAL_READ_MAX 65535u
+#define RDP_SERVER_KNOWN_FEATURES                                                                                   \
+    ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
+     (uint32_t)LIBRDP_FEATURE_VIDEO | (uint32_t)LIBRDP_FEATURE_CAMERA |                                              \
+     (uint32_t)LIBRDP_FEATURE_SMARTCARD | (uint32_t)LIBRDP_FEATURE_USB |                                             \
+     (uint32_t)LIBRDP_FEATURE_PNP | (uint32_t)LIBRDP_FEATURE_WEBAUTHN |                                              \
+     (uint32_t)LIBRDP_FEATURE_RAIL | (uint32_t)LIBRDP_FEATURE_CR2 |                                                  \
+     (uint32_t)LIBRDP_FEATURE_ECHO | (uint32_t)LIBRDP_FEATURE_TELEMETRY |                                            \
+     (uint32_t)LIBRDP_FEATURE_MULTITRANSPORT | (uint32_t)LIBRDP_FEATURE_DESKTOP_COMPOSITION |                        \
+     (uint32_t)LIBRDP_FEATURE_DISPLAY_CONTROL | (uint32_t)LIBRDP_FEATURE_UDP_TRANSPORT |                             \
+     (uint32_t)LIBRDP_FEATURE_UDP2_TRANSPORT | (uint32_t)LIBRDP_FEATURE_GEOMETRY_TRACKING |                          \
+     (uint32_t)LIBRDP_FEATURE_MULTIPARTY)
+
+static void rdp_server_metric_add(uint64_t* metric, uint64_t value)
+{
+    if (!metric)
+        return;
+    if (UINT64_MAX - *metric < value)
+        *metric = UINT64_MAX;
+    else
+        *metric += value;
+}
+
+static int rdp_server_valid_feature_mask(librdp_feature feature)
+{
+    uint32_t value = (uint32_t)feature;
+
+    return value != 0 && (value & ~RDP_SERVER_KNOWN_FEATURES) == 0;
+}
+
+static int rdp_server_valid_single_feature(librdp_feature feature)
+{
+    uint32_t value = (uint32_t)feature;
+
+    return rdp_server_valid_feature_mask(feature) && (value & (value - 1u)) == 0;
+}
+
+static int rdp_server_feature_has_runtime(librdp_feature feature)
+{
+    (void)feature;
+    return 0;
+}
+
+static void rdp_server_fill_feature_status(uint32_t requested_features,
+                                           librdp_feature feature,
+                                           librdp_feature_status* status)
+{
+    memset(status, 0, sizeof(*status));
+    status->feature = feature;
+    status->requested = (requested_features & (uint32_t)feature) != 0;
+    status->built = rdp_server_feature_has_runtime(feature);
+    status->backend_ready = status->built;
+    if (!status->requested)
+        status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
+    else if (!status->built)
+        status->reason = LIBRDP_FEATURE_REASON_NOT_BUILT;
+    else
+        status->reason = LIBRDP_FEATURE_REASON_NOT_NEGOTIATED;
+}
 
 static char* rdp_server_strdup_bounded(const char* text)
 {
@@ -113,6 +171,16 @@ librdp_status librdp_server_static_channel_info_init(librdp_server_static_channe
     memset(info, 0, sizeof(*info));
     info->version = LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION;
     info->size = (uint32_t)sizeof(*info);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_metrics_init(librdp_server_metrics* metrics)
+{
+    if (!metrics)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(metrics, 0, sizeof(*metrics));
+    metrics->version = LIBRDP_SERVER_METRICS_VERSION;
+    metrics->size = (uint32_t)sizeof(*metrics);
     return LIBRDP_STATUS_OK;
 }
 
@@ -249,6 +317,49 @@ uint16_t librdp_server_local_port(const librdp_server* server)
     return server->local_port;
 }
 
+librdp_status librdp_server_enable_feature(librdp_server* server, librdp_feature feature, int enabled)
+{
+    if (!server || !rdp_server_valid_feature_mask(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (server->listen_fd >= 0)
+        return LIBRDP_STATUS_STATE;
+    if (enabled)
+        server->requested_features |= (uint32_t)feature;
+    else
+        server->requested_features &= ~((uint32_t)feature);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_get_feature_status(const librdp_server* server,
+                                               librdp_feature feature,
+                                               librdp_feature_status* status)
+{
+    if (!server || !status || !rdp_server_valid_single_feature(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_server_fill_feature_status(server->requested_features, feature, status);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_get_pollfds(librdp_server* server,
+                                        struct pollfd* fds,
+                                        size_t capacity,
+                                        size_t* count)
+{
+    if (!server || !count || (!fds && capacity > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (server->listen_fd < 0)
+        return LIBRDP_STATUS_STATE;
+    *count = 1;
+    if (capacity == 0)
+        return LIBRDP_STATUS_OK;
+    if (capacity < 1)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&fds[0], 0, sizeof(fds[0]));
+    fds[0].fd = server->listen_fd;
+    fds[0].events = POLLIN;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp_server_peer** peer)
 {
     struct pollfd pfd;
@@ -292,6 +403,19 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->user_id = (uint16_t)RDP_MCS_BASE_CHANNEL_ID;
     accepted->width = (uint16_t)server->width;
     accepted->height = (uint16_t)server->height;
+    accepted->requested_features = server->requested_features;
+    accepted->pending_revents = 0;
+    if (server->server_name)
+    {
+        accepted->server_name = rdp_server_strdup_bounded(server->server_name);
+        if (!accepted->server_name)
+        {
+            free(accepted);
+            rdp_socket_close(fd);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+    (void)librdp_server_metrics_init(&accepted->metrics);
     rdp_buffer_init(&accepted->input);
     *peer = accepted;
     server->accepted_peers++;
@@ -335,6 +459,18 @@ static librdp_status rdp_server_send_all(int fd, const uint8_t* data, size_t len
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_server_peer_send_all(librdp_server_peer* peer, const uint8_t* data, size_t length)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || (!data && length > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_send_all(peer->fd, data, length);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_server_metric_add(&peer->metrics.bytes_written, (uint64_t)length);
+    return status;
+}
+
 static librdp_status rdp_server_send_x224_data(librdp_server_peer* peer, const void* payload, size_t payload_len)
 {
     rdp_buffer x224;
@@ -349,7 +485,7 @@ static librdp_status rdp_server_send_x224_data(librdp_server_peer* peer, const v
     if (status == LIBRDP_STATUS_OK)
         status = rdp_tpkt_write(&tpkt, x224.data, x224.length);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_all(peer->fd, tpkt.data, tpkt.length);
+        status = rdp_server_peer_send_all(peer, tpkt.data, tpkt.length);
     rdp_buffer_free(&tpkt);
     rdp_buffer_free(&x224);
     return status;
@@ -359,7 +495,11 @@ static librdp_status rdp_server_send_mcs_pdu(librdp_server_peer* peer, const rdp
 {
     if (!peer || !mcs_pdu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    return rdp_server_send_x224_data(peer, mcs_pdu->data, mcs_pdu->length);
+    librdp_status status = rdp_server_send_x224_data(peer, mcs_pdu->data, mcs_pdu->length);
+
+    if (status == LIBRDP_STATUS_OK)
+        rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+    return status;
 }
 
 static librdp_status rdp_server_send_slowpath(librdp_server_peer* peer, const rdp_buffer* slowpath_pdu)
@@ -403,7 +543,11 @@ static librdp_status rdp_server_send_x224_failure(librdp_server_peer* peer, uint
     rdp_buffer_init(&response);
     status = rdp_x224_build_negotiation_failure(&response, failure_code);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_all(peer->fd, response.data, response.length);
+    {
+        status = rdp_server_peer_send_all(peer, response.data, response.length);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+    }
     rdp_buffer_free(&response);
     rdp_server_close_peer(peer, status == LIBRDP_STATUS_OK ? LIBRDP_SERVER_PEER_CLOSED
                                                            : LIBRDP_SERVER_PEER_FAILED);
@@ -429,11 +573,20 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     pfd.fd = peer->fd;
     pfd.events = POLLIN;
     pfd.revents = 0;
-    poll_result = poll(&pfd, 1, timeout_ms);
-    if (poll_result == 0)
-        return LIBRDP_STATUS_TIMEOUT;
-    if (poll_result < 0)
-        return errno == EINTR ? LIBRDP_STATUS_TIMEOUT : LIBRDP_STATUS_IO_ERROR;
+    if (peer->pending_revents != 0)
+    {
+        pfd.revents = peer->pending_revents;
+        peer->pending_revents = 0;
+        poll_result = 1;
+    }
+    else
+    {
+        poll_result = poll(&pfd, 1, timeout_ms);
+        if (poll_result == 0)
+            return LIBRDP_STATUS_TIMEOUT;
+        if (poll_result < 0)
+            return errno == EINTR ? LIBRDP_STATUS_TIMEOUT : LIBRDP_STATUS_IO_ERROR;
+    }
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
     {
         peer->state = LIBRDP_SERVER_PEER_FAILED;
@@ -448,9 +601,11 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     if (read_len < 0)
         return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? LIBRDP_STATUS_TIMEOUT
                                                                          : LIBRDP_STATUS_IO_ERROR;
+    rdp_server_metric_add(&peer->metrics.bytes_read, (uint64_t)read_len);
     if (peer->input.length + (size_t)read_len > RDP_SERVER_INITIAL_READ_MAX)
     {
         peer->state = LIBRDP_SERVER_PEER_FAILED;
+        rdp_server_metric_add(&peer->metrics.limits_rejected, 1u);
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
     }
     status = rdp_buffer_append(&peer->input, chunk, (size_t)read_len);
@@ -471,6 +626,7 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
         peer->state = LIBRDP_SERVER_PEER_FAILED;
         return status;
     }
+    rdp_server_metric_add(&peer->metrics.pdu_in, 1u);
     *packet_len = total;
     return LIBRDP_STATUS_OK;
 }
@@ -493,7 +649,11 @@ static librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_
     rdp_buffer_init(&response);
     status = rdp_x224_build_connection_confirm(&response, RDP_X224_PROTOCOL_STANDARD);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_send_all(peer->fd, response.data, response.length);
+    {
+        status = rdp_server_peer_send_all(peer, response.data, response.length);
+        if (status == LIBRDP_STATUS_OK)
+            rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+    }
     rdp_buffer_free(&response);
     if (status != LIBRDP_STATUS_OK)
     {
@@ -659,7 +819,7 @@ static librdp_status rdp_server_send_demand_active(librdp_server_peer* peer)
                                               (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
                                               peer->width,
                                               peer->height,
-                                              "librdp");
+                                              peer->server_name ? peer->server_name : "librdp-server");
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_slowpath(peer, &demand);
     rdp_buffer_free(&demand);
@@ -736,6 +896,8 @@ static void rdp_server_copy_channel_name(char output[LIBRDP_SERVER_STATIC_CHANNE
 
 static void rdp_server_emit_input(librdp_server_peer* peer, const librdp_server_input_event* event)
 {
+    if (peer && event)
+        rdp_server_metric_add(&peer->metrics.input_events, 1u);
     if (peer && peer->input_callback)
         peer->input_callback(peer, event, peer->input_callback_user_data);
 }
@@ -1152,6 +1314,7 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                           y,
                           width,
                           height);
+    rdp_server_metric_add(&peer->metrics.surface_updates, 1u);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1343,6 +1506,11 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
     status = rdp_mcs_write_send_data_indication(&mcs, peer->user_id, channel_id, data, data_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_mcs_pdu(peer, &mcs);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_server_metric_add(&peer->metrics.static_channel_out, 1u);
+        rdp_server_metric_add(&peer->metrics.static_channel_bytes_out, (uint64_t)data_len);
+    }
     rdp_buffer_free(&mcs);
     return status;
 }
@@ -1508,21 +1676,26 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
         if (!rdp_server_static_channel_index(peer, request.channel_id, &channel_index) ||
             !peer->advertised_channel_joined[channel_index])
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        else if (peer->channel_callback)
+        else
         {
-            char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
-            librdp_server_channel_event event;
+            rdp_server_metric_add(&peer->metrics.static_channel_in, 1u);
+            rdp_server_metric_add(&peer->metrics.static_channel_bytes_in, (uint64_t)runtime_payload_len);
+            if (peer->channel_callback)
+            {
+                char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
+                librdp_server_channel_event event;
 
-            rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
-            memset(&event, 0, sizeof(event));
-            event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
-            event.size = (uint32_t)sizeof(event);
-            event.channel_id = request.channel_id;
-            event.name = name;
-            event.name_len = strlen(name);
-            event.data = runtime_payload;
-            event.data_len = runtime_payload_len;
-            peer->channel_callback(peer, &event, peer->channel_callback_user_data);
+                rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
+                memset(&event, 0, sizeof(event));
+                event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
+                event.size = (uint32_t)sizeof(event);
+                event.channel_id = request.channel_id;
+                event.name = name;
+                event.name_len = strlen(name);
+                event.data = runtime_payload;
+                event.data_len = runtime_payload_len;
+                peer->channel_callback(peer, &event, peer->channel_callback_user_data);
+            }
         }
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
@@ -1619,6 +1792,56 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_peer_get_pollfds(librdp_server_peer* peer,
+                                             struct pollfd* fds,
+                                             size_t capacity,
+                                             size_t* count)
+{
+    if (!peer || !count || (!fds && capacity > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->fd < 0 || peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    *count = 1;
+    if (capacity == 0)
+        return LIBRDP_STATUS_OK;
+    if (capacity < 1)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&fds[0], 0, sizeof(fds[0]));
+    fds[0].fd = peer->fd;
+    fds[0].events = POLLIN;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_notify_poll(librdp_server_peer* peer, const struct pollfd* fds, size_t count)
+{
+    int matched = 0;
+
+    if (!peer || !fds || count == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->fd < 0 || peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (fds[i].fd == peer->fd)
+        {
+            peer->pending_revents = (short)(peer->pending_revents | fds[i].revents);
+            matched = 1;
+        }
+    }
+    return matched ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
+librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->fd < 0 || peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    if (peer->pending_revents == 0)
+        return LIBRDP_STATUS_OK;
+    return librdp_server_peer_run_once(peer, 0);
+}
+
 librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_ms)
 {
     rdp_tpkt packet;
@@ -1658,6 +1881,8 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
         if (status == LIBRDP_STATUS_OK && consume_status != LIBRDP_STATUS_OK)
             status = consume_status;
     }
+    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
+        rdp_server_metric_add(&peer->metrics.errors, 1u);
     return status;
 }
 
@@ -1668,6 +1893,33 @@ librdp_server_peer_state librdp_server_peer_get_state(const librdp_server_peer* 
     return peer->state;
 }
 
+librdp_status librdp_server_peer_get_feature_status(const librdp_server_peer* peer,
+                                                    librdp_feature feature,
+                                                    librdp_feature_status* status)
+{
+    if (!peer || !status || !rdp_server_valid_single_feature(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_server_fill_feature_status(peer->requested_features, feature, status);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_get_metrics(const librdp_server_peer* peer, librdp_server_metrics* metrics)
+{
+    if (!peer || !metrics ||
+        metrics->version != LIBRDP_SERVER_METRICS_VERSION ||
+        metrics->size < sizeof(librdp_server_metrics))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *metrics = peer->metrics;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_reset_metrics(librdp_server_peer* peer)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return librdp_server_metrics_init(&peer->metrics);
+}
+
 void librdp_server_peer_free(librdp_server_peer* peer)
 {
     if (!peer)
@@ -1676,5 +1928,6 @@ void librdp_server_peer_free(librdp_server_peer* peer)
         rdp_socket_close(peer->fd);
     rdp_buffer_free(&peer->input);
     free(peer->framebuffer);
+    free(peer->server_name);
     free(peer);
 }

@@ -34,6 +34,7 @@ struct librdp_server
     uint32_t accepted_peers;
     uint32_t width;
     uint32_t height;
+    uint32_t requested_features;
 };
 
 struct librdp_server_peer
@@ -45,6 +46,9 @@ struct librdp_server_peer
     uint16_t user_id;
     uint16_t width;
     uint16_t height;
+    char* server_name;
+    uint32_t requested_features;
+    short pending_revents;
     uint16_t advertised_channel_count;
     uint16_t joined_channel_count;
     rdp_gcc_channel_definition advertised_channels[RDP_GCC_MAX_SERVER_CHANNELS];
@@ -64,6 +68,7 @@ struct librdp_server_peer
     void* input_callback_user_data;
     librdp_server_channel_callback channel_callback;
     void* channel_callback_user_data;
+    librdp_server_metrics metrics;
     rdp_buffer input;
 };
 
