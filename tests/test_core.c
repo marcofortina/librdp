@@ -7395,7 +7395,7 @@ static int test_licensing_request_before_activation(void)
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
     CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_ACTIVE);
-    for (i = 0; i < 4u; i++)
+    for (i = 0; i < 6u; i++)
         CHECK(librdp_session_run_once(session, 1000) == LIBRDP_STATUS_OK);
 
     librdp_session_free(session);
