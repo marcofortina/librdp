@@ -1244,6 +1244,65 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_ser
                                                                       size_t data_len);
 
 /**
+ * @brief Send a validated payload on a joined static extension channel.
+ *
+ * The helper checks that channel_id names the expected extension family and
+ * validates the outer PDU for known protocols before writing it to the peer.
+ * payload is borrowed only for the duration of the call.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] family Expected extension family for the static channel.
+ * @param[in] channel_id Joined static channel identifier.
+ * @param[in] payload Borrowed extension payload bytes; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * NULL pointers, a non-static family, or family/channel mismatch;
+ * LIBRDP_STATUS_PROTOCOL_ERROR for malformed payload; LIBRDP_STATUS_STATE
+ * when the peer is not ACTIVE; transport errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_static_extension_data(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    uint16_t channel_id,
+    const void* payload,
+    size_t payload_len);
+
+/**
+ * @brief Send a validated payload on an open dynamic extension channel.
+ *
+ * The helper checks that dynamic_channel_id is currently open with the
+ * expected extension family and validates the outer PDU for known protocols
+ * before writing it to the peer. payload is borrowed only for the duration of
+ * the call.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] family Expected extension family for the dynamic channel.
+ * @param[in] dynamic_channel_id Open dynamic channel identifier.
+ * @param[in] payload Borrowed extension payload bytes; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * NULL pointers, a non-dynamic family, or family/channel mismatch;
+ * LIBRDP_STATUS_PROTOCOL_ERROR for malformed payload; LIBRDP_STATUS_STATE
+ * when the peer is not ACTIVE; transport errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_dynamic_extension_data(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    uint32_t dynamic_channel_id,
+    const void* payload,
+    size_t payload_len);
+
+/**
  * @brief Send a clipboard Monitor Ready PDU on a joined clipboard channel.
  *
  * @param[in,out] peer Active peer; must not be NULL.

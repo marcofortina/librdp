@@ -1854,6 +1854,29 @@ static int test_server_loopback_standard_activation_sequence(void)
                                            dvc_data_response.data_len,
                                            &echo_response) == LIBRDP_STATUS_OK);
     SCHECK(echo_response.payload_len == 5 && memcmp(echo_response.payload, "reply", 5) == 0);
+    dvc_packet.length = 0;
+    SCHECK(rdp_echo_channel_write_response(&dvc_packet, "generic", 7) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_send_dynamic_extension_data(peer,
+                                                          LIBRDP_SERVER_EXTENSION_ECHO,
+                                                          8,
+                                                          dvc_packet.data,
+                                                          dvc_packet.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_dynamic_channel_payload(client_fd,
+                                                    response,
+                                                    sizeof(response),
+                                                    dynamic_static_channel_id,
+                                                    8,
+                                                    &dvc_data_response));
+    SCHECK(rdp_echo_channel_parse_response(dvc_data_response.data,
+                                           dvc_data_response.data_len,
+                                           &echo_response) == LIBRDP_STATUS_OK);
+    SCHECK(echo_response.payload_len == 7 && memcmp(echo_response.payload, "generic", 7) == 0);
+    SCHECK(librdp_server_peer_send_dynamic_extension_data(peer,
+                                                          LIBRDP_SERVER_EXTENSION_GRAPHICS,
+                                                          8,
+                                                          dvc_packet.data,
+                                                          dvc_packet.length) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_close_dynamic_channel(peer, 8) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_static_channel_data(client_fd,
                                                 response,
@@ -2133,6 +2156,28 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
     SCHECK(clipboard_packet.type == RDP_CLIPBOARD_CB_FORMAT_LIST_RESPONSE &&
            (clipboard_packet.flags & RDP_CLIPBOARD_CB_RESPONSE_OK) != 0);
+    dvc_packet.length = 0;
+    SCHECK(rdp_clipboard_write_monitor_ready(&dvc_packet) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_send_static_extension_data(peer,
+                                                         LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                         clipboard_channel_id,
+                                                         dvc_packet.data,
+                                                         dvc_packet.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(clipboard_packet.type == RDP_CLIPBOARD_CB_MONITOR_READY);
+    SCHECK(librdp_server_peer_send_static_extension_data(peer,
+                                                         LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION,
+                                                         clipboard_channel_id,
+                                                         dvc_packet.data,
+                                                         dvc_packet.length) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_send_clipboard_monitor_ready(peer, static_channel_id) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_send_graphics_default_caps(peer, 99) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -2203,7 +2248,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.input_events == runtime_context.input_count);
     SCHECK(server_metrics.static_channel_in == 1 && server_metrics.static_channel_out >= 1);
     SCHECK(server_metrics.static_channel_bytes_in == 4 && server_metrics.static_channel_bytes_out >= 4);
-    SCHECK(server_metrics.dynamic_channel_in == 2 && server_metrics.dynamic_channel_out == 10);
+    SCHECK(server_metrics.dynamic_channel_in == 2 && server_metrics.dynamic_channel_out == 11);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 8 && server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.surface_updates == 2);
     SCHECK(librdp_server_peer_reset_metrics(peer) == LIBRDP_STATUS_OK);
