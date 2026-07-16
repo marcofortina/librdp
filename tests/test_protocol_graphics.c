@@ -4705,17 +4705,63 @@ static int test_gdi_orders(void)
 static int test_gdi_backends(void)
 {
     rdp_gdi_backend_caps caps;
+    rdp_gdi_backend_point triangle[3];
     librdp_surface* surface = NULL;
     const uint8_t* pixels = NULL;
     size_t stride = 0;
+    uint32_t dirty_left = UINT32_MAX;
+    uint32_t dirty_top = UINT32_MAX;
+    uint32_t dirty_right = 0;
+    uint32_t dirty_bottom = 0;
     librdp_status cairo_status = LIBRDP_STATUS_OK;
     librdp_status quartz_status = LIBRDP_STATUS_OK;
+    static const uint8_t source_pixels[] = {
+        0x10u, 0x20u, 0x30u, 0xffu,
+        0x11u, 0x21u, 0x31u, 0xffu,
+        0x12u, 0x22u, 0x32u, 0xffu,
+        0x13u, 0x23u, 0x33u, 0xffu
+    };
+    static const uint8_t gdiplus_stream[] = {
+        0x09u, 0x40u, 0x00u, 0x00u, 0x10u, 0x00u, 0x00u, 0x00u,
+        0x04u, 0x00u, 0x00u, 0x00u, 0x03u, 0x02u, 0x01u, 0xffu,
+        0x0au, 0x40u, 0x00u, 0xc0u, 0x1cu, 0x00u, 0x00u, 0x00u,
+        0x10u, 0x00u, 0x00u, 0x00u, 0x33u, 0x22u, 0x11u, 0xffu,
+        0x01u, 0x00u, 0x00u, 0x00u, 0x01u, 0x00u, 0x01u, 0x00u,
+        0x02u, 0x00u, 0x02u, 0x00u, 0x0eu, 0x40u, 0x00u, 0xc0u,
+        0x18u, 0x00u, 0x00u, 0x00u, 0x0cu, 0x00u, 0x00u, 0x00u,
+        0x66u, 0x55u, 0x44u, 0xffu, 0x03u, 0x00u, 0x03u, 0x00u,
+        0x02u, 0x00u, 0x02u, 0x00u,
+        0x0bu, 0x40u, 0x00u, 0xc0u, 0x1cu, 0x00u, 0x00u, 0x00u,
+        0x10u, 0x00u, 0x00u, 0x00u, 0x77u, 0x66u, 0x55u, 0xffu,
+        0x01u, 0x00u, 0x00u, 0x00u, 0x04u, 0x00u, 0x00u, 0x00u,
+        0x01u, 0x00u, 0x01u, 0x00u,
+        0x0cu, 0x40u, 0x00u, 0xc0u, 0x20u, 0x00u, 0x00u, 0x00u,
+        0x14u, 0x00u, 0x00u, 0x00u, 0xaau, 0x99u, 0x88u, 0xffu,
+        0x03u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x03u, 0x00u,
+        0x04u, 0x00u, 0x03u, 0x00u, 0x00u, 0x00u, 0x05u, 0x00u,
+        0x0du, 0x40u, 0x00u, 0xc0u, 0x1cu, 0x00u, 0x00u, 0x00u,
+        0x10u, 0x00u, 0x00u, 0x00u, 0x44u, 0x33u, 0x22u, 0xffu,
+        0x02u, 0x00u, 0x00u, 0x00u, 0x05u, 0x00u, 0x00u, 0x00u,
+        0x05u, 0x00u, 0x05u, 0x00u,
+        0x0fu, 0x40u, 0x00u, 0xc0u, 0x18u, 0x00u, 0x00u, 0x00u,
+        0x0cu, 0x00u, 0x00u, 0x00u, 0x10u, 0x20u, 0x30u, 0xffu,
+        0x03u, 0x00u, 0x03u, 0x00u, 0x02u, 0x00u, 0x02u, 0x00u
+    };
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
 
     surface = librdp_surface_new(6, 6, LIBRDP_PIXEL_FORMAT_BGRA32);
     PCHECK(surface != NULL);
     PCHECK(rdp_gdi_backend_query(RDP_GDI_BACKEND_SOFTWARE, &caps) == LIBRDP_STATUS_OK);
     PCHECK(caps.name && strcmp(caps.name, "software") == 0);
-    PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_FILL_RECT) != 0);
+    PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_FILL_RECT) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_BLIT_BGRA32) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_COPY_RECT) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_DRAW_LINE) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_FILL_POLYGON) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_FILL_ELLIPSE) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE) != 0);
     PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
                                      surface,
                                      1,
@@ -4731,6 +4777,114 @@ static int test_gdi_backends(void)
            pixels[(2u * stride) + 6u] == 0x11u &&
            pixels[(2u * stride) + 7u] == 0xffu);
     PCHECK(pixels[0] == 0 && pixels[1] == 0 && pixels[2] == 0 && pixels[3] == 0);
+    PCHECK(rdp_gdi_backend_blit_bgra32(RDP_GDI_BACKEND_SOFTWARE,
+                                       surface,
+                                       0,
+                                       0,
+                                       2,
+                                       2,
+                                       source_pixels,
+                                       8) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_backend_copy_rect(RDP_GDI_BACKEND_SOFTWARE,
+                                     surface,
+                                     0,
+                                     0,
+                                     3,
+                                     0,
+                                     2,
+                                     2) == LIBRDP_STATUS_OK);
+    pixels = librdp_surface_pixels(surface);
+    PCHECK(pixels[(0u * stride) + (3u * 4u) + 0u] == 0x10u &&
+           pixels[(0u * stride) + (3u * 4u) + 1u] == 0x20u &&
+           pixels[(0u * stride) + (3u * 4u) + 2u] == 0x30u &&
+           pixels[(1u * stride) + (4u * 4u) + 0u] == 0x13u);
+    dirty_left = UINT32_MAX;
+    dirty_top = UINT32_MAX;
+    dirty_right = 0;
+    dirty_bottom = 0;
+    PCHECK(rdp_gdi_backend_draw_line(RDP_GDI_BACKEND_SOFTWARE,
+                                     surface,
+                                     0,
+                                     5,
+                                     5,
+                                     5,
+                                     1,
+                                     0xabcdefu,
+                                     NULL,
+                                     &dirty_left,
+                                     &dirty_top,
+                                     &dirty_right,
+                                     &dirty_bottom) == LIBRDP_STATUS_OK);
+    pixels = librdp_surface_pixels(surface);
+    PCHECK(dirty_left == 0 && dirty_top == 5 && dirty_right == 6 && dirty_bottom == 6);
+    PCHECK(pixels[(5u * stride) + 0u] == 0xefu &&
+           pixels[(5u * stride) + 1u] == 0xcdu &&
+           pixels[(5u * stride) + 2u] == 0xabu);
+    triangle[0].x = 0;
+    triangle[0].y = 0;
+    triangle[1].x = 3;
+    triangle[1].y = 0;
+    triangle[2].x = 0;
+    triangle[2].y = 3;
+    dirty_left = UINT32_MAX;
+    dirty_top = UINT32_MAX;
+    dirty_right = 0;
+    dirty_bottom = 0;
+    PCHECK(rdp_gdi_backend_fill_polygon(RDP_GDI_BACKEND_SOFTWARE,
+                                        surface,
+                                        triangle,
+                                        3,
+                                        1,
+                                        0x010203u,
+                                        NULL,
+                                        &dirty_left,
+                                        &dirty_top,
+                                        &dirty_right,
+                                        &dirty_bottom) == LIBRDP_STATUS_OK);
+    PCHECK(dirty_left == 0 && dirty_top == 0 && dirty_right >= 2 && dirty_bottom >= 2);
+    PCHECK(rdp_gdi_backend_fill_ellipse(RDP_GDI_BACKEND_SOFTWARE,
+                                        surface,
+                                        3,
+                                        3,
+                                        3,
+                                        3,
+                                        0x665544u,
+                                        NULL) == LIBRDP_STATUS_OK);
+    pixels = librdp_surface_pixels(surface);
+    PCHECK(pixels[(4u * stride) + (4u * 4u) + 0u] == 0x44u &&
+           pixels[(4u * stride) + (4u * 4u) + 1u] == 0x55u &&
+           pixels[(4u * stride) + (4u * 4u) + 2u] == 0x66u);
+    PCHECK(rdp_gdi_backend_draw_ellipse(RDP_GDI_BACKEND_SOFTWARE,
+                                        surface,
+                                        0,
+                                        0,
+                                        4,
+                                        4,
+                                        1,
+                                        0x123456u,
+                                        NULL) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                 surface,
+                                                 gdiplus_stream,
+                                                 sizeof(gdiplus_stream),
+                                                 &records,
+                                                 &rasterized,
+                                                 &unsupported) == LIBRDP_STATUS_OK);
+    PCHECK(records == 7 && rasterized == 7 && unsupported == 0);
+    pixels = librdp_surface_pixels(surface);
+    PCHECK(pixels[0] == 0x03u && pixels[1] == 0x02u && pixels[2] == 0x01u);
+    PCHECK(pixels[(4u * 4u) + 0u] == 0x77u &&
+           pixels[(4u * 4u) + 1u] == 0x66u &&
+           pixels[(4u * 4u) + 2u] == 0x55u);
+    PCHECK(pixels[(1u * stride) + (1u * 4u) + 0u] == 0x33u &&
+           pixels[(1u * stride) + (1u * 4u) + 1u] == 0x22u &&
+           pixels[(1u * stride) + (1u * 4u) + 2u] == 0x11u);
+    PCHECK(pixels[(4u * stride) + 0u] == 0xaau &&
+           pixels[(4u * stride) + 1u] == 0x99u &&
+           pixels[(4u * stride) + 2u] == 0x88u);
+    PCHECK(pixels[(5u * 4u) + 0u] == 0x44u &&
+           pixels[(5u * 4u) + 1u] == 0x33u &&
+           pixels[(5u * 4u) + 2u] == 0x22u);
     PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
                                      surface,
                                      5,
@@ -4746,6 +4900,7 @@ static int test_gdi_backends(void)
     {
         surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
         PCHECK(surface != NULL);
+        PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_FILL_ELLIPSE) != 0);
         PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_CAIRO,
                                          surface,
                                          0,
@@ -4759,6 +4914,19 @@ static int test_gdi_backends(void)
                pixels[1] == 0x55u &&
                pixels[2] == 0x44u &&
                pixels[3] == 0xffu);
+        PCHECK(rdp_gdi_backend_blit_bgra32(RDP_GDI_BACKEND_CAIRO,
+                                           surface,
+                                           2,
+                                           2,
+                                           2,
+                                           2,
+                                           source_pixels,
+                                           8) == LIBRDP_STATUS_OK);
+        pixels = librdp_surface_pixels(surface);
+        stride = librdp_surface_stride(surface);
+        PCHECK(pixels[(2u * stride) + (2u * 4u) + 0u] == 0x10u &&
+               pixels[(2u * stride) + (2u * 4u) + 1u] == 0x20u &&
+               pixels[(2u * stride) + (2u * 4u) + 2u] == 0x30u);
         librdp_surface_free(surface);
         surface = NULL;
     }

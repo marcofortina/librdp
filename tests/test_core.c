@@ -3272,6 +3272,7 @@ static int start_handshake_server_full(uint16_t* port,
                         {
                             _exit(5);
                         }
+                        goto done_connection;
                     }
                     if (clipboard_scenario == CLIPBOARD_SCENARIO_UNMATCHED_RESPONSES)
                     {
@@ -7552,9 +7553,9 @@ static int test_printer_file_backend_job_lifecycle(void)
 
 /*
  * Coverage: validates that complex GDI alternate secondary orders have a
- * bounded runtime path. The client parses GDI+ draw/cache chunks, preserves
- * window metadata and records desktop composition markers without advertising
- * rasterization that is not available.
+ * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes
+ * direct EMF+ vector records, preserves window metadata and records desktop
+ * composition markers without corrupting the active surface.
  */
 static int test_gdi_altsec_runtime_orders(void)
 {
