@@ -26,6 +26,7 @@
 #include "channels/telemetry.h"
 #include "clipboard/clipboard.h"
 #include "graphics/bitmap.h"
+#include "graphics/gdi_orders.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "protocol/gcc.h"
@@ -201,7 +202,6 @@ static int test_server_parser_only_feature_gates(void)
 {
     static const librdp_feature parser_only_features[] = {
         LIBRDP_FEATURE_MULTITRANSPORT,
-        LIBRDP_FEATURE_DESKTOP_COMPOSITION,
         LIBRDP_FEATURE_UDP_TRANSPORT,
         LIBRDP_FEATURE_UDP2_TRANSPORT,
         LIBRDP_FEATURE_GEOMETRY_TRACKING
@@ -1474,6 +1474,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_mouse_cursor_header mouse_cursor_header;
     rdp_telemetry_pdu telemetry_pdu;
     rdp_multiparty_header multiparty_header;
+    rdp_gdi_orders_update gdi_update;
+    rdp_gdi_order_list gdi_orders;
     librdp_server_dynamic_channel_info dynamic_info;
     rdp_buffer license_payload;
     rdp_buffer security_payload;
@@ -1533,6 +1535,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_ECHO, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_TELEMETRY, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_MULTIPARTY, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_DESKTOP_COMPOSITION, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_get_feature_status(server,
                                             LIBRDP_FEATURE_ECHO,
                                             &feature_status) == LIBRDP_STATUS_OK);
@@ -1544,6 +1547,11 @@ static int test_server_loopback_standard_activation_sequence(void)
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_get_feature_status(server,
                                             LIBRDP_FEATURE_MULTIPARTY,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    SCHECK(librdp_server_get_feature_status(server,
+                                            LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                             &feature_status) == LIBRDP_STATUS_OK);
     SCHECK(feature_status.requested && feature_status.backend_ready &&
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
@@ -1828,6 +1836,26 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
     SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP &&
            data_pdu.payload_len == 8);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+    SCHECK(librdp_server_peer_send_desktop_composition_start(peer) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_slowpath_data_pdu(client_fd, response, sizeof(response), &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+    SCHECK(rdp_gdi_parse_slow_orders_update_payload(data_pdu.payload,
+                                                    data_pdu.payload_len,
+                                                    &gdi_update) == LIBRDP_STATUS_OK);
+    SCHECK(gdi_update.number_orders == 1);
+    SCHECK(rdp_gdi_parse_order_list(gdi_update.order_data,
+                                    gdi_update.order_data_len,
+                                    gdi_update.number_orders,
+                                    RDP_GDI_ORDER_DSTBLT,
+                                    &gdi_orders) == LIBRDP_STATUS_OK);
+    SCHECK(gdi_orders.count == 1 &&
+           gdi_orders.orders[0].kind == RDP_GDI_ORDER_KIND_ALTSEC &&
+           gdi_orders.orders[0].order_type == RDP_GDI_ALTSEC_COMPDESK_FIRST);
     SCHECK(librdp_server_peer_open_dynamic_channel(peer, 8, 0, RDP_ECHO_CHANNEL_NAME) ==
            LIBRDP_STATUS_STATE);
 

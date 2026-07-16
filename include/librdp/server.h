@@ -1535,6 +1535,25 @@ LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server
                                                                    uint32_t dynamic_channel_id);
 
 /**
+ * @brief Send the Desktop Composition alternate-secondary start order.
+ *
+ * The order is delivered on the negotiated global slow-path update stream, not
+ * on a virtual channel. Applications call this after activation when they have
+ * enabled LIBRDP_FEATURE_DESKTOP_COMPOSITION and want the peer to enter the
+ * desktop-composition drawing path supported by the server runtime.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE when the peer is not ACTIVE or output is
+ * suppressed; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_desktop_composition_start(librdp_server_peer* peer);
+
+/**
  * @brief Close an open dynamic virtual channel from the server side.
  *
  * @param[in,out] peer Peer that owns the dynamic channel; must not be NULL.

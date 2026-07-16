@@ -42,6 +42,7 @@
 #include "channels/webauthn_channel.h"
 #include "clipboard/clipboard.h"
 #include "graphics/bitmap.h"
+#include "graphics/gdi_orders.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
 #include "platform/socket.h"
@@ -137,7 +138,6 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
 static int rdp_server_feature_parser_only(librdp_feature feature)
 {
     return feature == LIBRDP_FEATURE_MULTITRANSPORT ||
-           feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION ||
            feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
            feature == LIBRDP_FEATURE_UDP2_TRANSPORT ||
            feature == LIBRDP_FEATURE_GEOMETRY_TRACKING;
@@ -160,10 +160,10 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
         case LIBRDP_FEATURE_ECHO:
         case LIBRDP_FEATURE_TELEMETRY:
         case LIBRDP_FEATURE_MULTIPARTY:
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
             return 1;
         case LIBRDP_FEATURE_MULTITRANSPORT:
-        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
         case LIBRDP_FEATURE_UDP_TRANSPORT:
         case LIBRDP_FEATURE_UDP2_TRANSPORT:
         case LIBRDP_FEATURE_GEOMETRY_TRACKING:
@@ -3774,6 +3774,44 @@ librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server_peer* peer
     return status;
 }
 
+librdp_status librdp_server_peer_send_desktop_composition_start(librdp_server_peer* peer)
+{
+    rdp_buffer order;
+    rdp_buffer update;
+    rdp_buffer slowpath;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE || peer->updates_suppressed)
+        return LIBRDP_STATUS_STATE;
+    rdp_buffer_init(&order);
+    rdp_buffer_init(&update);
+    rdp_buffer_init(&slowpath);
+    status = rdp_gdi_write_altsec_order(&order, RDP_GDI_ALTSEC_COMPDESK_FIRST, NULL, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gdi_write_slow_orders_update_payload(&update, 1, order.data, order.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_data_pdu(&slowpath,
+                                             peer->share_id,
+                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             RDP_SLOWPATH_DATA_PDU_UPDATE,
+                                             update.data,
+                                             update.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_slowpath(peer, &slowpath);
+    if (status != LIBRDP_STATUS_OK)
+        rdp_server_record_status(peer,
+                                 status,
+                                 rdp_server_component_for_status(status),
+                                 "server.desktop_composition.start",
+                                 "desktop composition order send failed");
+    rdp_buffer_free(&slowpath);
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&order);
+    return status;
+}
+
 librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer, uint32_t dynamic_channel_id)
 {
     rdp_server_dynamic_channel* channel = NULL;
@@ -4747,6 +4785,9 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
             break;
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
             negotiated = rdp_server_peer_dynamic_channel_open_named(peer, RDP_DISPLAY_CONTROL_CHANNEL_NAME);
+            break;
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
+            negotiated = peer->state == LIBRDP_SERVER_PEER_ACTIVE;
             break;
         case LIBRDP_FEATURE_TELEMETRY:
             negotiated = rdp_server_peer_dynamic_channel_open_named(peer, RDP_TELEMETRY_DVC_CHANNEL_NAME) ||
