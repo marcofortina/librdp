@@ -1244,6 +1244,238 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_ser
                                                                       size_t data_len);
 
 /**
+ * @brief Send a clipboard Monitor Ready PDU on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_monitor_ready(librdp_server_peer* peer,
+                                                                         uint16_t channel_id);
+
+/**
+ * @brief Send clipboard general capabilities on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] general_flags Clipboard general capability flags.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_capabilities(librdp_server_peer* peer,
+                                                                        uint16_t channel_id,
+                                                                        uint32_t general_flags);
+
+/**
+ * @brief Send a clipboard format-list response on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] ok Non-zero sends success; zero sends failure.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_format_list_response(librdp_server_peer* peer,
+                                                                               uint16_t channel_id,
+                                                                               int ok);
+
+/**
+ * @brief Send an Echo response on an open ECHO dynamic channel.
+ *
+ * payload is borrowed only for the duration of the call and may be NULL only
+ * when payload_len is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open ECHO dynamic channel identifier.
+ * @param[in] payload Borrowed response payload bytes; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-ECHO channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; LIBRDP_STATUS_LIMIT_EXCEEDED for oversized Echo payloads;
+ * transport errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_echo_response(librdp_server_peer* peer,
+                                                               uint32_t dynamic_channel_id,
+                                                               const void* payload,
+                                                               size_t payload_len);
+
+/**
+ * @brief Send a single-monitor Display Control layout on an open channel.
+ *
+ * The helper creates a validated single primary monitor layout from width and
+ * height before serializing it.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Display Control dynamic channel id.
+ * @param[in] width Requested monitor width in pixels.
+ * @param[in] height Requested monitor height in pixels.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid geometry or a non-Display-Control channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_display_single_monitor_layout(librdp_server_peer* peer,
+                                                                               uint32_t dynamic_channel_id,
+                                                                               uint32_t width,
+                                                                               uint32_t height);
+
+/**
+ * @brief Send default RDP Graphics Pipeline capabilities.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-graphics channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_default_caps(librdp_server_peer* peer,
+                                                                       uint32_t dynamic_channel_id);
+
+/**
+ * @brief Send an RDP Graphics Pipeline Create Surface command.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] surface_id Graphics surface identifier.
+ * @param[in] width Surface width in pixels.
+ * @param[in] height Surface height in pixels.
+ * @param[in] pixel_format RDPGFX pixel format byte.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-graphics channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_create_surface(librdp_server_peer* peer,
+                                                                         uint32_t dynamic_channel_id,
+                                                                         uint16_t surface_id,
+                                                                         uint16_t width,
+                                                                         uint16_t height,
+                                                                         uint8_t pixel_format);
+
+/**
+ * @brief Send an RDP Graphics Pipeline Delete Surface command.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] surface_id Graphics surface identifier.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-graphics channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_delete_surface(librdp_server_peer* peer,
+                                                                         uint32_t dynamic_channel_id,
+                                                                         uint16_t surface_id);
+
+/**
+ * @brief Send an RDP Graphics Pipeline Reset Graphics command.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] width Desktop width in pixels.
+ * @param[in] height Desktop height in pixels.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-graphics channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_reset(librdp_server_peer* peer,
+                                                                uint32_t dynamic_channel_id,
+                                                                uint32_t width,
+                                                                uint32_t height);
+
+/**
+ * @brief Send a Core Input initialization request.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Core Input dynamic channel id.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-Core-Input channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_core_input_init(librdp_server_peer* peer,
+                                                                 uint32_t dynamic_channel_id);
+
+/**
+ * @brief Send an RDPEI server-ready message for touch and pen input.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open RDPEI dynamic channel id.
+ * @param[in] protocol_version RDPEI protocol version advertised by the server.
+ * @param[in] supported_features Optional supported feature flags.
+ * @param[in] has_supported_features Non-zero to include supported_features.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-RDPEI channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_touch_ready(librdp_server_peer* peer,
+                                                             uint32_t dynamic_channel_id,
+                                                             uint32_t protocol_version,
+                                                             uint32_t supported_features,
+                                                             int has_supported_features);
+
+/**
+ * @brief Send Mouse Cursor channel capabilities.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Mouse Cursor dynamic channel id.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-Mouse-Cursor channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server_peer* peer,
+                                                                   uint32_t dynamic_channel_id);
+
+/**
  * @brief Close an open dynamic virtual channel from the server side.
  *
  * @param[in,out] peer Peer that owns the dynamic channel; must not be NULL.

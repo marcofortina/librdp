@@ -74,6 +74,18 @@ LIBRDP_0.1 {
         librdp_server_peer_send_channel_data;
         librdp_server_peer_open_dynamic_channel;
         librdp_server_peer_send_dynamic_channel_data;
+        librdp_server_peer_send_clipboard_monitor_ready;
+        librdp_server_peer_send_clipboard_capabilities;
+        librdp_server_peer_send_clipboard_format_list_response;
+        librdp_server_peer_send_echo_response;
+        librdp_server_peer_send_display_single_monitor_layout;
+        librdp_server_peer_send_graphics_default_caps;
+        librdp_server_peer_send_graphics_create_surface;
+        librdp_server_peer_send_graphics_delete_surface;
+        librdp_server_peer_send_graphics_reset;
+        librdp_server_peer_send_core_input_init;
+        librdp_server_peer_send_touch_ready;
+        librdp_server_peer_send_mouse_cursor_caps;
         librdp_server_peer_close_dynamic_channel;
         librdp_server_peer_close;
         librdp_server_peer_free;
