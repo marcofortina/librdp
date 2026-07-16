@@ -636,6 +636,9 @@ librdp_status rdp_graphics_default_capsets_for_avc(rdp_graphics_capset* capsets,
     if ((avc_support & (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) != 0 &&
         (avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) != 0 &&
+        (avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444) == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     capsets[count].version = RDP_GRAPHICS_CAPVERSION_8;
     capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
@@ -655,14 +658,26 @@ librdp_status rdp_graphics_default_capsets_for_avc(rdp_graphics_capset* capsets,
         count++;
         if ((avc_support & (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) != 0)
         {
-            if (capset_capacity < count + 2u)
+            uint16_t extra_count = 0;
+
+            if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444) != 0)
+                extra_count++;
+            if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) != 0)
+                extra_count++;
+            if (capset_capacity < count + extra_count)
                 return LIBRDP_STATUS_INVALID_ARGUMENT;
-            capsets[count].version = RDP_GRAPHICS_CAPVERSION_106;
-            capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
-            count++;
-            capsets[count].version = RDP_GRAPHICS_CAPVERSION_107;
-            capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
-            count++;
+            if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444) != 0)
+            {
+                capsets[count].version = RDP_GRAPHICS_CAPVERSION_106;
+                capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+                count++;
+            }
+            if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) != 0)
+            {
+                capsets[count].version = RDP_GRAPHICS_CAPVERSION_107;
+                capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+                count++;
+            }
         }
     }
     else

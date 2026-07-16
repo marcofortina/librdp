@@ -1514,6 +1514,15 @@ static librdp_status rdp_avc_decode_h264_to_bgra(rdp_avc_decoder* decoder,
 #endif
     return status;
 }
+
+static librdp_status rdp_avc_decode_status_for_advertised_runtime(librdp_status status,
+                                                                  uint32_t avc_support,
+                                                                  uint32_t required_support)
+{
+    if (status == LIBRDP_STATUS_UNSUPPORTED && (avc_support & required_support) == required_support)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return status;
+}
 #endif
 
 librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
@@ -1531,6 +1540,16 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t avc_support = rdp_avc_runtime_support();
+
+    if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) == 0)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_INFO,
+                              "client.graphics.avc420.decode.unavailable",
+                              "backend=runtime codec=AVC420");
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
 
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_DEBUG,
@@ -1546,6 +1565,9 @@ librdp_status rdp_avc_decode_420(rdp_avc_decoder* decoder,
                                          surface_width,
                                          surface_height,
                                          frame);
+    status = rdp_avc_decode_status_for_advertised_runtime(status,
+                                                          avc_support,
+                                                          RDP_GRAPHICS_AVC_SUPPORT_AVC420);
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
                           status == LIBRDP_STATUS_OK ? "client.graphics.avc420.decode.done" :
@@ -1602,7 +1624,22 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
 #if defined(RDP_HAVE_ANY_AVC)
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t avc_support = rdp_avc_runtime_support();
+    uint32_t required_support = codec_id == RDP_GRAPHICS_CODECID_AVC444V2 ?
+                                    RDP_GRAPHICS_AVC_SUPPORT_AVC444V2 :
+                                    RDP_GRAPHICS_AVC_SUPPORT_AVC444;
     rdp_avc_yuv444_snapshot snapshot;
+
+    if ((avc_support & required_support) == 0)
+    {
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_INFO,
+                              "client.graphics.avc444.decode.unavailable",
+                              "backend=runtime codec_id=%u lc=%u",
+                              codec_id,
+                              stream->lc);
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
 
     rdp_avc_yuv444_snapshot_init(&snapshot);
 
@@ -1680,6 +1717,9 @@ librdp_status rdp_avc_decode_444(rdp_avc_decoder* decoder,
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_avc_yuv444_to_bgra(decoder, frame);
+    status = rdp_avc_decode_status_for_advertised_runtime(status,
+                                                          avc_support,
+                                                          required_support);
 
 out:
     if (status != LIBRDP_STATUS_OK)

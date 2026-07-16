@@ -7433,6 +7433,19 @@ static int test_path_security_license_channels(void)
                                                 (uint16_t)(sizeof(graphics_default_capsets) /
                                                            sizeof(graphics_default_capsets[0])),
                                                 &graphics_default_capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_AVC420 |
+                                                    RDP_GRAPHICS_AVC_SUPPORT_AVC444) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_default_capset_count == 4 &&
+           graphics_default_capsets[3].version == RDP_GRAPHICS_CAPVERSION_106);
+    graphics_capset.version = RDP_GRAPHICS_CAPVERSION_107;
+    graphics_capset.flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_capset,
+                                                    RDP_GRAPHICS_AVC_SUPPORT_AVC420 |
+                                                        RDP_GRAPHICS_AVC_SUPPORT_AVC444) == 0);
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
                                                 RDP_GRAPHICS_AVC_SUPPORT_ALL) == LIBRDP_STATUS_OK);
     PCHECK(graphics_default_capset_count == 5 &&
            graphics_default_capsets[4].version == RDP_GRAPHICS_CAPVERSION_107 &&
@@ -7446,6 +7459,13 @@ static int test_path_security_license_channels(void)
                                                            sizeof(graphics_default_capsets[0])),
                                                 &graphics_default_capset_count,
                                                 RDP_GRAPHICS_AVC_SUPPORT_AVC444) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_AVC420 |
+                                                    RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     dyn_response.length = 0;
     PCHECK(rdp_graphics_write_default_caps_advertise_for_avc(&dyn_response, 0) == LIBRDP_STATUS_OK);
@@ -8017,6 +8037,15 @@ static int test_path_security_license_channels(void)
                               16,
                               &avc_frame) == LIBRDP_STATUS_UNSUPPORTED);
 #endif
+    graphics_avc_status = rdp_avc_decode_420(avc_decoder,
+                                             &graphics_avc420,
+                                             16,
+                                             16,
+                                             &avc_frame);
+    if ((graphics_avc_runtime_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) != 0)
+        PCHECK(graphics_avc_status != LIBRDP_STATUS_UNSUPPORTED);
+    else
+        PCHECK(graphics_avc_status == LIBRDP_STATUS_UNSUPPORTED);
     PCHECK(rdp_graphics_parse_avc444_stream(graphics_avc444_both,
                                             sizeof(graphics_avc444_both),
                                             &graphics_avc444_edge) == LIBRDP_STATUS_OK);
@@ -8098,9 +8127,11 @@ static int test_path_security_license_channels(void)
                                              16,
                                              16,
                                              &avc_frame);
-    PCHECK(graphics_avc_status == LIBRDP_STATUS_OK ||
-           graphics_avc_status == LIBRDP_STATUS_UNSUPPORTED ||
-           graphics_avc_status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    if ((graphics_avc_runtime_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444) != 0)
+        PCHECK(graphics_avc_status == LIBRDP_STATUS_OK ||
+               graphics_avc_status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    else
+        PCHECK(graphics_avc_status == LIBRDP_STATUS_UNSUPPORTED);
     if (graphics_avc_status == LIBRDP_STATUS_OK)
     {
         const uint8_t* pixel = avc_frame.pixels.data;
@@ -8110,6 +8141,17 @@ static int test_path_security_license_channels(void)
         PCHECK(avc_frame.width == 16 && avc_frame.height == 16 && avc_frame.stride >= 64u);
         PCHECK(red_delta_bg > 8 && red_delta_gr > 8 && pixel[3] == 0xffu);
     }
+    graphics_avc_status = rdp_avc_decode_444(avc_decoder,
+                                             RDP_GRAPHICS_CODECID_AVC444V2,
+                                             &graphics_avc444_valid,
+                                             16,
+                                             16,
+                                             &avc_frame);
+    if ((graphics_avc_runtime_support & RDP_GRAPHICS_AVC_SUPPORT_AVC444V2) != 0)
+        PCHECK(graphics_avc_status == LIBRDP_STATUS_OK ||
+               graphics_avc_status == LIBRDP_STATUS_PROTOCOL_ERROR);
+    else
+        PCHECK(graphics_avc_status == LIBRDP_STATUS_UNSUPPORTED);
     {
         uint8_t aux_y[8u * 5u];
         uint8_t aux_u[4u * 3u];
