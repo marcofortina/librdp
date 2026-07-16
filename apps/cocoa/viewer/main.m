@@ -129,7 +129,7 @@ static void cocoa_viewer_usage(FILE* stream, const char* program)
             "[--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] "
             "[--serial name=path] [--parallel name=path] [--printer name=driver=path] "
             "[--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] "
-            "[--camera file=path] [--smartcard [pcsc|source]] [--usb vid:pid|bus:dev] "
+            "[--camera device=default|device=id|file=path] [--smartcard [pcsc|source]] [--usb vid:pid|bus:dev] "
             "[--pnp] [--webauthn [fido2|mock|provider]] [--webauthn-rp-id id] "
             "[--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n",
             program);
@@ -576,6 +576,7 @@ static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_view
         else if (strcmp(argv[i], "--camera") == 0)
         {
             if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
+                !cocoa_camera_source_allowed(argv[i]) ||
                 librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) != LIBRDP_STATUS_OK ||
                 librdp_settings_add_camera(settings, argv[i]) != LIBRDP_STATUS_OK)
                 return 0;

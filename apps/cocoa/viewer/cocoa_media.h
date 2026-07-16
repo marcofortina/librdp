@@ -41,6 +41,8 @@ size_t cocoa_audio_backend_read_input(cocoa_audio_backend* audio, void* data, si
 
 cocoa_camera_source* cocoa_camera_source_new(void);
 void cocoa_camera_source_free(cocoa_camera_source* camera);
+int cocoa_camera_source_allowed(const char* source);
+int cocoa_camera_media_supported(const librdp_video_capture_media* media, size_t* max_sample_bytes);
 int cocoa_camera_source_start(cocoa_camera_source* camera,
                               const char* source,
                               const librdp_video_capture_media* media);

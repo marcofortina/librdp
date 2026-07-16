@@ -62,7 +62,7 @@ viewer:
 - `--audio-output [device=name]`;
 - `--audio-input [device=name]`;
 - `--video file=path`;
-- `--camera file=path`;
+- `--camera device=default|device=id|file=path`;
 - `--smartcard [pcsc|source]`;
 - `--usb vid:pid|bus:dev`;
 - `--pnp`;
@@ -75,7 +75,8 @@ viewer:
 
 These switches configure the public librdp settings object. Audio uses
 CoreAudio queues. Video output can be written to a file sink. Camera redirection
-uses a bounded file source for deterministic capture smoke paths.
+uses AVFoundation for live devices and keeps a bounded file source for
+deterministic capture smoke paths.
 
 ## Platform Integration
 

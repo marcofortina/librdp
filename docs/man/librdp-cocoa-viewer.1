@@ -73,8 +73,8 @@ Enable audio input redirection and select the Core Audio device selector used by
 .BI --video " file=path"
 Enable video output capture into a file sink.
 .TP
-.BI --camera " file=path"
-Enable camera redirection with a bounded file source for deterministic capture paths.
+.BI --camera " device=default|device=id|file=path"
+Enable camera redirection. Device selectors use AVFoundation live capture; file selectors provide bounded deterministic samples.
 .TP
 .BI --smartcard " [pcsc|source]"
 Enable smartcard redirection with a PC/SC or explicit source selector.
