@@ -1535,6 +1535,42 @@ LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server
                                                                    uint32_t dynamic_channel_id);
 
 /**
+ * @brief Send a video geometry update on the joined TSMF static channel.
+ *
+ * The helper serializes one geometry update for an existing presentation. The
+ * geometry and visible-rectangle buffers are borrowed only for the duration of
+ * the call and are validated by the channel encoder before any bytes are sent.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined TSMF static channel identifier.
+ * @param[in] message_id Protocol message identifier for request correlation.
+ * @param[in] presentation_id Presentation GUID; must point to 16 bytes and
+ * must not be NULL.
+ * @param[in] geometry Borrowed geometry-info bytes; may be NULL only when
+ * geometry_len is zero.
+ * @param[in] geometry_len Number of bytes in geometry.
+ * @param[in] visible_rect Borrowed visible-rectangle bytes; may be NULL only
+ * when visible_rect_len is zero.
+ * @param[in] visible_rect_len Number of bytes in visible_rect.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer, NULL presentation_id, invalid borrowed buffers, or a non-TSMF
+ * channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport or
+ * allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_video_geometry_update(librdp_server_peer* peer,
+                                                                       uint16_t channel_id,
+                                                                       uint32_t message_id,
+                                                                       const uint8_t presentation_id[16],
+                                                                       const void* geometry,
+                                                                       uint32_t geometry_len,
+                                                                       const void* visible_rect,
+                                                                       uint32_t visible_rect_len);
+
+/**
  * @brief Send the Desktop Composition alternate-secondary start order.
  *
  * The order is delivered on the negotiated global slow-path update stream, not

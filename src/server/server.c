@@ -139,8 +139,7 @@ static int rdp_server_feature_parser_only(librdp_feature feature)
 {
     return feature == LIBRDP_FEATURE_MULTITRANSPORT ||
            feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
-           feature == LIBRDP_FEATURE_UDP2_TRANSPORT ||
-           feature == LIBRDP_FEATURE_GEOMETRY_TRACKING;
+           feature == LIBRDP_FEATURE_UDP2_TRANSPORT;
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -162,11 +161,11 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
         case LIBRDP_FEATURE_MULTIPARTY:
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
+        case LIBRDP_FEATURE_GEOMETRY_TRACKING:
             return 1;
         case LIBRDP_FEATURE_MULTITRANSPORT:
         case LIBRDP_FEATURE_UDP_TRANSPORT:
         case LIBRDP_FEATURE_UDP2_TRANSPORT:
-        case LIBRDP_FEATURE_GEOMETRY_TRACKING:
         default:
             return 0;
     }
@@ -3774,6 +3773,35 @@ librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server_peer* peer
     return status;
 }
 
+librdp_status librdp_server_peer_send_video_geometry_update(librdp_server_peer* peer,
+                                                            uint16_t channel_id,
+                                                            uint32_t message_id,
+                                                            const uint8_t presentation_id[16],
+                                                            const void* geometry,
+                                                            uint32_t geometry_len,
+                                                            const void* visible_rect,
+                                                            uint32_t visible_rect_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_redirection_write_geometry_update(&payload,
+                                                         message_id,
+                                                         presentation_id,
+                                                         geometry,
+                                                         geometry_len,
+                                                         visible_rect,
+                                                         visible_rect_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_VIDEO_REDIRECTION_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_desktop_composition_start(librdp_server_peer* peer)
 {
     rdp_buffer order;
@@ -4758,6 +4786,9 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
                          rdp_server_peer_dynamic_channel_open_named(peer,
                                                                     RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) ||
                          rdp_server_peer_dynamic_channel_open_named(peer, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL);
+            break;
+        case LIBRDP_FEATURE_GEOMETRY_TRACKING:
+            negotiated = rdp_server_peer_static_channel_joined_named(peer, RDP_VIDEO_REDIRECTION_CHANNEL_NAME);
             break;
         case LIBRDP_FEATURE_CAMERA:
             negotiated = rdp_server_peer_dynamic_channel_open_named(peer,

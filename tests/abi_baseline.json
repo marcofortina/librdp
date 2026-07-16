@@ -70,6 +70,7 @@
     "librdp_server_peer_send_mouse_cursor_caps",
     "librdp_server_peer_send_static_extension_data",
     "librdp_server_peer_send_touch_ready",
+    "librdp_server_peer_send_video_geometry_update",
     "librdp_server_peer_set_channel_callback",
     "librdp_server_peer_set_event_callback",
     "librdp_server_peer_set_extension_callback",
