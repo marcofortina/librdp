@@ -61,6 +61,7 @@ static int rdp_slowpath_valid_share_control_type(uint16_t pdu_type)
 }
 
 #define RDP_CONFIRM_ACTIVE_CAPABILITY_COUNT 18u
+#define RDP_DEMAND_ACTIVE_CAPABILITY_COUNT 11u
 
 static librdp_status rdp_slowpath_append_zeros(rdp_buffer* buffer, size_t count)
 {
@@ -565,9 +566,9 @@ librdp_status rdp_slowpath_write_data_pdu(rdp_buffer* buffer,
     return status;
 }
 
-static librdp_status rdp_slowpath_write_default_capability_list(rdp_buffer* capabilities,
-                                                                uint16_t width,
-                                                                uint16_t height)
+static librdp_status rdp_slowpath_write_confirm_active_capability_list(rdp_buffer* capabilities,
+                                                                       uint16_t width,
+                                                                       uint16_t height)
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -616,6 +617,50 @@ static librdp_status rdp_slowpath_write_default_capability_list(rdp_buffer* capa
     return status;
 }
 
+/*
+ * Demand Active travels from server to client, so it must not advertise
+ * client-only cache, brush, glyph, sound, control, activation, or drawing
+ * extension capabilities. Keeping this profile separate prevents the server
+ * runtime from leaking Confirm Active capability semantics in the opposite
+ * direction.
+ */
+static librdp_status rdp_slowpath_write_demand_active_capability_list(rdp_buffer* capabilities,
+                                                                      uint16_t width,
+                                                                      uint16_t height)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!capabilities || width == 0 || height == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    status = rdp_buffer_append_u16_le(capabilities, RDP_DEMAND_ACTIVE_CAPABILITY_COUNT);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(capabilities, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_general_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_bitmap_capability(capabilities, width, height);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_order_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_pointer_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_large_pointer_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_input_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_virtual_channel_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_share_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_color_cache_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_font_capability(capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_bitmap_codecs_capability(capabilities);
+    return status;
+}
+
 librdp_status rdp_slowpath_write_demand_active(rdp_buffer* buffer,
                                                uint32_t share_id,
                                                uint16_t channel_id,
@@ -636,7 +681,7 @@ librdp_status rdp_slowpath_write_demand_active(rdp_buffer* buffer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&capabilities);
-    status = rdp_slowpath_write_default_capability_list(&capabilities, width, height);
+    status = rdp_slowpath_write_demand_active_capability_list(&capabilities, width, height);
     capabilities_len = capabilities.length;
     total = 6u + 4u + 2u + 2u + source_len + capabilities_len + 4u;
     if (status == LIBRDP_STATUS_OK && (capabilities_len > 0xffffu || total > 0xffffu))
@@ -689,7 +734,7 @@ librdp_status rdp_slowpath_write_confirm_active(rdp_buffer* buffer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&capabilities);
-    status = rdp_slowpath_write_default_capability_list(&capabilities, width, height);
+    status = rdp_slowpath_write_confirm_active_capability_list(&capabilities, width, height);
     combined_len = capabilities.length;
     total = 6u + 4u + 2u + 2u + 2u + source_len + combined_len;
     if (status == LIBRDP_STATUS_OK && total > 0xffffu)

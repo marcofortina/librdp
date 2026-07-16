@@ -51,6 +51,8 @@ struct librdp_server_peer
     uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t confirm_active_seen;
+    uint8_t licensing_done;
+    uint8_t client_info_seen;
     uint8_t synchronize_seen;
     uint8_t control_seen;
     uint8_t font_list_seen;

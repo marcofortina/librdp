@@ -1110,7 +1110,7 @@ static int build_bitmap_update_packet(rdp_buffer* out)
          rdp_buffer_append_u16_le(&payload, 2) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u16_le(&payload, 32) == LIBRDP_STATUS_OK &&
          rdp_buffer_append_u16_le(&payload, 0) == LIBRDP_STATUS_OK &&
-         rdp_buffer_append_u32_le(&payload, (uint32_t)sizeof(pixels)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append_u16_le(&payload, (uint16_t)sizeof(pixels)) == LIBRDP_STATUS_OK &&
          rdp_buffer_append(&payload, pixels, sizeof(pixels)) == LIBRDP_STATUS_OK;
     total = payload.length + 18u;
     if (ok)

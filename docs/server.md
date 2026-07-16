@@ -24,12 +24,13 @@ librdp_server_peer *peer;
 librdp_server_config_init(&config);
 config.bind_address = "127.0.0.1";
 config.port = 3390;
-config.desktop_width = 1024;
-config.desktop_height = 768;
+config.width = 1024;
+config.height = 768;
 
 server = librdp_server_new(&config);
 librdp_server_listen(server);
-peer = librdp_server_accept(server, 1000);
+if (librdp_server_accept(server, 1000, &peer) != LIBRDP_STATUS_OK)
+    peer = NULL;
 
 while (peer) {
     librdp_status status = librdp_server_peer_run_once(peer, 50);
@@ -41,21 +42,38 @@ librdp_server_peer_free(peer);
 librdp_server_free(server);
 ```
 
-`librdp_server_peer_run_once()` is the only operation that advances a peer. It
+`librdp_server_peer_run_once()` is the operation that advances a peer. It
 processes X.224, MCS/GCC, domain setup, user attach, channel joins, Demand
-Active, Confirm Active, and first active-share control PDUs. Applications can
+Active, Confirm Active, active-share control PDUs, input PDUs, refresh requests,
+output suppression, and static-channel payload delivery. Applications can
 observe peer state with `librdp_server_peer_get_state()`.
+
+## Runtime Surfaces And Channels
+
+After a peer reaches `LIBRDP_SERVER_PEER_ACTIVE`, applications can copy BGRA32
+pixels into the peer surface with `librdp_server_peer_surface_blit_bgra32()` and
+send dirty rectangles with `librdp_server_peer_surface_present()`. Resize is
+handled through `librdp_server_peer_surface_resize()`, which starts a normal
+reactivation when the peer is already active. Use
+`librdp_server_peer_desktop_width()` and
+`librdp_server_peer_desktop_height()` to generate pixels for the desktop size
+negotiated with the client.
+
+Input and static-channel callbacks are installed with
+`librdp_server_peer_set_input_callback()` and
+`librdp_server_peer_set_channel_callback()`. Static channels advertised by the
+client can be queried with `librdp_server_peer_static_channel_count()` and
+`librdp_server_peer_static_channel_at()`.
 
 ## Example Listener
 
 ```sh
-build/librdp-example-server-listener --bind 127.0.0.1 --port 3390
+build/librdp-example-server-listener --bind 127.0.0.1 --port 3390 --width 1024 --height 768
 ```
 
-The example is intentionally small: it shows listener setup and peer driving
-without introducing an application-specific desktop model. Applications that
-embed the server API own policy, graphics production, input handling, channels,
-and resource access.
+The example accepts one peer, drives activation, sends a generated BGRA desktop
+surface, prints input events, and lists static channels using only public server
+APIs.
 
 ## Threading And Ownership
 

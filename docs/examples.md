@@ -21,7 +21,7 @@ The repository also ships standalone examples that are compiled by CMake when `L
 | `librdp-example-media-devices` | `examples/media_devices.c` | Configures audio, video, camera, smartcard, and WebAuthn feature backends. |
 | `librdp-example-trace-tls-policy` | `examples/trace_tls_policy.c` | Installs a trace callback and TLS certificate policy callback. |
 | `librdp-example-workspace-list` | `examples/workspace_list.c` | Loads a workspace feed from HTTP(S) or XML and lists published resources. |
-| `librdp-example-server-listener` | `examples/server_listener.c` | Opens a loopback server listener and drives one accepted peer through public server APIs. |
+| `librdp-example-server-listener` | `examples/server_listener.c` | Opens a loopback server listener, drives one peer, presents a BGRA desktop, and receives input/channel events through public server APIs. |
 
 ## Minimal session
 

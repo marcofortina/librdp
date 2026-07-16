@@ -11,8 +11,9 @@ the server-side negotiation and activation state machine with
 .BR librdp_server_peer_run_once ().
 .P
 The application owns security policy, desktop model, graphics production,
-input handling, channels, and resource access. The library owns the listener,
-peer transport, MCS/GCC state, and activation sequencing for each peer handle.
+and resource access. The library owns the listener, peer transport, MCS/GCC
+state, activation sequencing, runtime input delivery, static-channel dispatch,
+and BGRA surface update serialization for each peer handle.
 .SH OBJECTS
 .TP
 .B librdp_server_config
@@ -35,6 +36,12 @@ accepts peers with
 .BR librdp_server_accept (),
 drives each peer with
 .BR librdp_server_peer_run_once (),
+updates the peer surface with
+.BR librdp_server_peer_desktop_width (),
+.BR librdp_server_peer_desktop_height (),
+.BR librdp_server_peer_surface_blit_bgra32 ()
+and
+.BR librdp_server_peer_surface_present (),
 and frees each handle with
 .BR librdp_server_peer_free ()
 and
@@ -54,7 +61,7 @@ authentication and TLS policy. Trace output is redacted by default and must not
 be used for credentials or raw user payloads.
 .SH EXAMPLE
 .nf
-build/librdp-example-server-listener --bind 127.0.0.1 --port 3390
+build/librdp-example-server-listener --bind 127.0.0.1 --port 3390 --width 1024 --height 768
 .fi
 .SH SEE ALSO
 .BR librdp (7),

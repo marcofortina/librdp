@@ -257,15 +257,18 @@ config.port = 3390;
 librdp_server* server = librdp_server_new(&config);
 if (server && librdp_server_listen(server) == LIBRDP_STATUS_OK)
 {
-    librdp_server_peer* peer = librdp_server_accept(server, 1000);
+    librdp_server_peer* peer = NULL;
+    librdp_server_accept(server, 1000, &peer);
     while (peer && librdp_server_peer_run_once(peer, 50) == LIBRDP_STATUS_OK)
     {
+        if (librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVE)
+            break;
     }
     librdp_server_peer_free(peer);
 }
 librdp_server_free(server);
 ```
 
-The server API drives transport negotiation and activation state. Applications
-own the desktop model, graphics production, channels, security policy, and
-resource access above the active peer.
+The server API drives transport negotiation, activation state, runtime input,
+static-channel delivery, and BGRA surface updates. Applications own security
+policy and the desktop model above the active peer.

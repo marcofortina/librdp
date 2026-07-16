@@ -70,7 +70,8 @@ typedef enum librdp_server_peer_state
     LIBRDP_SERVER_PEER_USER_ATTACHED = 8, /**< Attach User Request was accepted and confirmed. */
     LIBRDP_SERVER_PEER_CHANNEL_JOINING = 9, /**< Channel Join Requests are being accepted. */
     LIBRDP_SERVER_PEER_ACTIVATING = 10,  /**< Demand Active was sent and client activation PDUs are pending. */
-    LIBRDP_SERVER_PEER_ACTIVE = 11       /**< Client confirmed activation and the peer is ready for runtime PDUs. */
+    LIBRDP_SERVER_PEER_ACTIVE = 11,      /**< Client confirmed activation and the peer is ready for runtime PDUs. */
+    LIBRDP_SERVER_PEER_LICENSING = 12    /**< Server licensing completion was sent before activation. */
 } librdp_server_peer_state;
 
 /**
@@ -447,6 +448,40 @@ LIBRDP_API uint32_t librdp_server_peer_static_channel_count(const librdp_server_
 LIBRDP_API librdp_status librdp_server_peer_static_channel_at(const librdp_server_peer* peer,
                                                               uint32_t index,
                                                               librdp_server_static_channel_info* info);
+
+/**
+ * @brief Return the current peer desktop width.
+ *
+ * The value is initialized from the server configuration and updated after the
+ * client core data is accepted during GCC negotiation. Applications should use
+ * this value when generating the peer framebuffer because it reflects the
+ * negotiated desktop geometry.
+ *
+ * @param[in] peer Peer to query, or NULL.
+ *
+ * @return Current peer desktop width in pixels, or zero when peer is NULL.
+ *
+ * @note Thread-safety: read from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API uint32_t librdp_server_peer_desktop_width(const librdp_server_peer* peer);
+
+/**
+ * @brief Return the current peer desktop height.
+ *
+ * The value is initialized from the server configuration and updated after the
+ * client core data is accepted during GCC negotiation. Applications should use
+ * this value when generating the peer framebuffer because it reflects the
+ * negotiated desktop geometry.
+ *
+ * @param[in] peer Peer to query, or NULL.
+ *
+ * @return Current peer desktop height in pixels, or zero when peer is NULL.
+ *
+ * @note Thread-safety: read from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API uint32_t librdp_server_peer_desktop_height(const librdp_server_peer* peer);
 
 /**
  * @brief Resize the server-side desktop surface.

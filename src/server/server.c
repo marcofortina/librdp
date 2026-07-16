@@ -18,13 +18,16 @@
 
 #include "common/buffer.h"
 #include "common/stream.h"
+#include "common/trace.h"
 #include "graphics/bitmap.h"
+#include "licensing/licensing.h"
 #include "platform/socket.h"
 #include "protocol/gcc.h"
 #include "protocol/mcs.h"
 #include "protocol/slowpath.h"
 #include "protocol/tpkt.h"
 #include "protocol/x224.h"
+#include "security/security.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -665,6 +668,54 @@ static librdp_status rdp_server_send_demand_active(librdp_server_peer* peer)
     return status;
 }
 
+/*
+ * Complete the permissive server-side licensing path used by the current
+ * Standard RDP server runtime. The alert is sent before Demand Active so real
+ * clients leave their licensing state machine before activation parsing.
+ */
+static librdp_status rdp_server_send_valid_client_license(librdp_server_peer* peer)
+{
+    rdp_buffer license;
+    rdp_buffer security_payload;
+    rdp_buffer mcs;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&license);
+    rdp_buffer_init(&security_payload);
+    rdp_buffer_init(&mcs);
+    status = rdp_license_write_error_alert(&license,
+                                           RDP_LICENSE_VERSION_3,
+                                           RDP_LICENSE_ERROR_STATUS_VALID_CLIENT,
+                                           RDP_LICENSE_STATE_TRANSITION_NO_TRANSITION,
+                                           RDP_LICENSE_BLOB_ERROR,
+                                           NULL,
+                                           0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_header(&security_payload,
+                                           (uint16_t)(RDP_SEC_LICENSE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&security_payload, license.data, license.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_send_data_indication(&mcs,
+                                                    peer->user_id,
+                                                    (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                    security_payload.data,
+                                                    security_payload.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_mcs_pdu(peer, &mcs);
+    rdp_buffer_free(&mcs);
+    rdp_buffer_free(&security_payload);
+    rdp_buffer_free(&license);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->licensing_done = 1;
+        peer->state = LIBRDP_SERVER_PEER_LICENSING;
+    }
+    return status;
+}
+
 static size_t rdp_server_channel_name_len(const char name[8])
 {
     size_t length = 0;
@@ -877,6 +928,13 @@ static librdp_status rdp_server_surface_ensure(librdp_server_peer* peer)
     return rdp_server_surface_allocate(peer, peer->width, peer->height);
 }
 
+/*
+ * Serialize one already-bounded BGRA tile as an uncompressed slow-path bitmap
+ * update. The caller owns tiling and MCS payload sizing; this helper validates
+ * 16-bit wire coordinates, copies rows bottom-up as required by bitmap updates,
+ * and fails without partially mutating peer state when any nested writer rejects
+ * the tile.
+ */
 static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
                                              uint32_t x,
                                              uint32_t y,
@@ -897,12 +955,27 @@ static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
         x + width - 1u > 0xffffu ||
         y + height - 1u > 0xffffu)
     {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.surface.tile.invalid",
+                        "x=%u y=%u width=%u height=%u peer_width=%u peer_height=%u",
+                        x,
+                        y,
+                        width,
+                        height,
+                        peer ? peer->width : 0,
+                        peer ? peer->height : 0);
         status = LIBRDP_STATUS_INVALID_ARGUMENT;
         goto out;
     }
     dst_stride = width * 4u;
     if (height > SIZE_MAX / dst_stride)
     {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.surface.tile.overflow",
+                        "width=%u height=%u stride=%u",
+                        width,
+                        height,
+                        (unsigned)dst_stride);
         status = LIBRDP_STATUS_INVALID_ARGUMENT;
         goto out;
     }
@@ -931,6 +1004,16 @@ static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
     rect.data = raw.data;
     rect.data_len = (uint32_t)raw.length;
     status = rdp_bitmap_write_update(&update, &rect, 1);
+    if (status != LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.surface.tile.bitmap_failed",
+                        "status=%s x=%u y=%u width=%u height=%u raw_len=%u",
+                        librdp_status_name(status),
+                        x,
+                        y,
+                        width,
+                        height,
+                        (unsigned)raw.length);
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_buffer slowpath;
@@ -942,8 +1025,28 @@ static librdp_status rdp_server_present_tile(librdp_server_peer* peer,
                                              RDP_SLOWPATH_DATA_PDU_UPDATE,
                                              update.data,
                                              update.length);
+        if (status != LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.surface.tile.slowpath_failed",
+                            "status=%s x=%u y=%u width=%u height=%u update_len=%u",
+                            librdp_status_name(status),
+                            x,
+                            y,
+                            width,
+                            height,
+                            (unsigned)update.length);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_server_send_slowpath(peer, &slowpath);
+        if (status != LIBRDP_STATUS_OK)
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.surface.tile.send_failed",
+                            "status=%s x=%u y=%u width=%u height=%u slowpath_len=%u",
+                            librdp_status_name(status),
+                            x,
+                            y,
+                            width,
+                            height,
+                            (unsigned)slowpath.length);
         rdp_buffer_free(&slowpath);
     }
 
@@ -953,14 +1056,24 @@ out:
     return status;
 }
 
+/*
+ * Present a dirty rectangle by splitting it into MCS-sized bitmap tiles. The
+ * limiting budget is the T.125 SendDataIndication payload size, so the tile
+ * planner accounts for bitmap-update and slow-path headers before choosing
+ * horizontal and vertical chunks. Any failed tile aborts the presentation and
+ * leaves the stored framebuffer intact for a later retry.
+ */
 static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                                                      uint32_t x,
                                                      uint32_t y,
                                                      uint32_t width,
                                                      uint32_t height)
 {
-    const size_t max_update_payload = 60000u;
-    uint32_t rows_per_tile = 0;
+    const size_t max_mcs_payload = 0x7fffu;
+    const size_t bitmap_update_overhead = 22u;
+    const size_t slowpath_data_overhead = 18u;
+    size_t max_raw_tile = 0;
+    uint32_t max_tile_width = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer)
@@ -971,23 +1084,74 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
     if (status != LIBRDP_STATUS_OK)
         return status;
     if (!rdp_server_rect_valid(peer, x, y, width, height))
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (width > (max_update_payload - 22u) / 4u)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    rows_per_tile = (uint32_t)((max_update_payload - 22u) / ((size_t)width * 4u));
-    if (rows_per_tile == 0)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    for (uint32_t row = 0; row < height; row += rows_per_tile)
     {
-        uint32_t tile_height = height - row;
-        librdp_status status = LIBRDP_STATUS_OK;
-
-        if (tile_height > rows_per_tile)
-            tile_height = rows_per_tile;
-        status = rdp_server_present_tile(peer, x, y + row, width, tile_height);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.surface.present.invalid",
+                        "x=%u y=%u width=%u height=%u peer_width=%u peer_height=%u",
+                        x,
+                        y,
+                        width,
+                        height,
+                        peer->width,
+                        peer->height);
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
+    if (max_mcs_payload <= bitmap_update_overhead + slowpath_data_overhead)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    max_raw_tile = max_mcs_payload - bitmap_update_overhead - slowpath_data_overhead;
+    max_tile_width = (uint32_t)(max_raw_tile / 4u);
+    if (max_tile_width == 0 || width > UINT32_MAX - x || height > UINT32_MAX - y)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "server.surface.present.start",
+                          "x=%u y=%u width=%u height=%u max_tile_width=%u peer_width=%u peer_height=%u",
+                          x,
+                          y,
+                          width,
+                          height,
+                          max_tile_width,
+                          peer->width,
+                          peer->height);
+    for (uint32_t column = 0; column < width; column += max_tile_width)
+    {
+        uint32_t tile_width = width - column;
+        uint32_t rows_per_tile = 0;
+
+        if (tile_width > max_tile_width)
+            tile_width = max_tile_width;
+        rows_per_tile = (uint32_t)(max_raw_tile / ((size_t)tile_width * 4u));
+        if (rows_per_tile == 0)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        for (uint32_t row = 0; row < height; row += rows_per_tile)
+        {
+            uint32_t tile_height = height - row;
+
+            if (tile_height > rows_per_tile)
+                tile_height = rows_per_tile;
+            status = rdp_server_present_tile(peer, x + column, y + row, tile_width, tile_height);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(RDP_TRACE_PROTOCOL,
+                                "server.surface.present.failed",
+                                "status=%s column=%u row=%u tile_width=%u tile_height=%u",
+                                librdp_status_name(status),
+                                column,
+                                row,
+                                tile_width,
+                                tile_height);
+                return status;
+            }
+        }
+    }
+    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "server.surface.present.done",
+                          "x=%u y=%u width=%u height=%u",
+                          x,
+                          y,
+                          width,
+                          height);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1087,6 +1251,16 @@ librdp_status librdp_server_peer_static_channel_at(const librdp_server_peer* pee
     info->joined = peer->advertised_channel_joined[channel_index] != 0;
     rdp_server_copy_channel_name(info->name, peer->advertised_channels[channel_index].name);
     return LIBRDP_STATUS_OK;
+}
+
+uint32_t librdp_server_peer_desktop_width(const librdp_server_peer* peer)
+{
+    return peer ? peer->width : 0;
+}
+
+uint32_t librdp_server_peer_desktop_height(const librdp_server_peer* peer)
+{
+    return peer ? peer->height : 0;
 }
 
 librdp_status librdp_server_peer_surface_resize(librdp_server_peer* peer, uint32_t width, uint32_t height)
@@ -1208,8 +1382,79 @@ static librdp_status rdp_server_handle_channel_join(librdp_server_peer* peer, co
     peer->joined_channel_count++;
     required_joins = (uint16_t)(peer->advertised_channel_count + 2u);
     if (peer->joined_channel_count >= required_joins)
-        return rdp_server_send_demand_active(peer);
+        return rdp_server_send_valid_client_license(peer);
     peer->state = LIBRDP_SERVER_PEER_CHANNEL_JOINING;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Validate the client-info PDU sent after licensing and before activation.
+ * Only field lengths are retained in trace; credentials stay in the borrowed
+ * packet memory and are never copied into the server peer.
+ */
+static librdp_status rdp_server_handle_client_info(librdp_server_peer* peer, const rdp_tpkt* packet)
+{
+    const uint8_t* data = NULL;
+    size_t data_len = 0;
+    rdp_mcs_send_data_indication request;
+    rdp_client_info_summary summary;
+    librdp_status status = rdp_server_parse_x224_data_packet(packet, &data, &data_len);
+
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_parse_send_data_request(data, data_len, &request);
+    if (status == LIBRDP_STATUS_OK &&
+        (request.initiator != peer->user_id || request.channel_id != RDP_MCS_GLOBAL_CHANNEL_ID))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_parse_client_info_pdu(request.payload, request.payload_len, &summary);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        return status;
+    }
+    peer->client_info_seen = 1;
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "server.client_info.received",
+                    "flags=%u username_bytes=%u domain_bytes=%u password_bytes=%u",
+                    summary.flags,
+                    summary.username_bytes,
+                    summary.domain_bytes,
+                    summary.password_bytes);
+    status = rdp_server_send_demand_active(peer);
+    if (status != LIBRDP_STATUS_OK)
+        rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+    return status;
+}
+
+static librdp_status rdp_server_unwrap_optional_security_header(const uint8_t* input,
+                                                                size_t input_len,
+                                                                rdp_buffer* storage,
+                                                                const uint8_t** output,
+                                                                size_t* output_len)
+{
+    uint16_t flags = 0;
+    uint16_t flags_hi = 0;
+    uint16_t allowed = (uint16_t)(RDP_SEC_EXCHANGE_PKT | RDP_SEC_ENCRYPT | RDP_SEC_INFO_PKT |
+                                  RDP_SEC_LICENSE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC |
+                                  RDP_SEC_SECURE_CHECKSUM);
+
+    if ((!input && input_len > 0) || !storage || !output || !output_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *output = input;
+    *output_len = input_len;
+    if (input_len < 4u)
+        return LIBRDP_STATUS_OK;
+    flags = (uint16_t)((uint16_t)input[0] | ((uint16_t)input[1] << 8));
+    flags_hi = (uint16_t)((uint16_t)input[2] | ((uint16_t)input[3] << 8));
+    if (flags_hi != 0 || (flags & (uint16_t)~allowed) != 0)
+        return LIBRDP_STATUS_OK;
+    if ((flags & RDP_SEC_ENCRYPT) != 0)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    storage->length = 0;
+    if (rdp_security_unwrap_pdu(NULL, input, input_len, storage, NULL) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_OK;
+    *output = storage->data;
+    *output_len = storage->length;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1226,12 +1471,36 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
     size_t data_len = 0;
     rdp_mcs_send_data_indication request;
     rdp_slowpath_share_control_header header;
+    rdp_buffer security_payload;
+    const uint8_t* runtime_payload = NULL;
+    size_t runtime_payload_len = 0;
     librdp_status status = rdp_server_parse_x224_data_packet(packet, &data, &data_len);
 
+    rdp_buffer_init(&security_payload);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_parse_send_data_request(data, data_len, &request);
     if (status == LIBRDP_STATUS_OK && request.initiator != peer->user_id)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "server.mcs.send_data.request",
+                              "state=%d initiator=%u channel_id=%u payload_len=%u",
+                              (int)peer->state,
+                              request.initiator,
+                              request.channel_id,
+                              (unsigned)request.payload_len);
+        rdp_trace_hexdump("server.mcs.send_data.request",
+                          RDP_TRACE_SENSITIVITY_HEADER,
+                          request.payload,
+                          request.payload_len);
+        status = rdp_server_unwrap_optional_security_header(request.payload,
+                                                            request.payload_len,
+                                                            &security_payload,
+                                                            &runtime_payload,
+                                                            &runtime_payload_len);
+    }
     if (status == LIBRDP_STATUS_OK && request.channel_id != RDP_MCS_GLOBAL_CHANNEL_ID)
     {
         uint16_t channel_index = 0;
@@ -1251,27 +1520,41 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
             event.channel_id = request.channel_id;
             event.name = name;
             event.name_len = strlen(name);
-            event.data = request.payload;
-            event.data_len = request.payload_len;
+            event.data = runtime_payload;
+            event.data_len = runtime_payload_len;
             peer->channel_callback(peer, &event, peer->channel_callback_user_data);
         }
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
         return status;
     }
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_slowpath_parse_share_control_header(request.payload, request.payload_len, &header);
+        status = rdp_slowpath_parse_share_control_header(runtime_payload, runtime_payload_len, &header);
     if (status != LIBRDP_STATUS_OK)
     {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.slowpath.header.failed",
+                        "status=%s payload_len=%u",
+                        librdp_status_name(status),
+                        (unsigned)runtime_payload_len);
         rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
         return status;
     }
+    rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "server.slowpath.header",
+                          "pdu_type=%u payload_len=%u",
+                          header.pdu_type,
+                          (unsigned)runtime_payload_len);
     if ((header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_CONFIRM_ACTIVE)
     {
         peer->confirm_active_seen = 1;
         status = rdp_server_send_activation_responses(peer);
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
         return status;
     }
     if ((header.pdu_type & 0x000fu) == RDP_SLOWPATH_PDU_TYPE_DATA)
@@ -1279,10 +1562,11 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
         rdp_slowpath_data_pdu pdu;
         librdp_server_input_event event;
 
-        status = rdp_slowpath_parse_data_pdu(request.payload, request.payload_len, &pdu);
+        status = rdp_slowpath_parse_data_pdu(runtime_payload, runtime_payload_len, &pdu);
         if (status != LIBRDP_STATUS_OK)
         {
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+            rdp_buffer_free(&security_payload);
             return status;
         }
         if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE)
@@ -1317,6 +1601,7 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
                 peer->state = LIBRDP_SERVER_PEER_ACTIVE;
             else
                 rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+            rdp_buffer_free(&security_payload);
             return status;
         }
         else if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_INPUT)
@@ -1327,8 +1612,10 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
             status = rdp_server_handle_suppress_output(peer, pdu.payload, pdu.payload_len);
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        rdp_buffer_free(&security_payload);
         return status;
     }
+    rdp_buffer_free(&security_payload);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1358,6 +1645,8 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
     else if (peer->state == LIBRDP_SERVER_PEER_USER_ATTACHED ||
              peer->state == LIBRDP_SERVER_PEER_CHANNEL_JOINING)
         status = rdp_server_handle_channel_join(peer, &packet);
+    else if (peer->state == LIBRDP_SERVER_PEER_LICENSING)
+        status = rdp_server_handle_client_info(peer, &packet);
     else if (peer->state == LIBRDP_SERVER_PEER_ACTIVATING || peer->state == LIBRDP_SERVER_PEER_ACTIVE)
         status = rdp_server_handle_runtime_data(peer, &packet);
     else
