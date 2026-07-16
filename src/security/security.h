@@ -105,6 +105,10 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
                                                 uint32_t method,
                                                 const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
                                                 const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN]);
+librdp_status rdp_security_standard_server_init(rdp_standard_security_context* context,
+                                                uint32_t method,
+                                                const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN]);
 void rdp_security_standard_clear(rdp_standard_security_context* context);
 librdp_status rdp_security_license_keys(const uint8_t premaster_secret[RDP_SECURITY_PREMASTER_SECRET_LEN],
                                         const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],

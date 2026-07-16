@@ -536,10 +536,16 @@ librdp_status rdp_security_write_client_info_body(rdp_buffer* buffer, const rdp_
     return status;
 }
 
-librdp_status rdp_security_standard_client_init(rdp_standard_security_context* context,
-                                                uint32_t method,
-                                                const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
-                                                const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN])
+/*
+ * Derive Standard Security RC4/MAC state for one traffic direction owner.
+ * Client and server share the same sign key, but encrypt/decrypt keys are
+ * inverted so each side verifies the peer's encrypted slow-path payloads.
+ */
+static librdp_status rdp_security_standard_init_direction(rdp_standard_security_context* context,
+                                                          uint32_t method,
+                                                          const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                          const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                          int server_side)
 {
     static const uint8_t a[] = {'A'};
     static const uint8_t bb[] = {'B', 'B'};
@@ -550,6 +556,8 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
     uint8_t pre_master[48];
     uint8_t master[48];
     uint8_t session_blob[48];
+    uint8_t client_encrypt_key[16];
+    uint8_t server_encrypt_key[16];
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!context || !client_random || !server_random)
@@ -567,10 +575,23 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
     if (status == LIBRDP_STATUS_OK)
     {
         memcpy(context->sign_key, session_blob, 16);
-        status = rdp_md5_key(session_blob + 16, client_random, server_random, context->decrypt_key);
+        status = rdp_md5_key(session_blob + 16, client_random, server_random, server_encrypt_key);
     }
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_md5_key(session_blob + 32, client_random, server_random, context->encrypt_key);
+        status = rdp_md5_key(session_blob + 32, client_random, server_random, client_encrypt_key);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        if (server_side)
+        {
+            memcpy(context->encrypt_key, server_encrypt_key, sizeof(context->encrypt_key));
+            memcpy(context->decrypt_key, client_encrypt_key, sizeof(context->decrypt_key));
+        }
+        else
+        {
+            memcpy(context->encrypt_key, client_encrypt_key, sizeof(context->encrypt_key));
+            memcpy(context->decrypt_key, server_encrypt_key, sizeof(context->decrypt_key));
+        }
+    }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_security_apply_method(context->sign_key,
                                            context->encrypt_key,
@@ -595,9 +616,27 @@ librdp_status rdp_security_standard_client_init(rdp_standard_security_context* c
     OPENSSL_cleanse(pre_master, sizeof(pre_master));
     OPENSSL_cleanse(master, sizeof(master));
     OPENSSL_cleanse(session_blob, sizeof(session_blob));
+    OPENSSL_cleanse(client_encrypt_key, sizeof(client_encrypt_key));
+    OPENSSL_cleanse(server_encrypt_key, sizeof(server_encrypt_key));
     if (status != LIBRDP_STATUS_OK)
         rdp_security_standard_clear(context);
     return status;
+}
+
+librdp_status rdp_security_standard_client_init(rdp_standard_security_context* context,
+                                                uint32_t method,
+                                                const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN])
+{
+    return rdp_security_standard_init_direction(context, method, client_random, server_random, 0);
+}
+
+librdp_status rdp_security_standard_server_init(rdp_standard_security_context* context,
+                                                uint32_t method,
+                                                const uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN],
+                                                const uint8_t server_random[RDP_SECURITY_CLIENT_RANDOM_LEN])
+{
+    return rdp_security_standard_init_direction(context, method, client_random, server_random, 1);
 }
 
 void rdp_security_standard_clear(rdp_standard_security_context* context)

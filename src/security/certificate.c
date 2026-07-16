@@ -24,6 +24,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/rsa.h>
 #include <openssl/x509.h>
 
 #include <limits.h>
@@ -34,6 +35,7 @@
 #define RDP_CERT_VERSION_2 2u
 #define RDP_CERT_RSA_KEY_BLOB 0x0006u
 #define RDP_RSA1_MAGIC 0x31415352u
+#define RDP_SECURITY_SERVER_RSA_BITS 2048u
 
 static void rdp_reverse_copy(uint8_t* dst, const uint8_t* src, size_t length)
 {
@@ -346,4 +348,199 @@ librdp_status rdp_security_encrypt_client_random(const rdp_security_public_key* 
                                               random,
                                               RDP_SECURITY_CLIENT_RANDOM_LEN,
                                               encrypted);
+}
+
+/*
+ * Generate the ephemeral RSA material used by Standard RDP Security servers.
+ * The wire certificate is the legacy RSA blob form consumed by the existing
+ * certificate parser; the private key remains OpenSSL-owned by the caller.
+ */
+librdp_status rdp_security_generate_server_certificate(EVP_PKEY** private_key, rdp_buffer* certificate)
+{
+    EVP_PKEY_CTX* context = NULL;
+    EVP_PKEY* generated = NULL;
+    BIGNUM* n = NULL;
+    BIGNUM* e = NULL;
+    uint8_t* modulus_be = NULL;
+    uint8_t* modulus_le = NULL;
+    uint8_t zero_pad[8] = {0};
+    BN_ULONG exponent = 0;
+    int modulus_len_int = 0;
+    int bit_len_int = 0;
+    uint32_t key_len = 0;
+    uint16_t blob_len = 0;
+    size_t original_len = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!private_key || !certificate)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *private_key = NULL;
+    original_len = certificate->length;
+
+    context = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+    if (!context)
+        status = LIBRDP_STATUS_NO_MEMORY;
+    else if (EVP_PKEY_keygen_init(context) != 1 ||
+             EVP_PKEY_CTX_set_rsa_keygen_bits(context, (int)RDP_SECURITY_SERVER_RSA_BITS) != 1 ||
+             EVP_PKEY_keygen(context, &generated) != 1)
+        status = LIBRDP_STATUS_IO_ERROR;
+    else if (EVP_PKEY_get_bn_param(generated, OSSL_PKEY_PARAM_RSA_N, &n) != 1 ||
+             EVP_PKEY_get_bn_param(generated, OSSL_PKEY_PARAM_RSA_E, &e) != 1)
+        status = LIBRDP_STATUS_UNSUPPORTED;
+    else
+    {
+        exponent = BN_get_word(e);
+        modulus_len_int = BN_num_bytes(n);
+        bit_len_int = BN_num_bits(n);
+        if (exponent == (BN_ULONG)-1 || exponent > UINT32_MAX || modulus_len_int <= 0 ||
+            bit_len_int <= 0 || (size_t)modulus_len_int > UINT32_MAX - sizeof(zero_pad) ||
+            (size_t)modulus_len_int > UINT16_MAX - 28u)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+        {
+            modulus_be = (uint8_t*)malloc((size_t)modulus_len_int);
+            modulus_le = (uint8_t*)malloc((size_t)modulus_len_int);
+            if (!modulus_be || !modulus_le)
+                status = LIBRDP_STATUS_NO_MEMORY;
+            else if (BN_bn2binpad(n, modulus_be, modulus_len_int) != modulus_len_int)
+                status = LIBRDP_STATUS_PROTOCOL_ERROR;
+            else
+            {
+                rdp_reverse_copy(modulus_le, modulus_be, (size_t)modulus_len_int);
+                key_len = (uint32_t)((size_t)modulus_len_int + sizeof(zero_pad));
+                blob_len = (uint16_t)(20u + key_len);
+                status = rdp_buffer_append_u32_le(certificate, RDP_CERT_VERSION_1);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, 1u);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, 1u);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u16_le(certificate, RDP_CERT_RSA_KEY_BLOB);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u16_le(certificate, blob_len);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, RDP_RSA1_MAGIC);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, key_len);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, (uint32_t)bit_len_int);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, (uint32_t)modulus_len_int);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u32_le(certificate, (uint32_t)exponent);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(certificate, modulus_le, (size_t)modulus_len_int);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(certificate, zero_pad, sizeof(zero_pad));
+            }
+        }
+    }
+
+    if (status == LIBRDP_STATUS_OK)
+    {
+        *private_key = generated;
+        generated = NULL;
+    }
+    else
+        certificate->length = original_len;
+
+    if (modulus_le)
+    {
+        OPENSSL_cleanse(modulus_le, (size_t)(modulus_len_int > 0 ? modulus_len_int : 0));
+        free(modulus_le);
+    }
+    if (modulus_be)
+    {
+        OPENSSL_cleanse(modulus_be, (size_t)(modulus_len_int > 0 ? modulus_len_int : 0));
+        free(modulus_be);
+    }
+    BN_free(e);
+    BN_free(n);
+    EVP_PKEY_free(generated);
+    EVP_PKEY_CTX_free(context);
+    return status;
+}
+
+/*
+ * Decrypt a Standard RDP Security client random using the server private key.
+ * The protocol performs raw RSA over little-endian integers, so the conversion
+ * and cleansing stay inside this helper rather than leaking into server code.
+ */
+librdp_status rdp_security_decrypt_private_secret(EVP_PKEY* private_key,
+                                                  const uint8_t* encrypted,
+                                                  size_t encrypted_len,
+                                                  uint8_t* secret,
+                                                  size_t secret_len)
+{
+    BIGNUM* n = NULL;
+    BIGNUM* d = NULL;
+    BIGNUM* c = NULL;
+    BIGNUM* m = NULL;
+    BN_CTX* bn_context = NULL;
+    uint8_t* encrypted_be = NULL;
+    uint8_t* plain_be = NULL;
+    uint8_t* plain_le = NULL;
+    int modulus_len = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!private_key || !encrypted || !secret || encrypted_len == 0 || secret_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (encrypted_len > (size_t)INT_MAX)
+        return LIBRDP_STATUS_UNSUPPORTED;
+
+    if (EVP_PKEY_get_bn_param(private_key, OSSL_PKEY_PARAM_RSA_N, &n) != 1 ||
+        EVP_PKEY_get_bn_param(private_key, OSSL_PKEY_PARAM_RSA_D, &d) != 1)
+        status = LIBRDP_STATUS_UNSUPPORTED;
+    else
+    {
+        modulus_len = BN_num_bytes(n);
+        if (modulus_len <= 0 || encrypted_len != (size_t)modulus_len || secret_len > encrypted_len)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        else
+        {
+            encrypted_be = (uint8_t*)malloc(encrypted_len);
+            plain_be = (uint8_t*)malloc(encrypted_len);
+            plain_le = (uint8_t*)malloc(encrypted_len);
+            bn_context = BN_CTX_new();
+            m = BN_new();
+            if (!encrypted_be || !plain_be || !plain_le || !bn_context || !m)
+                status = LIBRDP_STATUS_NO_MEMORY;
+            else
+            {
+                rdp_reverse_copy(encrypted_be, encrypted, encrypted_len);
+                c = BN_bin2bn(encrypted_be, (int)encrypted_len, NULL);
+                if (!c || BN_cmp(c, n) >= 0 || BN_mod_exp(m, c, d, n, bn_context) != 1 ||
+                    BN_bn2binpad(m, plain_be, modulus_len) != modulus_len)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else
+                {
+                    rdp_reverse_copy(plain_le, plain_be, encrypted_len);
+                    memcpy(secret, plain_le, secret_len);
+                    status = LIBRDP_STATUS_OK;
+                }
+            }
+        }
+    }
+
+    if (plain_le)
+    {
+        OPENSSL_cleanse(plain_le, encrypted_len);
+        free(plain_le);
+    }
+    if (plain_be)
+    {
+        OPENSSL_cleanse(plain_be, encrypted_len);
+        free(plain_be);
+    }
+    if (encrypted_be)
+    {
+        OPENSSL_cleanse(encrypted_be, encrypted_len);
+        free(encrypted_be);
+    }
+    BN_free(m);
+    BN_free(c);
+    BN_CTX_free(bn_context);
+    BN_free(d);
+    BN_free(n);
+    return status;
 }

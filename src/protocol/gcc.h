@@ -155,6 +155,12 @@ typedef struct rdp_gcc_server_config
     uint32_t version;
     uint32_t selected_protocol;
     uint32_t early_capability_flags;
+    uint32_t encryption_method;
+    uint32_t encryption_level;
+    const uint8_t* server_random;
+    uint32_t server_random_len;
+    const uint8_t* server_certificate;
+    uint32_t server_certificate_len;
     uint16_t mcs_channel_id;
     uint16_t channel_count;
 } rdp_gcc_server_config;

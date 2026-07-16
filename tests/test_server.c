@@ -556,30 +556,6 @@ static int test_server_send_confirm_active(int fd, uint32_t share_id, uint16_t u
     return ok;
 }
 
-static int test_server_send_client_info(int fd, uint16_t user_id)
-{
-    rdp_client_info info;
-    rdp_buffer client_info;
-    rdp_buffer send_data;
-    int ok = 0;
-
-    memset(&info, 0, sizeof(info));
-    info.username = "test";
-    info.password = "secret";
-    rdp_buffer_init(&client_info);
-    rdp_buffer_init(&send_data);
-    if (rdp_security_write_client_info_pdu(&client_info, &info) == LIBRDP_STATUS_OK &&
-        rdp_security_write_send_data_request(&send_data,
-                                             user_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
-                                             client_info.data,
-                                             client_info.length) == LIBRDP_STATUS_OK)
-        ok = test_server_send_mcs_pdu(fd, &send_data);
-    rdp_buffer_free(&send_data);
-    rdp_buffer_free(&client_info);
-    return ok;
-}
-
 static int test_server_send_slowpath(int fd, uint16_t user_id, const rdp_buffer* slowpath)
 {
     rdp_buffer security_payload;
@@ -935,7 +911,12 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_mcs_send_data_indication demand_indication;
     rdp_mcs_send_data_indication license_indication;
     rdp_license_error_alert license_alert;
+    rdp_security_public_key server_public_key;
+    rdp_standard_security_context client_security;
     rdp_buffer license_payload;
+    rdp_buffer security_payload;
+    rdp_buffer security_data;
+    rdp_buffer encrypted_client_random;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_data_pdu data_pdu;
     rdp_bitmap_update bitmap_update;
@@ -960,10 +941,16 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint16_t static_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u);
     uint16_t response_channel_id = 0;
     uint16_t security_flags = 0;
+    uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t pixels[4u * 4u * 4u];
     uint8_t large_pixels[800u * 11u * 4u];
 
+    memset(&server_public_key, 0, sizeof(server_public_key));
+    memset(&client_security, 0, sizeof(client_security));
     rdp_buffer_init(&license_payload);
+    rdp_buffer_init(&security_payload);
+    rdp_buffer_init(&security_data);
+    rdp_buffer_init(&encrypted_client_random);
     memset(&runtime_context, 0, sizeof(runtime_context));
     memset(pixels, 0, sizeof(pixels));
     for (size_t pixel_index = 0; pixel_index < sizeof(pixels); pixel_index++)
@@ -1044,6 +1031,10 @@ static int test_server_loopback_standard_activation_sequence(void)
                                             gcc_response.user_data_len,
                                             &server_data) == LIBRDP_STATUS_OK);
     SCHECK(server_data.has_core && server_data.has_security && server_data.has_network);
+    SCHECK(server_data.encryption_method == RDP_SECURITY_METHOD_128BIT);
+    SCHECK(server_data.encryption_level == 3);
+    SCHECK(server_data.server_random_len == RDP_SECURITY_CLIENT_RANDOM_LEN);
+    SCHECK(server_data.server_certificate_len > 64u);
     SCHECK(server_data.mcs_channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
     SCHECK(librdp_server_peer_desktop_width(peer) == 800);
     SCHECK(librdp_server_peer_desktop_height(peer) == 600);
@@ -1113,7 +1104,45 @@ static int test_server_loopback_standard_activation_sequence(void)
                                          license_payload.length,
                                          &license_alert) == LIBRDP_STATUS_OK);
     SCHECK(rdp_license_error_alert_is_terminal_success(&license_alert));
-    SCHECK(test_server_send_client_info(client_fd, attach_confirm.user_id));
+    SCHECK(rdp_security_parse_server_certificate(server_data.server_certificate,
+                                                 server_data.server_certificate_len,
+                                                 &server_public_key) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_security_generate_client_random(client_random) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_security_encrypt_client_random(&server_public_key, client_random, &encrypted_client_random) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(rdp_security_standard_client_init(&client_security,
+                                             server_data.encryption_method,
+                                             client_random,
+                                             server_data.server_random) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_security_write_exchange_pdu(&security_payload,
+                                           encrypted_client_random.data,
+                                           encrypted_client_random.length) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_security_write_send_data_request(&security_data,
+                                                attach_confirm.user_id,
+                                                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                security_payload.data,
+                                                security_payload.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_mcs_pdu(client_fd, &security_data));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_LICENSING);
+    security_payload.length = 0;
+    security_data.length = 0;
+    {
+        rdp_client_info info;
+
+        memset(&info, 0, sizeof(info));
+        info.username = "test";
+        info.password = "secret";
+        SCHECK(rdp_security_write_encrypted_client_info_pdu(&security_payload, &client_security, &info) ==
+               LIBRDP_STATUS_OK);
+    }
+    SCHECK(rdp_security_write_send_data_request(&security_data,
+                                                attach_confirm.user_id,
+                                                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                security_payload.data,
+                                                security_payload.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_mcs_pdu(client_fd, &security_data));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVATING);
@@ -1239,6 +1268,12 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_peer_close(peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_close(peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CLOSED);
+    memset(client_random, 0, sizeof(client_random));
+    rdp_security_standard_clear(&client_security);
+    rdp_security_public_key_clear(&server_public_key);
+    rdp_buffer_free(&encrypted_client_random);
+    rdp_buffer_free(&security_data);
+    rdp_buffer_free(&security_payload);
     rdp_buffer_free(&license_payload);
     librdp_server_peer_free(peer);
     librdp_server_close(server);

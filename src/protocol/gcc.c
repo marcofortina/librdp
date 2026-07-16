@@ -537,6 +537,11 @@ librdp_status rdp_gcc_write_conference_create_request(rdp_buffer* buffer, const 
     return status;
 }
 
+/*
+ * Serialize GCC Server Data blocks for both TLS/NLA and Standard Security
+ * paths. When encryption is advertised, random and certificate lengths are
+ * validated before any partial SC_SECURITY payload becomes visible.
+ */
 librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc_server_config* config)
 {
     rdp_buffer payload;
@@ -545,6 +550,10 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !config || config->channel_count > RDP_GCC_MAX_SERVER_CHANNELS)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((config->encryption_method != 0 || config->encryption_level != 0) &&
+        (!config->server_random || !config->server_certificate || config->server_random_len == 0 ||
+         config->server_certificate_len == 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&payload);
@@ -559,9 +568,17 @@ librdp_status rdp_gcc_write_server_data_blocks(rdp_buffer* buffer, const rdp_gcc
 
     payload.length = 0;
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 0);
+        status = rdp_buffer_append_u32_le(&payload, config->encryption_method);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append_u32_le(&payload, 0);
+        status = rdp_buffer_append_u32_le(&payload, config->encryption_level);
+    if (status == LIBRDP_STATUS_OK && (config->encryption_method != 0 || config->encryption_level != 0))
+        status = rdp_buffer_append_u32_le(&payload, config->server_random_len);
+    if (status == LIBRDP_STATUS_OK && (config->encryption_method != 0 || config->encryption_level != 0))
+        status = rdp_buffer_append_u32_le(&payload, config->server_certificate_len);
+    if (status == LIBRDP_STATUS_OK && (config->encryption_method != 0 || config->encryption_level != 0))
+        status = rdp_buffer_append(&payload, config->server_random, config->server_random_len);
+    if (status == LIBRDP_STATUS_OK && (config->encryption_method != 0 || config->encryption_level != 0))
+        status = rdp_buffer_append(&payload, config->server_certificate, config->server_certificate_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_block(buffer, RDP_GCC_SC_SECURITY, &payload);
 

@@ -22,6 +22,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <openssl/types.h>
+
 #define RDP_SECURITY_CLIENT_RANDOM_LEN 32u
 
 typedef struct rdp_security_public_key
@@ -45,5 +47,11 @@ librdp_status rdp_security_encrypt_public_secret(const rdp_security_public_key* 
                                                  const uint8_t* secret,
                                                  size_t secret_len,
                                                  rdp_buffer* encrypted);
+librdp_status rdp_security_generate_server_certificate(EVP_PKEY** private_key, rdp_buffer* certificate);
+librdp_status rdp_security_decrypt_private_secret(EVP_PKEY* private_key,
+                                                  const uint8_t* encrypted,
+                                                  size_t encrypted_len,
+                                                  uint8_t* secret,
+                                                  size_t secret_len);
 
 #endif

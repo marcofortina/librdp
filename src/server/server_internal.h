@@ -19,6 +19,7 @@
 
 #include "common/buffer.h"
 #include "protocol/gcc.h"
+#include "security/security.h"
 
 #include <librdp/server.h>
 
@@ -58,7 +59,12 @@ struct librdp_server_peer
     librdp_security_mode security_mode;
     SSL_CTX* tls_context;
     SSL* tls;
+    EVP_PKEY* standard_private_key;
+    rdp_standard_security_context standard_security;
+    rdp_buffer standard_certificate;
+    uint8_t standard_server_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     uint8_t tls_active;
+    uint8_t standard_security_ready;
     short pending_revents;
     uint16_t advertised_channel_count;
     uint16_t joined_channel_count;

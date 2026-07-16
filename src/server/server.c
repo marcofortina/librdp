@@ -33,6 +33,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <poll.h>
 #include <stdint.h>
@@ -55,6 +56,7 @@
 #define RDP_SERVER_NEGOTIATION_FAILURE_SSL_CERT_NOT_ON_SERVER 0x00000003u
 #define RDP_SERVER_NEGOTIATION_FAILURE_HYBRID_REQUIRED 0x00000005u
 #define RDP_SERVER_INITIAL_READ_MAX 65535u
+#define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
      (uint32_t)LIBRDP_FEATURE_VIDEO | (uint32_t)LIBRDP_FEATURE_CAMERA |                                              \
@@ -611,6 +613,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     (void)librdp_server_metrics_init(&accepted->metrics);
     (void)librdp_server_status_init(&accepted->last_status);
     rdp_buffer_init(&accepted->input);
+    rdp_buffer_init(&accepted->standard_certificate);
     *peer = accepted;
     server->accepted_peers++;
     return LIBRDP_STATUS_OK;
@@ -835,6 +838,35 @@ static int rdp_server_tls_material_available(const librdp_server_peer* peer)
 {
     return peer && peer->tls_certificate_path && peer->tls_certificate_path[0] != '\0' &&
            peer->tls_private_key_path && peer->tls_private_key_path[0] != '\0';
+}
+
+static int rdp_server_uses_standard_security(const librdp_server_peer* peer)
+{
+    return peer && peer->selected_protocol == RDP_X224_PROTOCOL_STANDARD;
+}
+
+/*
+ * Prepare per-peer Standard Security material before GCC Server Security Data
+ * is serialized. The generated private key never leaves the peer, while the
+ * public legacy certificate is advertised on the wire.
+ */
+static librdp_status rdp_server_prepare_standard_security(librdp_server_peer* peer)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_server_uses_standard_security(peer) || peer->standard_private_key)
+        return LIBRDP_STATUS_OK;
+    status = rdp_security_generate_client_random(peer->standard_server_random);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_generate_server_certificate(&peer->standard_private_key, &peer->standard_certificate);
+    if (status == LIBRDP_STATUS_OK)
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.standard_security.material.ready",
+                        "certificate_len=%u",
+                        (unsigned)peer->standard_certificate.length);
+    return status;
 }
 
 static librdp_status rdp_server_select_protocol(const librdp_server_peer* peer,
@@ -1092,6 +1124,11 @@ static librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Validate MCS Connect-Initial, capture client channel declarations, and emit
+ * GCC/MCS response data. Standard Security material is generated here because
+ * SC_SECURITY must carry the peer-specific random and certificate.
+ */
 static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, const rdp_tpkt* packet)
 {
     const uint8_t* x224_data = NULL;
@@ -1137,12 +1174,26 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
                 (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u + channel_index);
         }
         server_config.version = client_data.version ? client_data.version : RDP_GCC_CLIENT_VERSION_5;
-        server_config.selected_protocol = RDP_X224_PROTOCOL_STANDARD;
+        server_config.selected_protocol = peer->selected_protocol;
         server_config.early_capability_flags = client_data.early_capability_flags;
         server_config.mcs_channel_id = (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID;
         server_config.channel_count = client_data.channel_count;
-        status = rdp_gcc_write_server_data_blocks(&server_blocks, &server_config);
+        if (rdp_server_uses_standard_security(peer))
+        {
+            status = rdp_server_prepare_standard_security(peer);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                server_config.encryption_method = RDP_SECURITY_METHOD_128BIT;
+                server_config.encryption_level = RDP_SERVER_STANDARD_ENCRYPTION_LEVEL;
+                server_config.server_random = peer->standard_server_random;
+                server_config.server_random_len = RDP_SECURITY_CLIENT_RANDOM_LEN;
+                server_config.server_certificate = peer->standard_certificate.data;
+                server_config.server_certificate_len = (uint32_t)peer->standard_certificate.length;
+            }
+        }
     }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gcc_write_server_data_blocks(&server_blocks, &server_config);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_gcc_write_conference_create_response(&gcc_response, server_blocks.data, server_blocks.length);
     if (status == LIBRDP_STATUS_OK)
@@ -1302,6 +1353,15 @@ static librdp_status rdp_server_send_valid_client_license(librdp_server_peer* pe
     }
     return status;
 }
+
+static int rdp_server_security_payload_has_flag(const uint8_t* input, size_t input_len, uint16_t required);
+static librdp_status rdp_server_handle_security_exchange(librdp_server_peer* peer,
+                                                         const uint8_t* input,
+                                                         size_t input_len);
+static librdp_status rdp_server_parse_client_info_security_payload(librdp_server_peer* peer,
+                                                                   const uint8_t* input,
+                                                                   size_t input_len,
+                                                                   rdp_client_info_summary* summary);
 
 static size_t rdp_server_channel_name_len(const char name[8])
 {
@@ -2055,13 +2115,19 @@ static librdp_status rdp_server_handle_client_info(librdp_server_peer* peer, con
     if (status == LIBRDP_STATUS_OK &&
         (request.initiator != peer->user_id || request.channel_id != RDP_MCS_GLOBAL_CHANNEL_ID))
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_security_parse_client_info_pdu(request.payload, request.payload_len, &summary);
+    if (status == LIBRDP_STATUS_OK && !peer->standard_security_ready &&
+        rdp_server_security_payload_has_flag(request.payload, request.payload_len, RDP_SEC_EXCHANGE_PKT))
+        status = rdp_server_handle_security_exchange(peer, request.payload, request.payload_len);
+    else if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_parse_client_info_security_payload(peer, request.payload, request.payload_len, &summary);
     if (status != LIBRDP_STATUS_OK)
     {
         rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         return status;
     }
+    if (!peer->client_info_seen &&
+        rdp_server_security_payload_has_flag(request.payload, request.payload_len, RDP_SEC_EXCHANGE_PKT))
+        return LIBRDP_STATUS_OK;
     peer->client_info_seen = 1;
     rdp_trace_event(RDP_TRACE_PROTOCOL,
                     "server.client_info.received",
@@ -2076,7 +2142,120 @@ static librdp_status rdp_server_handle_client_info(librdp_server_peer* peer, con
     return status;
 }
 
-static librdp_status rdp_server_unwrap_optional_security_header(const uint8_t* input,
+static int rdp_server_security_payload_has_flag(const uint8_t* input, size_t input_len, uint16_t required)
+{
+    uint16_t flags = 0;
+    uint16_t flags_hi = 0;
+
+    if (!input || input_len < 4u)
+        return 0;
+    flags = (uint16_t)((uint16_t)input[0] | ((uint16_t)input[1] << 8));
+    flags_hi = (uint16_t)((uint16_t)input[2] | ((uint16_t)input[3] << 8));
+    return flags_hi == 0 && (flags & required) == required;
+}
+
+/*
+ * Consume the client Security Exchange PDU and arm Standard Security for all
+ * following client-to-server encrypted PDUs. The encrypted random is decrypted
+ * in the certificate helper, and the plaintext is cleansed immediately after
+ * key derivation.
+ */
+static librdp_status rdp_server_handle_security_exchange(librdp_server_peer* peer,
+                                                         const uint8_t* input,
+                                                         size_t input_len)
+{
+    rdp_buffer body;
+    rdp_stream stream;
+    const uint8_t* encrypted_random = NULL;
+    uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    uint32_t encrypted_random_padded_len = 0;
+    uint16_t flags = 0;
+    size_t encrypted_random_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !input)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_server_uses_standard_security(peer) || !peer->standard_private_key)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_buffer_init(&body);
+    memset(client_random, 0, sizeof(client_random));
+    status = rdp_security_unwrap_pdu(NULL, input, input_len, &body, &flags);
+    if (status == LIBRDP_STATUS_OK &&
+        (flags & (uint16_t)(RDP_SEC_EXCHANGE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC)) !=
+            (uint16_t)(RDP_SEC_EXCHANGE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_stream_init(&stream, body.data, body.length);
+        if (rdp_stream_read_u32_le(&stream, &encrypted_random_padded_len) != LIBRDP_STATUS_OK ||
+            encrypted_random_padded_len < 8u ||
+            rdp_stream_remaining(&stream) < encrypted_random_padded_len)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        encrypted_random_len = (size_t)encrypted_random_padded_len - 8u;
+        if (rdp_stream_read_bytes(&stream, &encrypted_random, encrypted_random_len) != LIBRDP_STATUS_OK ||
+            rdp_stream_skip(&stream, 8u) != LIBRDP_STATUS_OK)
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_decrypt_private_secret(peer->standard_private_key,
+                                                     encrypted_random,
+                                                     encrypted_random_len,
+                                                     client_random,
+                                                     sizeof(client_random));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_standard_server_init(&peer->standard_security,
+                                                   RDP_SECURITY_METHOD_128BIT,
+                                                   client_random,
+                                                   peer->standard_server_random);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->standard_security_ready = 1;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.standard_security.exchange.done",
+                        "encrypted_random_len=%u",
+                        (unsigned)encrypted_random_len);
+    }
+    OPENSSL_cleanse(client_random, sizeof(client_random));
+    rdp_buffer_free(&body);
+    return status;
+}
+
+static librdp_status rdp_server_parse_client_info_security_payload(librdp_server_peer* peer,
+                                                                   const uint8_t* input,
+                                                                   size_t input_len,
+                                                                   rdp_client_info_summary* summary)
+{
+    rdp_buffer body;
+    rdp_buffer framed;
+    uint16_t flags = 0;
+    rdp_standard_security_context* security = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !input || !summary)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&body);
+    rdp_buffer_init(&framed);
+    if (peer->standard_security_ready)
+        security = &peer->standard_security;
+    status = rdp_security_unwrap_pdu(security, input, input_len, &body, &flags);
+    if (status == LIBRDP_STATUS_OK && (flags & RDP_SEC_INFO_PKT) == 0)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_write_header(&framed, RDP_SEC_INFO_PKT);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&framed, body.data, body.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_security_parse_client_info_pdu(framed.data, framed.length, summary);
+    rdp_buffer_free(&framed);
+    rdp_buffer_free(&body);
+    return status;
+}
+
+static librdp_status rdp_server_unwrap_optional_security_header(librdp_server_peer* peer,
+                                                                const uint8_t* input,
                                                                 size_t input_len,
                                                                 rdp_buffer* storage,
                                                                 const uint8_t** output,
@@ -2098,11 +2277,15 @@ static librdp_status rdp_server_unwrap_optional_security_header(const uint8_t* i
     flags_hi = (uint16_t)((uint16_t)input[2] | ((uint16_t)input[3] << 8));
     if (flags_hi != 0 || (flags & (uint16_t)~allowed) != 0)
         return LIBRDP_STATUS_OK;
-    if ((flags & RDP_SEC_ENCRYPT) != 0)
-        return LIBRDP_STATUS_UNSUPPORTED;
+    if ((flags & RDP_SEC_ENCRYPT) != 0 && (!peer || !peer->standard_security_ready))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     storage->length = 0;
-    if (rdp_security_unwrap_pdu(NULL, input, input_len, storage, NULL) != LIBRDP_STATUS_OK)
-        return LIBRDP_STATUS_OK;
+    if (rdp_security_unwrap_pdu((flags & RDP_SEC_ENCRYPT) != 0 ? &peer->standard_security : NULL,
+                                input,
+                                input_len,
+                                storage,
+                                NULL) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     *output = storage->data;
     *output_len = storage->length;
     return LIBRDP_STATUS_OK;
@@ -2145,7 +2328,8 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
                           RDP_TRACE_SENSITIVITY_HEADER,
                           request.payload,
                           request.payload_len);
-        status = rdp_server_unwrap_optional_security_header(request.payload,
+        status = rdp_server_unwrap_optional_security_header(peer,
+                                                            request.payload,
                                                             request.payload_len,
                                                             &security_payload,
                                                             &runtime_payload,
@@ -2466,9 +2650,12 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     }
     if (peer->tls_context)
         SSL_CTX_free(peer->tls_context);
+    EVP_PKEY_free(peer->standard_private_key);
+    rdp_security_standard_clear(&peer->standard_security);
     if (peer->fd >= 0)
         rdp_socket_close(peer->fd);
     rdp_buffer_free(&peer->input);
+    rdp_buffer_free(&peer->standard_certificate);
     free(peer->framebuffer);
     free(peer->server_name);
     free(peer->tls_certificate_path);
