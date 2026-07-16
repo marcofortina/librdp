@@ -25,6 +25,7 @@
 
 #include "common/buffer.h"
 
+#define RDP_CORE_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::CoreInput"
 #define RDP_CORE_INPUT_SIGNATURE 0x03u
 #define RDP_CORE_INPUT_PDU_CS_INIT_REQUEST 0x01u
 #define RDP_CORE_INPUT_PDU_SC_INIT_RESPONSE 0x02u

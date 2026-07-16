@@ -25,6 +25,7 @@
 
 #include "common/buffer.h"
 
+#define RDP_WEBAUTHN_CHANNEL_NAME "WebAuthN_Channel"
 #define RDP_WEBAUTHN_COMMAND_WEB_AUTHN 5u
 #define RDP_WEBAUTHN_COMMAND_IUVPAA 6u
 #define RDP_WEBAUTHN_COMMAND_CANCEL 7u

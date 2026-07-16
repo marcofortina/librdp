@@ -70,6 +70,7 @@ LIBRDP_0.1 {
         librdp_server_peer_surface_blit_bgra32;
         librdp_server_peer_surface_present;
         librdp_server_peer_send_channel_data;
+        librdp_server_peer_open_dynamic_channel;
         librdp_server_peer_send_dynamic_channel_data;
         librdp_server_peer_close_dynamic_channel;
         librdp_server_peer_close;

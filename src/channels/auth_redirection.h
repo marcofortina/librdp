@@ -25,6 +25,7 @@
 
 #include "common/buffer.h"
 
+#define RDP_AUTH_REDIRECTION_CHANNEL_NAME "Microsoft::Windows::RDS::AuthRedirection"
 #define RDP_AUTH_REDIRECTION_MAGIC 0x4eacc3c8u
 #define RDP_AUTH_REDIRECTION_VERSION 0x00000000u
 #define RDP_AUTH_REDIRECTION_OUTER_HEADER_LENGTH 24u

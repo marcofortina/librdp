@@ -25,6 +25,7 @@
 
 #include "common/buffer.h"
 
+#define RDP_ECHO_CHANNEL_NAME "ECHO"
 #define RDP_ECHO_CHANNEL_MAX_PAYLOAD 65536u
 
 typedef struct rdp_echo_channel_pdu

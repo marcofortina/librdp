@@ -26,6 +26,7 @@
 #include "common/buffer.h"
 #include "protocol/pointer.h"
 
+#define RDP_MOUSE_CURSOR_CHANNEL_NAME "Microsoft::Windows::RDS::MouseCursor"
 #define RDP_MOUSE_CURSOR_PDU_CS_CAPS_ADVERTISE 0x01u
 #define RDP_MOUSE_CURSOR_PDU_SC_CAPS_CONFIRM 0x02u
 #define RDP_MOUSE_CURSOR_PDU_SC_MOUSEPTR_UPDATE 0x03u

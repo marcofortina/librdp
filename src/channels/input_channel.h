@@ -25,6 +25,7 @@
 
 #include "common/buffer.h"
 
+#define RDP_INPUT_CHANNEL_NAME "Microsoft::Windows::RDS::Input"
 #define RDP_INPUT_CHANNEL_EVENT_SC_READY 0x0001u
 #define RDP_INPUT_CHANNEL_EVENT_CS_READY 0x0002u
 #define RDP_INPUT_CHANNEL_EVENT_TOUCH 0x0003u

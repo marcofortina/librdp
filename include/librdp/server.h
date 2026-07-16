@@ -1071,6 +1071,40 @@ LIBRDP_API librdp_status librdp_server_peer_send_channel_data(librdp_server_peer
                                                               size_t data_len);
 
 /**
+ * @brief Request creation of a dynamic virtual channel from the server side.
+ *
+ * The peer must be ACTIVE, the client must have joined the `drdynvc` static
+ * channel, and the DVC capability exchange must have completed. The call sends
+ * a CREATE request and records a pending channel; the channel becomes visible
+ * through librdp_server_peer_dynamic_channel_count() only after the client
+ * replies with success. The channel name is copied and must contain printable
+ * non-space ASCII bytes that fit in librdp_server_dynamic_channel_info::name.
+ *
+ * @param[in,out] peer Peer that owns the dynamic channel table; must not be
+ * NULL.
+ * @param[in] dynamic_channel_id Application-selected DVC identifier; must be
+ * non-zero and must not already be open or pending on this peer.
+ * @param[in] priority DVC priority encoded in the CREATE header.
+ * @param[in] name NUL-terminated DVC name; must not be NULL. The string is
+ * copied before the call returns.
+ *
+ * @return LIBRDP_STATUS_OK after the CREATE request is sent;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL peer/name, invalid channel id,
+ * duplicate id, invalid priority, or invalid name; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE or DVC is not negotiated; LIBRDP_STATUS_LIMIT_EXCEEDED
+ * when the peer channel table is full; transport errors for send failures.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. Channel
+ * lifecycle callbacks are delivered later from the same dispatch context when
+ * the client accepts or closes the channel.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_open_dynamic_channel(librdp_server_peer* peer,
+                                                                 uint32_t dynamic_channel_id,
+                                                                 uint8_t priority,
+                                                                 const char* name);
+
+/**
  * @brief Send data on an open dynamic virtual channel.
  *
  * data is borrowed only for the call duration and copied into a drdynvc packet
