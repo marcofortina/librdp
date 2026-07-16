@@ -136,12 +136,6 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
     peer->dynamic_channels_ready = 0;
 }
 
-static int rdp_server_feature_parser_only(librdp_feature feature)
-{
-    (void)feature;
-    return 0;
-}
-
 static int rdp_server_feature_has_runtime(librdp_feature feature)
 {
     switch (feature)
@@ -178,12 +172,10 @@ static void rdp_server_fill_feature_status(uint32_t requested_features,
     memset(status, 0, sizeof(*status));
     status->feature = feature;
     status->requested = (requested_features & (uint32_t)feature) != 0;
-    status->built = (rdp_server_feature_has_runtime(feature) || rdp_server_feature_parser_only(feature)) ? 1 : 0;
+    status->built = rdp_server_feature_has_runtime(feature) ? 1 : 0;
     status->backend_ready = rdp_server_feature_has_runtime(feature) ? 1 : 0;
     if (!status->requested)
         status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
-    else if (rdp_server_feature_parser_only(feature))
-        status->reason = LIBRDP_FEATURE_REASON_PARSER_ONLY;
     else if (!status->built)
         status->reason = LIBRDP_FEATURE_REASON_NOT_BUILT;
     else if (!status->backend_ready)
@@ -4965,8 +4957,7 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
 {
     int negotiated = 0;
 
-    if (!peer || !status || !status->requested || !status->built || !status->backend_ready ||
-        rdp_server_feature_parser_only(feature))
+    if (!peer || !status || !status->requested || !status->built || !status->backend_ready)
         return;
     switch (feature)
     {

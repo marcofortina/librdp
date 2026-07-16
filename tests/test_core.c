@@ -1376,39 +1376,46 @@ static int build_gdi_altsec_runtime_update_packet(rdp_buffer* out)
 {
     static const uint8_t gdiplus_draw_first[] = {
         (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
-        0x02u,
+        0x04u,
         0x00u,
-        0x05u,
-        0x00u,
-        0x00u,
-        0x00u,
-        0x05u,
+        0x0cu,
         0x00u,
         0x00u,
         0x00u,
-        0xaau,
-        0xbbu
+        0x0cu,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x01u,
+        0x40u,
+        0x00u,
+        0x00u
     };
     static const uint8_t gdiplus_draw_next[] = {
         (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT << 2u) | RDP_GDI_TS_SECONDARY),
-        0x01u,
+        0x04u,
         0x00u,
-        0xccu
+        0x0cu,
+        0x00u,
+        0x00u,
+        0x00u
     };
     static const uint8_t gdiplus_draw_end[] = {
         (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_END << 2u) | RDP_GDI_TS_SECONDARY),
-        0x02u,
+        0x04u,
         0x00u,
-        0x05u,
-        0x00u,
-        0x00u,
-        0x00u,
-        0x05u,
+        0x0cu,
         0x00u,
         0x00u,
         0x00u,
-        0xddu,
-        0xeeu
+        0x0cu,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u
     };
     static const uint8_t gdiplus_cache_first[] = {
         (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
@@ -7739,6 +7746,24 @@ static int append_gdiplus_continued_object_record(rdp_buffer* stream,
            rdp_buffer_append(stream, payload->data, payload->length) == LIBRDP_STATUS_OK;
 }
 
+static int append_gdiplus_compressed_rect(rdp_buffer* payload,
+                                          uint16_t x,
+                                          uint16_t y,
+                                          uint16_t width,
+                                          uint16_t height)
+{
+    return rdp_buffer_append_u16_le(payload, x) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, y) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, width) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, height) == LIBRDP_STATUS_OK;
+}
+
+static int append_gdiplus_compressed_point(rdp_buffer* payload, uint16_t x, uint16_t y)
+{
+    return rdp_buffer_append_u16_le(payload, x) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, y) == LIBRDP_STATUS_OK;
+}
+
 /*
  * Coverage: exercises EMF+ object-table solid brushes, continued object
  * records, and solid pens referenced by vector draw records.
@@ -7840,6 +7865,120 @@ static int test_gdiplus_object_table_solid_brush_and_pen(void)
     CHECK(pixels[(12u * stride) + (1u * 4u)] == 0x66u);
     CHECK(pixels[(12u * stride) + (1u * 4u) + 1u] == 0x55u);
     CHECK(pixels[(12u * stride) + (1u * 4u) + 2u] == 0x44u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
+ * Coverage: locks all EMF+ record families known to the renderer to a bounded
+ * runtime path. State-only and provider-backed records must be consumed without
+ * incrementing the unsupported counter; malformed unknown records remain
+ * protocol errors.
+ */
+static int test_gdiplus_known_record_families_are_runtime_handled(void)
+{
+    static const uint16_t state_records[] = {
+        0x4001u, 0x4002u, 0x4003u, 0x4004u, 0x4005u, 0x4006u, 0x4007u,
+        0x401du, 0x401eu, 0x401fu, 0x4020u, 0x4021u, 0x4022u, 0x4023u,
+        0x4024u, 0x4025u, 0x4026u, 0x4027u, 0x4028u, 0x4029u, 0x402au,
+        0x402bu, 0x402cu, 0x402du, 0x402eu, 0x402fu, 0x4030u, 0x4031u,
+        0x4032u, 0x4033u, 0x4034u, 0x4035u, 0x4039u, 0x403au
+    };
+    static const uint16_t deferred_records[] = {
+        0x4013u, 0x4014u, 0x4015u, 0x401au, 0x401bu,
+        0x401cu, 0x4036u, 0x4037u, 0x4038u
+    };
+    static const uint16_t pie_arc_records[] = {0x4010u, 0x4011u, 0x4012u};
+    static const uint16_t curve_records[] = {0x4016u, 0x4017u, 0x4018u, 0x4019u};
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
+    uint32_t expected_records = 0;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(16, 16, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    for (size_t i = 0; i < sizeof(state_records) / sizeof(state_records[0]); i++)
+    {
+        CHECK(append_gdiplus_record(&stream, state_records[i], 0, &payload));
+        expected_records++;
+    }
+    for (size_t i = 0; i < sizeof(deferred_records) / sizeof(deferred_records[0]); i++)
+    {
+        CHECK(append_gdiplus_record(&stream, deferred_records[i], 0, &payload));
+        expected_records++;
+    }
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x00000003u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0306u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 6u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 1, 1, 3, 3));
+    CHECK(append_gdiplus_record(&stream, 0x400bu, 0x4000u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    for (size_t i = 0; i < sizeof(pie_arc_records) / sizeof(pie_arc_records[0]); i++)
+    {
+        CHECK(rdp_buffer_append_u32_le(&payload, 0xff102030u) == LIBRDP_STATUS_OK);
+        CHECK(rdp_buffer_append_u32_le(&payload, 0x00000000u) == LIBRDP_STATUS_OK);
+        CHECK(rdp_buffer_append_u32_le(&payload, 0x42b40000u) == LIBRDP_STATUS_OK);
+        CHECK(append_gdiplus_compressed_rect(&payload, 2, 2, 4, 4));
+        CHECK(append_gdiplus_record(&stream, pie_arc_records[i], 0xc000u, &payload));
+        expected_records++;
+        rdp_buffer_free(&payload);
+        rdp_buffer_init(&payload);
+    }
+
+    for (size_t i = 0; i < sizeof(curve_records) / sizeof(curve_records[0]); i++)
+    {
+        uint32_t count = curve_records[i] == 0x4019u ? 4u : 3u;
+
+        CHECK(rdp_buffer_append_u32_le(&payload, 0xff405060u) == LIBRDP_STATUS_OK);
+        CHECK(rdp_buffer_append_u32_le(&payload, count) == LIBRDP_STATUS_OK);
+        CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
+        CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
+        CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
+        if (count == 4u)
+            CHECK(append_gdiplus_compressed_point(&payload, 14, 12));
+        CHECK(append_gdiplus_record(&stream, curve_records[i], 0xc000u, &payload));
+        expected_records++;
+        rdp_buffer_free(&payload);
+        rdp_buffer_init(&payload);
+    }
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == expected_records);
+    CHECK(rasterized >= 8u);
+    CHECK(unsupported == 0u);
+
+    stream.data[1] = 0x7fu;
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_PROTOCOL_ERROR);
 
     rdp_buffer_free(&payload);
     rdp_buffer_free(&stream);
@@ -8710,6 +8849,8 @@ int test_client_core(void)
     if (test_printer_file_backend_job_lifecycle() != 0)
         return 1;
     if (test_gdiplus_object_table_solid_brush_and_pen() != 0)
+        return 1;
+    if (test_gdiplus_known_record_families_are_runtime_handled() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;

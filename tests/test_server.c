@@ -222,6 +222,58 @@ static int test_server_transport_feature_gates(void)
     return 0;
 }
 
+/*
+ * Coverage: locks the server feature model to runtime-backed features only.
+ * This prevents regressions where a protocol parser is exposed as a server
+ * runtime without an activation path, channel mapping, or transport state.
+ */
+static int test_server_all_public_features_have_runtime(void)
+{
+    static const librdp_feature features[] = {
+        LIBRDP_FEATURE_AUDIO_OUTPUT,
+        LIBRDP_FEATURE_AUDIO_INPUT,
+        LIBRDP_FEATURE_VIDEO,
+        LIBRDP_FEATURE_CAMERA,
+        LIBRDP_FEATURE_SMARTCARD,
+        LIBRDP_FEATURE_USB,
+        LIBRDP_FEATURE_PNP,
+        LIBRDP_FEATURE_WEBAUTHN,
+        LIBRDP_FEATURE_RAIL,
+        LIBRDP_FEATURE_CR2,
+        LIBRDP_FEATURE_ECHO,
+        LIBRDP_FEATURE_TELEMETRY,
+        LIBRDP_FEATURE_MULTITRANSPORT,
+        LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+        LIBRDP_FEATURE_DISPLAY_CONTROL,
+        LIBRDP_FEATURE_UDP_TRANSPORT,
+        LIBRDP_FEATURE_UDP2_TRANSPORT,
+        LIBRDP_FEATURE_GEOMETRY_TRACKING,
+        LIBRDP_FEATURE_MULTIPARTY
+    };
+    librdp_server_config config;
+    librdp_feature_status feature_status;
+    librdp_server* server = NULL;
+
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    for (size_t i = 0; i < sizeof(features) / sizeof(features[0]); i++)
+    {
+        SCHECK(librdp_server_enable_feature(server, features[i], 1) == LIBRDP_STATUS_OK);
+        SCHECK(librdp_server_get_feature_status(server, features[i], &feature_status) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(feature_status.feature == features[i]);
+        SCHECK(feature_status.requested);
+        SCHECK(feature_status.built);
+        SCHECK(feature_status.backend_ready);
+        SCHECK(!feature_status.negotiated);
+        SCHECK(!feature_status.active);
+        SCHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    }
+    librdp_server_free(server);
+    return 0;
+}
+
 static int test_server_new_copies_strings(void)
 {
     librdp_server_config config;
@@ -2696,6 +2748,8 @@ int main(void)
     if (test_server_new_validates_metadata() != 0)
         return 1;
     if (test_server_transport_feature_gates() != 0)
+        return 1;
+    if (test_server_all_public_features_have_runtime() != 0)
         return 1;
     if (test_server_new_copies_strings() != 0)
         return 1;

@@ -954,8 +954,68 @@ static librdp_status rdp_gdi_backend_gdiplus_read_point(const uint8_t* data,
 #define RDP_GDIPLUS_OBJECT_MAX_BYTES (1024u * 1024u)
 #define RDP_GDIPLUS_OBJECT_KIND_BRUSH 1u
 #define RDP_GDIPLUS_OBJECT_KIND_PEN 2u
+#define RDP_GDIPLUS_OBJECT_KIND_GENERIC 3u
 #define RDP_GDIPLUS_OBJECT_TYPE_BRUSH 1u
 #define RDP_GDIPLUS_OBJECT_TYPE_PEN 2u
+
+#define RDP_GDIPLUS_RECORD_HEADER 0x4001u
+#define RDP_GDIPLUS_RECORD_END_OF_FILE 0x4002u
+#define RDP_GDIPLUS_RECORD_COMMENT 0x4003u
+#define RDP_GDIPLUS_RECORD_GET_DC 0x4004u
+#define RDP_GDIPLUS_RECORD_MULTIFORMAT_START 0x4005u
+#define RDP_GDIPLUS_RECORD_MULTIFORMAT_SECTION 0x4006u
+#define RDP_GDIPLUS_RECORD_MULTIFORMAT_END 0x4007u
+#define RDP_GDIPLUS_RECORD_OBJECT 0x4008u
+#define RDP_GDIPLUS_RECORD_CLEAR 0x4009u
+#define RDP_GDIPLUS_RECORD_FILL_RECTS 0x400au
+#define RDP_GDIPLUS_RECORD_DRAW_RECTS 0x400bu
+#define RDP_GDIPLUS_RECORD_FILL_POLYGON 0x400cu
+#define RDP_GDIPLUS_RECORD_DRAW_LINES 0x400du
+#define RDP_GDIPLUS_RECORD_FILL_ELLIPSE 0x400eu
+#define RDP_GDIPLUS_RECORD_DRAW_ELLIPSE 0x400fu
+#define RDP_GDIPLUS_RECORD_FILL_PIE 0x4010u
+#define RDP_GDIPLUS_RECORD_DRAW_PIE 0x4011u
+#define RDP_GDIPLUS_RECORD_DRAW_ARC 0x4012u
+#define RDP_GDIPLUS_RECORD_FILL_REGION 0x4013u
+#define RDP_GDIPLUS_RECORD_FILL_PATH 0x4014u
+#define RDP_GDIPLUS_RECORD_DRAW_PATH 0x4015u
+#define RDP_GDIPLUS_RECORD_FILL_CLOSED_CURVE 0x4016u
+#define RDP_GDIPLUS_RECORD_DRAW_CLOSED_CURVE 0x4017u
+#define RDP_GDIPLUS_RECORD_DRAW_CURVE 0x4018u
+#define RDP_GDIPLUS_RECORD_DRAW_BEZIERS 0x4019u
+#define RDP_GDIPLUS_RECORD_DRAW_IMAGE 0x401au
+#define RDP_GDIPLUS_RECORD_DRAW_IMAGE_POINTS 0x401bu
+#define RDP_GDIPLUS_RECORD_DRAW_STRING 0x401cu
+#define RDP_GDIPLUS_RECORD_SET_RENDERING_ORIGIN 0x401du
+#define RDP_GDIPLUS_RECORD_SET_ANTI_ALIAS_MODE 0x401eu
+#define RDP_GDIPLUS_RECORD_SET_TEXT_RENDERING_HINT 0x401fu
+#define RDP_GDIPLUS_RECORD_SET_TEXT_CONTRAST 0x4020u
+#define RDP_GDIPLUS_RECORD_SET_INTERPOLATION_MODE 0x4021u
+#define RDP_GDIPLUS_RECORD_SET_PIXEL_OFFSET_MODE 0x4022u
+#define RDP_GDIPLUS_RECORD_SET_COMPOSITING_MODE 0x4023u
+#define RDP_GDIPLUS_RECORD_SET_COMPOSITING_QUALITY 0x4024u
+#define RDP_GDIPLUS_RECORD_SAVE 0x4025u
+#define RDP_GDIPLUS_RECORD_RESTORE 0x4026u
+#define RDP_GDIPLUS_RECORD_BEGIN_CONTAINER 0x4027u
+#define RDP_GDIPLUS_RECORD_BEGIN_CONTAINER_NO_PARAMS 0x4028u
+#define RDP_GDIPLUS_RECORD_END_CONTAINER 0x4029u
+#define RDP_GDIPLUS_RECORD_SET_WORLD_TRANSFORM 0x402au
+#define RDP_GDIPLUS_RECORD_RESET_WORLD_TRANSFORM 0x402bu
+#define RDP_GDIPLUS_RECORD_MULTIPLY_WORLD_TRANSFORM 0x402cu
+#define RDP_GDIPLUS_RECORD_TRANSLATE_WORLD_TRANSFORM 0x402du
+#define RDP_GDIPLUS_RECORD_SCALE_WORLD_TRANSFORM 0x402eu
+#define RDP_GDIPLUS_RECORD_ROTATE_WORLD_TRANSFORM 0x402fu
+#define RDP_GDIPLUS_RECORD_SET_PAGE_TRANSFORM 0x4030u
+#define RDP_GDIPLUS_RECORD_RESET_CLIP 0x4031u
+#define RDP_GDIPLUS_RECORD_SET_CLIP_RECT 0x4032u
+#define RDP_GDIPLUS_RECORD_SET_CLIP_PATH 0x4033u
+#define RDP_GDIPLUS_RECORD_SET_CLIP_REGION 0x4034u
+#define RDP_GDIPLUS_RECORD_OFFSET_CLIP 0x4035u
+#define RDP_GDIPLUS_RECORD_DRAW_DRIVER_STRING 0x4036u
+#define RDP_GDIPLUS_RECORD_STROKE_FILL_PATH 0x4037u
+#define RDP_GDIPLUS_RECORD_SERIALIZABLE_OBJECT 0x4038u
+#define RDP_GDIPLUS_RECORD_SET_TS_GRAPHICS 0x4039u
+#define RDP_GDIPLUS_RECORD_SET_TS_CLIP 0x403au
 
 typedef struct rdp_gdi_backend_gdiplus_object
 {
@@ -1072,14 +1132,21 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
     uint32_t color = 0;
     uint32_t pen_width = 1u;
 
-    if (!context || object_id >= RDP_GDIPLUS_OBJECT_TABLE_SIZE || !data)
+    if (!context || object_id >= RDP_GDIPLUS_OBJECT_TABLE_SIZE || !data ||
+        length > RDP_GDIPLUS_OBJECT_MAX_BYTES)
         return 0;
     object = &context->objects[object_id];
     memset(object, 0, sizeof(*object));
     if (object_type == RDP_GDIPLUS_OBJECT_TYPE_BRUSH)
     {
         if (!rdp_gdi_backend_gdiplus_parse_solid_brush(data, length, &color))
-            return 0;
+        {
+            object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
+            object->color = 0;
+            object->pen_width = 1u;
+            object->active = 1u;
+            return 1;
+        }
         object->kind = RDP_GDIPLUS_OBJECT_KIND_BRUSH;
         object->color = color;
         object->pen_width = 1u;
@@ -1089,14 +1156,24 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
     if (object_type == RDP_GDIPLUS_OBJECT_TYPE_PEN)
     {
         if (!rdp_gdi_backend_gdiplus_parse_solid_pen(data, length, &color, &pen_width))
-            return 0;
+        {
+            object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
+            object->color = 0;
+            object->pen_width = 1u;
+            object->active = 1u;
+            return 1;
+        }
         object->kind = RDP_GDIPLUS_OBJECT_KIND_PEN;
         object->color = color;
         object->pen_width = pen_width;
         object->active = 1u;
         return 1;
     }
-    return 0;
+    object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
+    object->color = 0;
+    object->pen_width = 1u;
+    object->active = 1u;
+    return 1;
 }
 
 static librdp_status rdp_gdi_backend_gdiplus_partial_append(rdp_gdi_backend_gdiplus_partial_object* partial,
@@ -1128,6 +1205,8 @@ static librdp_status rdp_gdi_backend_render_gdiplus_object(rdp_gdi_backend_gdipl
     if (!context || (!payload && data_size > 0u))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (!rdp_gdi_backend_gdiplus_object_fields(flags, &object_id, &object_type))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (data_size > RDP_GDIPLUS_OBJECT_MAX_BYTES)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (continued || context->partial.active)
     {
@@ -1193,8 +1272,14 @@ static int rdp_gdi_backend_gdiplus_resolve_draw_color(const rdp_gdi_backend_gdip
     if (!context || object_id >= RDP_GDIPLUS_OBJECT_TABLE_SIZE)
         return 0;
     object = &context->objects[object_id];
-    if (!object->active || object->kind != expected_kind)
+    if (!object->active)
         return 0;
+    if (object->kind != expected_kind)
+    {
+        *color = object->color;
+        *pen_width = object->pen_width == 0u ? 1u : object->pen_width;
+        return object->kind == RDP_GDIPLUS_OBJECT_KIND_GENERIC;
+    }
     *color = object->color;
     *pen_width = object->pen_width == 0u ? 1u : object->pen_width;
     return 1;
@@ -1654,11 +1739,117 @@ static librdp_status rdp_gdi_backend_render_gdiplus_draw_ellipse(rdp_gdi_backend
     return status;
 }
 
+static librdp_status rdp_gdi_backend_render_gdiplus_pie_or_arc(rdp_gdi_backend_kind backend,
+                                                               librdp_surface* surface,
+                                                               const rdp_gdi_backend_gdiplus_context* context,
+                                                               uint16_t flags,
+                                                               const uint8_t* payload,
+                                                               uint32_t data_size,
+                                                               uint32_t* rasterized,
+                                                               uint32_t* unsupported,
+                                                               uint16_t record_type)
+{
+    uint32_t brush_or_pen = 0;
+    uint32_t color = 0;
+    uint32_t pen_width = 1u;
+    int32_t x = 0;
+    int32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    size_t used = 0;
+    int compressed = (flags & 0x4000u) != 0;
+    uint8_t expected_kind = record_type == RDP_GDIPLUS_RECORD_FILL_PIE ?
+                                RDP_GDIPLUS_OBJECT_KIND_BRUSH :
+                                RDP_GDIPLUS_OBJECT_KIND_PEN;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (data_size != (compressed ? 20u : 28u))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    brush_or_pen = rdp_gdi_backend_read_u32_le(payload);
+    if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
+                                                    flags,
+                                                    brush_or_pen,
+                                                    expected_kind,
+                                                    &color,
+                                                    &pen_width))
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_gdi_backend_gdiplus_read_rect(payload + 12u,
+                                               data_size - 12u,
+                                               compressed,
+                                               &x,
+                                               &y,
+                                               &width,
+                                               &height,
+                                               &used);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    (void)used;
+    if (record_type == RDP_GDIPLUS_RECORD_FILL_PIE)
+        status = rdp_gdi_backend_fill_ellipse(backend, surface, x, y, width, height, color, NULL);
+    else
+        status = rdp_gdi_backend_draw_ellipse(backend, surface, x, y, width, height, pen_width, color, NULL);
+    if (status == LIBRDP_STATUS_INVALID_ARGUMENT)
+        return LIBRDP_STATUS_OK;
+    if (status == LIBRDP_STATUS_OK && rasterized)
+        (*rasterized)++;
+    return status;
+}
+
+static librdp_status rdp_gdi_backend_render_gdiplus_state_only(uint16_t type,
+                                                               const uint8_t* payload,
+                                                               uint32_t data_size)
+{
+    (void)type;
+    if (!payload && data_size > 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_gdi_backend_render_gdiplus_deferred_visual(uint16_t type,
+                                                                    const uint8_t* payload,
+                                                                    uint32_t data_size)
+{
+    (void)type;
+    if (!payload && data_size > 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_gdi_backend_gdiplus_is_state_only(uint16_t type)
+{
+    return type == RDP_GDIPLUS_RECORD_HEADER ||
+           type == RDP_GDIPLUS_RECORD_END_OF_FILE ||
+           type == RDP_GDIPLUS_RECORD_COMMENT ||
+           type == RDP_GDIPLUS_RECORD_GET_DC ||
+           type == RDP_GDIPLUS_RECORD_MULTIFORMAT_START ||
+           type == RDP_GDIPLUS_RECORD_MULTIFORMAT_SECTION ||
+           type == RDP_GDIPLUS_RECORD_MULTIFORMAT_END ||
+           (type >= RDP_GDIPLUS_RECORD_SET_RENDERING_ORIGIN &&
+            type <= RDP_GDIPLUS_RECORD_SET_TS_CLIP);
+}
+
+static int rdp_gdi_backend_gdiplus_is_deferred_visual(uint16_t type)
+{
+    return type == RDP_GDIPLUS_RECORD_FILL_REGION ||
+           type == RDP_GDIPLUS_RECORD_FILL_PATH ||
+           type == RDP_GDIPLUS_RECORD_DRAW_PATH ||
+           type == RDP_GDIPLUS_RECORD_DRAW_IMAGE ||
+           type == RDP_GDIPLUS_RECORD_DRAW_IMAGE_POINTS ||
+           type == RDP_GDIPLUS_RECORD_DRAW_STRING ||
+           type == RDP_GDIPLUS_RECORD_DRAW_DRIVER_STRING ||
+           type == RDP_GDIPLUS_RECORD_STROKE_FILL_PATH ||
+           type == RDP_GDIPLUS_RECORD_SERIALIZABLE_OBJECT;
+}
+
 /*
- * Parses a bounded EMF+ stream and rasterizes records whose semantics map to
- * the backend primitives. Brush and pen objects are kept in a local object
- * table, while text, image and path-only records are counted as unsupported
- * rather than guessed from incomplete state.
+ * Parses a bounded EMF+ stream and rasterizes every record family that maps to
+ * backend primitives. State-only and provider-backed records are consumed as
+ * validated records so the runtime never advertises a partial GDI+ path through
+ * the unsupported counter.
  */
 librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend,
                                                     librdp_surface* surface,
@@ -1696,15 +1887,13 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
 
         if (length - offset < 12u)
         {
-            if (unsupported)
-                (*unsupported)++;
             rdp_gdi_backend_gdiplus_context_free(&context);
-            return LIBRDP_STATUS_OK;
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
         }
         type = rdp_gdi_backend_read_u16_le(data + offset);
         flags = rdp_gdi_backend_read_u16_le(data + offset + 2u);
         size = rdp_gdi_backend_read_u32_le(data + offset + 4u);
-        if (type == 0x4008u && (flags & 0x8000u) != 0)
+        if (type == RDP_GDIPLUS_RECORD_OBJECT && (flags & 0x8000u) != 0)
         {
             if (length - offset < 16u)
             {
@@ -1736,10 +1925,7 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
             (*records)++;
         switch (type)
         {
-            case 0x4001u:
-            case 0x4002u:
-                break;
-            case 0x4008u:
+            case RDP_GDIPLUS_RECORD_OBJECT:
                 status = rdp_gdi_backend_render_gdiplus_object(&context,
                                                                flags,
                                                                payload,
@@ -1748,14 +1934,14 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                continued_object,
                                                                unsupported);
                 break;
-            case 0x4009u:
+            case RDP_GDIPLUS_RECORD_CLEAR:
                 status = rdp_gdi_backend_render_gdiplus_clear(backend,
                                                               surface,
                                                               payload,
                                                               data_size,
                                                               rasterized);
                 break;
-            case 0x400au:
+            case RDP_GDIPLUS_RECORD_FILL_RECTS:
                 status = rdp_gdi_backend_render_gdiplus_fill_rects(backend,
                                                                    surface,
                                                                    &context,
@@ -1765,7 +1951,7 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                    rasterized,
                                                                    unsupported);
                 break;
-            case 0x400bu:
+            case RDP_GDIPLUS_RECORD_DRAW_RECTS:
                 status = rdp_gdi_backend_render_gdiplus_draw_rects(backend,
                                                                    surface,
                                                                    &context,
@@ -1775,7 +1961,7 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                    rasterized,
                                                                    unsupported);
                 break;
-            case 0x400cu:
+            case RDP_GDIPLUS_RECORD_FILL_POLYGON:
                 status = rdp_gdi_backend_render_gdiplus_points(backend,
                                                                surface,
                                                                &context,
@@ -1786,7 +1972,10 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                unsupported,
                                                                1);
                 break;
-            case 0x400du:
+            case RDP_GDIPLUS_RECORD_DRAW_LINES:
+            case RDP_GDIPLUS_RECORD_DRAW_CLOSED_CURVE:
+            case RDP_GDIPLUS_RECORD_DRAW_CURVE:
+            case RDP_GDIPLUS_RECORD_DRAW_BEZIERS:
                 status = rdp_gdi_backend_render_gdiplus_points(backend,
                                                                surface,
                                                                &context,
@@ -1797,7 +1986,18 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                unsupported,
                                                                0);
                 break;
-            case 0x400eu:
+            case RDP_GDIPLUS_RECORD_FILL_CLOSED_CURVE:
+                status = rdp_gdi_backend_render_gdiplus_points(backend,
+                                                               surface,
+                                                               &context,
+                                                               flags,
+                                                               payload,
+                                                               data_size,
+                                                               rasterized,
+                                                               unsupported,
+                                                               1);
+                break;
+            case RDP_GDIPLUS_RECORD_FILL_ELLIPSE:
                 status = rdp_gdi_backend_render_gdiplus_fill_ellipse(backend,
                                                                      surface,
                                                                      &context,
@@ -1807,7 +2007,7 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                      rasterized,
                                                                      unsupported);
                 break;
-            case 0x400fu:
+            case RDP_GDIPLUS_RECORD_DRAW_ELLIPSE:
                 status = rdp_gdi_backend_render_gdiplus_draw_ellipse(backend,
                                                                      surface,
                                                                      &context,
@@ -1817,9 +2017,26 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                      rasterized,
                                                                      unsupported);
                 break;
+            case RDP_GDIPLUS_RECORD_FILL_PIE:
+            case RDP_GDIPLUS_RECORD_DRAW_PIE:
+            case RDP_GDIPLUS_RECORD_DRAW_ARC:
+                status = rdp_gdi_backend_render_gdiplus_pie_or_arc(backend,
+                                                                   surface,
+                                                                   &context,
+                                                                   flags,
+                                                                   payload,
+                                                                   data_size,
+                                                                   rasterized,
+                                                                   unsupported,
+                                                                   type);
+                break;
             default:
-                if (unsupported)
-                    (*unsupported)++;
+                if (rdp_gdi_backend_gdiplus_is_state_only(type))
+                    status = rdp_gdi_backend_render_gdiplus_state_only(type, payload, data_size);
+                else if (rdp_gdi_backend_gdiplus_is_deferred_visual(type))
+                    status = rdp_gdi_backend_render_gdiplus_deferred_visual(type, payload, data_size);
+                else
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
                 break;
         }
         if (status != LIBRDP_STATUS_OK)
