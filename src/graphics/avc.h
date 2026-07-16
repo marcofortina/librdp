@@ -79,6 +79,7 @@ void rdp_avc_decoder_reset(rdp_avc_decoder* decoder);
 void rdp_avc_decoder_free(rdp_avc_decoder* decoder);
 void rdp_avc_frame_init(rdp_avc_frame* frame);
 void rdp_avc_frame_free(rdp_avc_frame* frame);
+uint32_t rdp_avc_runtime_support(void);
 librdp_status rdp_avc_reconstruct_444_chroma(const rdp_avc_444_chroma_view* view);
 librdp_status rdp_avc_reconstruct_444v2_chroma(const rdp_avc_444v2_chroma_view* view);
 #if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)

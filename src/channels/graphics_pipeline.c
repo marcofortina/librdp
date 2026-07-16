@@ -607,28 +607,86 @@ librdp_status rdp_graphics_default_capsets(rdp_graphics_capset* capsets,
                                            uint16_t capset_capacity,
                                            uint16_t* capset_count)
 {
-    const rdp_graphics_capset defaults[] = {
 #if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
-        {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
-        {RDP_GRAPHICS_CAPVERSION_81, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED},
-        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
-        {RDP_GRAPHICS_CAPVERSION_106, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
-        {RDP_GRAPHICS_CAPVERSION_107, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
+    return rdp_graphics_default_capsets_for_avc(capsets,
+                                                capset_capacity,
+                                                capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_ALL);
 #else
-        {RDP_GRAPHICS_CAPVERSION_8, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE},
-        {RDP_GRAPHICS_CAPVERSION_10, RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE | RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED},
+    return rdp_graphics_default_capsets_for_avc(capsets, capset_capacity, capset_count, 0);
 #endif
-    };
-    uint16_t count = (uint16_t)(sizeof(defaults) / sizeof(defaults[0]));
+}
 
-    if (!capsets || !capset_count || capset_capacity < count)
+/*
+ * Builds graphics capability sets from the effective AVC runtime mask. AVC420
+ * and AVC444 are advertised separately so a client never negotiates a codec
+ * whose decoder path is known to be unavailable.
+ */
+librdp_status rdp_graphics_default_capsets_for_avc(rdp_graphics_capset* capsets,
+                                                   uint16_t capset_capacity,
+                                                   uint16_t* capset_count,
+                                                   uint32_t avc_support)
+{
+    uint16_t count = 0;
+
+    if (!capsets || !capset_count || capset_capacity < 2u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    memcpy(capsets, defaults, sizeof(defaults));
+    if ((avc_support & ~RDP_GRAPHICS_AVC_SUPPORT_ALL) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((avc_support & (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) != 0 &&
+        (avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    capsets[count].version = RDP_GRAPHICS_CAPVERSION_8;
+    capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+    count++;
+    if ((avc_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) != 0)
+    {
+        if (capset_capacity < count + 2u)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        capsets[count].version = RDP_GRAPHICS_CAPVERSION_81;
+        capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE |
+                               RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED;
+        count++;
+        capsets[count].version = RDP_GRAPHICS_CAPVERSION_10;
+        capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+        if ((avc_support & (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) == 0)
+            capsets[count].flags |= RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED;
+        count++;
+        if ((avc_support & (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) != 0)
+        {
+            if (capset_capacity < count + 2u)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            capsets[count].version = RDP_GRAPHICS_CAPVERSION_106;
+            capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+            count++;
+            capsets[count].version = RDP_GRAPHICS_CAPVERSION_107;
+            capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE;
+            count++;
+        }
+    }
+    else
+    {
+        capsets[count].version = RDP_GRAPHICS_CAPVERSION_10;
+        capsets[count].flags = RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE |
+                               RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED;
+        count++;
+    }
     *capset_count = count;
     return LIBRDP_STATUS_OK;
 }
 
 int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset)
+{
+#if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
+    return rdp_graphics_capset_is_supported_for_avc(capset, RDP_GRAPHICS_AVC_SUPPORT_ALL);
+#else
+    return rdp_graphics_capset_is_supported_for_avc(capset, 0);
+#endif
+}
+
+int rdp_graphics_capset_is_supported_for_avc(const rdp_graphics_capset* capset,
+                                             uint32_t avc_support)
 {
     rdp_graphics_capset capsets[RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
     uint16_t count = 0;
@@ -636,9 +694,10 @@ int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset)
 
     if (!capset)
         return 0;
-    if (rdp_graphics_default_capsets(capsets,
-                                     (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
-                                     &count) != LIBRDP_STATUS_OK)
+    if (rdp_graphics_default_capsets_for_avc(capsets,
+                                             (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
+                                             &count,
+                                             avc_support) != LIBRDP_STATUS_OK)
         return 0;
     for (i = 0; i < count; i++)
     {
@@ -650,13 +709,26 @@ int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset)
 
 librdp_status rdp_graphics_write_default_caps_advertise(rdp_buffer* buffer)
 {
+    return rdp_graphics_write_default_caps_advertise_for_avc(buffer,
+#if defined(RDP_HAVE_FFMPEG_AVC) || defined(RDP_HAVE_OPENH264_AVC)
+                                                             RDP_GRAPHICS_AVC_SUPPORT_ALL
+#else
+                                                             0
+#endif
+    );
+}
+
+librdp_status rdp_graphics_write_default_caps_advertise_for_avc(rdp_buffer* buffer,
+                                                                uint32_t avc_support)
+{
     rdp_graphics_capset capsets[RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
     uint16_t count = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    status = rdp_graphics_default_capsets(capsets,
-                                          (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
-                                          &count);
+    status = rdp_graphics_default_capsets_for_avc(capsets,
+                                                  (uint16_t)(sizeof(capsets) / sizeof(capsets[0])),
+                                                  &count,
+                                                  avc_support);
     if (status != LIBRDP_STATUS_OK)
         return status;
     return rdp_graphics_write_caps_advertise(buffer, capsets, count);

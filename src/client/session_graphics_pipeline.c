@@ -2237,26 +2237,34 @@ static librdp_status rdp_session_graphics_cache_copy_to_surface(librdp_session* 
 librdp_status rdp_session_send_graphics_caps(librdp_session* session)
 {
     rdp_buffer caps;
+    uint32_t avc_support = 0;
+    size_t caps_length = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || session->graphics_channel_id_bytes == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     rdp_buffer_init(&caps);
-    status = rdp_graphics_write_default_caps_advertise(&caps);
+    avc_support = rdp_avc_runtime_support();
+    status = rdp_graphics_write_default_caps_advertise_for_avc(&caps, avc_support);
     if (status == LIBRDP_STATUS_OK)
+    {
+        caps_length = caps.length;
         status = rdp_session_send_dynamic_channel_data(session,
                                                        session->graphics_channel_id,
                                                        session->graphics_channel_id_bytes,
                                                        caps.data,
                                                        caps.length,
                                                        "client.graphics.caps_advertise");
+    }
     rdp_buffer_free(&caps);
     if (status == LIBRDP_STATUS_OK)
         rdp_trace_event(RDP_TRACE_CLIENT,
                         "client.graphics.caps_advertise",
-                        "dvc_channel_id=%u",
-                        session->graphics_channel_id);
+                        "dvc_channel_id=%u payload_len=%u avc_support=%u",
+                        session->graphics_channel_id,
+                        (unsigned)caps_length,
+                        avc_support);
     return status;
 }
 
@@ -2351,7 +2359,7 @@ librdp_status rdp_session_handle_graphics_message(librdp_session* session,
             status = rdp_graphics_parse_caps_confirm(pdu, header.pdu_length, &confirm);
             if (status != LIBRDP_STATUS_OK)
                 break;
-            if (!rdp_graphics_capset_is_default_supported(&confirm.selected))
+            if (!rdp_graphics_capset_is_supported_for_avc(&confirm.selected, rdp_avc_runtime_support()))
             {
                 rdp_trace_event(RDP_TRACE_CLIENT,
                                 "client.graphics.caps_confirm.invalid",

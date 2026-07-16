@@ -1352,6 +1352,94 @@ void rdp_avc_decoder_free(rdp_avc_decoder* decoder)
 }
 
 #if defined(RDP_HAVE_ANY_AVC)
+
+#if defined(RDP_HAVE_FFMPEG_AVC)
+/*
+ * Probes FFmpeg beyond library presence: the H.264 decoder must open and the
+ * pixel converters used by AVC420 and AVC444 must be constructible. Capability
+ * advertisement uses this probe so negotiation mirrors the runtime path.
+ */
+static uint32_t rdp_avc_ffmpeg_runtime_support(void)
+{
+    rdp_avc_h264 h264;
+    struct SwsContext* to_bgra = NULL;
+    struct SwsContext* to_yuv420 = NULL;
+    uint32_t support = 0;
+
+    memset(&h264, 0, sizeof(h264));
+    if (rdp_avc_h264_open(&h264) != LIBRDP_STATUS_OK)
+        return 0;
+    to_bgra = sws_getContext(16,
+                             16,
+                             AV_PIX_FMT_YUV420P,
+                             16,
+                             16,
+                             AV_PIX_FMT_BGRA,
+                             SWS_FAST_BILINEAR,
+                             NULL,
+                             NULL,
+                             NULL);
+    to_yuv420 = sws_getContext(16,
+                               16,
+                               AV_PIX_FMT_YUV420P,
+                               16,
+                               16,
+                               AV_PIX_FMT_YUV420P,
+                               SWS_FAST_BILINEAR,
+                               NULL,
+                               NULL,
+                               NULL);
+    if (to_bgra)
+        support |= RDP_GRAPHICS_AVC_SUPPORT_AVC420;
+    if (to_bgra && to_yuv420)
+        support |= RDP_GRAPHICS_AVC_SUPPORT_AVC444 |
+                   RDP_GRAPHICS_AVC_SUPPORT_AVC444V2;
+    sws_freeContext(to_bgra);
+    sws_freeContext(to_yuv420);
+    rdp_avc_h264_free(&h264);
+    return support;
+}
+#endif
+
+#if defined(RDP_HAVE_OPENH264_AVC)
+/*
+ * Verifies that the OpenH264 backend can instantiate and initialize a decoder.
+ * Output conversion for advertised AVC modes uses librdp's internal YUV paths,
+ * so decoder initialization is the backend-specific runtime gate.
+ */
+static uint32_t rdp_avc_openh264_runtime_support(void)
+{
+    rdp_avc_openh264 h264;
+    uint32_t support = 0;
+
+    memset(&h264, 0, sizeof(h264));
+    if (rdp_avc_openh264_open(&h264) == LIBRDP_STATUS_OK)
+        support = RDP_GRAPHICS_AVC_SUPPORT_ALL;
+    rdp_avc_openh264_free(&h264);
+    return support;
+}
+#endif
+
+uint32_t rdp_avc_runtime_support(void)
+{
+    uint32_t support = 0;
+
+#if defined(RDP_HAVE_FFMPEG_AVC)
+    support |= rdp_avc_ffmpeg_runtime_support();
+#endif
+#if defined(RDP_HAVE_OPENH264_AVC)
+    support |= rdp_avc_openh264_runtime_support();
+#endif
+    return support & RDP_GRAPHICS_AVC_SUPPORT_ALL;
+}
+#else
+uint32_t rdp_avc_runtime_support(void)
+{
+    return 0;
+}
+#endif
+
+#if defined(RDP_HAVE_ANY_AVC)
 static librdp_status rdp_avc_decode_h264_to_yuv420(rdp_avc_decoder* decoder,
                                                    uint8_t aux,
                                                    const uint8_t* data,

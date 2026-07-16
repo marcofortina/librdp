@@ -1948,6 +1948,7 @@ static int test_path_security_license_channels(void)
     rdp_graphics_caps_confirm graphics_caps_confirm;
     rdp_graphics_capset graphics_capset;
     rdp_graphics_capset graphics_default_capsets[RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT];
+    uint32_t graphics_avc_runtime_support = 0;
     uint16_t graphics_default_capset_count = 0;
     uint16_t graphics_default_capset_index = 0;
     rdp_graphics_create_surface graphics_create;
@@ -7405,6 +7406,67 @@ static int test_path_security_license_channels(void)
                (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_SMALL_CACHE) != 0 &&
                (graphics_capset.flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
     }
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
+                                                0) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_default_capset_count == 2);
+    PCHECK(graphics_default_capsets[1].version == RDP_GRAPHICS_CAPVERSION_10 &&
+           (graphics_default_capsets[1].flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_default_capsets[1], 0) != 0);
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_AVC420) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_default_capset_count == 3);
+    PCHECK(graphics_default_capsets[1].version == RDP_GRAPHICS_CAPVERSION_81 &&
+           (graphics_default_capsets[1].flags & RDP_GRAPHICS_CAPS_FLAG_AVC420_ENABLED) != 0);
+    PCHECK(graphics_default_capsets[2].version == RDP_GRAPHICS_CAPVERSION_10 &&
+           (graphics_default_capsets[2].flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) != 0);
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_default_capsets[2],
+                                                    RDP_GRAPHICS_AVC_SUPPORT_AVC420) != 0);
+    graphics_capset = graphics_default_capsets[1];
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_capset, 0) == 0);
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_ALL) == LIBRDP_STATUS_OK);
+    PCHECK(graphics_default_capset_count == 5 &&
+           graphics_default_capsets[4].version == RDP_GRAPHICS_CAPVERSION_107 &&
+           (graphics_default_capsets[4].flags & RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED) == 0);
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_default_capsets[4],
+                                                    RDP_GRAPHICS_AVC_SUPPORT_ALL) != 0);
+    PCHECK(rdp_graphics_capset_is_supported_for_avc(&graphics_default_capsets[4],
+                                                    RDP_GRAPHICS_AVC_SUPPORT_AVC420) == 0);
+    PCHECK(rdp_graphics_default_capsets_for_avc(graphics_default_capsets,
+                                                (uint16_t)(sizeof(graphics_default_capsets) /
+                                                           sizeof(graphics_default_capsets[0])),
+                                                &graphics_default_capset_count,
+                                                RDP_GRAPHICS_AVC_SUPPORT_AVC444) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    dyn_response.length = 0;
+    PCHECK(rdp_graphics_write_default_caps_advertise_for_avc(&dyn_response, 0) == LIBRDP_STATUS_OK);
+    PCHECK(dyn_response.length == 34u);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    PCHECK(rdp_buffer_append_u8(&dyn_response, 0xa5) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_graphics_write_default_caps_advertise_for_avc(&dyn_response,
+                                                             RDP_GRAPHICS_AVC_SUPPORT_ALL << 1u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(dyn_response.length == 1 && dyn_response.data[0] == 0xa5);
+    graphics_avc_runtime_support = rdp_avc_runtime_support();
+    PCHECK((graphics_avc_runtime_support & ~RDP_GRAPHICS_AVC_SUPPORT_ALL) == 0);
+    PCHECK((graphics_avc_runtime_support &
+            (RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)) == 0 ||
+           (graphics_avc_runtime_support & RDP_GRAPHICS_AVC_SUPPORT_AVC420) != 0);
+    PCHECK(rdp_graphics_write_default_caps_advertise_for_avc(&dyn_response,
+                                                             graphics_avc_runtime_support) ==
+           LIBRDP_STATUS_OK);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
     graphics_capset = graphics_default_capsets[0];
     PCHECK(rdp_graphics_parse_capset(graphics_capset_v107,
                                      sizeof(graphics_capset_v107),

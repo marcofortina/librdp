@@ -62,6 +62,11 @@
 #define RDP_GRAPHICS_CAPS_FLAG_AVC_DISABLED 0x00000020u
 #define RDP_GRAPHICS_CAPS_FLAG_AVC_THINCLIENT 0x00000040u
 #define RDP_GRAPHICS_CAPS_FLAG_SCALEDMAP_DISABLE 0x00000080u
+#define RDP_GRAPHICS_AVC_SUPPORT_AVC420 0x00000001u
+#define RDP_GRAPHICS_AVC_SUPPORT_AVC444 0x00000002u
+#define RDP_GRAPHICS_AVC_SUPPORT_AVC444V2 0x00000004u
+#define RDP_GRAPHICS_AVC_SUPPORT_ALL \
+    (RDP_GRAPHICS_AVC_SUPPORT_AVC420 | RDP_GRAPHICS_AVC_SUPPORT_AVC444 | RDP_GRAPHICS_AVC_SUPPORT_AVC444V2)
 #define RDP_GRAPHICS_DEFAULT_CAPSET_LIMIT 5u
 #define RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888 0x20u
 #define RDP_GRAPHICS_PIXEL_FORMAT_ARGB_8888 0x21u
@@ -424,7 +429,15 @@ librdp_status rdp_graphics_parse_capset(const void* data, size_t length, rdp_gra
 librdp_status rdp_graphics_default_capsets(rdp_graphics_capset* capsets,
                                            uint16_t capset_capacity,
                                            uint16_t* capset_count);
+librdp_status rdp_graphics_default_capsets_for_avc(rdp_graphics_capset* capsets,
+                                                   uint16_t capset_capacity,
+                                                   uint16_t* capset_count,
+                                                   uint32_t avc_support);
 int rdp_graphics_capset_is_default_supported(const rdp_graphics_capset* capset);
+int rdp_graphics_capset_is_supported_for_avc(const rdp_graphics_capset* capset,
+                                             uint32_t avc_support);
+librdp_status rdp_graphics_write_default_caps_advertise_for_avc(rdp_buffer* buffer,
+                                                                uint32_t avc_support);
 librdp_status rdp_graphics_write_caps_advertise(rdp_buffer* buffer,
                                                 const rdp_graphics_capset* capsets,
                                                 uint16_t capset_count);
