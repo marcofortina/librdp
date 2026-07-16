@@ -22,10 +22,14 @@
 
 #include <librdp/server.h>
 
+#include <openssl/types.h>
+
 struct librdp_server
 {
     char* bind_address;
     char* server_name;
+    char* tls_certificate_path;
+    char* tls_private_key_path;
     int listen_fd;
     uint16_t port;
     uint16_t local_port;
@@ -35,6 +39,7 @@ struct librdp_server
     uint32_t width;
     uint32_t height;
     uint32_t requested_features;
+    librdp_security_mode security_mode;
 };
 
 struct librdp_server_peer
@@ -47,7 +52,13 @@ struct librdp_server_peer
     uint16_t width;
     uint16_t height;
     char* server_name;
+    char* tls_certificate_path;
+    char* tls_private_key_path;
     uint32_t requested_features;
+    librdp_security_mode security_mode;
+    SSL_CTX* tls_context;
+    SSL* tls;
+    uint8_t tls_active;
     short pending_revents;
     uint16_t advertised_channel_count;
     uint16_t joined_channel_count;

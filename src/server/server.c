@@ -32,6 +32,8 @@
 #include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,7 +50,10 @@
 #define RDP_SERVER_MAX_BACKLOG 128u
 #define RDP_SERVER_MAX_PEERS 1024u
 #define RDP_SERVER_MAX_DESKTOP_SIZE 8192u
+#define RDP_SERVER_NEGOTIATION_FAILURE_SSL_REQUIRED 0x00000001u
 #define RDP_SERVER_NEGOTIATION_FAILURE_SSL_NOT_ALLOWED 0x00000002u
+#define RDP_SERVER_NEGOTIATION_FAILURE_SSL_CERT_NOT_ON_SERVER 0x00000003u
+#define RDP_SERVER_NEGOTIATION_FAILURE_HYBRID_REQUIRED 0x00000005u
 #define RDP_SERVER_INITIAL_READ_MAX 65535u
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
@@ -137,6 +142,14 @@ static int rdp_server_config_valid(const librdp_server_config* config)
         return 0;
     if ((config->width == 0) != (config->height == 0))
         return 0;
+    if (config->security_mode != LIBRDP_SECURITY_AUTO &&
+        config->security_mode != LIBRDP_SECURITY_STANDARD &&
+        config->security_mode != LIBRDP_SECURITY_TLS &&
+        config->security_mode != LIBRDP_SECURITY_NLA)
+        return 0;
+    if ((config->security_mode == LIBRDP_SECURITY_TLS || config->security_mode == LIBRDP_SECURITY_NLA) &&
+        (!config->tls_certificate_path || !config->tls_private_key_path))
+        return 0;
     return 1;
 }
 
@@ -151,6 +164,7 @@ librdp_status librdp_server_config_init(librdp_server_config* config)
     config->max_peers = RDP_SERVER_DEFAULT_MAX_PEERS;
     config->width = RDP_SERVER_DEFAULT_WIDTH;
     config->height = RDP_SERVER_DEFAULT_HEIGHT;
+    config->security_mode = LIBRDP_SECURITY_STANDARD;
     return LIBRDP_STATUS_OK;
 }
 
@@ -350,11 +364,30 @@ librdp_server* librdp_server_new(const librdp_server_config* config)
             return NULL;
         }
     }
+    if (config->tls_certificate_path)
+    {
+        server->tls_certificate_path = rdp_server_strdup_bounded(config->tls_certificate_path);
+        if (!server->tls_certificate_path)
+        {
+            librdp_server_free(server);
+            return NULL;
+        }
+    }
+    if (config->tls_private_key_path)
+    {
+        server->tls_private_key_path = rdp_server_strdup_bounded(config->tls_private_key_path);
+        if (!server->tls_private_key_path)
+        {
+            librdp_server_free(server);
+            return NULL;
+        }
+    }
     server->port = config->port;
     server->backlog = config->backlog ? config->backlog : RDP_SERVER_DEFAULT_BACKLOG;
     server->max_peers = config->max_peers ? config->max_peers : RDP_SERVER_DEFAULT_MAX_PEERS;
     server->width = config->width ? config->width : RDP_SERVER_DEFAULT_WIDTH;
     server->height = config->height ? config->height : RDP_SERVER_DEFAULT_HEIGHT;
+    server->security_mode = config->security_mode;
     server->listen_fd = -1;
     return server;
 }
@@ -366,6 +399,8 @@ void librdp_server_free(librdp_server* server)
     librdp_server_close(server);
     free(server->bind_address);
     free(server->server_name);
+    free(server->tls_certificate_path);
+    free(server->tls_private_key_path);
     free(server);
 }
 
@@ -543,6 +578,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->width = (uint16_t)server->width;
     accepted->height = (uint16_t)server->height;
     accepted->requested_features = server->requested_features;
+    accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
     if (server->server_name)
     {
@@ -551,6 +587,24 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
         {
             free(accepted);
             rdp_socket_close(fd);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+    if (server->tls_certificate_path)
+    {
+        accepted->tls_certificate_path = rdp_server_strdup_bounded(server->tls_certificate_path);
+        if (!accepted->tls_certificate_path)
+        {
+            librdp_server_peer_free(accepted);
+            return LIBRDP_STATUS_NO_MEMORY;
+        }
+    }
+    if (server->tls_private_key_path)
+    {
+        accepted->tls_private_key_path = rdp_server_strdup_bounded(server->tls_private_key_path);
+        if (!accepted->tls_private_key_path)
+        {
+            librdp_server_peer_free(accepted);
             return LIBRDP_STATUS_NO_MEMORY;
         }
     }
@@ -599,13 +653,83 @@ static librdp_status rdp_server_send_all(int fd, const uint8_t* data, size_t len
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_server_wait_fd(int fd, short events, int timeout_ms)
+{
+    struct pollfd pfd;
+    int rc = 0;
+
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = fd;
+    pfd.events = events;
+    do
+    {
+        rc = poll(&pfd, 1, timeout_ms);
+    } while (rc < 0 && errno == EINTR);
+    if (rc == 0)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (rc < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)))
+        return LIBRDP_STATUS_IO_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_tls_status(SSL* tls, int rc, short* wait_events)
+{
+    int error = SSL_get_error(tls, rc);
+
+    if (error == SSL_ERROR_ZERO_RETURN)
+        return LIBRDP_STATUS_CLOSED;
+    if (error == SSL_ERROR_WANT_READ)
+    {
+        if (wait_events)
+            *wait_events = POLLIN;
+        return LIBRDP_STATUS_AGAIN;
+    }
+    if (error == SSL_ERROR_WANT_WRITE)
+    {
+        if (wait_events)
+            *wait_events = POLLOUT;
+        return LIBRDP_STATUS_AGAIN;
+    }
+    return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+}
+
+static librdp_status rdp_server_tls_send_all(librdp_server_peer* peer, const uint8_t* data, size_t length)
+{
+    size_t offset = 0;
+
+    while (offset < length)
+    {
+        int chunk = (length - offset) > (size_t)INT32_MAX ? INT32_MAX : (int)(length - offset);
+        int written = SSL_write(peer->tls, data + offset, chunk);
+
+        if (written > 0)
+        {
+            offset += (size_t)written;
+            continue;
+        }
+        else
+        {
+            short wait_events = 0;
+            librdp_status status = rdp_server_tls_status(peer->tls, written, &wait_events);
+
+            if (status != LIBRDP_STATUS_AGAIN)
+                return status;
+            status = rdp_server_wait_fd(peer->fd, wait_events, 1000);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_server_peer_send_all(librdp_server_peer* peer, const uint8_t* data, size_t length)
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    status = rdp_server_send_all(peer->fd, data, length);
+    status = peer->tls_active ? rdp_server_tls_send_all(peer, data, length)
+                              : rdp_server_send_all(peer->fd, data, length);
     if (status == LIBRDP_STATUS_OK)
         rdp_server_metric_add(&peer->metrics.bytes_written, (uint64_t)length);
     return status;
@@ -665,6 +789,19 @@ static void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_s
 {
     if (!peer)
         return;
+    if (peer->tls)
+    {
+        SSL_set_quiet_shutdown(peer->tls, 1);
+        (void)SSL_shutdown(peer->tls);
+        SSL_free(peer->tls);
+        peer->tls = NULL;
+    }
+    if (peer->tls_context)
+    {
+        SSL_CTX_free(peer->tls_context);
+        peer->tls_context = NULL;
+    }
+    peer->tls_active = 0;
     if (peer->fd >= 0)
     {
         rdp_socket_close(peer->fd);
@@ -694,6 +831,69 @@ static librdp_status rdp_server_send_x224_failure(librdp_server_peer* peer, uint
     return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_UNSUPPORTED : status;
 }
 
+static int rdp_server_tls_material_available(const librdp_server_peer* peer)
+{
+    return peer && peer->tls_certificate_path && peer->tls_certificate_path[0] != '\0' &&
+           peer->tls_private_key_path && peer->tls_private_key_path[0] != '\0';
+}
+
+static librdp_status rdp_server_select_protocol(const librdp_server_peer* peer,
+                                                const rdp_x224_connection_request* request,
+                                                uint32_t* selected_protocol,
+                                                uint32_t* failure_code)
+{
+    uint32_t requested = RDP_X224_PROTOCOL_STANDARD;
+    int standard_requested = 0;
+
+    if (!peer || !request || !selected_protocol || !failure_code)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    requested = request->negotiation.present ? request->requested_protocols : RDP_X224_PROTOCOL_STANDARD;
+    standard_requested = !request->negotiation.present || requested == RDP_X224_PROTOCOL_STANDARD;
+    *selected_protocol = RDP_X224_PROTOCOL_STANDARD;
+    *failure_code = RDP_SERVER_NEGOTIATION_FAILURE_SSL_NOT_ALLOWED;
+    if (peer->security_mode == LIBRDP_SECURITY_STANDARD)
+    {
+        if (standard_requested)
+            return LIBRDP_STATUS_OK;
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    if (peer->security_mode == LIBRDP_SECURITY_TLS)
+    {
+        if (!rdp_server_tls_material_available(peer))
+        {
+            *failure_code = RDP_SERVER_NEGOTIATION_FAILURE_SSL_CERT_NOT_ON_SERVER;
+            return LIBRDP_STATUS_UNSUPPORTED;
+        }
+        if ((requested & RDP_X224_PROTOCOL_TLS) != 0)
+        {
+            *selected_protocol = RDP_X224_PROTOCOL_TLS;
+            return LIBRDP_STATUS_OK;
+        }
+        *failure_code = RDP_SERVER_NEGOTIATION_FAILURE_SSL_REQUIRED;
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    if (peer->security_mode == LIBRDP_SECURITY_NLA)
+    {
+        *failure_code = RDP_SERVER_NEGOTIATION_FAILURE_HYBRID_REQUIRED;
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    if (rdp_server_tls_material_available(peer) && (requested & RDP_X224_PROTOCOL_TLS) != 0)
+    {
+        *selected_protocol = RDP_X224_PROTOCOL_TLS;
+        return LIBRDP_STATUS_OK;
+    }
+    if (standard_requested)
+        return LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+/*
+ * Read exactly one complete TPKT from the peer transport, regardless of
+ * whether the byte source is the initial TCP socket or the TLS layer selected
+ * after X.224 negotiation. The peer input buffer owns partial data between
+ * calls, so malformed lengths must fail without discarding unrelated queued
+ * bytes.
+ */
 static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
                                           int timeout_ms,
                                           rdp_tpkt* packet,
@@ -732,15 +932,36 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_FAILED);
         return LIBRDP_STATUS_IO_ERROR;
     }
-    read_len = recv(peer->fd, chunk, sizeof(chunk), 0);
-    if (read_len == 0)
+    if (peer->tls_active)
     {
-        rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
-        return LIBRDP_STATUS_CLOSED;
+        int tls_read = SSL_read(peer->tls, chunk, (int)sizeof(chunk));
+
+        if (tls_read <= 0)
+        {
+            short wait_events = 0;
+            librdp_status tls_status = rdp_server_tls_status(peer->tls, tls_read, &wait_events);
+
+            (void)wait_events;
+            if (tls_status == LIBRDP_STATUS_AGAIN)
+                return LIBRDP_STATUS_TIMEOUT;
+            if (tls_status == LIBRDP_STATUS_CLOSED)
+                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
+            return tls_status;
+        }
+        read_len = tls_read;
     }
-    if (read_len < 0)
-        return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? LIBRDP_STATUS_TIMEOUT
-                                                                         : LIBRDP_STATUS_IO_ERROR;
+    else
+    {
+        read_len = recv(peer->fd, chunk, sizeof(chunk), 0);
+        if (read_len == 0)
+        {
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
+            return LIBRDP_STATUS_CLOSED;
+        }
+        if (read_len < 0)
+            return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? LIBRDP_STATUS_TIMEOUT
+                                                                             : LIBRDP_STATUS_IO_ERROR;
+    }
     rdp_server_metric_add(&peer->metrics.bytes_read, (uint64_t)read_len);
     if (peer->input.length + (size_t)read_len > RDP_SERVER_INITIAL_READ_MAX)
     {
@@ -771,11 +992,71 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_server_start_tls(librdp_server_peer* peer, int timeout_ms)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    int rc = 0;
+
+    if (!peer || timeout_ms < 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->tls_active)
+        return LIBRDP_STATUS_OK;
+    if (!rdp_server_tls_material_available(peer))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (!peer->tls_context)
+    {
+        peer->tls_context = SSL_CTX_new(TLS_server_method());
+        if (!peer->tls_context)
+            return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+        if (SSL_CTX_use_certificate_file(peer->tls_context, peer->tls_certificate_path, SSL_FILETYPE_PEM) != 1 ||
+            SSL_CTX_use_PrivateKey_file(peer->tls_context, peer->tls_private_key_path, SSL_FILETYPE_PEM) != 1 ||
+            SSL_CTX_check_private_key(peer->tls_context) != 1)
+        {
+            SSL_CTX_free(peer->tls_context);
+            peer->tls_context = NULL;
+            ERR_clear_error();
+            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+        }
+    }
+    if (!peer->tls)
+    {
+        peer->tls = SSL_new(peer->tls_context);
+        if (!peer->tls)
+            return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+        if (SSL_set_fd(peer->tls, peer->fd) != 1)
+            return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    }
+    rc = SSL_accept(peer->tls);
+    if (rc != 1)
+    {
+        short wait_events = 0;
+
+        status = rdp_server_tls_status(peer->tls, rc, &wait_events);
+        if (status == LIBRDP_STATUS_AGAIN)
+        {
+            status = rdp_server_wait_fd(peer->fd, wait_events, timeout_ms);
+            return status == LIBRDP_STATUS_OK ? LIBRDP_STATUS_TIMEOUT : status;
+        }
+        ERR_clear_error();
+        return status == LIBRDP_STATUS_CLOSED ? LIBRDP_STATUS_TLS_HANDSHAKE_FAILED : status;
+    }
+    peer->tls_active = 1;
+    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                    "server.transport.tls.accept.done",
+                    "version=%s cipher=%s",
+                    SSL_get_version(peer->tls),
+                    SSL_get_cipher(peer->tls));
+    rdp_server_set_state(peer, LIBRDP_SERVER_PEER_X224_CONFIRMED);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_tpkt* packet)
 {
     rdp_x224_connection_request request;
     rdp_buffer response;
     librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t selected_protocol = RDP_X224_PROTOCOL_STANDARD;
+    uint32_t failure_code = RDP_SERVER_NEGOTIATION_FAILURE_SSL_NOT_ALLOWED;
 
     status = rdp_x224_parse_connection_request(packet->payload, packet->payload_len, &request);
     if (status != LIBRDP_STATUS_OK)
@@ -783,12 +1064,13 @@ static librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_FAILED);
         return status;
     }
-    if (request.negotiation.present && request.requested_protocols != RDP_X224_PROTOCOL_STANDARD)
-        return rdp_server_send_x224_failure(peer, RDP_SERVER_NEGOTIATION_FAILURE_SSL_NOT_ALLOWED);
+    status = rdp_server_select_protocol(peer, &request, &selected_protocol, &failure_code);
+    if (status != LIBRDP_STATUS_OK)
+        return rdp_server_send_x224_failure(peer, failure_code);
 
     rdp_buffer_init(&response);
     status = rdp_x224_build_connection_confirm_ex(&response,
-                                                  RDP_X224_PROTOCOL_STANDARD,
+                                                  selected_protocol,
                                                   request.negotiation.present);
     if (status == LIBRDP_STATUS_OK)
     {
@@ -802,8 +1084,11 @@ static librdp_status rdp_server_handle_x224(librdp_server_peer* peer, const rdp_
         rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         return status;
     }
-    peer->selected_protocol = RDP_X224_PROTOCOL_STANDARD;
-    rdp_server_set_state(peer, LIBRDP_SERVER_PEER_X224_CONFIRMED);
+    peer->selected_protocol = selected_protocol;
+    rdp_server_set_state(peer,
+                         selected_protocol == RDP_X224_PROTOCOL_TLS ?
+                             LIBRDP_SERVER_PEER_TLS_HANDSHAKING :
+                             LIBRDP_SERVER_PEER_X224_CONFIRMED);
     return LIBRDP_STATUS_OK;
 }
 
@@ -2039,6 +2324,12 @@ librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
     return librdp_server_peer_run_once(peer, 0);
 }
 
+/*
+ * Advance one externally-driven server peer phase. TLS handshaking is handled
+ * before TPKT parsing because encrypted peers switch transport semantics after
+ * the X.224 confirm; every later state consumes exactly one protocol packet
+ * and records status at the public boundary.
+ */
 librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_ms)
 {
     rdp_tpkt packet;
@@ -2051,6 +2342,21 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
         return LIBRDP_STATUS_STATE;
     if (peer->state == LIBRDP_SERVER_PEER_NEW)
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_NEGOTIATING);
+    if (peer->state == LIBRDP_SERVER_PEER_TLS_HANDSHAKING)
+    {
+        status = rdp_server_start_tls(peer, timeout_ms);
+        if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
+        {
+            rdp_server_metric_add(&peer->metrics.errors, 1u);
+            rdp_server_record_status(peer,
+                                     status,
+                                     LIBRDP_ERROR_COMPONENT_TLS,
+                                     "server.transport.tls.accept",
+                                     "server TLS handshake failed");
+            rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+        }
+        return status;
+    }
     status = rdp_server_read_tpkt(peer, timeout_ms, &packet, &packet_len);
     if (status != LIBRDP_STATUS_OK)
     {
@@ -2152,10 +2458,20 @@ void librdp_server_peer_free(librdp_server_peer* peer)
 {
     if (!peer)
         return;
+    if (peer->tls)
+    {
+        SSL_set_quiet_shutdown(peer->tls, 1);
+        (void)SSL_shutdown(peer->tls);
+        SSL_free(peer->tls);
+    }
+    if (peer->tls_context)
+        SSL_CTX_free(peer->tls_context);
     if (peer->fd >= 0)
         rdp_socket_close(peer->fd);
     rdp_buffer_free(&peer->input);
     free(peer->framebuffer);
     free(peer->server_name);
+    free(peer->tls_certificate_path);
+    free(peer->tls_private_key_path);
     free(peer);
 }

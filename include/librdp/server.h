@@ -78,7 +78,8 @@ typedef enum librdp_server_peer_state
     LIBRDP_SERVER_PEER_CHANNEL_JOINING = 9, /**< Channel Join Requests are being accepted. */
     LIBRDP_SERVER_PEER_ACTIVATING = 10,  /**< Demand Active was sent and client activation PDUs are pending. */
     LIBRDP_SERVER_PEER_ACTIVE = 11,      /**< Client confirmed activation and the peer is ready for runtime PDUs. */
-    LIBRDP_SERVER_PEER_LICENSING = 12    /**< Server licensing completion was sent before activation. */
+    LIBRDP_SERVER_PEER_LICENSING = 12,   /**< Server licensing completion was sent before activation. */
+    LIBRDP_SERVER_PEER_TLS_HANDSHAKING = 13 /**< TLS transport handshake is in progress after X.224. */
 } librdp_server_peer_state;
 
 /**
@@ -321,6 +322,9 @@ typedef struct librdp_server_config
     uint32_t width;        /**< Default desktop width reserved for future activation; zero uses default. */
     uint32_t height;       /**< Default desktop height reserved for future activation; zero uses default. */
     const char* server_name; /**< Optional diagnostic server name copied on creation. */
+    librdp_security_mode security_mode; /**< Server security policy; STANDARD is the default. */
+    const char* tls_certificate_path; /**< PEM certificate path for TLS/NLA modes; copied on creation. */
+    const char* tls_private_key_path; /**< PEM private-key path for TLS/NLA modes; copied on creation. */
 } librdp_server_config;
 
 /**
