@@ -2476,6 +2476,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
             rdp_session_gdi_ninegrid_cache_clear(session);
             rdp_session_gdi_glyph_cache_clear(session);
             rdp_session_gdi_glyph_fragment_cache_clear(session);
+            rdp_session_gdi_gdiplus_reset(session);
+            rdp_session_gdi_window_state_reset(session);
             rdp_trace_event(RDP_TRACE_CLIENT,
                             "client.graphics.channel",
                             "dvc_channel_id=%u",
@@ -2857,6 +2859,8 @@ static librdp_status rdp_session_handle_dynamic_channel(librdp_session* session,
                 rdp_session_gdi_ninegrid_cache_clear(session);
                 rdp_session_gdi_glyph_cache_clear(session);
                 rdp_session_gdi_glyph_fragment_cache_clear(session);
+                rdp_session_gdi_gdiplus_reset(session);
+                rdp_session_gdi_window_state_reset(session);
             }
             if (entry->channel_id == session->usb_redirection_channel_id)
                 rdp_session_usb_redirection_reset(session);
@@ -3261,6 +3265,8 @@ librdp_status librdp_session_connect(librdp_session* session)
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_gdi_stream_bitmap_reset(session);
+    rdp_session_gdi_gdiplus_reset(session);
+    rdp_session_gdi_window_state_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_gdi_render_state_init(&session->gdi_render);
     rdp_session_palette_reset(session);

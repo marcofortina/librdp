@@ -31,6 +31,8 @@ void rdp_session_gdi_glyph_fragment_cache_clear(librdp_session* session);
 void rdp_session_gdi_saved_bitmaps_clear(librdp_session* session);
 void rdp_session_gdi_offscreen_cache_clear(librdp_session* session);
 void rdp_session_gdi_stream_bitmap_reset(librdp_session* session);
+void rdp_session_gdi_gdiplus_reset(librdp_session* session);
+void rdp_session_gdi_window_state_reset(librdp_session* session);
 void rdp_session_palette_reset(librdp_session* session);
 librdp_status rdp_session_apply_palette_update(librdp_session* session, const rdp_palette_update* palette);
 librdp_status rdp_session_apply_surface_commands(librdp_session* session,

@@ -1692,6 +1692,134 @@ librdp_status rdp_gdi_write_stream_bitmap_next_order(
     return rdp_gdi_restore_on_error(buffer, start, status);
 }
 
+static int rdp_gdi_altsec_order_is_gdiplus(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST ||
+           order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT ||
+           order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_END ||
+           order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST ||
+           order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT ||
+           order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END;
+}
+
+/*
+ * Decode GDI+ alternate-secondary orders into bounded chunks. The renderer is
+ * intentionally separate from this parser; this function only proves that the
+ * wire chunk and cache metadata are internally consistent before session state
+ * accepts them.
+ */
+librdp_status rdp_gdi_parse_gdiplus_order(const rdp_gdi_altsec_order_header* header,
+                                          rdp_gdi_gdiplus_order* order)
+{
+    rdp_gdi_gdiplus_order parsed;
+    rdp_stream stream;
+    uint16_t value16 = 0;
+    const uint8_t* chunk = NULL;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_gdi_altsec_order_is_gdiplus(header->order_type))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    memset(&parsed, 0, sizeof(parsed));
+    parsed.order_type = header->order_type;
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+
+    switch (header->order_type)
+    {
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST:
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_END:
+            if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(&stream, &parsed.total_size) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(&stream, &parsed.total_emf_size) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.data_len = value16;
+            break;
+
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT:
+            if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.data_len = value16;
+            break;
+
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST:
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END:
+            if (rdp_stream_read_u8(&stream, &parsed.cache_type) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed.cache_index) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.total_size = value16;
+            if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u32_le(&stream, &parsed.total_emf_size) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.data_len = value16;
+            break;
+
+        case RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT:
+            if (rdp_stream_read_u8(&stream, &parsed.cache_type) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &parsed.cache_index) != LIBRDP_STATUS_OK ||
+                rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.total_size = value16;
+            if (rdp_stream_read_u16_le(&stream, &value16) != LIBRDP_STATUS_OK)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            parsed.data_len = value16;
+            break;
+
+        default:
+            return LIBRDP_STATUS_UNSUPPORTED;
+    }
+
+    if (rdp_stream_remaining(&stream) < parsed.data_len ||
+        rdp_stream_read_bytes(&stream, &chunk, parsed.data_len) != LIBRDP_STATUS_OK ||
+        rdp_stream_remaining(&stream) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.total_size != 0 && parsed.data_len > parsed.total_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.total_emf_size != 0 && parsed.data_len > parsed.total_emf_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed.data = chunk;
+    *order = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Decode the Window alternate-secondary envelope. The payload is kept opaque
+ * because the order family carries multiple window-state forms, but the size
+ * contract and flags are normalized for the session dispatcher.
+ */
+librdp_status rdp_gdi_parse_window_order(const rdp_gdi_altsec_order_header* header,
+                                         rdp_gdi_window_order* order)
+{
+    rdp_gdi_window_order parsed;
+    rdp_stream stream;
+
+    if (!header || !order || !header->payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->order_type != RDP_GDI_ALTSEC_WINDOW)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (header->payload_len < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(&parsed, 0, sizeof(parsed));
+    rdp_stream_init(&stream, header->payload, header->payload_len);
+    if (rdp_stream_read_u16_le(&stream, &parsed.order_size) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (parsed.order_size < 3u || header->payload_len != (size_t)parsed.order_size - 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (rdp_stream_remaining(&stream) >= 4u)
+    {
+        if (rdp_stream_read_u32_le(&stream, &parsed.flags) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (rdp_stream_remaining(&stream) > UINT32_MAX)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed.data_len = (uint32_t)rdp_stream_remaining(&stream);
+    if (parsed.data_len > 0 &&
+        rdp_stream_read_bytes(&stream, &parsed.data, parsed.data_len) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *order = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
 /*
  * Parse a list of GDI orders from a slow-path update. Order count, control
  * flags, and per-order payload boundaries are checked before render dispatch.

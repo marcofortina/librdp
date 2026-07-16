@@ -218,6 +218,8 @@ void librdp_session_free(librdp_session* session)
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_gdi_stream_bitmap_reset(session);
+    rdp_session_gdi_gdiplus_reset(session);
+    rdp_session_gdi_window_state_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_avc_decoder_free(session->avc);
     rdp_nscodec_context_free(&session->surface_nscodec);
@@ -395,6 +397,8 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_gdi_saved_bitmaps_clear(session);
     rdp_session_gdi_offscreen_cache_clear(session);
     rdp_session_gdi_stream_bitmap_reset(session);
+    rdp_session_gdi_gdiplus_reset(session);
+    rdp_session_gdi_window_state_reset(session);
     rdp_session_pointer_cache_clear(session);
     rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);

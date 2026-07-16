@@ -4229,6 +4229,8 @@ static int test_gdi_orders(void)
             0xeeu
         };
         rdp_gdi_altsec_order_header valid_altsec = altsec;
+        rdp_gdi_window_order window_order;
+        rdp_gdi_gdiplus_order gdiplus_order;
 
         PCHECK(rdp_gdi_parse_altsec_order(invalid_altsec,
                                           sizeof(invalid_altsec),
@@ -4244,6 +4246,11 @@ static int test_gdi_orders(void)
         PCHECK(altsec.order_type == RDP_GDI_ALTSEC_WINDOW &&
                altsec.payload_len == sizeof(window_altsec) - 1u &&
                altsec.actual_length == sizeof(window_altsec));
+        PCHECK(rdp_gdi_parse_window_order(&altsec, &window_order) == LIBRDP_STATUS_OK);
+        PCHECK(window_order.order_size == 8u &&
+               window_order.flags == 0x04000000u &&
+               window_order.data_len == 1u &&
+               window_order.data[0] == 0x12u);
         PCHECK(rdp_gdi_parse_altsec_order(compdesk_altsec,
                                           sizeof(compdesk_altsec),
                                           &altsec) == LIBRDP_STATUS_OK);
@@ -4255,11 +4262,28 @@ static int test_gdi_orders(void)
                                           &altsec) == LIBRDP_STATUS_OK);
         PCHECK(altsec.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST &&
                altsec.payload_len == sizeof(gdiplus_first_altsec) - 1u);
+        PCHECK(rdp_gdi_parse_gdiplus_order(&altsec, &gdiplus_order) == LIBRDP_STATUS_OK);
+        PCHECK(gdiplus_order.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST &&
+               gdiplus_order.data_len == 3u &&
+               gdiplus_order.total_size == 3u &&
+               gdiplus_order.total_emf_size == 3u &&
+               gdiplus_order.data[0] == 0xaau &&
+               gdiplus_order.data[1] == 0xbbu &&
+               gdiplus_order.data[2] == 0xccu);
         PCHECK(rdp_gdi_parse_altsec_order(gdiplus_cache_next_altsec,
                                           sizeof(gdiplus_cache_next_altsec),
                                           &altsec) == LIBRDP_STATUS_OK);
         PCHECK(altsec.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT &&
                altsec.actual_length == sizeof(gdiplus_cache_next_altsec));
+        PCHECK(rdp_gdi_parse_gdiplus_order(&altsec, &gdiplus_order) == LIBRDP_STATUS_OK);
+        PCHECK(gdiplus_order.order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT &&
+               gdiplus_order.cache_type == 1u &&
+               gdiplus_order.cache_index == 2u &&
+               gdiplus_order.total_size == 3u &&
+               gdiplus_order.total_emf_size == 0u &&
+               gdiplus_order.data_len == 2u &&
+               gdiplus_order.data[0] == 0xddu &&
+               gdiplus_order.data[1] == 0xeeu);
         mixed.length = 0;
         PCHECK(rdp_buffer_append(&mixed, window_altsec, sizeof(window_altsec)) ==
                LIBRDP_STATUS_OK);

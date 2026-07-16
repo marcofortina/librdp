@@ -95,7 +95,7 @@
 #define DVC_SCENARIO_GEOMETRY_TRACKING_RUNTIME 24
 
 #define GDI_SCENARIO_NORMAL 0
-#define GDI_SCENARIO_UNSUPPORTED_ALTSEC 1
+#define GDI_SCENARIO_ALTSEC_RUNTIME 1
 #define GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION 2
 #define GDI_SCENARIO_DESKTOP_COMPOSITION 3
 
@@ -1363,29 +1363,115 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
     return ok;
 }
 
-static int build_gdi_unsupported_altsec_update_packet(rdp_buffer* out)
+static int build_gdi_altsec_runtime_update_packet(rdp_buffer* out)
 {
-    static const uint8_t gdiplus_first_altsec[] = {
+    static const uint8_t gdiplus_draw_first[] = {
         (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
-        0x03u,
+        0x02u,
         0x00u,
-        0x03u,
+        0x05u,
         0x00u,
         0x00u,
         0x00u,
-        0x03u,
+        0x05u,
         0x00u,
         0x00u,
         0x00u,
         0xaau,
-        0xbbu,
+        0xbbu
+    };
+    static const uint8_t gdiplus_draw_next[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT << 2u) | RDP_GDI_TS_SECONDARY),
+        0x01u,
+        0x00u,
         0xccu
     };
+    static const uint8_t gdiplus_draw_end[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_END << 2u) | RDP_GDI_TS_SECONDARY),
+        0x02u,
+        0x00u,
+        0x05u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x05u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0xddu,
+        0xeeu
+    };
+    static const uint8_t gdiplus_cache_first[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST << 2u) | RDP_GDI_TS_SECONDARY),
+        0x01u,
+        0x02u,
+        0x00u,
+        0x04u,
+        0x00u,
+        0x01u,
+        0x00u,
+        0x04u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0xf0u
+    };
+    static const uint8_t gdiplus_cache_next[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT << 2u) | RDP_GDI_TS_SECONDARY),
+        0x01u,
+        0x02u,
+        0x00u,
+        0x04u,
+        0x00u,
+        0x01u,
+        0x00u,
+        0xf1u
+    };
+    static const uint8_t gdiplus_cache_end[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END << 2u) | RDP_GDI_TS_SECONDARY),
+        0x01u,
+        0x02u,
+        0x00u,
+        0x04u,
+        0x00u,
+        0x02u,
+        0x00u,
+        0x04u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0xf2u,
+        0xf3u
+    };
+    static const uint8_t window_altsec[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_WINDOW << 2u) | RDP_GDI_TS_SECONDARY),
+        0x08u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x00u,
+        0x04u,
+        0x12u
+    };
+    static const uint8_t compdesk_first[] = {
+        (uint8_t)((RDP_GDI_ALTSEC_COMPDESK_FIRST << 2u) | RDP_GDI_TS_SECONDARY)
+    };
+    rdp_buffer orders;
+    int ok = 0;
 
-    return build_gdi_update_packet_from_orders(out,
-                                               gdiplus_first_altsec,
-                                               sizeof(gdiplus_first_altsec),
-                                               1);
+    rdp_buffer_init(&orders);
+    ok = rdp_buffer_append(&orders, gdiplus_draw_first, sizeof(gdiplus_draw_first)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, gdiplus_draw_next, sizeof(gdiplus_draw_next)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, gdiplus_draw_end, sizeof(gdiplus_draw_end)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, gdiplus_cache_first, sizeof(gdiplus_cache_first)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, gdiplus_cache_next, sizeof(gdiplus_cache_next)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, gdiplus_cache_end, sizeof(gdiplus_cache_end)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, window_altsec, sizeof(window_altsec)) == LIBRDP_STATUS_OK &&
+         rdp_buffer_append(&orders, compdesk_first, sizeof(compdesk_first)) == LIBRDP_STATUS_OK &&
+         build_gdi_update_packet_from_orders(out, orders.data, orders.length, 8);
+
+    rdp_buffer_free(&orders);
+    return ok;
 }
 
 static int build_gdi_desktop_composition_update_packet(rdp_buffer* out)
@@ -2965,7 +3051,7 @@ static int start_handshake_server_full(uint16_t* port,
     if (connection_count <= 0 || connection_count > 4)
         return 0;
     if (gdi_scenario != GDI_SCENARIO_NORMAL &&
-        gdi_scenario != GDI_SCENARIO_UNSUPPORTED_ALTSEC &&
+        gdi_scenario != GDI_SCENARIO_ALTSEC_RUNTIME &&
         gdi_scenario != GDI_SCENARIO_UPDATE_BEFORE_ACTIVATION &&
         gdi_scenario != GDI_SCENARIO_DESKTOP_COMPOSITION)
         return 0;
@@ -3154,8 +3240,8 @@ static int start_handshake_server_full(uint16_t* port,
                 {
                     if (!build_bitmap_update_packet(&bitmap_update) ||
                         !write_exact_fd(client, bitmap_update.data, bitmap_update.length) ||
-                        !((gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC) ?
-                              build_gdi_unsupported_altsec_update_packet(&gdi_orders_update) :
+                        !((gdi_scenario == GDI_SCENARIO_ALTSEC_RUNTIME) ?
+                              build_gdi_altsec_runtime_update_packet(&gdi_orders_update) :
                               ((gdi_scenario == GDI_SCENARIO_DESKTOP_COMPOSITION) ?
                                    build_gdi_desktop_composition_update_packet(&gdi_orders_update) :
                                    build_gdi_orders_update_packet(&gdi_orders_update))) ||
@@ -3170,7 +3256,7 @@ static int start_handshake_server_full(uint16_t* port,
                     {
                         _exit(5);
                     }
-                    if (gdi_scenario == GDI_SCENARIO_UNSUPPORTED_ALTSEC)
+                    if (gdi_scenario == GDI_SCENARIO_ALTSEC_RUNTIME)
                         goto done_connection;
                     if (dynamic_channel_scenario == DVC_SCENARIO_MULTIPARTY_RUNTIME)
                     {
@@ -7459,13 +7545,12 @@ static int test_printer_file_backend_job_lifecycle(void)
 }
 
 /*
- * Coverage: validates that recognized but non-rendered GDI alternate
- * secondary orders are treated as protocol errors at session runtime instead
- * of being silently accepted. This catches capability/runtime drift where
- * unsupported GDI+ or window composition packets would otherwise look
- * successfully rendered.
+ * Coverage: validates that complex GDI alternate secondary orders have a
+ * bounded runtime path. The client parses GDI+ draw/cache chunks, preserves
+ * window metadata and records desktop composition markers without advertising
+ * rasterization that is not available.
  */
-static int test_gdi_unsupported_altsec_order(void)
+static int test_gdi_altsec_runtime_orders(void)
 {
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
@@ -7487,7 +7572,7 @@ static int test_gdi_unsupported_altsec_order(void)
                                       0,
                                       1,
                                       DVC_SCENARIO_NORMAL,
-                                      GDI_SCENARIO_UNSUPPORTED_ALTSEC,
+                                      GDI_SCENARIO_ALTSEC_RUNTIME,
                                       0,
                                       CLIPBOARD_SCENARIO_NONE));
     CHECK(librdp_settings_set_port(settings, test_port) == LIBRDP_STATUS_OK);
@@ -7495,10 +7580,10 @@ static int test_gdi_unsupported_altsec_order(void)
     CHECK(session != NULL);
 
     CHECK(librdp_session_connect(session) == LIBRDP_STATUS_OK);
-    for (i = 0; i < 6u && status == LIBRDP_STATUS_OK; i++)
-        status = librdp_session_run_once(session, 1000);
-    CHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
-    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    for (i = 0; i < 4u && status == LIBRDP_STATUS_OK; i++)
+        status = librdp_session_run_once(session, 10);
+    CHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
+    CHECK(librdp_session_get_state(session) != LIBRDP_SESSION_FAILED);
 
     librdp_session_free(session);
     librdp_settings_free(settings);
@@ -8319,7 +8404,7 @@ int test_client_core(void)
         return 1;
     if (test_printer_file_backend_job_lifecycle() != 0)
         return 1;
-    if (test_gdi_unsupported_altsec_order() != 0)
+    if (test_gdi_altsec_runtime_orders() != 0)
         return 1;
     if (test_graphics_update_before_activation() != 0)
         return 1;

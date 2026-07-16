@@ -109,6 +109,9 @@
 #define RDP_SESSION_GDI_SAVE_BITMAP_SLOTS 64u
 #define RDP_SESSION_GDI_SAVE_BITMAP_MAX_BYTES (8u * 1024u * 1024u)
 #define RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS 256u
+#define RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS 128u
+#define RDP_SESSION_GDI_GDIPLUS_MAX_BYTES (16u * 1024u * 1024u)
+#define RDP_SESSION_GDI_WINDOW_MAX_BYTES (64u * 1024u)
 #define RDP_SESSION_GDI_SCREEN_BITMAP_SURFACE 0xffffu
 #define RDP_SESSION_PROGRESSIVE_TILE_STATES 2048u
 #define RDP_SESSION_POINTER_CACHE_SLOTS 128u
@@ -417,6 +420,36 @@ typedef struct rdp_session_gdi_stream_bitmap
     uint32_t bitmap_size;
     rdp_buffer bitmap_data;
 } rdp_session_gdi_stream_bitmap;
+
+typedef struct rdp_session_gdi_gdiplus_stream
+{
+    uint8_t active;
+    uint8_t cache_type;
+    uint16_t cache_index;
+    uint32_t total_size;
+    uint32_t total_emf_size;
+    rdp_buffer data;
+} rdp_session_gdi_gdiplus_stream;
+
+typedef struct rdp_session_gdi_gdiplus_cache_entry
+{
+    uint8_t active;
+    uint8_t cache_type;
+    uint16_t cache_index;
+    uint32_t total_size;
+    uint32_t total_emf_size;
+    uint64_t last_used;
+    rdp_buffer data;
+} rdp_session_gdi_gdiplus_cache_entry;
+
+typedef struct rdp_session_gdi_window_state
+{
+    uint8_t active;
+    uint16_t order_size;
+    uint32_t flags;
+    uint64_t update_count;
+    rdp_buffer data;
+} rdp_session_gdi_window_state;
 
 typedef struct rdp_session_gdi_bitmap_cache_entry
 {
@@ -757,6 +790,7 @@ struct librdp_session
     rdp_session_gdi_glyph_fragment gdi_glyph_fragments[RDP_SESSION_GDI_GLYPH_FRAGMENT_SLOTS];
     rdp_session_gdi_saved_bitmap gdi_saved_bitmaps[RDP_SESSION_GDI_SAVE_BITMAP_SLOTS];
     rdp_session_gdi_offscreen_bitmap gdi_offscreen_cache[RDP_SESSION_GDI_OFFSCREEN_CACHE_SLOTS];
+    rdp_session_gdi_gdiplus_cache_entry gdi_gdiplus_cache[RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS];
     rdp_session_progressive_tile_cache progressive_tiles[RDP_SESSION_PROGRESSIVE_TILE_STATES];
     rdp_session_pointer_cache_entry pointer_cache[RDP_SESSION_POINTER_CACHE_SLOTS];
     rdp_composited_render_tree composited_tree;
@@ -797,6 +831,11 @@ struct librdp_session
     uint32_t gdi_current_surface_id;
     uint8_t gdi_drawing_to_offscreen;
     rdp_session_gdi_stream_bitmap gdi_stream_bitmap;
+    rdp_session_gdi_gdiplus_stream gdi_gdiplus_stream;
+    rdp_session_gdi_window_state gdi_window_state;
+    uint64_t gdi_gdiplus_cache_clock;
+    size_t gdi_gdiplus_cache_bytes;
+    uint64_t gdi_gdiplus_draw_count;
     uint32_t graphics_current_frame_id;
     rdp_session_dynamic_channel dynamic_channels[RDP_SESSION_MAX_DYNAMIC_CHANNELS];
     librdp_echo_stats echo_stats;

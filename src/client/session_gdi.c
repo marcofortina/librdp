@@ -752,6 +752,398 @@ void rdp_session_gdi_stream_bitmap_reset(librdp_session* session)
     memset(&session->gdi_stream_bitmap, 0, sizeof(session->gdi_stream_bitmap));
 }
 
+void rdp_session_gdi_gdiplus_reset(librdp_session* session)
+{
+    size_t i = 0;
+
+    if (!session)
+        return;
+    rdp_buffer_free(&session->gdi_gdiplus_stream.data);
+    memset(&session->gdi_gdiplus_stream, 0, sizeof(session->gdi_gdiplus_stream));
+    for (i = 0; i < RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS; i++)
+        rdp_buffer_free(&session->gdi_gdiplus_cache[i].data);
+    memset(session->gdi_gdiplus_cache, 0, sizeof(session->gdi_gdiplus_cache));
+    session->gdi_gdiplus_cache_clock = 0;
+    session->gdi_gdiplus_cache_bytes = 0;
+    session->gdi_gdiplus_draw_count = 0;
+}
+
+void rdp_session_gdi_window_state_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_buffer_free(&session->gdi_window_state.data);
+    memset(&session->gdi_window_state, 0, sizeof(session->gdi_window_state));
+}
+
+static size_t rdp_session_gdi_gdiplus_cache_entry_size(const rdp_session_gdi_gdiplus_cache_entry* entry)
+{
+    if (!entry || !entry->active)
+        return 0;
+    return entry->data.length;
+}
+
+static void rdp_session_gdi_gdiplus_cache_evict(librdp_session* session, size_t index)
+{
+    rdp_session_gdi_gdiplus_cache_entry* entry = NULL;
+    size_t size = 0;
+
+    if (!session || index >= RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS)
+        return;
+    entry = &session->gdi_gdiplus_cache[index];
+    size = rdp_session_gdi_gdiplus_cache_entry_size(entry);
+    if (session->gdi_gdiplus_cache_bytes >= size)
+        session->gdi_gdiplus_cache_bytes -= size;
+    else
+        session->gdi_gdiplus_cache_bytes = 0;
+    rdp_buffer_free(&entry->data);
+    memset(entry, 0, sizeof(*entry));
+}
+
+static rdp_session_gdi_gdiplus_cache_entry* rdp_session_gdi_gdiplus_cache_find(
+    librdp_session* session,
+    uint8_t cache_type,
+    uint16_t cache_index)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_gdiplus_cache_entry* entry = &session->gdi_gdiplus_cache[i];
+
+        if (entry->active && entry->cache_type == cache_type &&
+            entry->cache_index == cache_index)
+        {
+            entry->last_used = ++session->gdi_gdiplus_cache_clock;
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static size_t rdp_session_gdi_gdiplus_cache_lru(librdp_session* session)
+{
+    size_t selected = 0;
+    uint64_t selected_clock = UINT64_MAX;
+    size_t i = 0;
+
+    for (i = 0; i < RDP_SESSION_GDI_GDIPLUS_CACHE_SLOTS; i++)
+    {
+        const rdp_session_gdi_gdiplus_cache_entry* entry = &session->gdi_gdiplus_cache[i];
+
+        if (!entry->active)
+            return i;
+        if (entry->last_used < selected_clock)
+        {
+            selected = i;
+            selected_clock = entry->last_used;
+        }
+    }
+    return selected;
+}
+
+static rdp_session_gdi_gdiplus_cache_entry* rdp_session_gdi_gdiplus_cache_slot(
+    librdp_session* session,
+    uint8_t cache_type,
+    uint16_t cache_index)
+{
+    rdp_session_gdi_gdiplus_cache_entry* entry =
+        rdp_session_gdi_gdiplus_cache_find(session, cache_type, cache_index);
+    size_t slot = 0;
+
+    if (entry)
+        return entry;
+    slot = rdp_session_gdi_gdiplus_cache_lru(session);
+    rdp_session_gdi_gdiplus_cache_evict(session, slot);
+    return &session->gdi_gdiplus_cache[slot];
+}
+
+static librdp_status rdp_session_gdi_gdiplus_append(rdp_buffer* buffer,
+                                                    uint32_t total_size,
+                                                    const uint8_t* data,
+                                                    uint32_t data_len)
+{
+    if (!buffer || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (total_size != 0 &&
+        (buffer->length > total_size || data_len > total_size - buffer->length))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (buffer->length > RDP_SESSION_GDI_GDIPLUS_MAX_BYTES ||
+        data_len > RDP_SESSION_GDI_GDIPLUS_MAX_BYTES - buffer->length)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_buffer_append(buffer, data, data_len);
+}
+
+static librdp_status rdp_session_gdi_gdiplus_cache_store(librdp_session* session,
+                                                         const rdp_gdi_gdiplus_order* order)
+{
+    rdp_session_gdi_gdiplus_cache_entry* entry = NULL;
+    size_t old_size = 0;
+    size_t new_total = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->total_size > RDP_SESSION_GDI_GDIPLUS_MAX_BYTES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    entry = rdp_session_gdi_gdiplus_cache_slot(session, order->cache_type, order->cache_index);
+    old_size = rdp_session_gdi_gdiplus_cache_entry_size(entry);
+    if (session->gdi_gdiplus_cache_bytes >= old_size)
+        new_total = session->gdi_gdiplus_cache_bytes - old_size;
+    if (order->total_size > RDP_SESSION_GDI_GDIPLUS_MAX_BYTES - new_total)
+    {
+        rdp_session_gdi_gdiplus_reset(session);
+        new_total = 0;
+        entry = rdp_session_gdi_gdiplus_cache_slot(session, order->cache_type, order->cache_index);
+    }
+    rdp_buffer_free(&entry->data);
+    memset(entry, 0, sizeof(*entry));
+    status = rdp_buffer_reserve(&entry->data, order->total_size);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_session_gdi_gdiplus_append(&entry->data,
+                                                order->total_size,
+                                                order->data,
+                                                order->data_len);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&entry->data);
+        memset(entry, 0, sizeof(*entry));
+        return status;
+    }
+    entry->active = 1;
+    entry->cache_type = order->cache_type;
+    entry->cache_index = order->cache_index;
+    entry->total_size = order->total_size;
+    entry->total_emf_size = order->total_emf_size;
+    entry->last_used = ++session->gdi_gdiplus_cache_clock;
+    session->gdi_gdiplus_cache_bytes = new_total + entry->data.length;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_gdiplus_cache_append(librdp_session* session,
+                                                          const rdp_gdi_gdiplus_order* order)
+{
+    rdp_session_gdi_gdiplus_cache_entry* entry = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    entry = rdp_session_gdi_gdiplus_cache_find(session, order->cache_type, order->cache_index);
+    if (!entry)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (order->total_size != 0 && order->total_size != entry->total_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_session_gdi_gdiplus_append(&entry->data,
+                                            entry->total_size,
+                                            order->data,
+                                            order->data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    session->gdi_gdiplus_cache_bytes += order->data_len;
+    entry->last_used = ++session->gdi_gdiplus_cache_clock;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_gdiplus_cache_finish(librdp_session* session,
+                                                          const rdp_gdi_gdiplus_order* order)
+{
+    rdp_session_gdi_gdiplus_cache_entry* entry = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_session_gdi_gdiplus_cache_append(session, order);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    entry = rdp_session_gdi_gdiplus_cache_find(session, order->cache_type, order->cache_index);
+    if (!entry)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (entry->total_size != 0 && entry->data.length != entry->total_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_gdi_apply_window_order(librdp_session* session,
+                                                        const rdp_gdi_window_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->data_len > RDP_SESSION_GDI_WINDOW_MAX_BYTES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_buffer_reserve(&session->gdi_window_state.data, order->data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    session->gdi_window_state.data.length = 0;
+    status = rdp_buffer_append(&session->gdi_window_state.data, order->data, order->data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    session->gdi_window_state.active = 1;
+    session->gdi_window_state.order_size = order->order_size;
+    session->gdi_window_state.flags = order->flags;
+    session->gdi_window_state.update_count++;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_DEBUG,
+                          "client.gdi.window.order",
+                          "order_size=%u flags=%u payload_len=%u updates=%u",
+                          order->order_size,
+                          order->flags,
+                          order->data_len,
+                          (unsigned)session->gdi_window_state.update_count);
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_session_gdi_gdiplus_is_draw_first(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST;
+}
+
+static int rdp_session_gdi_gdiplus_is_draw_next(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT;
+}
+
+static int rdp_session_gdi_gdiplus_is_draw_end(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_END;
+}
+
+static int rdp_session_gdi_gdiplus_is_cache_first(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST;
+}
+
+static int rdp_session_gdi_gdiplus_is_cache_next(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT;
+}
+
+static int rdp_session_gdi_gdiplus_is_cache_end(uint8_t order_type)
+{
+    return order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END;
+}
+
+static librdp_status rdp_session_gdi_gdiplus_draw_start(librdp_session* session,
+                                                        const rdp_gdi_gdiplus_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (order->total_size > RDP_SESSION_GDI_GDIPLUS_MAX_BYTES)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_buffer_free(&session->gdi_gdiplus_stream.data);
+    memset(&session->gdi_gdiplus_stream, 0, sizeof(session->gdi_gdiplus_stream));
+    status = rdp_buffer_reserve(&session->gdi_gdiplus_stream.data, order->total_size);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    session->gdi_gdiplus_stream.active = 1;
+    session->gdi_gdiplus_stream.total_size = order->total_size;
+    session->gdi_gdiplus_stream.total_emf_size = order->total_emf_size;
+    return rdp_session_gdi_gdiplus_append(&session->gdi_gdiplus_stream.data,
+                                          order->total_size,
+                                          order->data,
+                                          order->data_len);
+}
+
+static librdp_status rdp_session_gdi_gdiplus_draw_append(librdp_session* session,
+                                                         const rdp_gdi_gdiplus_order* order)
+{
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->gdi_gdiplus_stream.active)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (order->total_size != 0 && order->total_size != session->gdi_gdiplus_stream.total_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return rdp_session_gdi_gdiplus_append(&session->gdi_gdiplus_stream.data,
+                                          session->gdi_gdiplus_stream.total_size,
+                                          order->data,
+                                          order->data_len);
+}
+
+static librdp_status rdp_session_gdi_gdiplus_draw_finish(librdp_session* session,
+                                                         const rdp_gdi_gdiplus_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t received = 0;
+    uint32_t expected = 0;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!session->gdi_gdiplus_stream.active)
+        status = rdp_session_gdi_gdiplus_draw_start(session, order);
+    else
+        status = rdp_session_gdi_gdiplus_draw_append(session, order);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_buffer_free(&session->gdi_gdiplus_stream.data);
+        memset(&session->gdi_gdiplus_stream, 0, sizeof(session->gdi_gdiplus_stream));
+        return status;
+    }
+    received = session->gdi_gdiplus_stream.data.length;
+    expected = session->gdi_gdiplus_stream.total_size;
+    if (expected != 0 && received != expected)
+    {
+        rdp_buffer_free(&session->gdi_gdiplus_stream.data);
+        memset(&session->gdi_gdiplus_stream, 0, sizeof(session->gdi_gdiplus_stream));
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    session->gdi_gdiplus_draw_count++;
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          RDP_TRACE_LEVEL_INFO,
+                          "client.gdi.gdiplus.draw.complete",
+                          "surface_id=%u bytes=%u expected=%u emf_bytes=%u rasterized=0 count=%u",
+                          session->gdi_current_surface_id,
+                          (unsigned)received,
+                          expected,
+                          session->gdi_gdiplus_stream.total_emf_size,
+                          (unsigned)session->gdi_gdiplus_draw_count);
+    rdp_buffer_free(&session->gdi_gdiplus_stream.data);
+    memset(&session->gdi_gdiplus_stream, 0, sizeof(session->gdi_gdiplus_stream));
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Apply GDI+ alternate-secondary chunks without pretending to rasterize them.
+ * The client does not advertise Draw GDI+ capability, but malformed or
+ * unsolicited orders must still be bounded, correlated, and accounted for.
+ */
+static librdp_status rdp_session_gdi_apply_gdiplus_order(librdp_session* session,
+                                                         const rdp_gdi_gdiplus_order* order)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !order)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (rdp_session_gdi_gdiplus_is_draw_first(order->order_type))
+        status = rdp_session_gdi_gdiplus_draw_start(session, order);
+    else if (rdp_session_gdi_gdiplus_is_draw_next(order->order_type))
+        status = rdp_session_gdi_gdiplus_draw_append(session, order);
+    else if (rdp_session_gdi_gdiplus_is_draw_end(order->order_type))
+        status = rdp_session_gdi_gdiplus_draw_finish(session, order);
+    else if (rdp_session_gdi_gdiplus_is_cache_first(order->order_type))
+        status = rdp_session_gdi_gdiplus_cache_store(session, order);
+    else if (rdp_session_gdi_gdiplus_is_cache_next(order->order_type))
+        status = rdp_session_gdi_gdiplus_cache_append(session, order);
+    else if (rdp_session_gdi_gdiplus_is_cache_end(order->order_type))
+        status = rdp_session_gdi_gdiplus_cache_finish(session, order);
+    else
+        status = LIBRDP_STATUS_UNSUPPORTED;
+
+    rdp_trace_event_level(RDP_TRACE_CLIENT,
+                          status == LIBRDP_STATUS_OK ? RDP_TRACE_LEVEL_DEBUG : RDP_TRACE_LEVEL_INFO,
+                          "client.gdi.gdiplus.order",
+                          "order_type=%u cache_type=%u cache_index=%u chunk_len=%u total_size=%u status=%d",
+                          order->order_type,
+                          order->cache_type,
+                          order->cache_index,
+                          order->data_len,
+                          order->total_size,
+                          (int)status);
+    return status;
+}
+
 static librdp_status rdp_session_gdi_stream_bitmap_blit(librdp_session* session)
 {
     rdp_bitmap_rect rect;
@@ -3703,6 +4095,8 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
     rdp_gdi_frame_marker_order frame_marker;
     rdp_gdi_stream_bitmap_first_order stream_first;
     rdp_gdi_stream_bitmap_next_order stream_next;
+    rdp_gdi_gdiplus_order gdiplus;
+    rdp_gdi_window_order window;
     rdp_session_gdi_ninegrid_cache_entry* entry = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -3806,6 +4200,25 @@ static librdp_status rdp_session_apply_gdi_altsec_order(librdp_session* session,
                               "payload_len=%u",
                               (unsigned)header->payload_len);
         return LIBRDP_STATUS_OK;
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_WINDOW)
+    {
+        status = rdp_gdi_parse_window_order(header, &window);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_apply_window_order(session, &window);
+    }
+    if (header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST ||
+        header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT ||
+        header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_END ||
+        header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST ||
+        header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT ||
+        header->order_type == RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END)
+    {
+        status = rdp_gdi_parse_gdiplus_order(header, &gdiplus);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        return rdp_session_gdi_apply_gdiplus_order(session, &gdiplus);
     }
     rdp_trace_event_level(RDP_TRACE_PROTOCOL,
                           RDP_TRACE_LEVEL_DEBUG,
