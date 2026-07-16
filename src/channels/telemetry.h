@@ -25,6 +25,8 @@
 
 #include "common/buffer.h"
 
+#define RDP_TELEMETRY_CHANNEL_NAME "telemetry"
+#define RDP_TELEMETRY_DVC_CHANNEL_NAME "Microsoft::Windows::RDS::Telemetry"
 #define RDP_TELEMETRY_PDU_ID 0x01u
 #define RDP_TELEMETRY_PDU_LENGTH 0x12u
 

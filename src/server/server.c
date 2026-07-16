@@ -136,13 +136,11 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
 
 static int rdp_server_feature_parser_only(librdp_feature feature)
 {
-    return feature == LIBRDP_FEATURE_TELEMETRY ||
-           feature == LIBRDP_FEATURE_MULTITRANSPORT ||
+    return feature == LIBRDP_FEATURE_MULTITRANSPORT ||
            feature == LIBRDP_FEATURE_DESKTOP_COMPOSITION ||
            feature == LIBRDP_FEATURE_UDP_TRANSPORT ||
            feature == LIBRDP_FEATURE_UDP2_TRANSPORT ||
-           feature == LIBRDP_FEATURE_GEOMETRY_TRACKING ||
-           feature == LIBRDP_FEATURE_MULTIPARTY;
+           feature == LIBRDP_FEATURE_GEOMETRY_TRACKING;
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -160,15 +158,15 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
         case LIBRDP_FEATURE_RAIL:
         case LIBRDP_FEATURE_CR2:
         case LIBRDP_FEATURE_ECHO:
+        case LIBRDP_FEATURE_TELEMETRY:
+        case LIBRDP_FEATURE_MULTIPARTY:
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
             return 1;
-        case LIBRDP_FEATURE_TELEMETRY:
         case LIBRDP_FEATURE_MULTITRANSPORT:
         case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
         case LIBRDP_FEATURE_UDP_TRANSPORT:
         case LIBRDP_FEATURE_UDP2_TRANSPORT:
         case LIBRDP_FEATURE_GEOMETRY_TRACKING:
-        case LIBRDP_FEATURE_MULTIPARTY:
         default:
             return 0;
     }
@@ -551,6 +549,17 @@ static void rdp_server_extension_classify_name(const char* name,
         *family = LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR;
     else if (rdp_server_name_equals(name, name_len, RDP_AUTH_REDIRECTION_CHANNEL_NAME))
         *family = LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION;
+    else if (rdp_server_name_equals(name, name_len, RDP_TELEMETRY_CHANNEL_NAME) ||
+             rdp_server_name_equals(name, name_len, RDP_TELEMETRY_DVC_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_TELEMETRY;
+        *feature = LIBRDP_FEATURE_TELEMETRY;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_MULTIPARTY_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_MULTIPARTY;
+        *feature = LIBRDP_FEATURE_MULTIPARTY;
+    }
 }
 
 /*
@@ -4683,6 +4692,12 @@ static void rdp_server_finish_peer_feature_status(librdp_feature_status* status,
         status->reason = LIBRDP_FEATURE_REASON_NONE;
 }
 
+/*
+ * Resolve peer-local feature state from the negotiated server runtime, not from
+ * parser availability. The requested/built/backend flags are prepared by the
+ * generic feature layer; this function only marks features active when the
+ * matching static or dynamic channel is actually joined/open for this peer.
+ */
 static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer* peer,
                                                         librdp_feature feature,
                                                         librdp_feature_status* status)
@@ -4732,6 +4747,13 @@ static void rdp_server_peer_fill_runtime_feature_status(const librdp_server_peer
             break;
         case LIBRDP_FEATURE_DISPLAY_CONTROL:
             negotiated = rdp_server_peer_dynamic_channel_open_named(peer, RDP_DISPLAY_CONTROL_CHANNEL_NAME);
+            break;
+        case LIBRDP_FEATURE_TELEMETRY:
+            negotiated = rdp_server_peer_dynamic_channel_open_named(peer, RDP_TELEMETRY_DVC_CHANNEL_NAME) ||
+                         rdp_server_peer_static_channel_joined_named(peer, RDP_TELEMETRY_CHANNEL_NAME);
+            break;
+        case LIBRDP_FEATURE_MULTIPARTY:
+            negotiated = rdp_server_peer_static_channel_joined_named(peer, RDP_MULTIPARTY_CHANNEL_NAME);
             break;
         default:
             return;
