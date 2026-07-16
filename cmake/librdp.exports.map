@@ -44,6 +44,7 @@ LIBRDP_0.1 {
         librdp_server_input_event_init;
         librdp_server_static_channel_info_init;
         librdp_server_dynamic_channel_info_init;
+        librdp_server_extension_event_init;
         librdp_server_event_init;
         librdp_server_status_init;
         librdp_server_metrics_init;
@@ -52,6 +53,7 @@ LIBRDP_0.1 {
         librdp_server_get_pollfds;
         librdp_server_peer_set_input_callback;
         librdp_server_peer_set_channel_callback;
+        librdp_server_peer_set_extension_callback;
         librdp_server_peer_set_event_callback;
         librdp_server_peer_get_pollfds;
         librdp_server_peer_notify_poll;

@@ -28,6 +28,7 @@ extern "C" {
 #define LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_static_channel_info version. */
 #define LIBRDP_SERVER_DYNAMIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_dynamic_channel_info version. */
 #define LIBRDP_SERVER_CHANNEL_EVENT_VERSION 1u /**< Current librdp_server_channel_event version. */
+#define LIBRDP_SERVER_EXTENSION_EVENT_VERSION 1u /**< Current librdp_server_extension_event version. */
 #define LIBRDP_SERVER_EVENT_VERSION 1u /**< Current librdp_server_event version. */
 #define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
@@ -187,6 +188,43 @@ typedef enum librdp_server_channel_event_type
 } librdp_server_channel_event_type;
 
 /**
+ * @brief Server-side extension protocol family.
+ *
+ * Values identify normalized server dispatch for optional RDP extensions.
+ * They are independent from librdp_feature because some legacy static
+ * channels, such as clipboard, are always negotiated by name rather than by a
+ * public feature bit.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_extension_family
+{
+    LIBRDP_SERVER_EXTENSION_UNKNOWN = 0,             /**< Unrecognized extension channel. */
+    LIBRDP_SERVER_EXTENSION_CLIPBOARD = 1,           /**< Clipboard redirection static channel. */
+    LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION = 2,  /**< Core device redirection static channel. */
+    LIBRDP_SERVER_EXTENSION_AUDIO_OUTPUT = 3,        /**< Audio output static channel. */
+    LIBRDP_SERVER_EXTENSION_AUDIO_INPUT = 4,         /**< Audio input dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_VIDEO = 5,               /**< Video redirection static or dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_CAMERA = 6,              /**< Camera capture dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_SMARTCARD = 7,           /**< Smartcard traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_USB = 8,                 /**< USB redirection dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_PNP = 9,                 /**< Plug-and-play device redirection. */
+    LIBRDP_SERVER_EXTENSION_WEBAUTHN = 10,           /**< WebAuthn dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_RAIL = 11,               /**< Remote Programs static channel. */
+    LIBRDP_SERVER_EXTENSION_CR2 = 12,                /**< Composited remoting dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_ECHO = 13,               /**< Echo diagnostics dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_DISPLAY_CONTROL = 14,    /**< Display Control dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_GRAPHICS = 15,           /**< Graphics Pipeline dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_CORE_INPUT = 16,         /**< Core Input dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_TOUCH_INPUT = 17,        /**< Touch and pen input dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR = 18,       /**< Mouse Cursor dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION = 19,   /**< Authentication redirection dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_TELEMETRY = 20,          /**< Telemetry dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_DESKTOP_COMPOSITION = 21, /**< Desktop composition channel. */
+    LIBRDP_SERVER_EXTENSION_MULTIPARTY = 22          /**< Multiparty dynamic channel. */
+} librdp_server_extension_family;
+
+/**
  * @brief Server-side static virtual-channel data event.
  *
  * name and data are borrowed and valid only until the channel callback
@@ -207,6 +245,35 @@ typedef struct librdp_server_channel_event
     uint32_t dynamic_channel_id; /**< Dynamic channel ID for dynamic events, otherwise zero. */
     uint8_t dynamic_priority; /**< Dynamic channel priority for dynamic events, otherwise zero. */
 } librdp_server_channel_event;
+
+/**
+ * @brief Normalized server-side extension event.
+ *
+ * The event is emitted after the server has validated the outer channel packet
+ * and extracted the protocol family and message type. payload is borrowed and
+ * valid only until the extension callback returns. message_type and flags are
+ * protocol-specific values such as packet identifiers, order types, or command
+ * identifiers. status is the result of lightweight header validation.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_extension_event
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_EXTENSION_EVENT_VERSION. */
+    uint32_t size;    /**< Size of this struct in bytes. */
+    librdp_server_extension_family family; /**< Normalized extension family. */
+    librdp_feature feature; /**< Matching feature bit when one exists, otherwise zero. */
+    librdp_status status;   /**< Header validation status for this payload. */
+    uint16_t channel_id;    /**< Static MCS channel id carrying the payload, or zero. */
+    uint32_t dynamic_channel_id; /**< Dynamic channel id, or zero for static channels. */
+    uint8_t dynamic_priority;    /**< Dynamic channel priority, or zero for static channels. */
+    const char* name;            /**< Borrowed channel name; never NULL for known channels. */
+    size_t name_len;             /**< Channel name length in bytes. */
+    uint32_t message_type;       /**< Protocol-specific PDU, order, or function identifier. */
+    uint32_t flags;              /**< Protocol-specific flags or component value. */
+    const uint8_t* payload;      /**< Borrowed extension payload; may be NULL only when payload_len is zero. */
+    size_t payload_len;          /**< Extension payload length in bytes. */
+} librdp_server_extension_event;
 
 /**
  * @brief Server event discriminator.
@@ -333,6 +400,19 @@ typedef void (*librdp_server_channel_callback)(librdp_server_peer* peer,
                                                void* user_data);
 
 /**
+ * @brief Server-side normalized extension callback.
+ *
+ * Called synchronously from librdp_server_peer_run_once() on the thread driving
+ * the peer. The event object, channel name, and payload are valid only for the
+ * callback duration. The callback must not free the peer.
+ *
+ * @since 0.1.0
+ */
+typedef void (*librdp_server_extension_callback)(librdp_server_peer* peer,
+                                                 const librdp_server_extension_event* event,
+                                                 void* user_data);
+
+/**
  * @brief Server-side runtime event callback.
  *
  * Called synchronously from public server functions on the same serialized
@@ -428,6 +508,19 @@ LIBRDP_API librdp_status librdp_server_static_channel_info_init(librdp_server_st
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_dynamic_channel_info_init(librdp_server_dynamic_channel_info* info);
+
+/**
+ * @brief Initialize a server extension event value.
+ *
+ * @param[out] event Caller-owned event object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * event is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_extension_event_init(librdp_server_extension_event* event);
 
 /**
  * @brief Initialize a server runtime event value.
@@ -776,6 +869,28 @@ LIBRDP_API librdp_status librdp_server_peer_set_input_callback(librdp_server_pee
 LIBRDP_API librdp_status librdp_server_peer_set_channel_callback(librdp_server_peer* peer,
                                                                  librdp_server_channel_callback callback,
                                                                  void* user_data);
+
+/**
+ * @brief Register the callback for normalized extension-channel events.
+ *
+ * Passing NULL disables extension delivery. The callback is independent from
+ * librdp_server_peer_set_channel_callback(): applications can receive raw
+ * channel bytes, normalized extension events, or both.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque application pointer passed back to callback;
+ * may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer,
+                                                                   librdp_server_extension_callback callback,
+                                                                   void* user_data);
 
 /**
  * @brief Register the callback for server runtime events.

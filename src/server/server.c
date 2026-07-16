@@ -21,17 +21,26 @@
 #include "common/trace.h"
 #include "channels/audio_input.h"
 #include "channels/audio_output.h"
+#include "channels/auth_redirection.h"
 #include "channels/composited_remoting.h"
+#include "channels/core_input.h"
+#include "channels/desktop_composition.h"
 #include "channels/device_redirection.h"
 #include "channels/display_control.h"
 #include "channels/dynamic_channel.h"
 #include "channels/echo_channel.h"
+#include "channels/graphics_pipeline.h"
+#include "channels/input_channel.h"
+#include "channels/mouse_cursor.h"
+#include "channels/multiparty.h"
 #include "channels/remote_programs.h"
+#include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
 #include "channels/video_capture.h"
 #include "channels/video_optimized.h"
 #include "channels/video_redirection.h"
 #include "channels/webauthn_channel.h"
+#include "clipboard/clipboard.h"
 #include "graphics/bitmap.h"
 #include "licensing/licensing.h"
 #include "nla/credssp.h"
@@ -76,6 +85,7 @@
 #define RDP_SERVER_CREDSSP_MESSAGE_MAX 1048576u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
+#define RDP_SERVER_CLIPBOARD_CHANNEL_NAME "cliprdr"
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
      (uint32_t)LIBRDP_FEATURE_VIDEO | (uint32_t)LIBRDP_FEATURE_CAMERA |                                              \
@@ -286,6 +296,17 @@ librdp_status librdp_server_dynamic_channel_info_init(librdp_server_dynamic_chan
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_extension_event_init(librdp_server_extension_event* event)
+{
+    if (!event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(event, 0, sizeof(*event));
+    event->version = LIBRDP_SERVER_EXTENSION_EVENT_VERSION;
+    event->size = (uint32_t)sizeof(*event);
+    event->status = LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_event_init(librdp_server_event* event)
 {
     if (!event)
@@ -433,6 +454,397 @@ static void rdp_server_emit_channel_joined_event(librdp_server_peer* peer, uint1
     event.type = LIBRDP_SERVER_EVENT_CHANNEL_JOINED;
     event.channel_id = channel_id;
     rdp_server_emit_event(peer, &event);
+}
+
+static librdp_status rdp_server_read_u32_le(const uint8_t* data, size_t data_len, uint32_t* value)
+{
+    rdp_stream stream;
+
+    if (!data || !value || data_len < 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&stream, data, data_len);
+    return rdp_stream_read_u32_le(&stream, value);
+}
+
+static int rdp_server_name_equals(const char* name, size_t name_len, const char* expected)
+{
+    size_t expected_len = expected ? strlen(expected) : 0;
+
+    return name && expected && name_len == expected_len && memcmp(name, expected, expected_len) == 0;
+}
+
+static void rdp_server_extension_classify_name(const char* name,
+                                               size_t name_len,
+                                               librdp_server_extension_family* family,
+                                               librdp_feature* feature)
+{
+    *family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+    *feature = (librdp_feature)0;
+    if (rdp_server_name_equals(name, name_len, RDP_SERVER_CLIPBOARD_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_CLIPBOARD;
+    else if (rdp_server_name_equals(name, name_len, RDP_DEVICE_REDIRECTION_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION;
+        *feature = (librdp_feature)(LIBRDP_FEATURE_SMARTCARD |
+                                    LIBRDP_FEATURE_PNP);
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_AUDIO_OUTPUT_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_AUDIO_OUTPUT;
+        *feature = LIBRDP_FEATURE_AUDIO_OUTPUT;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_AUDIO_INPUT_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_AUDIO_INPUT;
+        *feature = LIBRDP_FEATURE_AUDIO_INPUT;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_VIDEO_REDIRECTION_CHANNEL_NAME) ||
+             rdp_server_name_equals(name, name_len, RDP_VIDEO_OPTIMIZED_CONTROL_CHANNEL) ||
+             rdp_server_name_equals(name, name_len, RDP_VIDEO_OPTIMIZED_DATA_CHANNEL))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_VIDEO;
+        *feature = LIBRDP_FEATURE_VIDEO;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME) ||
+             rdp_server_name_equals(name, name_len, RDP_VIDEO_CAPTURE_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_CAMERA;
+        *feature = LIBRDP_FEATURE_CAMERA;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_USB_REDIRECTION_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_USB;
+        *feature = LIBRDP_FEATURE_USB;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_WEBAUTHN_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_WEBAUTHN;
+        *feature = LIBRDP_FEATURE_WEBAUTHN;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_REMOTE_PROGRAMS_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_RAIL;
+        *feature = LIBRDP_FEATURE_RAIL;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_COMPOSITED_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_CR2;
+        *feature = LIBRDP_FEATURE_CR2;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_ECHO_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_ECHO;
+        *feature = LIBRDP_FEATURE_ECHO;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_DISPLAY_CONTROL_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_DISPLAY_CONTROL;
+        *feature = LIBRDP_FEATURE_DISPLAY_CONTROL;
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_GRAPHICS;
+    else if (rdp_server_name_equals(name, name_len, RDP_CORE_INPUT_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_CORE_INPUT;
+    else if (rdp_server_name_equals(name, name_len, RDP_INPUT_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_TOUCH_INPUT;
+    else if (rdp_server_name_equals(name, name_len, RDP_MOUSE_CURSOR_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR;
+    else if (rdp_server_name_equals(name, name_len, RDP_AUTH_REDIRECTION_CHANNEL_NAME))
+        *family = LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION;
+}
+
+/*
+ * Validate the outer PDU for a known server extension and extract stable
+ * metadata for the public extension callback. This deliberately stops at
+ * header-level fields so sensitive payloads remain borrowed and opaque; a
+ * malformed known extension returns the parser status and prevents raw data
+ * from being accepted as a valid runtime message.
+ */
+static librdp_status rdp_server_extension_validate(librdp_server_extension_event* event)
+{
+    switch (event->family)
+    {
+        case LIBRDP_SERVER_EXTENSION_CLIPBOARD:
+        {
+            rdp_clipboard_packet packet;
+            librdp_status status = rdp_clipboard_parse_packet(event->payload, event->payload_len, &packet);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = packet.type;
+                event->flags = packet.flags;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION:
+        {
+            rdp_device_redirection_header header;
+            librdp_status status = rdp_device_redirection_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.packet_id;
+                event->flags = header.component;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_AUDIO_OUTPUT:
+        {
+            rdp_audio_output_header header;
+            librdp_status status = rdp_audio_output_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.msg_type;
+                event->flags = header.pad;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_AUDIO_INPUT:
+        {
+            rdp_audio_input_header header;
+            librdp_status status = rdp_audio_input_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+                event->message_type = header.message_id;
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_VIDEO:
+            if (rdp_server_name_equals(event->name, event->name_len, RDP_VIDEO_REDIRECTION_CHANNEL_NAME))
+            {
+                rdp_video_redirection_header header;
+                librdp_status status =
+                    rdp_video_redirection_parse_header(event->payload, event->payload_len, 1, &header);
+                if (status != LIBRDP_STATUS_OK)
+                    status = rdp_video_redirection_parse_header(event->payload, event->payload_len, 0, &header);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    event->message_type = header.message_id;
+                    event->flags = header.interface_id;
+                }
+                return status;
+            }
+            {
+                rdp_video_optimized_header header;
+                librdp_status status =
+                    rdp_video_optimized_parse_header(event->payload, event->payload_len, &header);
+                if (status == LIBRDP_STATUS_OK)
+                    event->message_type = header.packet_type;
+                return status;
+            }
+        case LIBRDP_SERVER_EXTENSION_CAMERA:
+        {
+            rdp_video_capture_header header;
+            librdp_status status = rdp_video_capture_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.message_id;
+                event->flags = header.version;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_USB:
+        {
+            rdp_usb_redirection_header header;
+            librdp_status status =
+                rdp_usb_redirection_parse_header(event->payload, event->payload_len, 1, &header);
+            if (status != LIBRDP_STATUS_OK)
+                status = rdp_usb_redirection_parse_header(event->payload, event->payload_len, 0, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.has_function_id ? header.function_id : header.message_id;
+                event->flags = header.interface_id;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_WEBAUTHN:
+        {
+            rdp_webauthn_request request;
+            rdp_webauthn_response response;
+            librdp_status status = rdp_webauthn_parse_request(event->payload, event->payload_len, &request);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = request.command;
+                event->flags = request.flags;
+                return LIBRDP_STATUS_OK;
+            }
+            status = rdp_webauthn_parse_response(event->payload, event->payload_len, &response);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = response.hresult;
+                event->flags = 1u;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_RAIL:
+        {
+            rdp_remote_programs_header header;
+            librdp_status status = rdp_remote_programs_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.order_type;
+                event->flags = header.order_length;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_CR2:
+        {
+            rdp_composited_channel_message message;
+            librdp_status status =
+                rdp_composited_parse_channel_message(event->payload, event->payload_len, &message);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = message.control_code;
+                event->flags = message.message_size;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_ECHO:
+        {
+            rdp_echo_channel_pdu pdu;
+            librdp_status status = rdp_echo_channel_parse_request(event->payload, event->payload_len, &pdu);
+            if (status == LIBRDP_STATUS_OK)
+                event->message_type = 1u;
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_DISPLAY_CONTROL:
+        {
+            uint32_t pdu_type = 0;
+            librdp_status status = rdp_server_read_u32_le(event->payload, event->payload_len, &pdu_type);
+            if (status == LIBRDP_STATUS_OK)
+                event->message_type = pdu_type;
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_GRAPHICS:
+        {
+            rdp_graphics_header header;
+            librdp_status status = rdp_graphics_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.cmd_id;
+                event->flags = header.flags;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_CORE_INPUT:
+        {
+            rdp_core_input_header header;
+            librdp_status status = rdp_core_input_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.pdu_type;
+                event->flags = header.event_count;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_TOUCH_INPUT:
+        {
+            rdp_input_channel_header header;
+            librdp_status status = rdp_input_channel_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.event_id;
+                event->flags = header.pdu_length;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR:
+        {
+            rdp_mouse_cursor_header header;
+            librdp_status status = rdp_mouse_cursor_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.pdu_type;
+                event->flags = header.update_type;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION:
+        {
+            rdp_auth_redirection_call_message call;
+            rdp_auth_redirection_response_message response;
+            librdp_status status =
+                rdp_auth_redirection_parse_call_message(event->payload, event->payload_len, &call);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = call.call.call_id;
+                return LIBRDP_STATUS_OK;
+            }
+            status = rdp_auth_redirection_parse_response_message(event->payload, event->payload_len, &response);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = response.response.call_id;
+                event->flags = response.response.status;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_TELEMETRY:
+        {
+            rdp_telemetry_pdu pdu;
+            librdp_status status = rdp_telemetry_parse_pdu(event->payload, event->payload_len, &pdu);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = pdu.id;
+                event->flags = pdu.length;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_DESKTOP_COMPOSITION:
+        {
+            rdp_desktop_composition_header header;
+            librdp_status status =
+                rdp_desktop_composition_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.operation;
+                event->flags = header.size;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_MULTIPARTY:
+        {
+            rdp_multiparty_header header;
+            librdp_status status = rdp_multiparty_parse_header(event->payload, event->payload_len, &header);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = header.type;
+                event->flags = header.length;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_UNKNOWN:
+        case LIBRDP_SERVER_EXTENSION_SMARTCARD:
+        case LIBRDP_SERVER_EXTENSION_PNP:
+        default:
+            return LIBRDP_STATUS_OK;
+    }
+}
+
+static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
+                                                     const char* name,
+                                                     size_t name_len,
+                                                     uint16_t channel_id,
+                                                     uint32_t dynamic_channel_id,
+                                                     uint8_t dynamic_priority,
+                                                     const uint8_t* data,
+                                                     size_t data_len)
+{
+    librdp_server_extension_event event;
+
+    if (!peer || !name || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (librdp_server_extension_event_init(&event) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    event.channel_id = channel_id;
+    event.dynamic_channel_id = dynamic_channel_id;
+    event.dynamic_priority = dynamic_priority;
+    event.name = name;
+    event.name_len = name_len;
+    event.payload = data;
+    event.payload_len = data_len;
+    rdp_server_extension_classify_name(name, name_len, &event.family, &event.feature);
+    event.status = rdp_server_extension_validate(&event);
+    if (event.family != LIBRDP_SERVER_EXTENSION_UNKNOWN &&
+        event.status == LIBRDP_STATUS_OK &&
+        peer->extension_callback)
+        peer->extension_callback(peer, &event, peer->extension_callback_user_data);
+    return event.status;
 }
 
 librdp_server* librdp_server_new(const librdp_server_config* config)
@@ -2617,6 +3029,17 @@ librdp_status librdp_server_peer_set_channel_callback(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer,
+                                                        librdp_server_extension_callback callback,
+                                                        void* user_data)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    peer->extension_callback = callback;
+    peer->extension_callback_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
                                                     librdp_server_event_callback callback,
                                                     void* user_data)
@@ -3025,8 +3448,20 @@ static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* pee
                                                          const uint8_t* data,
                                                          size_t data_len)
 {
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!peer || !channel || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_emit_extension_event(peer,
+                                             channel->name,
+                                             strlen(channel->name),
+                                             rdp_server_dynamic_static_channel_id(peer),
+                                             channel->channel_id,
+                                             channel->priority,
+                                             data,
+                                             data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     rdp_server_metric_add(&peer->metrics.dynamic_channel_in, 1u);
     rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_in, (uint64_t)data_len);
     rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_DATA, data, data_len);
@@ -3557,14 +3992,29 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
             status = rdp_server_handle_dynamic_channel_message(peer, runtime_payload, runtime_payload_len);
         else
         {
+            char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
+
+            rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
+            status = rdp_server_emit_extension_event(peer,
+                                                     name,
+                                                     strlen(name),
+                                                     request.channel_id,
+                                                     0,
+                                                     0,
+                                                     runtime_payload,
+                                                     runtime_payload_len);
+            if (status != LIBRDP_STATUS_OK)
+            {
+                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+                rdp_buffer_free(&security_payload);
+                return status;
+            }
             rdp_server_metric_add(&peer->metrics.static_channel_in, 1u);
             rdp_server_metric_add(&peer->metrics.static_channel_bytes_in, (uint64_t)runtime_payload_len);
             if (peer->channel_callback)
             {
-                char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
                 librdp_server_channel_event event;
 
-                rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
                 memset(&event, 0, sizeof(event));
                 event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
                 event.size = (uint32_t)sizeof(event);
