@@ -186,6 +186,8 @@ librdp_feature_option(LIBRDP_WITH_ATTR "Use extended attribute filesystem metada
 librdp_feature_option(LIBRDP_WITH_ARCHIVE "Use archive-backed print payload support")
 librdp_feature_option(LIBRDP_WITH_CURL "Use libcurl for HTTP transport backends")
 librdp_feature_option(LIBRDP_WITH_LIBXML2 "Use libxml2 for workspace feed parsing")
+librdp_feature_option(LIBRDP_WITH_CAIRO "Use Cairo GDI raster backend")
+librdp_feature_option(LIBRDP_WITH_QUARTZ "Use Quartz GDI raster backend")
 librdp_feature_option(LIBRDP_WITH_PIPEWIRE "Use PipeWire audio backend in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_JPEG "Use JPEG camera conversion backend in the X11 viewer")
 librdp_feature_option(LIBRDP_WITH_XSHM "Use MIT-SHM presentation path in the X11 viewer")

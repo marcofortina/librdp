@@ -11,6 +11,7 @@
  */
 
 #include "client/session_internal.h"
+#include "graphics/gdi_backend.h"
 #include "graphics/rfx_stream.h"
 
 #include <stdint.h>
@@ -1973,6 +1974,11 @@ static librdp_status rdp_session_gdi_restore_bitmap(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Applies solid fill orders to the active surface. Native raster backends are
+ * used only for source-copy fills; ROP-dependent orders stay in the protocol
+ * software path so the order semantics remain explicit and testable.
+ */
 static librdp_status rdp_session_gdi_fill_rect(librdp_session* session,
                                                const rdp_gdi_render_op* op,
                                                const rdp_session_gdi_region* region,
@@ -1986,9 +1992,50 @@ static librdp_status rdp_session_gdi_fill_rect(librdp_session* session,
     uint8_t b = (uint8_t)(color & 0xffu);
     uint8_t g = (uint8_t)((color >> 8u) & 0xffu);
     uint8_t r = (uint8_t)((color >> 16u) & 0xffu);
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !op || !region)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!use_rop)
+    {
+        rdp_gdi_backend_kind backend = rdp_gdi_backend_default();
+
+        status = rdp_gdi_backend_fill_rect(backend,
+                                           session->surface,
+                                           region->dst_x,
+                                           region->dst_y,
+                                           region->width,
+                                           region->height,
+                                           color);
+        if (status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            backend = RDP_GDI_BACKEND_SOFTWARE;
+            status = rdp_gdi_backend_fill_rect(backend,
+                                               session->surface,
+                                               region->dst_x,
+                                               region->dst_y,
+                                               region->width,
+                                               region->height,
+                                               color);
+        }
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        rdp_session_emit_surface_invalidated(session, region->dst_x, region->dst_y, region->width, region->height);
+        rdp_trace_event_level(RDP_TRACE_CLIENT,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "client.gdi.order.apply",
+                              "type=%u kind=%u x=%u y=%u width=%u height=%u rop=%u color=%06x backend=%u",
+                              op->order_type,
+                              op->kind,
+                              region->dst_x,
+                              region->dst_y,
+                              region->width,
+                              region->height,
+                              rop,
+                              color & 0x00ffffffu,
+                              (unsigned)backend);
+        return LIBRDP_STATUS_OK;
+    }
     pixels = librdp_surface_pixels_mut(session->surface);
     stride = librdp_surface_stride(session->surface);
     if (!pixels || stride == 0)

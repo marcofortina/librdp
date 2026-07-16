@@ -79,6 +79,9 @@ set(LIBRDP_GRAPHICS_SOURCES
     src/graphics/avc.c
     src/graphics/bitmap.c
     src/graphics/clearcodec.c
+    src/graphics/gdi_backend.c
+    src/graphics/gdi_backend_cairo.c
+    src/graphics/gdi_backend_quartz.c
     src/graphics/gdi_orders.c
     src/graphics/gdi_render.c
     src/graphics/nscodec.c
@@ -345,6 +348,16 @@ if(LIBRDP_LIBXML2_FOUND)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_LIBXML2)
     librdp_link_library_targets(PkgConfig::LIBRDP_LIBXML2)
 endif()
+if(LIBRDP_CAIRO_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_CAIRO=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CAIRO)
+    librdp_link_library_targets(PkgConfig::LIBRDP_CAIRO)
+endif()
+if(LIBRDP_QUARTZ_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_QUARTZ=1)
+    target_link_libraries(librdp_objects PRIVATE ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
+    librdp_link_library_targets(${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
+endif()
 
 function(librdp_link_internal_runtime target)
     librdp_apply_system_definitions(${target})
@@ -389,5 +402,11 @@ function(librdp_link_internal_runtime target)
     endif()
     if(LIBRDP_LIBXML2_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_LIBXML2)
+    endif()
+    if(LIBRDP_CAIRO_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CAIRO)
+    endif()
+    if(LIBRDP_QUARTZ_FOUND)
+        target_link_libraries(${target} PRIVATE ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
     endif()
 endfunction()

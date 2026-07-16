@@ -1363,6 +1363,12 @@ static int build_gdi_orders_update_packet(rdp_buffer* out)
     return ok;
 }
 
+/*
+ * Builds a compact alternate-secondary stream covering GDI+ chunk correlation,
+ * GDI+ cache storage, window state, and desktop-composition lifecycle handling.
+ * The fixture catches regressions where recognized order families are parsed
+ * but then silently dropped by the session runtime.
+ */
 static int build_gdi_altsec_runtime_update_packet(rdp_buffer* out)
 {
     static const uint8_t gdiplus_draw_first[] = {

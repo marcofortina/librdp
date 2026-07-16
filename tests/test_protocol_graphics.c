@@ -44,6 +44,7 @@
 #include "graphics/avc.h"
 #include "graphics/bitmap.h"
 #include "graphics/clearcodec.h"
+#include "graphics/gdi_backend.h"
 #include "graphics/gdi_orders.h"
 #include "graphics/gdi_render.h"
 #include "graphics/nscodec.h"
@@ -68,6 +69,7 @@
 #include "transport/udp_transport.h"
 
 #include <librdp/session.h>
+#include <librdp/surface.h>
 
 #include <openssl/evp.h>
 
@@ -4694,6 +4696,98 @@ static int test_gdi_orders(void)
     return 0;
 }
 
+/*
+ * Coverage: exercises the normalized GDI raster backend contract on software
+ * and any native backends compiled into this build. The checks catch BGRA
+ * byte-order drift, unchecked rectangle bounds, and backend availability
+ * mismatches without requiring a display server.
+ */
+static int test_gdi_backends(void)
+{
+    rdp_gdi_backend_caps caps;
+    librdp_surface* surface = NULL;
+    const uint8_t* pixels = NULL;
+    size_t stride = 0;
+    librdp_status cairo_status = LIBRDP_STATUS_OK;
+    librdp_status quartz_status = LIBRDP_STATUS_OK;
+
+    surface = librdp_surface_new(6, 6, LIBRDP_PIXEL_FORMAT_BGRA32);
+    PCHECK(surface != NULL);
+    PCHECK(rdp_gdi_backend_query(RDP_GDI_BACKEND_SOFTWARE, &caps) == LIBRDP_STATUS_OK);
+    PCHECK(caps.name && strcmp(caps.name, "software") == 0);
+    PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_FILL_RECT) != 0);
+    PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
+                                     surface,
+                                     1,
+                                     2,
+                                     3,
+                                     2,
+                                     0x112233u) == LIBRDP_STATUS_OK);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    PCHECK(pixels != NULL && stride >= 24u);
+    PCHECK(pixels[(2u * stride) + 4u] == 0x33u &&
+           pixels[(2u * stride) + 5u] == 0x22u &&
+           pixels[(2u * stride) + 6u] == 0x11u &&
+           pixels[(2u * stride) + 7u] == 0xffu);
+    PCHECK(pixels[0] == 0 && pixels[1] == 0 && pixels[2] == 0 && pixels[3] == 0);
+    PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
+                                     surface,
+                                     5,
+                                     5,
+                                     2,
+                                     1,
+                                     0) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    librdp_surface_free(surface);
+
+    cairo_status = rdp_gdi_backend_query(RDP_GDI_BACKEND_CAIRO, &caps);
+    PCHECK(cairo_status == LIBRDP_STATUS_OK || cairo_status == LIBRDP_STATUS_UNSUPPORTED);
+    if (cairo_status == LIBRDP_STATUS_OK)
+    {
+        surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
+        PCHECK(surface != NULL);
+        PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_CAIRO,
+                                         surface,
+                                         0,
+                                         0,
+                                         2,
+                                         2,
+                                         0x445566u) == LIBRDP_STATUS_OK);
+        pixels = librdp_surface_pixels(surface);
+        PCHECK(pixels != NULL &&
+               pixels[0] == 0x66u &&
+               pixels[1] == 0x55u &&
+               pixels[2] == 0x44u &&
+               pixels[3] == 0xffu);
+        librdp_surface_free(surface);
+        surface = NULL;
+    }
+
+    quartz_status = rdp_gdi_backend_query(RDP_GDI_BACKEND_QUARTZ, &caps);
+    PCHECK(quartz_status == LIBRDP_STATUS_OK || quartz_status == LIBRDP_STATUS_UNSUPPORTED);
+    if (quartz_status == LIBRDP_STATUS_OK)
+    {
+        surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
+        PCHECK(surface != NULL);
+        PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_QUARTZ,
+                                         surface,
+                                         0,
+                                         0,
+                                         2,
+                                         2,
+                                         0x778899u) == LIBRDP_STATUS_OK);
+        pixels = librdp_surface_pixels(surface);
+        PCHECK(pixels != NULL &&
+               pixels[0] == 0x99u &&
+               pixels[1] == 0x88u &&
+               pixels[2] == 0x77u &&
+               pixels[3] == 0xffu);
+        librdp_surface_free(surface);
+    }
+    PCHECK(rdp_gdi_backend_query(rdp_gdi_backend_default(), &caps) == LIBRDP_STATUS_OK);
+    return 0;
+}
+
 
 int test_protocol_graphics_vectors(void)
 {
@@ -4704,6 +4798,8 @@ int test_protocol_graphics_vectors(void)
     if (test_video_redirection_channel() != 0)
         return 1;
     if (test_video_optimized_channel() != 0)
+        return 1;
+    if (test_gdi_backends() != 0)
         return 1;
     if (test_gdi_orders() != 0)
         return 1;
