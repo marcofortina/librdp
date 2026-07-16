@@ -1604,9 +1604,11 @@ static librdp_status rdp_session_write_file_full_ea_information(rdp_buffer* buff
 }
 
 /*
- * Dispatch file-information serialization by requested information class.
- * Unsupported classes fail with STATUS_INVALID_PARAMETER so the device
- * redirection state machine never emits a mismatched response layout.
+ * Dispatch file-information serialization by requested information class. The
+ * writer covers file query classes that can be represented on redirected POSIX
+ * files and reports operation-incompatible or backend-inapplicable classes as
+ * invalid parameters, so the device state machine never emits a mismatched
+ * response layout.
  */
 librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
                                                         uint32_t information_class,
@@ -1661,19 +1663,19 @@ librdp_status rdp_session_write_file_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION:
             return rdp_session_write_file_size_information(buffer, rdp_session_stat_size(st));
         default:
-            return LIBRDP_STATUS_UNSUPPORTED;
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
 }
 
 /*
  * Serialize one redirected directory enumeration record. The writer maps host
- * stat data into the requested information class, validate next-entry
- * offsets and keeping UTF-16 names consistent.
+ * stat data into the requested information class, validates next-entry
+ * offsets, and keeps UTF-16 names consistent.
  */
-static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
-                                                             uint32_t information_class,
-                                                             const struct stat* st,
-                                                             const char* name)
+librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
+                                                      uint32_t information_class,
+                                                      const struct stat* st,
+                                                      const char* name)
 {
     rdp_buffer utf16;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -1709,10 +1711,14 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
         case RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION:
         case RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION:
         case RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION:
+        case RDP_SESSION_FILE_ID_64_EXTD_DIRECTORY_INFORMATION:
+        case RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION:
+        case RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION:
+        case RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION:
             break;
         default:
             rdp_buffer_free(&utf16);
-            return LIBRDP_STATUS_UNSUPPORTED;
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
 
     status = rdp_buffer_append_u32_le(buffer, 0);
@@ -1744,15 +1750,33 @@ static librdp_status rdp_session_write_directory_information(rdp_buffer* buffer,
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, (uint32_t)utf16.length);
     if (information_class == RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION ||
-        information_class == RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION)
+        information_class == RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_64_EXTD_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION ||
+        information_class == RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION)
     {
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u32_le(buffer, 0);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_buffer_append_u32_le(buffer, 0);
         if (status == LIBRDP_STATUS_OK)
+        {
+            if (information_class == RDP_SESSION_FILE_ID_64_EXTD_DIRECTORY_INFORMATION ||
+                information_class == RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION ||
+                information_class == RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION ||
+                information_class == RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION)
+                status = rdp_session_append_u64_le(buffer, rdp_session_stat_file_id(st));
+        }
+        if (status == LIBRDP_STATUS_OK &&
+            (information_class == RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION ||
+             information_class == RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION ||
+             information_class == RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION ||
+             information_class == RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION))
             status = rdp_session_append_file_id_128(buffer, st);
-        if (information_class == RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION)
+        if (information_class == RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION ||
+            information_class == RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION ||
+            information_class == RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION)
         {
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_buffer_append_u8(buffer, 0);
@@ -3106,7 +3130,7 @@ static librdp_status rdp_session_handle_filesystem_set_information(librdp_sessio
                 io_status = rdp_session_apply_link_information_ex(session, file, &request);
                 break;
             default:
-                io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
+                io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
                 break;
         }
     }

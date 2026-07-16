@@ -20,6 +20,8 @@
 #include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
+#include "client/session_filesystem.h"
+#include "client/session_internal.h"
 #include "client/settings_internal.h"
 #include "clipboard/clipboard.h"
 #include "channels/device_redirection.h"
@@ -7552,6 +7554,159 @@ static int test_printer_file_backend_job_lifecycle(void)
 }
 
 /*
+ * Coverage: verifies RDPEFS file and directory information-class coverage
+ * without a remote server. The fixture checks that supported query layouts are
+ * serialized, modern directory ID classes are present, and usage mismatches fail
+ * as invalid parameters instead of looking like missing backend support.
+ */
+static int test_filesystem_information_class_coverage(void)
+{
+    static const uint32_t query_classes[] = {
+        RDP_SESSION_FILE_BASIC_INFORMATION,
+        RDP_SESSION_FILE_STANDARD_INFORMATION,
+        RDP_SESSION_FILE_INTERNAL_INFORMATION,
+        RDP_SESSION_FILE_EA_INFORMATION,
+        RDP_SESSION_FILE_ACCESS_INFORMATION,
+        RDP_SESSION_FILE_NAME_INFORMATION,
+        RDP_SESSION_FILE_NORMALIZED_NAME_INFORMATION,
+        RDP_SESSION_FILE_FULL_EA_INFORMATION,
+        RDP_SESSION_FILE_POSITION_INFORMATION,
+        RDP_SESSION_FILE_MODE_INFORMATION,
+        RDP_SESSION_FILE_ALIGNMENT_INFORMATION,
+        RDP_SESSION_FILE_ALL_INFORMATION,
+        RDP_SESSION_FILE_ALTERNATE_NAME_INFORMATION,
+        RDP_SESSION_FILE_STREAM_INFORMATION,
+        RDP_SESSION_FILE_COMPRESSION_INFORMATION,
+        RDP_SESSION_FILE_NETWORK_OPEN_INFORMATION,
+        RDP_SESSION_FILE_ATTRIBUTE_TAG_INFORMATION,
+        RDP_SESSION_FILE_ID_INFORMATION,
+        RDP_SESSION_FILE_CASE_SENSITIVE_INFORMATION,
+        RDP_SESSION_FILE_ALLOCATION_INFORMATION,
+        RDP_SESSION_FILE_END_OF_FILE_INFORMATION,
+        RDP_SESSION_FILE_VALID_DATA_LENGTH_INFORMATION};
+    static const uint32_t invalid_file_query_classes[] = {
+        RDP_SESSION_FILE_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_FULL_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_NAMES_INFORMATION,
+        RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_64_EXTD_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_RENAME_INFORMATION,
+        RDP_SESSION_FILE_LINK_INFORMATION,
+        RDP_SESSION_FILE_DISPOSITION_INFORMATION,
+        RDP_SESSION_FILE_DISPOSITION_INFORMATION_EX,
+        RDP_SESSION_FILE_RENAME_INFORMATION_EX,
+        RDP_SESSION_FILE_LINK_INFORMATION_EX,
+        RDP_SESSION_FILE_PIPE_INFORMATION,
+        RDP_SESSION_FILE_PIPE_LOCAL_INFORMATION,
+        RDP_SESSION_FILE_PIPE_REMOTE_INFORMATION,
+        RDP_SESSION_FILE_MAILSLOT_QUERY_INFORMATION,
+        RDP_SESSION_FILE_MAILSLOT_SET_INFORMATION,
+        RDP_SESSION_FILE_OBJECT_ID_INFORMATION,
+        RDP_SESSION_FILE_MOVE_CLUSTER_INFORMATION,
+        RDP_SESSION_FILE_QUOTA_INFORMATION,
+        RDP_SESSION_FILE_REPARSE_POINT_INFORMATION,
+        RDP_SESSION_FILE_TRACKING_INFORMATION,
+        RDP_SESSION_FILE_SHORT_NAME_INFORMATION,
+        RDP_SESSION_FILE_SFIO_RESERVE_INFORMATION,
+        RDP_SESSION_FILE_SFIO_VOLUME_INFORMATION,
+        RDP_SESSION_FILE_HARD_LINK_INFORMATION,
+        RDP_SESSION_FILE_ID_GLOBAL_TX_DIRECTORY_INFORMATION,
+        RDP_SESSION_FILE_STANDARD_LINK_INFORMATION};
+    static const struct
+    {
+        uint32_t information_class;
+        size_t fixed_size;
+    } directory_classes[] = {
+        {RDP_SESSION_FILE_DIRECTORY_INFORMATION, 64u},
+        {RDP_SESSION_FILE_FULL_DIRECTORY_INFORMATION, 68u},
+        {RDP_SESSION_FILE_BOTH_DIRECTORY_INFORMATION, 94u},
+        {RDP_SESSION_FILE_NAMES_INFORMATION, 12u},
+        {RDP_SESSION_FILE_ID_BOTH_DIRECTORY_INFORMATION, 102u},
+        {RDP_SESSION_FILE_ID_FULL_DIRECTORY_INFORMATION, 76u},
+        {RDP_SESSION_FILE_ID_EXTD_DIRECTORY_INFORMATION, 88u},
+        {RDP_SESSION_FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION, 114u},
+        {RDP_SESSION_FILE_ID_64_EXTD_DIRECTORY_INFORMATION, 80u},
+        {RDP_SESSION_FILE_ID_64_EXTD_BOTH_DIRECTORY_INFORMATION, 106u},
+        {RDP_SESSION_FILE_ID_ALL_EXTD_DIRECTORY_INFORMATION, 96u},
+        {RDP_SESSION_FILE_ID_ALL_EXTD_BOTH_DIRECTORY_INFORMATION, 122u}};
+    const char* directory_name = "sample.txt";
+    char path[] = "/tmp/librdp-rdpefs-info-XXXXXX";
+    rdp_session_redirected_file file;
+    rdp_buffer buffer;
+    struct stat st;
+    int fd = -1;
+    size_t i = 0;
+    size_t utf16_name_len = strlen(directory_name) * 2u;
+
+    memset(&file, 0, sizeof(file));
+    memset(&st, 0, sizeof(st));
+    rdp_buffer_init(&buffer);
+    fd = mkstemp(path);
+    CHECK(fd >= 0);
+    CHECK(write(fd, "abcdef", 6u) == 6);
+    CHECK(fstat(fd, &st) == 0);
+    file.active = 1;
+    file.fd = fd;
+    file.path = path;
+    file.desired_access = 0x0012019fu;
+    file.create_options = 0x00000020u;
+    file.delete_pending = 1;
+
+    for (i = 0; i < sizeof(query_classes) / sizeof(query_classes[0]); i++)
+    {
+        rdp_buffer_free(&buffer);
+        rdp_buffer_init(&buffer);
+        CHECK(rdp_session_write_file_information(&buffer, query_classes[i], &st, &file) == LIBRDP_STATUS_OK);
+        CHECK(buffer.length >= 4u || query_classes[i] == RDP_SESSION_FILE_FULL_EA_INFORMATION);
+    }
+    for (i = 0; i < sizeof(invalid_file_query_classes) / sizeof(invalid_file_query_classes[0]); i++)
+    {
+        rdp_buffer_free(&buffer);
+        rdp_buffer_init(&buffer);
+        CHECK(rdp_session_write_file_information(&buffer,
+                                                 invalid_file_query_classes[i],
+                                                 &st,
+                                                 &file) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_session_write_file_information(&buffer, 0xffffffffu, &st, &file) == LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    for (i = 0; i < sizeof(directory_classes) / sizeof(directory_classes[0]); i++)
+    {
+        rdp_buffer_free(&buffer);
+        rdp_buffer_init(&buffer);
+        CHECK(rdp_session_write_directory_information(&buffer,
+                                                      directory_classes[i].information_class,
+                                                      &st,
+                                                      directory_name) == LIBRDP_STATUS_OK);
+        CHECK(buffer.length == directory_classes[i].fixed_size + utf16_name_len);
+    }
+    rdp_buffer_free(&buffer);
+    rdp_buffer_init(&buffer);
+    CHECK(rdp_session_write_directory_information(&buffer,
+                                                  RDP_SESSION_FILE_BASIC_INFORMATION,
+                                                  &st,
+                                                  directory_name) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_session_write_directory_information(&buffer,
+                                                  0xffffffffu,
+                                                  &st,
+                                                  directory_name) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_free(&buffer);
+    CHECK(close(fd) == 0);
+    fd = -1;
+    CHECK(unlink(path) == 0);
+    return 0;
+}
+
+/*
  * Coverage: validates that complex GDI alternate secondary orders have a
  * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes
  * direct EMF+ vector records, preserves window metadata and records desktop
@@ -8408,6 +8563,8 @@ int test_client_core(void)
     if (test_webauthn_rp_id_allowlist_denies_unmatched_request() != 0)
         return 1;
     if (test_auth_redirection_dvc_requires_credssp() != 0)
+        return 1;
+    if (test_filesystem_information_class_coverage() != 0)
         return 1;
     if (test_printer_file_backend_job_lifecycle() != 0)
         return 1;
