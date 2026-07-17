@@ -365,6 +365,14 @@ static librdp_status rdp_server_create_tls_context(const char* certificate_path,
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Purpose: validate public server configuration before any listener, TLS
+ * context, or peer state is created.
+ * Invariants: size/version gates protect ABI extension, bounded fields are
+ * checked before allocation, and TLS material is opened only for TLS/NLA modes.
+ * Failure policy: reject invalid metadata or unusable TLS material without
+ * mutating caller-owned configuration.
+ */
 static int rdp_server_config_valid(const librdp_server_config* config)
 {
     SSL_CTX* tls_context = NULL;
@@ -1732,22 +1740,60 @@ static librdp_status rdp_server_send_mcs_pdu(librdp_server_peer* peer, const rdp
     return status;
 }
 
+static size_t rdp_server_outbound_security_overhead(const librdp_server_peer* peer)
+{
+    return peer && peer->standard_security_ready ? 12u : 0u;
+}
+
+static librdp_status rdp_server_prepare_outbound_security_payload(librdp_server_peer* peer,
+                                                                  rdp_buffer* secured,
+                                                                  const uint8_t** payload,
+                                                                  size_t* payload_len)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !secured || !payload || !payload_len || (!*payload && *payload_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!peer->standard_security_ready)
+        return LIBRDP_STATUS_OK;
+    status = rdp_security_write_encrypted_pdu(secured,
+                                              &peer->standard_security,
+                                              0,
+                                              *payload,
+                                              *payload_len);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        *payload = secured->data;
+        *payload_len = secured->length;
+    }
+    return status;
+}
+
 static librdp_status rdp_server_send_slowpath(librdp_server_peer* peer, const rdp_buffer* slowpath_pdu)
 {
+    rdp_buffer secured;
     rdp_buffer mcs;
+    const uint8_t* wire_payload = NULL;
+    size_t wire_payload_len = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || !slowpath_pdu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&secured);
     rdp_buffer_init(&mcs);
-    status = rdp_mcs_write_send_data_indication(&mcs,
-                                                peer->user_id,
-                                                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
-                                                slowpath_pdu->data,
-                                                slowpath_pdu->length);
+    wire_payload = slowpath_pdu->data;
+    wire_payload_len = slowpath_pdu->length;
+    status = rdp_server_prepare_outbound_security_payload(peer, &secured, &wire_payload, &wire_payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_send_data_indication(&mcs,
+                                                    peer->user_id,
+                                                    (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                                    wire_payload,
+                                                    wire_payload_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_mcs_pdu(peer, &mcs);
     rdp_buffer_free(&mcs);
+    rdp_buffer_free(&secured);
     return status;
 }
 
@@ -3284,6 +3330,7 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
     const size_t max_mcs_payload = 0x7fffu;
     const size_t bitmap_update_overhead = 22u;
     const size_t slowpath_data_overhead = 18u;
+    size_t security_overhead = 0;
     size_t max_raw_tile = 0;
     uint32_t max_tile_width = 0;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -3308,9 +3355,10 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                         peer->height);
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     }
-    if (max_mcs_payload <= bitmap_update_overhead + slowpath_data_overhead)
+    security_overhead = rdp_server_outbound_security_overhead(peer);
+    if (max_mcs_payload <= bitmap_update_overhead + slowpath_data_overhead + security_overhead)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    max_raw_tile = max_mcs_payload - bitmap_update_overhead - slowpath_data_overhead;
+    max_raw_tile = max_mcs_payload - bitmap_update_overhead - slowpath_data_overhead - security_overhead;
     max_tile_width = (uint32_t)(max_raw_tile / 4u);
     if (max_tile_width == 0 || width > UINT32_MAX - x || height > UINT32_MAX - y)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -3675,7 +3723,10 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
                                                    size_t data_len)
 {
     uint16_t channel_index = 0;
+    rdp_buffer secured;
     rdp_buffer mcs;
+    const uint8_t* wire_payload = data;
+    size_t wire_payload_len = data_len;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || (!data && data_len > 0))
@@ -3685,10 +3736,13 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
     if (!rdp_server_static_channel_index(peer, channel_id, &channel_index) ||
         !peer->advertised_channel_joined[channel_index])
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (data_len > 0x7fffu)
+    if (data_len > 0x7fffu || rdp_server_outbound_security_overhead(peer) > 0x7fffu - data_len)
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    rdp_buffer_init(&secured);
     rdp_buffer_init(&mcs);
-    status = rdp_mcs_write_send_data_indication(&mcs, peer->user_id, channel_id, data, data_len);
+    status = rdp_server_prepare_outbound_security_payload(peer, &secured, &wire_payload, &wire_payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_mcs_write_send_data_indication(&mcs, peer->user_id, channel_id, wire_payload, wire_payload_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_mcs_pdu(peer, &mcs);
     if (status == LIBRDP_STATUS_OK)
@@ -3703,6 +3757,7 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
                                  "server.channel.send",
                                  "static channel send failed");
     rdp_buffer_free(&mcs);
+    rdp_buffer_free(&secured);
     return status;
 }
 
