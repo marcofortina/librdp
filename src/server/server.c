@@ -33,6 +33,7 @@
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
 #include "channels/multiparty.h"
+#include "channels/pnp_redirection.h"
 #include "channels/remote_programs.h"
 #include "channels/telemetry.h"
 #include "channels/usb_redirection.h"
@@ -65,6 +66,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509err.h>
 #include <poll.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1139,6 +1141,13 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Map a joined channel name to the normalized extension family used by public
+ * callbacks, feature status, and runtime state. The function deliberately keeps
+ * this as a single switch-like classifier so every channel-family mapping has
+ * one review point; callers still validate the concrete payload before marking
+ * a message as accepted.
+ */
 static void rdp_server_extension_classify_name(const char* name,
                                                size_t name_len,
                                                librdp_server_extension_family* family,
@@ -1153,6 +1162,11 @@ static void rdp_server_extension_classify_name(const char* name,
         *family = LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION;
         *feature = (librdp_feature)(LIBRDP_FEATURE_SMARTCARD |
                                     LIBRDP_FEATURE_PNP);
+    }
+    else if (rdp_server_name_equals(name, name_len, RDP_PNP_REDIRECTION_CHANNEL_NAME))
+    {
+        *family = LIBRDP_SERVER_EXTENSION_PNP;
+        *feature = LIBRDP_FEATURE_PNP;
     }
     else if (rdp_server_name_equals(name, name_len, RDP_AUDIO_OUTPUT_CHANNEL_NAME))
     {
@@ -1490,8 +1504,40 @@ static librdp_status rdp_server_extension_validate(librdp_server_extension_event
             }
             return status;
         }
-        case LIBRDP_SERVER_EXTENSION_UNKNOWN:
         case LIBRDP_SERVER_EXTENSION_PNP:
+        {
+            rdp_pnp_redirection_info_header info;
+            rdp_pnp_redirection_server_io_header server_io;
+            rdp_pnp_redirection_client_io_header client_io;
+            librdp_status status = rdp_pnp_redirection_parse_info_header(event->payload,
+                                                                         event->payload_len,
+                                                                         &info);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = info.packet_id;
+                event->flags = info.size;
+                return LIBRDP_STATUS_OK;
+            }
+            status = rdp_pnp_redirection_parse_server_io_header(event->payload,
+                                                                event->payload_len,
+                                                                &server_io);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = server_io.function_id;
+                event->flags = server_io.request_id;
+                return LIBRDP_STATUS_OK;
+            }
+            status = rdp_pnp_redirection_parse_client_io_header(event->payload,
+                                                                event->payload_len,
+                                                                &client_io);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                event->message_type = client_io.packet_type;
+                event->flags = client_io.request_id;
+            }
+            return status;
+        }
+        case LIBRDP_SERVER_EXTENSION_UNKNOWN:
         default:
             return LIBRDP_STATUS_OK;
     }
@@ -4892,6 +4938,409 @@ librdp_status librdp_server_peer_send_device_io_completion(librdp_server_peer* p
                                                                channel_id,
                                                                payload.data,
                                                                payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_usb_device_capabilities_init(
+    librdp_server_usb_device_capabilities* capabilities)
+{
+    if (!capabilities)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(capabilities, 0, sizeof(*capabilities));
+    capabilities->version = LIBRDP_SERVER_USB_DEVICE_CAPABILITIES_VERSION;
+    capabilities->size = sizeof(*capabilities);
+    capabilities->usb_bus_interface_version = 1u;
+    capabilities->usbdi_version = 0x00000600u;
+    capabilities->supported_usb_version = 0x00000200u;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_usb_device_capabilities_to_wire(
+    const librdp_server_usb_device_capabilities* capabilities,
+    rdp_usb_redirection_device_capabilities* wire)
+{
+    const size_t required_size =
+        offsetof(librdp_server_usb_device_capabilities,
+                 no_ack_isoch_write_jitter_buffer_size_ms) +
+        sizeof(capabilities->no_ack_isoch_write_jitter_buffer_size_ms);
+
+    if (!capabilities || !wire ||
+        capabilities->version != LIBRDP_SERVER_USB_DEVICE_CAPABILITIES_VERSION ||
+        capabilities->size < required_size ||
+        capabilities->usb_bus_interface_version == 0 ||
+        capabilities->supported_usb_version == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(wire, 0, sizeof(*wire));
+    wire->cb_size = RDP_USB_REDIRECTION_DEVICE_CAPABILITIES_SIZE;
+    wire->usb_bus_interface_version = capabilities->usb_bus_interface_version;
+    wire->usbdi_version = capabilities->usbdi_version;
+    wire->supported_usb_version = capabilities->supported_usb_version;
+    wire->hcd_capabilities = capabilities->hcd_capabilities;
+    wire->device_is_high_speed = capabilities->device_is_high_speed ? 1u : 0u;
+    wire->no_ack_isoch_write_jitter_buffer_size_ms =
+        capabilities->no_ack_isoch_write_jitter_buffer_size_ms;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_send_usb_capability_response(librdp_server_peer* peer,
+                                                              uint32_t dynamic_channel_id,
+                                                              uint32_t message_id,
+                                                              uint32_t capability_value,
+                                                              uint32_t result)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_usb_redirection_write_capability_response(&payload,
+                                                           message_id,
+                                                           capability_value,
+                                                           result);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_usb_add_device(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t message_id,
+    uint32_t usb_device,
+    const void* device_instance_id,
+    uint32_t device_instance_id_len,
+    const void* hardware_ids,
+    uint32_t hardware_ids_len,
+    const void* compatibility_ids,
+    uint32_t compatibility_ids_len,
+    const void* container_id,
+    uint32_t container_id_len,
+    const librdp_server_usb_device_capabilities* capabilities)
+{
+    rdp_usb_redirection_device_capabilities wire_caps;
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if ((!device_instance_id && device_instance_id_len > 0) ||
+        (!hardware_ids && hardware_ids_len > 0) ||
+        (!compatibility_ids && compatibility_ids_len > 0) ||
+        (!container_id && container_id_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_usb_device_capabilities_to_wire(capabilities, &wire_caps);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_usb_redirection_write_add_device(&payload,
+                                                  message_id,
+                                                  usb_device,
+                                                  (const uint8_t*)device_instance_id,
+                                                  device_instance_id_len,
+                                                  (const uint8_t*)hardware_ids,
+                                                  hardware_ids_len,
+                                                  (const uint8_t*)compatibility_ids,
+                                                  compatibility_ids_len,
+                                                  (const uint8_t*)container_id,
+                                                  container_id_len,
+                                                  &wire_caps);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_usb_retract_device(librdp_server_peer* peer,
+                                                         uint32_t dynamic_channel_id,
+                                                         uint32_t interface_id,
+                                                         uint32_t message_id,
+                                                         uint32_t reason)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_usb_redirection_write_retract_device(&payload, interface_id, message_id, reason);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_usb_io_control_completion(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t request_completion_interface_id,
+    uint32_t message_id,
+    uint32_t request_id,
+    uint32_t hresult,
+    uint32_t information,
+    const void* output_buffer,
+    uint32_t output_buffer_len)
+{
+    rdp_usb_redirection_io_completion completion;
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!output_buffer && output_buffer_len > 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&completion, 0, sizeof(completion));
+    completion.request_id = request_id;
+    completion.hresult = hresult;
+    completion.information = information;
+    completion.output_buffer = (const uint8_t*)output_buffer;
+    completion.output_buffer_len = output_buffer_len;
+    rdp_buffer_init(&payload);
+    status = rdp_usb_redirection_write_io_control_completion(&payload,
+                                                             request_completion_interface_id,
+                                                             message_id,
+                                                             &completion);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_usb_urb_completion(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t request_completion_interface_id,
+    uint32_t message_id,
+    uint32_t request_id,
+    const void* ts_urb_result,
+    uint32_t ts_urb_result_len,
+    uint32_t hresult,
+    const void* output_buffer,
+    uint32_t output_buffer_len)
+{
+    rdp_usb_redirection_urb_completion completion;
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if ((!ts_urb_result && ts_urb_result_len > 0) ||
+        (!output_buffer && output_buffer_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&completion, 0, sizeof(completion));
+    completion.request_id = request_id;
+    completion.ts_urb_result = (const uint8_t*)ts_urb_result;
+    completion.cb_ts_urb_result = ts_urb_result_len;
+    completion.hresult = hresult;
+    completion.output_buffer = (const uint8_t*)output_buffer;
+    completion.output_buffer_len = output_buffer_len;
+    rdp_buffer_init(&payload);
+    status = output_buffer_len > 0 ?
+                 rdp_usb_redirection_write_urb_completion(&payload,
+                                                          request_completion_interface_id,
+                                                          message_id,
+                                                          &completion) :
+                 rdp_usb_redirection_write_urb_completion_no_data(&payload,
+                                                                  request_completion_interface_id,
+                                                                  message_id,
+                                                                  &completion);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status rdp_server_send_pnp_buffer(librdp_server_peer* peer,
+                                                uint16_t channel_id,
+                                                const rdp_buffer* payload)
+{
+    return rdp_server_send_static_named_buffer(peer,
+                                               channel_id,
+                                               RDP_PNP_REDIRECTION_CHANNEL_NAME,
+                                               payload);
+}
+
+librdp_status librdp_server_peer_send_pnp_version(librdp_server_peer* peer,
+                                                  uint16_t channel_id,
+                                                  uint32_t major_version,
+                                                  uint32_t minor_version,
+                                                  uint32_t capabilities)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_version(&payload,
+                                               major_version,
+                                               minor_version,
+                                               capabilities);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_authenticated(librdp_server_peer* peer,
+                                                        uint16_t channel_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_authenticated(&payload);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_capabilities_request(librdp_server_peer* peer,
+                                                               uint16_t channel_id,
+                                                               uint32_t request_id,
+                                                               uint16_t version)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_capabilities_request(&payload, request_id, 0, version);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_create_request(librdp_server_peer* peer,
+                                                         uint16_t channel_id,
+                                                         uint32_t request_id,
+                                                         uint32_t device_id,
+                                                         uint32_t desired_access,
+                                                         uint32_t share_mode,
+                                                         uint32_t creation_disposition,
+                                                         uint32_t flags_and_attributes)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_create_request(&payload,
+                                                      request_id,
+                                                      0,
+                                                      device_id,
+                                                      desired_access,
+                                                      share_mode,
+                                                      creation_disposition,
+                                                      flags_and_attributes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_read_request(librdp_server_peer* peer,
+                                                       uint16_t channel_id,
+                                                       uint32_t request_id,
+                                                       uint32_t bytes_to_read,
+                                                       uint32_t offset_high,
+                                                       uint32_t offset_low)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_read_request(&payload,
+                                                    request_id,
+                                                    0,
+                                                    bytes_to_read,
+                                                    offset_high,
+                                                    offset_low);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_write_request(librdp_server_peer* peer,
+                                                        uint16_t channel_id,
+                                                        uint32_t request_id,
+                                                        uint32_t offset_high,
+                                                        uint32_t offset_low,
+                                                        const void* data,
+                                                        uint32_t data_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data && data_len > 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_write_request(&payload,
+                                                     request_id,
+                                                     0,
+                                                     offset_high,
+                                                     offset_low,
+                                                     (const uint8_t*)data,
+                                                     data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_control_request(librdp_server_peer* peer,
+                                                          uint16_t channel_id,
+                                                          uint32_t request_id,
+                                                          uint32_t io_code,
+                                                          const void* input,
+                                                          uint32_t input_len,
+                                                          uint32_t output_len,
+                                                          const void* output,
+                                                          uint32_t actual_output_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if ((!input && input_len > 0) || (!output && actual_output_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_control_request(&payload,
+                                                       request_id,
+                                                       0,
+                                                       io_code,
+                                                       (const uint8_t*)input,
+                                                       input_len,
+                                                       output_len,
+                                                       (const uint8_t*)output,
+                                                       actual_output_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_pnp_cancel_request(librdp_server_peer* peer,
+                                                         uint16_t channel_id,
+                                                         uint32_t request_id,
+                                                         uint32_t id_to_cancel)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_pnp_redirection_write_cancel_request(&payload,
+                                                      request_id,
+                                                      0,
+                                                      0,
+                                                      id_to_cancel);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_pnp_buffer(peer, channel_id, &payload);
     rdp_buffer_free(&payload);
     return status;
 }

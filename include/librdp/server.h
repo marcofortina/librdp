@@ -277,6 +277,35 @@ typedef struct librdp_server_clipboard_state
 } librdp_server_clipboard_state;
 
 /**
+ * @brief ABI version for librdp_server_usb_device_capabilities.
+ *
+ * @since 0.1.0
+ */
+#define LIBRDP_SERVER_USB_DEVICE_CAPABILITIES_VERSION 1u
+
+/**
+ * @brief Server-side USB redirection device capability advertisement.
+ *
+ * The structure mirrors the USB bus capability block sent by a server provider
+ * when it exposes one redirected USB device. It contains metadata only; device
+ * descriptors and transfer payloads remain borrowed buffers passed to the send
+ * APIs.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_usb_device_capabilities
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_USB_DEVICE_CAPABILITIES_VERSION. */
+    size_t size;      /**< Size of this structure as seen by the caller. */
+    uint32_t usb_bus_interface_version; /**< USB bus interface version; must be non-zero. */
+    uint32_t usbdi_version;             /**< USBDI version advertised for the device. */
+    uint32_t supported_usb_version;     /**< Supported USB specification version. */
+    uint32_t hcd_capabilities;          /**< Host-controller capability flags. */
+    uint32_t device_is_high_speed;      /**< Non-zero when the device is high-speed. */
+    uint32_t no_ack_isoch_write_jitter_buffer_size_ms; /**< Optional isochronous jitter buffer. */
+} librdp_server_usb_device_capabilities;
+
+/**
  * @brief Server-side static virtual-channel data event.
  *
  * name and data are borrowed and valid only until the channel callback
@@ -1748,6 +1777,20 @@ LIBRDP_API librdp_status librdp_server_peer_record_extension_timeout(
     librdp_server_extension_family family);
 
 /**
+ * @brief Initialize a USB device capability advertisement.
+ *
+ * @param[out] capabilities Capability object to initialize; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * capabilities is NULL.
+ *
+ * @note Thread-safety: the caller owns the object.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_usb_device_capabilities_init(
+    librdp_server_usb_device_capabilities* capabilities);
+
+/**
  * @brief Send a typed device-redirection device reply.
  *
  * The helper validates that device_id is known for family before serializing the
@@ -1812,6 +1855,372 @@ LIBRDP_API librdp_status librdp_server_peer_send_device_io_completion(
     uint32_t io_status,
     const void* payload,
     size_t payload_len);
+
+/**
+ * @brief Send a USB redirection capability response.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open USB redirection dynamic channel id.
+ * @param[in] message_id Message identifier copied from the request.
+ * @param[in] capability_value Capability value being acknowledged.
+ * @param[in] result Protocol result code.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer, invalid capability, or non-USB channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_usb_capability_response(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t message_id,
+    uint32_t capability_value,
+    uint32_t result);
+
+/**
+ * @brief Announce a USB device on an open USB redirection channel.
+ *
+ * All byte buffers are borrowed only for the duration of the call and may be
+ * NULL only when the matching length is zero. capabilities must be initialized
+ * with librdp_server_usb_device_capabilities_init().
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open USB redirection dynamic channel id.
+ * @param[in] message_id Message identifier for the Add Device PDU.
+ * @param[in] usb_device Server-assigned USB device identifier.
+ * @param[in] device_instance_id Optional UTF-16LE device instance ID bytes;
+ * may be NULL only when device_instance_id_len is zero.
+ * @param[in] device_instance_id_len Length of device_instance_id.
+ * @param[in] hardware_ids Optional UTF-16LE hardware ID multistring bytes;
+ * may be NULL only when hardware_ids_len is zero.
+ * @param[in] hardware_ids_len Length of hardware_ids.
+ * @param[in] compatibility_ids Optional UTF-16LE compatibility ID multistring
+ * bytes; may be NULL only when compatibility_ids_len is zero.
+ * @param[in] compatibility_ids_len Length of compatibility_ids.
+ * @param[in] container_id Optional UTF-16LE container ID bytes; may be NULL
+ * only when container_id_len is zero.
+ * @param[in] container_id_len Length of container_id.
+ * @param[in] capabilities USB capability metadata; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid buffers, capability metadata, or non-USB channel;
+ * LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport or allocation
+ * errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Device identifiers and descriptors can reveal host hardware; default
+ * trace policy redacts payload bytes.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_usb_add_device(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t message_id,
+    uint32_t usb_device,
+    const void* device_instance_id,
+    uint32_t device_instance_id_len,
+    const void* hardware_ids,
+    uint32_t hardware_ids_len,
+    const void* compatibility_ids,
+    uint32_t compatibility_ids_len,
+    const void* container_id,
+    uint32_t container_id_len,
+    const librdp_server_usb_device_capabilities* capabilities);
+
+/**
+ * @brief Retract a USB device from an open USB redirection channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open USB redirection dynamic channel id.
+ * @param[in] interface_id USB interface identifier to encode.
+ * @param[in] message_id Message identifier for the retract PDU.
+ * @param[in] reason Protocol reason code.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-USB channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE;
+ * transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_usb_retract_device(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t interface_id,
+    uint32_t message_id,
+    uint32_t reason);
+
+/**
+ * @brief Complete a USB IO-control request.
+ *
+ * output_buffer is borrowed only for the duration of the call and may be NULL
+ * only when output_buffer_len is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open USB redirection dynamic channel id.
+ * @param[in] request_completion_interface_id Request-completion interface id.
+ * @param[in] message_id Completion message identifier.
+ * @param[in] request_id Request identifier being completed.
+ * @param[in] hresult Completion HRESULT.
+ * @param[in] information Completion information field.
+ * @param[in] output_buffer Optional borrowed output bytes; may be NULL only
+ * when output_buffer_len is zero.
+ * @param[in] output_buffer_len Number of bytes in output_buffer.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or non-USB channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_usb_io_control_completion(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t request_completion_interface_id,
+    uint32_t message_id,
+    uint32_t request_id,
+    uint32_t hresult,
+    uint32_t information,
+    const void* output_buffer,
+    uint32_t output_buffer_len);
+
+/**
+ * @brief Complete a USB URB request.
+ *
+ * ts_urb_result and output_buffer are borrowed only for the duration of the
+ * call and may be NULL only when their matching length is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open USB redirection dynamic channel id.
+ * @param[in] request_completion_interface_id Request-completion interface id.
+ * @param[in] message_id Completion message identifier.
+ * @param[in] request_id Request identifier being completed.
+ * @param[in] ts_urb_result Optional URB-result bytes; may be NULL only when
+ * ts_urb_result_len is zero.
+ * @param[in] ts_urb_result_len Number of bytes in ts_urb_result.
+ * @param[in] hresult Completion HRESULT.
+ * @param[in] output_buffer Optional borrowed output bytes; may be NULL only
+ * when output_buffer_len is zero.
+ * @param[in] output_buffer_len Number of bytes in output_buffer.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or non-USB channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_usb_urb_completion(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t request_completion_interface_id,
+    uint32_t message_id,
+    uint32_t request_id,
+    const void* ts_urb_result,
+    uint32_t ts_urb_result_len,
+    uint32_t hresult,
+    const void* output_buffer,
+    uint32_t output_buffer_len);
+
+/**
+ * @brief Send a PnP channel version announcement.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] major_version Major protocol version.
+ * @param[in] minor_version Minor protocol version.
+ * @param[in] capabilities PnP capability flags.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid capabilities or non-PNP channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_version(librdp_server_peer* peer,
+                                                             uint16_t channel_id,
+                                                             uint32_t major_version,
+                                                             uint32_t minor_version,
+                                                             uint32_t capabilities);
+
+/**
+ * @brief Send a PnP authenticated/logon notification.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-PNP channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE;
+ * transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_authenticated(librdp_server_peer* peer,
+                                                                   uint16_t channel_id);
+
+/**
+ * @brief Send a PnP capabilities request to the client.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier.
+ * @param[in] version Requested PnP IO version.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid version or non-PNP channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_capabilities_request(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    uint32_t request_id,
+    uint16_t version);
+
+/**
+ * @brief Send a PnP create/open request.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier.
+ * @param[in] device_id Client device identifier.
+ * @param[in] desired_access Desired access mask.
+ * @param[in] share_mode Share-mode flags.
+ * @param[in] creation_disposition Creation disposition.
+ * @param[in] flags_and_attributes File attribute flags.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or non-PNP channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_create_request(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    uint32_t request_id,
+    uint32_t device_id,
+    uint32_t desired_access,
+    uint32_t share_mode,
+    uint32_t creation_disposition,
+    uint32_t flags_and_attributes);
+
+/**
+ * @brief Send a PnP read request.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier.
+ * @param[in] bytes_to_read Requested byte count.
+ * @param[in] offset_high High 32 bits of the file offset.
+ * @param[in] offset_low Low 32 bits of the file offset.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * non-PNP channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport
+ * or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_read_request(librdp_server_peer* peer,
+                                                                  uint16_t channel_id,
+                                                                  uint32_t request_id,
+                                                                  uint32_t bytes_to_read,
+                                                                  uint32_t offset_high,
+                                                                  uint32_t offset_low);
+
+/**
+ * @brief Send a PnP write request.
+ *
+ * data is borrowed only for the duration of the call and may be NULL only when
+ * data_len is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier.
+ * @param[in] offset_high High 32 bits of the file offset.
+ * @param[in] offset_low Low 32 bits of the file offset.
+ * @param[in] data Optional borrowed data bytes; may be NULL only when data_len
+ * is zero.
+ * @param[in] data_len Number of bytes in data.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid buffers or non-PNP channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_write_request(librdp_server_peer* peer,
+                                                                   uint16_t channel_id,
+                                                                   uint32_t request_id,
+                                                                   uint32_t offset_high,
+                                                                   uint32_t offset_low,
+                                                                   const void* data,
+                                                                   uint32_t data_len);
+
+/**
+ * @brief Send a PnP IO-control request.
+ *
+ * input and output are borrowed only for the duration of the call and may be
+ * NULL only when their matching length is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier.
+ * @param[in] io_code IO control code.
+ * @param[in] input Optional input buffer; may be NULL only when input_len is
+ * zero.
+ * @param[in] input_len Number of bytes in input.
+ * @param[in] output_len Expected output length.
+ * @param[in] output Optional initial output buffer; may be NULL only when
+ * actual_output_len is zero.
+ * @param[in] actual_output_len Number of bytes in output.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid buffers or non-PNP channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_control_request(librdp_server_peer* peer,
+                                                                     uint16_t channel_id,
+                                                                     uint32_t request_id,
+                                                                     uint32_t io_code,
+                                                                     const void* input,
+                                                                     uint32_t input_len,
+                                                                     uint32_t output_len,
+                                                                     const void* output,
+                                                                     uint32_t actual_output_len);
+
+/**
+ * @brief Send a PnP cancel request.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined PNPDR static channel identifier.
+ * @param[in] request_id Request identifier for the cancel PDU.
+ * @param[in] id_to_cancel Previously issued request id to cancel.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * non-PNP channel or out-of-range cancellation id; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pnp_cancel_request(librdp_server_peer* peer,
+                                                                    uint16_t channel_id,
+                                                                    uint32_t request_id,
+                                                                    uint32_t id_to_cancel);
 
 /**
  * @brief Initialize a server clipboard state snapshot.

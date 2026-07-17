@@ -24,7 +24,9 @@
 #include "channels/input_channel.h"
 #include "channels/mouse_cursor.h"
 #include "channels/multiparty.h"
+#include "channels/pnp_redirection.h"
 #include "channels/telemetry.h"
+#include "channels/usb_redirection.h"
 #include "channels/video_redirection.h"
 #include "clipboard/clipboard.h"
 #include "graphics/bitmap.h"
@@ -851,12 +853,13 @@ static void test_server_event_callback(librdp_server_peer* peer,
 
 static int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
 {
-    static const rdp_gcc_channel_definition extra_channels[5] = {
+    static const rdp_gcc_channel_definition extra_channels[6] = {
         {{'t', 'e', 's', 't', 'v', 'c', 0, 0}, 0xc0800000u},
         {{'c', 'l', 'i', 'p', 'r', 'd', 'r', 0}, 0xc0a00000u},
         {{'e', 'n', 'c', 'o', 'm', 's', 'p', 0}, 0xc0a00000u},
         {{'T', 'S', 'M', 'F', 0, 0, 0, 0}, 0xc0a00000u},
-        {{'r', 'd', 'p', 'd', 'r', 0, 0, 0}, 0xc0a00000u}
+        {{'r', 'd', 'p', 'd', 'r', 0, 0, 0}, 0xc0a00000u},
+        {{'P', 'N', 'P', 'D', 'R', 0, 0, 0}, 0xc0a00000u}
     };
     rdp_buffer gcc_blocks;
     rdp_buffer gcc_request;
@@ -882,7 +885,7 @@ static int test_server_build_client_mcs_connect_initial(rdp_buffer* tpkt)
                                   RDP_GCC_MULTITRANSPORT_UDP_FECL |
                                   RDP_GCC_MULTITRANSPORT_UDP_PREFERRED;
     config.extra_channels = extra_channels;
-    config.extra_channel_count = 5;
+    config.extra_channel_count = 6;
     if (rdp_gcc_write_client_data_blocks(&gcc_blocks, &config) == LIBRDP_STATUS_OK &&
         rdp_gcc_write_conference_create_request(&gcc_request, gcc_blocks.data, gcc_blocks.length) ==
             LIBRDP_STATUS_OK &&
@@ -2048,6 +2051,20 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_mouse_cursor_header mouse_cursor_header;
     rdp_telemetry_pdu telemetry_pdu;
     rdp_multiparty_header multiparty_header;
+    rdp_pnp_redirection_version pnp_version;
+    rdp_pnp_redirection_info_header pnp_info;
+    rdp_pnp_redirection_io_version pnp_io_version;
+    rdp_pnp_redirection_create_request pnp_create;
+    rdp_pnp_redirection_read_request pnp_read;
+    rdp_pnp_redirection_write_request pnp_write;
+    rdp_pnp_redirection_control_request pnp_control;
+    rdp_pnp_redirection_cancel_request pnp_cancel;
+    librdp_server_usb_device_capabilities usb_caps;
+    rdp_usb_redirection_header usb_header;
+    rdp_usb_redirection_add_device usb_device;
+    rdp_usb_redirection_retract_device usb_retract;
+    rdp_usb_redirection_io_completion usb_io_completion;
+    rdp_usb_redirection_urb_completion usb_urb_completion;
     rdp_video_redirection_geometry_info geometry_info;
     rdp_video_redirection_geometry_update geometry_update;
     rdp_video_redirection_rect geometry_rect;
@@ -2110,6 +2127,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint16_t multiparty_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 4u);
     uint16_t video_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 5u);
     uint16_t device_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 6u);
+    uint16_t pnp_channel_id = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 7u);
     uint16_t response_channel_id = 0;
     uint16_t security_flags = 0;
     uint32_t extension_count_before_echo = 0;
@@ -2137,6 +2155,9 @@ static int test_server_loopback_standard_activation_sequence(void)
     size_t dvc_oversize_len = ((size_t)64u * 1024u * 1024u) + 1u;
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     static const uint8_t clipboard_name_utf16[] = {'T', 0, 'e', 0, 'x', 0, 't', 0};
+    static const uint8_t usb_instance_utf16[] = {'U', 0, 'S', 0, 'B', 0, 0, 0};
+    static const uint8_t usb_ids_utf16[] = {'I', 0, 'D', 0, 0, 0, 0, 0};
+    static const uint8_t usb_container_utf16[] = {'{', 0, '1', 0, '}', 0, 0, 0};
     uint32_t clipboard_clip_data_id = 0x8899aabbu;
     uint8_t presentation_id[16] = {
         0x10, 0x11, 0x12, 0x13,
@@ -2190,6 +2211,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_MULTIPARTY, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_DESKTOP_COMPOSITION, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_GEOMETRY_TRACKING, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_PNP, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_USB, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_MULTITRANSPORT, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_UDP_TRANSPORT, 1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_UDP2_TRANSPORT, 1) == LIBRDP_STATUS_OK);
@@ -2228,6 +2251,12 @@ static int test_server_loopback_standard_activation_sequence(void)
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_enable_extension_provider(server,
                                                    LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_PNP,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_USB,
                                                    1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_get_extension_provider_status(server,
                                                        LIBRDP_SERVER_EXTENSION_CLIPBOARD,
@@ -2416,7 +2445,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_data.mcs_channel_id == RDP_MCS_GLOBAL_CHANNEL_ID);
     SCHECK(librdp_server_peer_desktop_width(peer) == 800);
     SCHECK(librdp_server_peer_desktop_height(peer) == 600);
-    SCHECK(librdp_server_peer_static_channel_count(peer) == 6);
+    SCHECK(librdp_server_peer_static_channel_count(peer) == 7);
     SCHECK(librdp_server_static_channel_info_init(&static_info) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_static_channel_at(peer, 0, &static_info) == LIBRDP_STATUS_OK);
     SCHECK(static_info.channel_id == dynamic_static_channel_id);
@@ -2442,7 +2471,11 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(static_info.channel_id == device_channel_id);
     SCHECK(static_info.joined == 0);
     SCHECK(strcmp(static_info.name, RDP_DEVICE_REDIRECTION_CHANNEL_NAME) == 0);
-    SCHECK(librdp_server_peer_static_channel_at(peer, 6, &static_info) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 6, &static_info) == LIBRDP_STATUS_OK);
+    SCHECK(static_info.channel_id == pnp_channel_id);
+    SCHECK(static_info.joined == 0);
+    SCHECK(strcmp(static_info.name, RDP_PNP_REDIRECTION_CHANNEL_NAME) == 0);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 7, &static_info) == LIBRDP_STATUS_INVALID_ARGUMENT);
 
     SCHECK(test_server_send_simple_mcs(client_fd, rdp_mcs_write_erect_domain_request));
     status = librdp_server_peer_run_once(peer, 1000);
@@ -2532,13 +2565,24 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_send_channel_join(client_fd, attach_confirm.user_id, device_channel_id));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_LICENSING);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CHANNEL_JOINING);
     SCHECK(runtime_context.channel_joined_event_count == 6);
     SCHECK(runtime_context.last_channel_id == device_channel_id);
     SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
     SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
     SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data, x224_data_len, &join_confirm) == LIBRDP_STATUS_OK);
     SCHECK(join_confirm.channel_id == device_channel_id);
+
+    SCHECK(test_server_send_channel_join(client_fd, attach_confirm.user_id, pnp_channel_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_LICENSING);
+    SCHECK(runtime_context.channel_joined_event_count == 7);
+    SCHECK(runtime_context.last_channel_id == pnp_channel_id);
+    SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
+    SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_mcs_parse_channel_join_confirm(x224_data, x224_data_len, &join_confirm) == LIBRDP_STATUS_OK);
+    SCHECK(join_confirm.channel_id == pnp_channel_id);
 
     SCHECK(librdp_server_peer_static_channel_at(peer, 0, &static_info) == LIBRDP_STATUS_OK);
     SCHECK(static_info.joined != 0);
@@ -2551,6 +2595,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(librdp_server_peer_static_channel_at(peer, 4, &static_info) == LIBRDP_STATUS_OK);
     SCHECK(static_info.joined != 0);
     SCHECK(librdp_server_peer_static_channel_at(peer, 5, &static_info) == LIBRDP_STATUS_OK);
+    SCHECK(static_info.joined != 0);
+    SCHECK(librdp_server_peer_static_channel_at(peer, 6, &static_info) == LIBRDP_STATUS_OK);
     SCHECK(static_info.joined != 0);
     SCHECK(test_server_read_tpkt_x224_data(client_fd, response, sizeof(response), &tpkt));
     SCHECK(rdp_x224_parse_data(tpkt.payload, tpkt.payload_len, &x224_data, &x224_data_len) == LIBRDP_STATUS_OK);
@@ -3726,6 +3772,143 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
            feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
+    SCHECK(test_server_open_client_dynamic_channel(client_fd,
+                                                   peer,
+                                                   attach_confirm.user_id,
+                                                   dynamic_static_channel_id,
+                                                   15,
+                                                   RDP_USB_REDIRECTION_CHANNEL_NAME,
+                                                   0,
+                                                   &client_security,
+                                                   &channel_plaintext,
+                                                   response,
+                                                   sizeof(response)));
+    SCHECK(librdp_server_usb_device_capabilities_init(&usb_caps) == LIBRDP_STATUS_OK);
+    usb_caps.device_is_high_speed = 1u;
+    SCHECK(librdp_server_peer_send_usb_capability_response(peer,
+                                                           15,
+                                                           0x20u,
+                                                           RDP_USB_REDIRECTION_CAPABILITY_VERSION_01,
+                                                           0) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    15,
+                                                    &dvc_data_response));
+    SCHECK(rdp_usb_redirection_parse_header(dvc_data_response.data,
+                                            dvc_data_response.data_len,
+                                            0,
+                                            &usb_header) == LIBRDP_STATUS_OK);
+    SCHECK(usb_header.interface_id == RDP_USB_REDIRECTION_INTERFACE_CAPABILITIES &&
+           usb_header.message_id == 0x20u &&
+           usb_header.payload_len == 8u &&
+           usb_header.payload[0] == RDP_USB_REDIRECTION_CAPABILITY_VERSION_01 &&
+           usb_header.payload[4] == 0);
+    SCHECK(librdp_server_peer_send_usb_add_device(peer,
+                                                  15,
+                                                  0x21u,
+                                                  0x77u,
+                                                  usb_instance_utf16,
+                                                  (uint32_t)sizeof(usb_instance_utf16),
+                                                  usb_ids_utf16,
+                                                  (uint32_t)sizeof(usb_ids_utf16),
+                                                  usb_ids_utf16,
+                                                  (uint32_t)sizeof(usb_ids_utf16),
+                                                  usb_container_utf16,
+                                                  (uint32_t)sizeof(usb_container_utf16),
+                                                  &usb_caps) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    15,
+                                                    &dvc_data_response));
+    SCHECK(rdp_usb_redirection_parse_add_device(dvc_data_response.data,
+                                                dvc_data_response.data_len,
+                                                &usb_device) == LIBRDP_STATUS_OK);
+    SCHECK(usb_device.usb_device == 0x77u &&
+           usb_device.capabilities.hcd_capabilities == usb_caps.hcd_capabilities &&
+           usb_device.capabilities.device_is_high_speed == 1u);
+    SCHECK(librdp_server_peer_send_usb_io_control_completion(peer,
+                                                             15,
+                                                             9,
+                                                             0x22u,
+                                                             0x1234u,
+                                                             RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS,
+                                                             2,
+                                                             "ok",
+                                                             2) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    15,
+                                                    &dvc_data_response));
+    SCHECK(rdp_usb_redirection_parse_io_control_completion(dvc_data_response.data,
+                                                           dvc_data_response.data_len,
+                                                           &usb_io_completion) == LIBRDP_STATUS_OK);
+    SCHECK(usb_io_completion.request_id == 0x1234u &&
+           usb_io_completion.information == 2 &&
+           usb_io_completion.output_buffer_len == 2 &&
+           memcmp(usb_io_completion.output_buffer, "ok", 2) == 0);
+    SCHECK(librdp_server_peer_send_usb_urb_completion(peer,
+                                                      15,
+                                                      9,
+                                                      0x23u,
+                                                      0x1235u,
+                                                      "urb",
+                                                      3,
+                                                      RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS,
+                                                      "xy",
+                                                      2) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    15,
+                                                    &dvc_data_response));
+    SCHECK(rdp_usb_redirection_parse_urb_completion(dvc_data_response.data,
+                                                    dvc_data_response.data_len,
+                                                    RDP_USB_REDIRECTION_FN_URB_COMPLETION,
+                                                    &usb_urb_completion) == LIBRDP_STATUS_OK);
+    SCHECK(usb_urb_completion.request_id == 0x1235u &&
+           usb_urb_completion.cb_ts_urb_result == 3 &&
+           memcmp(usb_urb_completion.ts_urb_result, "urb", 3) == 0 &&
+           usb_urb_completion.output_buffer_len == 2 &&
+           memcmp(usb_urb_completion.output_buffer, "xy", 2) == 0);
+    SCHECK(librdp_server_peer_send_usb_retract_device(peer,
+                                                      15,
+                                                      RDP_USB_REDIRECTION_INTERFACE_CHANNEL_NOTIFY_SERVER,
+                                                      0x24u,
+                                                      RDP_USB_REDIRECTION_RETRACT_BLOCKED_BY_POLICY) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    15,
+                                                    &dvc_data_response));
+    SCHECK(rdp_usb_redirection_parse_retract_device(dvc_data_response.data,
+                                                    dvc_data_response.data_len,
+                                                    &usb_retract) == LIBRDP_STATUS_OK);
+    SCHECK(usb_retract.reason == RDP_USB_REDIRECTION_RETRACT_BLOCKED_BY_POLICY);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_USB,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
+
     SCHECK(librdp_server_peer_send_clipboard_monitor_ready(peer, clipboard_channel_id) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
                                                           response,
@@ -3964,6 +4147,166 @@ static int test_server_loopback_standard_activation_sequence(void)
                                                          dvc_packet.data,
                                                          dvc_packet.length) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_send_pnp_version(peer,
+                                               pnp_channel_id,
+                                               1,
+                                               0,
+                                               RDP_PNP_REDIRECTION_CAP_DYNAMIC_DEVICES) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_version(static_payload,
+                                             static_payload_len,
+                                             &pnp_version) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_version.major_version == 1 &&
+           pnp_version.capabilities == RDP_PNP_REDIRECTION_CAP_DYNAMIC_DEVICES);
+    SCHECK(librdp_server_peer_send_pnp_authenticated(peer, pnp_channel_id) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_authenticated(static_payload,
+                                                   static_payload_len,
+                                                   &pnp_info) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_info.packet_id == RDP_PNP_REDIRECTION_INFO_SERVER_LOGON);
+    SCHECK(librdp_server_peer_send_pnp_capabilities_request(peer,
+                                                            pnp_channel_id,
+                                                            1,
+                                                            RDP_PNP_REDIRECTION_IO_VERSION_6) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_capabilities_request(static_payload,
+                                                          static_payload_len,
+                                                          &pnp_io_version) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_io_version.header.request_id == 1 &&
+           pnp_io_version.version == RDP_PNP_REDIRECTION_IO_VERSION_6);
+    SCHECK(librdp_server_peer_send_pnp_create_request(peer,
+                                                      pnp_channel_id,
+                                                      2,
+                                                      0x8888u,
+                                                      0x80000000u,
+                                                      1,
+                                                      3,
+                                                      0x80u) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_create_request(static_payload,
+                                                    static_payload_len,
+                                                    &pnp_create) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_create.header.request_id == 2 && pnp_create.device_id == 0x8888u);
+    SCHECK(librdp_server_peer_send_pnp_read_request(peer,
+                                                    pnp_channel_id,
+                                                    3,
+                                                    16,
+                                                    0,
+                                                    4) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_read_request(static_payload,
+                                                  static_payload_len,
+                                                  &pnp_read) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_read.header.request_id == 3 && pnp_read.bytes_to_read == 16);
+    SCHECK(librdp_server_peer_send_pnp_write_request(peer,
+                                                     pnp_channel_id,
+                                                     4,
+                                                     0,
+                                                     8,
+                                                     "pn",
+                                                     2) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_write_request(static_payload,
+                                                   static_payload_len,
+                                                   &pnp_write) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_write.header.request_id == 4 &&
+           pnp_write.bytes_to_write == 2 &&
+           memcmp(pnp_write.data, "pn", 2) == 0);
+    SCHECK(librdp_server_peer_send_pnp_control_request(peer,
+                                                       pnp_channel_id,
+                                                       5,
+                                                       0x1020u,
+                                                       "in",
+                                                       2,
+                                                       4,
+                                                       "out",
+                                                       3) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_control_request(static_payload,
+                                                     static_payload_len,
+                                                     &pnp_control) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_control.header.request_id == 5 &&
+           pnp_control.input_len == 2 &&
+           pnp_control.output_len == 4 &&
+           pnp_control.actual_output_len == 3);
+    SCHECK(librdp_server_peer_send_pnp_cancel_request(peer,
+                                                      pnp_channel_id,
+                                                      6,
+                                                      5) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(client_fd,
+                                                          response,
+                                                          sizeof(response),
+                                                          &client_security,
+                                                          &channel_plaintext,
+                                                          &response_channel_id,
+                                                          &static_payload,
+                                                          &static_payload_len));
+    SCHECK(response_channel_id == pnp_channel_id);
+    SCHECK(rdp_pnp_redirection_parse_cancel_request(static_payload,
+                                                    static_payload_len,
+                                                    &pnp_cancel) == LIBRDP_STATUS_OK);
+    SCHECK(pnp_cancel.header.request_id == 6 && pnp_cancel.id_to_cancel == 5);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_PNP,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.negotiated && feature_status.active &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
     SCHECK(librdp_server_peer_send_multiparty_filter_state(peer,
                                                            multiparty_channel_id,
                                                            RDP_MULTIPARTY_FILTER_ENABLED) == LIBRDP_STATUS_OK);
@@ -4183,7 +4526,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.input_events == runtime_context.input_count);
     SCHECK(server_metrics.static_channel_in == 7 && server_metrics.static_channel_out >= 2);
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
-    SCHECK(server_metrics.dynamic_channel_in == 4 && server_metrics.dynamic_channel_out == 18);
+    SCHECK(server_metrics.dynamic_channel_in == 4);
+    SCHECK(server_metrics.dynamic_channel_out == 23);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 38 && server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.surface_updates == 3);
     SCHECK(librdp_server_peer_reset_metrics(peer) == LIBRDP_STATUS_OK);
