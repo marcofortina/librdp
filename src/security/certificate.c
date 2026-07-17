@@ -34,8 +34,10 @@
 #define RDP_CERT_VERSION_1 1u
 #define RDP_CERT_VERSION_2 2u
 #define RDP_CERT_RSA_KEY_BLOB 0x0006u
+#define RDP_CERT_RSA_SIGNATURE_BLOB 0x0008u
 #define RDP_RSA1_MAGIC 0x31415352u
 #define RDP_SECURITY_SERVER_RSA_BITS 2048u
+#define RDP_SECURITY_LEGACY_SIGNATURE_LEN 72u
 
 static void rdp_reverse_copy(uint8_t* dst, const uint8_t* src, size_t length)
 {
@@ -364,6 +366,7 @@ librdp_status rdp_security_generate_server_certificate(EVP_PKEY** private_key, r
     uint8_t* modulus_be = NULL;
     uint8_t* modulus_le = NULL;
     uint8_t zero_pad[8] = {0};
+    uint8_t signature[RDP_SECURITY_LEGACY_SIGNATURE_LEN] = {0};
     BN_ULONG exponent = 0;
     int modulus_len_int = 0;
     int bit_len_int = 0;
@@ -425,13 +428,19 @@ librdp_status rdp_security_generate_server_certificate(EVP_PKEY** private_key, r
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_buffer_append_u32_le(certificate, (uint32_t)bit_len_int);
                 if (status == LIBRDP_STATUS_OK)
-                    status = rdp_buffer_append_u32_le(certificate, (uint32_t)modulus_len_int);
+                    status = rdp_buffer_append_u32_le(certificate, (uint32_t)(modulus_len_int - 1));
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_buffer_append_u32_le(certificate, (uint32_t)exponent);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_buffer_append(certificate, modulus_le, (size_t)modulus_len_int);
                 if (status == LIBRDP_STATUS_OK)
                     status = rdp_buffer_append(certificate, zero_pad, sizeof(zero_pad));
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u16_le(certificate, RDP_CERT_RSA_SIGNATURE_BLOB);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append_u16_le(certificate, sizeof(signature));
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_buffer_append(certificate, signature, sizeof(signature));
             }
         }
     }

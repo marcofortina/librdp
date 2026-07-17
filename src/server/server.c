@@ -74,6 +74,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define RDP_SERVER_DEFAULT_BACKLOG 4u
@@ -90,6 +91,12 @@
 #define RDP_SERVER_NEGOTIATION_FAILURE_HYBRID_REQUIRED 0x00000005u
 #define RDP_SERVER_INITIAL_READ_MAX 65535u
 #define RDP_SERVER_CREDSSP_MESSAGE_MAX 1048576u
+#define RDP_SERVER_NTLM_AV_EOL 0x0000u
+#define RDP_SERVER_NTLM_AV_NB_COMPUTER_NAME 0x0001u
+#define RDP_SERVER_NTLM_AV_NB_DOMAIN_NAME 0x0002u
+#define RDP_SERVER_NTLM_AV_DNS_COMPUTER_NAME 0x0003u
+#define RDP_SERVER_NTLM_AV_DNS_DOMAIN_NAME 0x0004u
+#define RDP_SERVER_NTLM_AV_TIMESTAMP 0x0007u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
 #define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT 4u
@@ -2104,6 +2111,8 @@ librdp_status librdp_server_get_pollfds(librdp_server* server,
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_server_close_peer(librdp_server_peer* peer, librdp_server_peer_state state);
+
 /*
  * Purpose: accept exactly one TCP peer and transfer a copied listener
  * configuration into peer-owned state. Invariants: the peer is visible to the
@@ -2232,10 +2241,15 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
 static librdp_status rdp_server_send_all(int fd, const uint8_t* data, size_t length)
 {
     size_t offset = 0;
+#ifdef MSG_NOSIGNAL
+    const int send_flags = MSG_NOSIGNAL;
+#else
+    const int send_flags = 0;
+#endif
 
     while (offset < length)
     {
-        ssize_t written = send(fd, data + offset, length - offset, 0);
+        ssize_t written = send(fd, data + offset, length - offset, send_flags);
 
         if (written > 0)
         {
@@ -2244,6 +2258,8 @@ static librdp_status rdp_server_send_all(int fd, const uint8_t* data, size_t len
         }
         if (written < 0 && errno == EINTR)
             continue;
+        if (written < 0 && (errno == EPIPE || errno == ECONNRESET))
+            return LIBRDP_STATUS_CLOSED;
         if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         {
             struct pollfd pfd;
@@ -2343,6 +2359,8 @@ static librdp_status rdp_server_peer_send_all(librdp_server_peer* peer, const ui
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = peer->tls_active ? rdp_server_tls_send_all(peer, data, length)
                               : rdp_server_send_all(peer->fd, data, length);
+    if (status == LIBRDP_STATUS_CLOSED)
+        rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
     if (status == LIBRDP_STATUS_OK)
         rdp_server_metric_add(&peer->metrics.bytes_written, (uint64_t)length);
     return status;
@@ -2597,6 +2615,39 @@ static librdp_status rdp_server_select_protocol(const librdp_server_peer* peer,
     return LIBRDP_STATUS_UNSUPPORTED;
 }
 
+static librdp_status rdp_server_parse_buffered_tpkt(librdp_server_peer* peer,
+                                                    rdp_tpkt* packet,
+                                                    size_t* packet_len,
+                                                    int* need_more)
+{
+    size_t total = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !packet || !packet_len || !need_more)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *packet_len = 0;
+    *need_more = 1;
+    if (peer->input.length < 4u)
+        return LIBRDP_STATUS_OK;
+    if (peer->input.data[0] != 3u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total = ((size_t)peer->input.data[2] << 8) | (size_t)peer->input.data[3];
+    if (total < 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (total > peer->input.length)
+        return LIBRDP_STATUS_OK;
+    status = rdp_tpkt_parse(peer->input.data, total, packet);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_server_set_state(peer, LIBRDP_SERVER_PEER_FAILED);
+        return status;
+    }
+    rdp_server_metric_add(&peer->metrics.pdu_in, 1u);
+    *packet_len = total;
+    *need_more = 0;
+    return LIBRDP_STATUS_OK;
+}
+
 /*
  * Read exactly one complete TPKT from the peer transport, regardless of
  * whether the byte source is the initial TCP socket or the TLS layer selected
@@ -2613,13 +2664,16 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     uint8_t chunk[2048];
     ssize_t read_len = 0;
     int poll_result = 0;
+    int need_more = 0;
     librdp_status status = LIBRDP_STATUS_OK;
-    size_t total = 0;
 
     if (!peer || !packet || !packet_len || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->fd < 0)
         return LIBRDP_STATUS_STATE;
+    status = rdp_server_parse_buffered_tpkt(peer, packet, packet_len, &need_more);
+    if (status != LIBRDP_STATUS_OK || !need_more)
+        return status;
     pfd.fd = peer->fd;
     pfd.events = POLLIN;
     pfd.revents = 0;
@@ -2682,23 +2736,11 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     status = rdp_buffer_append(&peer->input, chunk, (size_t)read_len);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (peer->input.length < 4u)
-        return LIBRDP_STATUS_TIMEOUT;
-    if (peer->input.data[0] != 3u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    total = ((size_t)peer->input.data[2] << 8) | (size_t)peer->input.data[3];
-    if (total < 4u)
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (total > peer->input.length)
-        return LIBRDP_STATUS_TIMEOUT;
-    status = rdp_tpkt_parse(peer->input.data, total, packet);
+    status = rdp_server_parse_buffered_tpkt(peer, packet, packet_len, &need_more);
     if (status != LIBRDP_STATUS_OK)
-    {
-        rdp_server_set_state(peer, LIBRDP_SERVER_PEER_FAILED);
         return status;
-    }
-    rdp_server_metric_add(&peer->metrics.pdu_in, 1u);
-    *packet_len = total;
+    if (need_more)
+        return LIBRDP_STATUS_TIMEOUT;
     return LIBRDP_STATUS_OK;
 }
 
@@ -2779,6 +2821,79 @@ static librdp_status rdp_server_append_utf16le_ascii(rdp_buffer* buffer, const c
             return status;
     }
     return LIBRDP_STATUS_OK;
+}
+
+static uint64_t rdp_server_filetime_now(void)
+{
+    struct timespec ts;
+    const uint64_t windows_epoch_seconds = 11644473600ull;
+
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0 || ts.tv_sec < 0)
+        return 0;
+    return ((uint64_t)ts.tv_sec + windows_epoch_seconds) * 10000000ull +
+           (uint64_t)(ts.tv_nsec / 100u);
+}
+
+static librdp_status rdp_server_append_ntlm_av_utf16(rdp_buffer* buffer, uint16_t av_id, const char* text)
+{
+    rdp_buffer value;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !text)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&value);
+    status = rdp_server_append_utf16le_ascii(&value, text);
+    if (status == LIBRDP_STATUS_OK && value.length > UINT16_MAX)
+        status = LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, av_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)value.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, value.data, value.length);
+    rdp_buffer_free(&value);
+    return status;
+}
+
+static librdp_status rdp_server_append_ntlm_av_u64(rdp_buffer* buffer, uint16_t av_id, uint64_t value)
+{
+    uint8_t encoded[8];
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (size_t i = 0; i < sizeof(encoded); i++)
+        encoded[i] = (uint8_t)((value >> (i * 8u)) & 0xffu);
+    status = rdp_buffer_append_u16_le(buffer, av_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, (uint16_t)sizeof(encoded));
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, encoded, sizeof(encoded));
+    return status;
+}
+
+static librdp_status rdp_server_append_ntlm_target_info(rdp_buffer* buffer, const char* target_name)
+{
+    uint64_t timestamp = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !target_name)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_append_ntlm_av_utf16(buffer, RDP_SERVER_NTLM_AV_NB_COMPUTER_NAME, target_name);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_append_ntlm_av_utf16(buffer, RDP_SERVER_NTLM_AV_NB_DOMAIN_NAME, target_name);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_append_ntlm_av_utf16(buffer, RDP_SERVER_NTLM_AV_DNS_COMPUTER_NAME, target_name);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_append_ntlm_av_utf16(buffer, RDP_SERVER_NTLM_AV_DNS_DOMAIN_NAME, target_name);
+    timestamp = rdp_server_filetime_now();
+    if (status == LIBRDP_STATUS_OK && timestamp != 0)
+        status = rdp_server_append_ntlm_av_u64(buffer, RDP_SERVER_NTLM_AV_TIMESTAMP, timestamp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, RDP_SERVER_NTLM_AV_EOL);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    return status;
 }
 
 static librdp_status rdp_server_credssp_packet_length(const rdp_buffer* input, size_t* total)
@@ -2920,7 +3035,6 @@ static librdp_status rdp_server_send_credssp_ts_request(librdp_server_peer* peer
 static librdp_status rdp_server_prepare_credssp_challenge(librdp_server_peer* peer,
                                                           rdp_ntlm_challenge* challenge)
 {
-    static const uint8_t target_info_eol[] = {0, 0, 0, 0};
     const char* target_name = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -2931,7 +3045,7 @@ static librdp_status rdp_server_prepare_credssp_challenge(librdp_server_peer* pe
     target_name = peer->server_name ? peer->server_name : "librdp";
     status = rdp_server_append_utf16le_ascii(&peer->credssp_target_name, target_name);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_buffer_append(&peer->credssp_target_info, target_info_eol, sizeof(target_info_eol));
+        status = rdp_server_append_ntlm_target_info(&peer->credssp_target_info, target_name);
     if (status == LIBRDP_STATUS_OK && RAND_bytes(peer->credssp_server_challenge,
                                                  (int)sizeof(peer->credssp_server_challenge)) != 1)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -3005,6 +3119,14 @@ static librdp_status rdp_server_credssp_utf16_field(const uint8_t* data, size_t 
     return rdp_charset_utf16le_to_utf8_alloc(data, length, 0, text, &text_len);
 }
 
+/*
+ * Purpose: turn the claimed NTLM identity into provider-approved credentials
+ * without persisting raw secrets in peer state longer than required.
+ * Invariants: UTF-16 fields are decoded before policy callbacks, usernames
+ * must be non-empty, provider output owns the password only until copied into
+ * the peer's secure expected-credential storage, and failures increment server
+ * error metrics without leaking credential values to trace.
+ */
 static librdp_status rdp_server_credssp_resolve_expected_credentials(
     librdp_server_peer* peer,
     const rdp_ntlm_authenticate* authenticate,
@@ -3109,7 +3231,6 @@ static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* pee
 {
     rdp_buffer packet;
     rdp_buffer ntlm_challenge;
-    rdp_buffer spnego_challenge;
     rdp_credssp_ts_request request;
     rdp_ntlm_negotiate negotiate;
     rdp_ntlm_challenge challenge;
@@ -3119,7 +3240,6 @@ static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* pee
 
     rdp_buffer_init(&packet);
     rdp_buffer_init(&ntlm_challenge);
-    rdp_buffer_init(&spnego_challenge);
     status = rdp_server_read_credssp_ts_request(peer, timeout_ms, &packet);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ts_request(packet.data, packet.length, &request);
@@ -3145,14 +3265,10 @@ static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* pee
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_write_ntlm_challenge(&ntlm_challenge, &challenge);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_credssp_write_spnego_ntlm_challenge(&spnego_challenge,
-                                                         ntlm_challenge.data,
-                                                         ntlm_challenge.length);
-    if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_credssp_ts_request(peer,
                                                     request.version,
-                                                    spnego_challenge.data,
-                                                    spnego_challenge.length,
+                                                    ntlm_challenge.data,
+                                                    ntlm_challenge.length,
                                                     NULL,
                                                     0,
                                                     NULL,
@@ -3166,15 +3282,25 @@ static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* pee
                         negotiate.flags,
                         (unsigned)challenge.target_info_len);
     }
-    rdp_buffer_free(&spnego_challenge);
     rdp_buffer_free(&ntlm_challenge);
     rdp_buffer_free(&packet);
     return status;
 }
 
+/*
+ * Purpose: consume the NTLM authenticate token, verify provider credentials,
+ * and support both CredSSP packet layouts observed on the wire: public-key
+ * auth in a following TSRequest or combined with the final negotiate token.
+ * Invariants: derived NTLM session keys become usable only after password
+ * proof validation, public-key binding is checked before credentials are
+ * accepted, and any failure clears expected secrets and leaves the peer in a
+ * protocol-error state.
+ */
 static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* peer, int timeout_ms)
 {
     rdp_buffer packet;
+    rdp_buffer public_key;
+    rdp_buffer pub_key_auth;
     rdp_credssp_ts_request request;
     rdp_ntlm_challenge challenge;
     rdp_ntlm_authenticate authenticate;
@@ -3184,6 +3310,8 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&packet);
+    rdp_buffer_init(&public_key);
+    rdp_buffer_init(&pub_key_auth);
     memset(&result, 0, sizeof(result));
     status = rdp_server_read_credssp_ts_request(peer, timeout_ms, &packet);
     if (status == LIBRDP_STATUS_OK)
@@ -3223,12 +3351,50 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     if (status == LIBRDP_STATUS_OK)
     {
         peer->credssp_security_ready = 1;
-        status = rdp_server_send_credssp_ts_request(peer, request.version, NULL, 0, NULL, 0, NULL, 0);
+        rdp_trace_event(RDP_TRACE_PROTOCOL, "server.credssp.authenticate.done", "username=redacted");
     }
+    if (status == LIBRDP_STATUS_OK && request.pub_key_auth_len > 0)
+        status = rdp_server_tls_public_key(peer, &public_key);
+    if (status == LIBRDP_STATUS_OK && request.pub_key_auth_len > 0)
+        status = rdp_credssp_verify_client_public_key_hash(&peer->credssp_security,
+                                                           peer->credssp_client_nonce,
+                                                           sizeof(peer->credssp_client_nonce),
+                                                           public_key.data,
+                                                           public_key.length,
+                                                           request.pub_key_auth,
+                                                           request.pub_key_auth_len);
+    if (status == LIBRDP_STATUS_OK && request.pub_key_auth_len > 0)
+        status = rdp_credssp_encrypt_server_public_key_hash(&peer->credssp_security,
+                                                            peer->credssp_client_nonce,
+                                                            sizeof(peer->credssp_client_nonce),
+                                                            public_key.data,
+                                                            public_key.length,
+                                                            &pub_key_auth);
+    if (status == LIBRDP_STATUS_OK && request.pub_key_auth_len > 0)
+        status = rdp_server_send_credssp_ts_request(peer,
+                                                    request.version,
+                                                    NULL,
+                                                    0,
+                                                    NULL,
+                                                    0,
+                                                    pub_key_auth.data,
+                                                    pub_key_auth.length);
     if (status == LIBRDP_STATUS_OK)
     {
-        peer->credssp_stage = 2;
-        rdp_trace_event(RDP_TRACE_PROTOCOL, "server.credssp.authenticate.done", "username=redacted");
+        if (request.pub_key_auth_len > 0)
+        {
+            peer->credssp_public_key_bound = 1;
+            peer->credssp_stage = 3;
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.credssp.pubkey.done",
+                            "public_key_len=%u pub_key_auth_len=%u",
+                            (unsigned)public_key.length,
+                            (unsigned)pub_key_auth.length);
+        }
+        else
+        {
+            peer->credssp_stage = 2;
+        }
     }
     if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT && status != LIBRDP_STATUS_AGAIN)
     {
@@ -3236,6 +3402,8 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
         rdp_server_credssp_expected_clear(peer);
     }
     OPENSSL_cleanse(&result, sizeof(result));
+    rdp_buffer_free(&pub_key_auth);
+    rdp_buffer_free(&public_key);
     rdp_buffer_free(&packet);
     return status;
 }
@@ -3290,8 +3458,9 @@ static librdp_status rdp_server_handle_credssp_pubkey(librdp_server_peer* peer, 
         peer->credssp_stage = 3;
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "server.credssp.pubkey.done",
-                        "public_key_len=%u",
-                        (unsigned)public_key.length);
+                        "public_key_len=%u pub_key_auth_len=%u",
+                        (unsigned)public_key.length,
+                        (unsigned)pub_key_auth.length);
     }
     if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT && status != LIBRDP_STATUS_AGAIN)
     {
@@ -3864,11 +4033,19 @@ static librdp_status rdp_server_handle_input_events(librdp_server_peer* peer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_stream_init(&stream, payload, payload_len);
     if (rdp_stream_read_u16_le(&stream, &event_count) != LIBRDP_STATUS_OK ||
-        rdp_stream_read_u16_le(&stream, &pad) != LIBRDP_STATUS_OK ||
-        event_count > 256u ||
-        pad != 0 ||
-        rdp_stream_remaining(&stream) != (size_t)event_count * 12u)
+        rdp_stream_read_u16_le(&stream, &pad) != LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (event_count > 256u || pad != 0 || rdp_stream_remaining(&stream) != (size_t)event_count * 12u)
+    {
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.input.header.failed",
+                        "event_count=%u pad=%u remaining=%u payload_len=%u",
+                        event_count,
+                        pad,
+                        (unsigned)rdp_stream_remaining(&stream),
+                        (unsigned)payload_len);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
     for (uint16_t i = 0; i < event_count; i++)
     {
         librdp_server_input_event event;
@@ -3881,7 +4058,9 @@ static librdp_status rdp_server_handle_input_events(librdp_server_peer* peer,
             rdp_stream_read_u16_le(&stream, &event.param1) != LIBRDP_STATUS_OK ||
             rdp_stream_read_u16_le(&stream, &event.param2) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (message_type == 0x0004u)
+        if (message_type == 0x0000u)
+            event.type = LIBRDP_SERVER_INPUT_SYNCHRONIZE;
+        else if (message_type == 0x0004u)
             event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
         else if (message_type == 0x0005u)
             event.type = LIBRDP_SERVER_INPUT_UNICODE_KEY;
@@ -3898,7 +4077,16 @@ static librdp_status rdp_server_handle_input_events(librdp_server_peer* peer,
             event.y = event.param2;
         }
         else
+        {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.input.message_type.failed",
+                            "message_type=%u flags=%u param1=%u param2=%u",
+                            message_type,
+                            event.flags,
+                            event.param1,
+                            event.param2);
             return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
         rdp_server_emit_input(peer, &event);
     }
     return LIBRDP_STATUS_OK;
@@ -8208,10 +8396,21 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
         status = rdp_slowpath_parse_data_pdu(runtime_payload, runtime_payload_len, &pdu);
         if (status != LIBRDP_STATUS_OK)
         {
+            rdp_trace_event(RDP_TRACE_PROTOCOL,
+                            "server.slowpath.data.failed",
+                            "status=%s payload_len=%u",
+                            librdp_status_name(status),
+                            (unsigned)runtime_payload_len);
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
             rdp_buffer_free(&security_payload);
             return status;
         }
+        rdp_trace_event_level(RDP_TRACE_PROTOCOL,
+                              RDP_TRACE_LEVEL_DEBUG,
+                              "server.slowpath.data",
+                              "pdu_type2=%u payload_len=%u",
+                              pdu.pdu_type2,
+                              (unsigned)pdu.payload_len);
         if (pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE)
         {
             peer->synchronize_seen = 1;

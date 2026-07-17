@@ -23,6 +23,12 @@
 typedef struct server_listener_options
 {
     const char* bind_address;
+    librdp_security_mode security_mode;
+    const char* tls_certificate_path;
+    const char* tls_private_key_path;
+    const char* username;
+    const char* password;
+    const char* domain;
     uint16_t port;
     uint32_t width;
     uint32_t height;
@@ -41,8 +47,32 @@ typedef struct server_listener_peer_context
 static void server_listener_usage(FILE* stream, const char* program)
 {
     fprintf(stream,
-            "usage: %s [--bind address] [--port port] [--width px] [--height px] [--timeout ms]\n",
+            "usage: %s [--bind address] [--port port] [--width px] [--height px] [--timeout ms] "
+            "[--security standard|tls|nla] [--tls-cert path] [--tls-key path] "
+            "[--user name] [--password value] [--domain name]\n",
             program);
+}
+
+static int server_listener_parse_security(const char* value, librdp_security_mode* mode)
+{
+    if (!value || !mode)
+        return 0;
+    if (strcmp(value, "standard") == 0 || strcmp(value, "rdp") == 0)
+    {
+        *mode = LIBRDP_SECURITY_STANDARD;
+        return 1;
+    }
+    if (strcmp(value, "tls") == 0)
+    {
+        *mode = LIBRDP_SECURITY_TLS;
+        return 1;
+    }
+    if (strcmp(value, "nla") == 0)
+    {
+        *mode = LIBRDP_SECURITY_NLA;
+        return 1;
+    }
+    return 0;
 }
 
 static int server_listener_need_value(int argc, char** argv, int* index)
@@ -101,6 +131,14 @@ static int server_listener_parse_size(const char* value, uint32_t* out)
     return 1;
 }
 
+/*
+ * Purpose: validate the listener example command line before any socket,
+ * certificate, or credential state is created. Invariants: only documented
+ * flags are accepted, security-specific required files and credentials are
+ * checked together, and untrusted string ownership stays with argv.
+ * Failure policy: reject malformed values early so protocol setup never sees
+ * partial or contradictory configuration.
+ */
 static int server_listener_parse_args(int argc, char** argv, server_listener_options* options)
 {
     int i = 0;
@@ -109,6 +147,7 @@ static int server_listener_parse_args(int argc, char** argv, server_listener_opt
         return 0;
     memset(options, 0, sizeof(*options));
     options->bind_address = "127.0.0.1";
+    options->security_mode = LIBRDP_SECURITY_STANDARD;
     options->width = 1024;
     options->height = 768;
     options->timeout_ms = 10000;
@@ -149,13 +188,82 @@ static int server_listener_parse_args(int argc, char** argv, server_listener_opt
                 !server_listener_parse_timeout(argv[i], &options->timeout_ms))
                 return 0;
         }
+        else if (strcmp(argv[i], "--security") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i) ||
+                !server_listener_parse_security(argv[i], &options->security_mode))
+                return 0;
+        }
+        else if (strcmp(argv[i], "--tls-cert") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i))
+                return 0;
+            options->tls_certificate_path = argv[i];
+        }
+        else if (strcmp(argv[i], "--tls-key") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i))
+                return 0;
+            options->tls_private_key_path = argv[i];
+        }
+        else if (strcmp(argv[i], "--user") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i))
+                return 0;
+            options->username = argv[i];
+        }
+        else if (strcmp(argv[i], "--password") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i))
+                return 0;
+            options->password = argv[i];
+        }
+        else if (strcmp(argv[i], "--domain") == 0)
+        {
+            if (!server_listener_need_value(argc, argv, &i))
+                return 0;
+            options->domain = argv[i];
+        }
         else
         {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
             return 0;
         }
     }
+    if ((options->security_mode == LIBRDP_SECURITY_TLS ||
+         options->security_mode == LIBRDP_SECURITY_NLA) &&
+        (!options->tls_certificate_path || !options->tls_private_key_path))
+    {
+        fprintf(stderr, "--tls-cert and --tls-key are required for TLS/NLA\n");
+        return 0;
+    }
+    if (options->security_mode == LIBRDP_SECURITY_NLA &&
+        (!options->username || !options->password))
+    {
+        fprintf(stderr, "--user and --password are required for NLA\n");
+        return 0;
+    }
     return 1;
+}
+
+static librdp_status server_listener_credentials_provider(librdp_server_peer* peer,
+                                                          const librdp_server_credentials_request* request,
+                                                          librdp_credentials* credentials,
+                                                          void* user_data)
+{
+    const server_listener_options* options = (const server_listener_options*)user_data;
+
+    (void)peer;
+    if (!request || !credentials || !options || !options->username || !options->password)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (request->username && strcmp(request->username, options->username) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (options->domain && request->domain && strcmp(request->domain, options->domain) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return librdp_credentials_set(credentials,
+                                  options->username,
+                                  options->password,
+                                  options->domain);
 }
 
 static void server_listener_input_callback(librdp_server_peer* peer,
@@ -315,6 +423,8 @@ static int server_listener_run_peer(librdp_server_peer* peer,
             status = server_listener_present_desktop(peer, width, height);
             context->surface_presented = status == LIBRDP_STATUS_OK ? 1 : 0;
             printf("surface_present status=%s\n", librdp_status_name(status));
+            if (status == LIBRDP_STATUS_CLOSED)
+                return 0;
             if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_STATE)
                 return 2;
         }
@@ -359,9 +469,20 @@ int main(int argc, char** argv)
     config.port = options.port;
     config.width = options.width;
     config.height = options.height;
+    config.security_mode = options.security_mode;
+    config.tls_certificate_path = options.tls_certificate_path;
+    config.tls_private_key_path = options.tls_private_key_path;
     server = librdp_server_new(&config);
     if (!server)
         return 2;
+    if (options.security_mode == LIBRDP_SECURITY_NLA &&
+        librdp_server_set_credentials_provider(server,
+                                               server_listener_credentials_provider,
+                                               &options) != LIBRDP_STATUS_OK)
+    {
+        librdp_server_free(server);
+        return 2;
+    }
     status = librdp_server_listen(server);
     if (status != LIBRDP_STATUS_OK)
     {

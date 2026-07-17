@@ -5014,6 +5014,17 @@ static int test_path_security_license_channels(void)
     PCHECK(rdp_security_generate_server_certificate(&generated_server_key, &generated_server_certificate) ==
            LIBRDP_STATUS_OK);
     PCHECK(generated_server_key != NULL && generated_server_certificate.length > 64u);
+    PCHECK(test_read_u32_le(generated_server_certificate.data) == 1u);
+    PCHECK(test_read_u16_le(generated_server_certificate.data + 12u) == 6u);
+    PCHECK(test_read_u32_le(generated_server_certificate.data + 16u) == 0x31415352u);
+    PCHECK(test_read_u32_le(generated_server_certificate.data + 28u) ==
+           test_read_u32_le(generated_server_certificate.data + 20u) - 9u);
+    PCHECK(generated_server_certificate.length >=
+           40u + test_read_u32_le(generated_server_certificate.data + 20u));
+    PCHECK(test_read_u16_le(generated_server_certificate.data + 36u +
+                            test_read_u32_le(generated_server_certificate.data + 20u)) == 8u);
+    PCHECK(test_read_u16_le(generated_server_certificate.data + 38u +
+                            test_read_u32_le(generated_server_certificate.data + 20u)) == 72u);
     PCHECK(rdp_security_parse_server_certificate(generated_server_certificate.data,
                                                  generated_server_certificate.length,
                                                  &public_key) == LIBRDP_STATUS_OK);
