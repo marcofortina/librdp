@@ -407,8 +407,8 @@ static const char* cocoa_camera_file_path(const char* source)
 
     if (!source)
         return NULL;
-    if (strncmp(source, prefix, sizeof(prefix) - 1u) == 0 && source[sizeof(prefix) - 1u] != '\0')
-        return source + sizeof(prefix) - 1u;
+    if (strncmp(source, prefix, sizeof(prefix) - 1u) == 0)
+        return source[sizeof(prefix) - 1u] != '\0' ? source + sizeof(prefix) - 1u : NULL;
     if (strncmp(source, "device=", 7u) == 0)
         return NULL;
     return source[0] != '\0' ? source : NULL;

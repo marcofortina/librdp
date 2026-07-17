@@ -1994,7 +1994,7 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
             break;
     }
     SCHECK(tls_ready);
-    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_NLA_AUTHENTICATING);
+    SCHECK(test_server_wait_peer_state(peer, LIBRDP_SERVER_PEER_NLA_AUTHENTICATING));
     SCHECK(test_server_tls_public_key(client_tls, &tls_public_key));
 
     request.length = 0;
