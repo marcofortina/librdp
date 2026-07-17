@@ -2514,6 +2514,16 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(dvc_close.channel_id == 8);
     SCHECK(runtime_context.dynamic_close_count == 1);
     SCHECK(librdp_server_peer_dynamic_channel_count(peer) == 0);
+    dvc_packet.length = 0;
+    SCHECK(rdp_dynamic_channel_write_close(&dvc_packet, 8, 1) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_channel_payload(client_fd,
+                                            attach_confirm.user_id,
+                                            dynamic_static_channel_id,
+                                            &dvc_packet));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(runtime_context.dynamic_close_count == 1);
+    SCHECK(librdp_server_peer_dynamic_channel_count(peer) == 0);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_ECHO,
                                                  &feature_status) == LIBRDP_STATUS_OK);

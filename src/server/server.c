@@ -2854,7 +2854,7 @@ static rdp_server_dynamic_channel* rdp_server_find_dynamic_channel_any(librdp_se
     {
         rdp_server_dynamic_channel* channel = &peer->dynamic_channels[i];
 
-        if ((channel->open || channel->pending_open) && channel->channel_id == channel_id)
+        if ((channel->open || channel->pending_open || channel->closing) && channel->channel_id == channel_id)
             return channel;
     }
     return NULL;
@@ -2874,7 +2874,9 @@ static rdp_server_dynamic_channel* rdp_server_allocate_dynamic_channel(librdp_se
         return NULL;
     for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
     {
-        if (!peer->dynamic_channels[i].open && !peer->dynamic_channels[i].pending_open)
+        if (!peer->dynamic_channels[i].open &&
+            !peer->dynamic_channels[i].pending_open &&
+            !peer->dynamic_channels[i].closing)
             return &peer->dynamic_channels[i];
     }
     return NULL;
@@ -4632,6 +4634,7 @@ librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer,
     if (status == LIBRDP_STATUS_OK)
     {
         channel->open = 0;
+        channel->closing = 1;
         peer->dynamic_channel_count--;
         rdp_buffer_free(&channel->fragment);
         rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
@@ -4839,13 +4842,22 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
 
     if (status != LIBRDP_STATUS_OK)
         return status;
-    channel = rdp_server_find_dynamic_channel(peer, pdu.channel_id);
+    channel = rdp_server_find_dynamic_channel_any(peer, pdu.channel_id);
     if (!channel)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (channel->closing)
+    {
+        rdp_buffer_free(&channel->fragment);
+        memset(channel, 0, sizeof(*channel));
+        return LIBRDP_STATUS_OK;
+    }
+    if (!channel->open || channel->pending_open)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     channel->open = 0;
     peer->dynamic_channel_count--;
     rdp_buffer_free(&channel->fragment);
     rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
+    memset(channel, 0, sizeof(*channel));
     return LIBRDP_STATUS_OK;
 }
 
