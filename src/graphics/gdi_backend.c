@@ -2500,6 +2500,13 @@ static void rdp_gdi_backend_gdiplus_transform_points(const rdp_gdi_backend_gdipl
         rdp_gdi_backend_gdiplus_transform_context_point(context, &points[i]);
 }
 
+/*
+ * Purpose: render transformed EMF+ line strips and optional closing segments.
+ * Invariants: each segment is clipped through the backend line primitive, and
+ * anti-alias coverage is emitted only after the main segment succeeds. Failure
+ * policy: the first backend drawing error stops the polyline so callers never
+ * count a partially failed visual record as fully rasterized.
+ */
 static librdp_status rdp_gdi_backend_gdiplus_draw_polyline(rdp_gdi_backend_kind backend,
                                                            librdp_surface* surface,
                                                            const rdp_gdi_backend_gdiplus_context* context,
@@ -2535,6 +2542,38 @@ static librdp_status rdp_gdi_backend_gdiplus_draw_polyline(rdp_gdi_backend_kind 
                                            &dirty_top,
                                            &dirty_right,
                                            &dirty_bottom);
+        if (status == LIBRDP_STATUS_OK && context && context->anti_alias_mode != 0u && pen_width <= 2u)
+        {
+            uint32_t aa_color = 0x40000000u | (color & 0x00ffffffu);
+
+            status = rdp_gdi_backend_draw_line(backend,
+                                               surface,
+                                               points[i - 1u].x,
+                                               points[i - 1u].y + 1,
+                                               points[i].x,
+                                               points[i].y + 1,
+                                               1u,
+                                               aa_color,
+                                               &context->clip,
+                                               &dirty_left,
+                                               &dirty_top,
+                                               &dirty_right,
+                                               &dirty_bottom);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_gdi_backend_draw_line(backend,
+                                                   surface,
+                                                   points[i - 1u].x + 1,
+                                                   points[i - 1u].y,
+                                                   points[i].x + 1,
+                                                   points[i].y,
+                                                   1u,
+                                                   aa_color,
+                                                   &context->clip,
+                                                   &dirty_left,
+                                                   &dirty_top,
+                                                   &dirty_right,
+                                                   &dirty_bottom);
+        }
     }
     if (close && status == LIBRDP_STATUS_OK)
     {
@@ -4039,6 +4078,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
     size_t abs_stride = 0u;
     const uint8_t* pixels = NULL;
     int source_bottom_up = 0;
+    uint32_t interpolation_mode = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!surface || !image || image->object_type != RDP_GDIPLUS_OBJECT_TYPE_IMAGE ||
@@ -4098,6 +4138,12 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
         src_width = width - (uint32_t)src_x;
     if (src_height > height - (uint32_t)src_y)
         src_height = height - (uint32_t)src_y;
+    if (context)
+    {
+        interpolation_mode = context->interpolation_mode;
+        if (context->compositing_quality >= 4u && interpolation_mode < 3u)
+            interpolation_mode = 3u;
+    }
     status = rdp_gdi_backend_gdiplus_scale_bgra32(surface,
                                                   dst_x,
                                                   dst_y,
@@ -4112,7 +4158,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
                                                   height,
                                                   abs_stride,
                                                   source_bottom_up,
-                                                  context ? context->interpolation_mode : 0u,
+                                                  interpolation_mode,
                                                   context ? &context->clip : NULL);
     if (status == LIBRDP_STATUS_OK && rasterized)
         (*rasterized)++;

@@ -8444,6 +8444,20 @@ static int test_gdiplus_interpolation_and_metadata_objects(void)
     CHECK(append_gdiplus_float(&payload, 2.0f));
     CHECK(append_gdiplus_compressed_rect(&payload, 0, 0, 4, 4));
     CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_record(&stream, 0x4021u, 0x0000u, &payload));
+    CHECK(append_gdiplus_record(&stream, 0x4024u, 0x0004u, &payload));
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 4, 0, 4, 4));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
 
     CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
                                                 surface,
@@ -8452,8 +8466,8 @@ static int test_gdiplus_interpolation_and_metadata_objects(void)
                                                 &records,
                                                 &rasterized,
                                                 &unsupported) == LIBRDP_STATUS_OK);
-    CHECK(records == 6u);
-    CHECK(rasterized == 1u);
+    CHECK(records == 9u);
+    CHECK(rasterized == 2u);
     CHECK(unsupported == 0u);
     pixels = librdp_surface_pixels(surface);
     stride = librdp_surface_stride(surface);
@@ -8461,6 +8475,60 @@ static int test_gdiplus_interpolation_and_metadata_objects(void)
     CHECK(pixels[1u * stride + 1u * 4u] != 0xffu);
     CHECK(pixels[1u * stride + 1u * 4u + 1u] != 0x00u ||
           pixels[1u * stride + 1u * 4u + 2u] != 0x00u);
+    CHECK(pixels[1u * stride + 5u * 4u] != 0xffu);
+    CHECK(pixels[1u * stride + 5u * 4u + 1u] != 0x00u ||
+          pixels[1u * stride + 5u * 4u + 2u] != 0x00u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
+ * Coverage: verifies GDI+ antialias state through a visible alpha edge on a
+ * direct-color line. It catches regressions where SetAntiAliasMode is parsed
+ * and saved but never influences rasterization.
+ */
+static int test_gdiplus_antialias_affects_line_edges(void)
+{
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    const uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(8, 8, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(append_gdiplus_record(&stream, 0x401eu, 0x0001u, &payload));
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1, 1));
+    CHECK(append_gdiplus_compressed_point(&payload, 6, 1));
+    CHECK(append_gdiplus_record(&stream, 0x400du, 0xc000u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 2u);
+    CHECK(rasterized == 1u);
+    CHECK(unsupported == 0u);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    CHECK(pixels != NULL && stride >= 8u * 4u);
+    CHECK(pixels[1u * stride + 1u * 4u + 2u] == 0xffu);
+    CHECK(pixels[2u * stride + 1u * 4u + 2u] > 0u &&
+          pixels[2u * stride + 1u * 4u + 2u] < 0xffu);
 
     rdp_buffer_free(&payload);
     rdp_buffer_free(&stream);
@@ -9272,6 +9340,12 @@ int test_common(void)
     return 0;
 }
 
+/*
+ * Fixture: runs client-core regression groups that require session state,
+ * local loopback servers, feature gates, backend mocks, and graphics replay.
+ * The ordering keeps cheap pure-state tests before fork/socket fixtures and
+ * exercises codec/GDI paths before activation and workspace/admin scenarios.
+ */
 int test_client_core(void)
 {
     if (test_core_devices() != 0)
@@ -9339,6 +9413,8 @@ int test_client_core(void)
     if (test_gdiplus_complex_brushes_sample_pixels() != 0)
         return 1;
     if (test_gdiplus_interpolation_and_metadata_objects() != 0)
+        return 1;
+    if (test_gdiplus_antialias_affects_line_edges() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;
