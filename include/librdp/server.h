@@ -404,6 +404,24 @@ typedef void (*librdp_server_channel_callback)(librdp_server_peer* peer,
                                                void* user_data);
 
 /**
+ * @brief Server-side dynamic-channel accept callback.
+ *
+ * Called synchronously from librdp_server_peer_run_once() when a client sends a
+ * DVC CREATE request. name is borrowed and valid only until the callback
+ * returns; it is not guaranteed to be NUL-terminated, so consumers must use
+ * name_len. Return non-zero to accept the channel or zero to reject it with a
+ * protocol-level not-supported response.
+ *
+ * @since 0.1.0
+ */
+typedef int (*librdp_server_dynamic_channel_accept_callback)(librdp_server_peer* peer,
+                                                             uint32_t dynamic_channel_id,
+                                                             uint8_t priority,
+                                                             const char* name,
+                                                             size_t name_len,
+                                                             void* user_data);
+
+/**
  * @brief Server-side normalized extension callback.
  *
  * Called synchronously from librdp_server_peer_run_once() on the thread driving
@@ -912,6 +930,32 @@ LIBRDP_API librdp_status librdp_server_peer_set_input_callback(librdp_server_pee
 LIBRDP_API librdp_status librdp_server_peer_set_channel_callback(librdp_server_peer* peer,
                                                                  librdp_server_channel_callback callback,
                                                                  void* user_data);
+
+/**
+ * @brief Install the dynamic-channel accept policy callback.
+ *
+ * The callback is optional. When unset, valid client CREATE requests are
+ * accepted. When set, it is called before the dynamic channel is added to the
+ * peer table. The callback and user_data are borrowed; librdp does not retain
+ * ownership of application objects.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] callback Optional accept callback, or NULL to restore the default
+ * accept-all policy for syntactically valid CREATE requests.
+ * @param[in] user_data Opaque application pointer passed to callback; may be
+ * NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. The
+ * callback is executed from librdp_server_peer_run_once() on the same thread.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_dynamic_channel_accept_callback(
+    librdp_server_peer* peer,
+    librdp_server_dynamic_channel_accept_callback callback,
+    void* user_data);
 
 /**
  * @brief Register the callback for normalized extension-channel events.

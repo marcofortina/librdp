@@ -3326,6 +3326,18 @@ librdp_status librdp_server_peer_set_channel_callback(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_peer_set_dynamic_channel_accept_callback(
+    librdp_server_peer* peer,
+    librdp_server_dynamic_channel_accept_callback callback,
+    void* user_data)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    peer->dynamic_channel_accept_callback = callback;
+    peer->dynamic_channel_accept_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer,
                                                         librdp_server_extension_callback callback,
                                                         void* user_data)
@@ -4367,6 +4379,7 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
     rdp_buffer response;
     uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
     librdp_status status = LIBRDP_STATUS_OK;
+    int accepted = 1;
 
     memset(&request, 0, sizeof(request));
     rdp_buffer_init(&response);
@@ -4377,7 +4390,18 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         status = LIBRDP_STATUS_LIMIT_EXCEEDED;
     if (status == LIBRDP_STATUS_OK && rdp_server_find_dynamic_channel_any(peer, request.channel_id))
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (status == LIBRDP_STATUS_OK)
+    if (status == LIBRDP_STATUS_OK && peer->dynamic_channel_accept_callback)
+    {
+        accepted = peer->dynamic_channel_accept_callback(peer,
+                                                         request.channel_id,
+                                                         request.priority,
+                                                         (const char*)request.name,
+                                                         request.name_len,
+                                                         peer->dynamic_channel_accept_user_data);
+        if (!accepted)
+            status_code = RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    }
+    if (status == LIBRDP_STATUS_OK && accepted)
     {
         channel = rdp_server_allocate_dynamic_channel(peer);
         if (!channel)
@@ -4390,7 +4414,7 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
                                                   request.channel_id_bytes ? request.channel_id_bytes : 1u,
                                                   status_code) == LIBRDP_STATUS_OK)
         (void)rdp_server_send_dynamic_packet(peer, &response);
-    if (status == LIBRDP_STATUS_OK && channel)
+    if (status == LIBRDP_STATUS_OK && accepted && channel)
     {
         memset(channel, 0, sizeof(*channel));
         channel->channel_id = request.channel_id;
