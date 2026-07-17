@@ -60,6 +60,8 @@ struct librdp_server
     char* nla_domain;
     char* nla_username;
     char* nla_password;
+    librdp_server_credentials_provider credentials_provider;
+    void* credentials_provider_user_data;
     int listen_fd;
     uint16_t port;
     uint16_t local_port;
@@ -89,6 +91,11 @@ struct librdp_server_peer
     char* nla_domain;
     char* nla_username;
     char* nla_password;
+    char* credssp_expected_domain;
+    char* credssp_expected_username;
+    char* credssp_expected_password;
+    librdp_server_credentials_provider credentials_provider;
+    void* credentials_provider_user_data;
     uint32_t requested_features;
     uint32_t backend_features;
     uint64_t backend_extension_families;
@@ -107,9 +114,12 @@ struct librdp_server_peer
     uint8_t tls_active;
     uint8_t standard_security_ready;
     uint8_t credssp_stage;
+    uint8_t credssp_ts_request_version;
+    uint8_t credssp_public_key_bound;
     uint8_t credssp_client_nonce_ready;
     uint8_t credssp_security_ready;
     uint8_t nla_authenticated;
+    uint32_t nla_failed_attempts;
     short pending_revents;
     uint16_t advertised_channel_count;
     uint16_t dynamic_channel_static_index;

@@ -18,6 +18,7 @@
 
 #include "nla/credssp.h"
 
+#include "common/charset.h"
 #include "common/stream.h"
 
 #include <openssl/asn1.h>
@@ -30,6 +31,7 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -228,22 +230,30 @@ static librdp_status rdp_buffer_append_u64_le(rdp_buffer* buffer, uint64_t value
 
 static librdp_status rdp_append_utf16le_ascii(rdp_buffer* buffer, const char* text, int uppercase)
 {
-    size_t i = 0;
-    size_t length = rdp_ascii_token_len(text);
+    const char* input = text ? text : "";
+    char* normalized = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t length = strlen(input);
 
-    if (!buffer || (!text && length > 0) || length > 0x7fffu)
+    if (!buffer || length > 0x7fffu)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    for (i = 0; i < length; i++)
+    if (uppercase)
     {
-        uint8_t ch = (uint8_t)text[i];
-        librdp_status status = LIBRDP_STATUS_OK;
-        if (uppercase)
-            ch = (uint8_t)toupper(ch);
-        status = rdp_buffer_append_u16_le(buffer, ch);
-        if (status != LIBRDP_STATUS_OK)
-            return status;
+        normalized = (char*)malloc(length + 1u);
+        if (!normalized)
+            return LIBRDP_STATUS_NO_MEMORY;
+        for (size_t i = 0; i < length; i++)
+        {
+            unsigned char ch = (unsigned char)input[i];
+
+            normalized[i] = (ch >= 'a' && ch <= 'z') ? (char)(ch - ('a' - 'A')) : (char)ch;
+        }
+        normalized[length] = '\0';
+        input = normalized;
     }
-    return LIBRDP_STATUS_OK;
+    status = rdp_charset_utf8_to_utf16le_buffer(input, 0, buffer);
+    free(normalized);
+    return status;
 }
 
 static int rdp_ascii_equal_fold(const char* left, const char* right)
@@ -262,16 +272,19 @@ static int rdp_ascii_equal_fold(const char* left, const char* right)
 
 static librdp_status rdp_utf16le_ascii_to_cstring(const uint8_t* data, size_t length, rdp_buffer* output)
 {
+    char* text = NULL;
+    size_t text_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if ((!data && length > 0) || !output || (length % 2u) != 0 || (length / 2u) > 0x7fffu)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    for (size_t i = 0; i < length; i += 2u)
-    {
-        if (data[i + 1u] != 0)
-            return LIBRDP_STATUS_UNSUPPORTED;
-        if (rdp_buffer_append_u8(output, data[i]) != LIBRDP_STATUS_OK)
-            return LIBRDP_STATUS_NO_MEMORY;
-    }
-    return rdp_buffer_append_u8(output, 0);
+    status = rdp_charset_utf16le_to_utf8_alloc(data, length, 0, &text, &text_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(output, (const uint8_t*)text, text_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(output, 0);
+    free(text);
+    return status;
 }
 
 static CRYPTO_ONCE rdp_credssp_provider_once = CRYPTO_ONCE_STATIC_INIT;
@@ -2169,6 +2182,155 @@ static librdp_status rdp_credssp_validate_password_credentials(const uint8_t* da
     return seen == 0x03u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
 }
 
+void rdp_credssp_password_credentials_clear(rdp_credssp_password_credentials* credentials)
+{
+    if (!credentials)
+        return;
+    free(credentials->domain);
+    free(credentials->username);
+    if (credentials->password)
+    {
+        OPENSSL_cleanse(credentials->password, strlen(credentials->password));
+        free(credentials->password);
+    }
+    memset(credentials, 0, sizeof(*credentials));
+}
+
+static librdp_status rdp_credssp_set_password_field(rdp_credssp_password_credentials* credentials,
+                                                    uint8_t index,
+                                                    const uint8_t* data,
+                                                    size_t length)
+{
+    char** target = NULL;
+    char* text = NULL;
+    size_t text_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!credentials || (!data && length > 0) || (length % 2u) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (index == 0)
+        target = &credentials->domain;
+    else if (index == 1)
+        target = &credentials->username;
+    else if (index == 2)
+        target = &credentials->password;
+    else
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (*target)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_charset_utf16le_to_utf8_alloc(data, length, 0, &text, &text_len);
+    (void)text_len;
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    *target = text;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_credssp_parse_password_sequence(const uint8_t* data,
+                                                         size_t length,
+                                                         rdp_credssp_password_credentials* credentials)
+{
+    rdp_stream outer;
+    rdp_stream sequence;
+    uint8_t outer_tag = 0;
+    uint8_t seen = 0;
+    const uint8_t* sequence_data = NULL;
+    size_t sequence_len = 0;
+
+    rdp_stream_init(&outer, data, length);
+    if (rdp_der_read_tlv(&outer, &outer_tag, &sequence_data, &sequence_len) != LIBRDP_STATUS_OK ||
+        outer_tag != 0x30 || rdp_stream_remaining(&outer) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&sequence, sequence_data, sequence_len);
+    while (rdp_stream_remaining(&sequence) > 0)
+    {
+        rdp_stream field;
+        uint8_t tag = 0;
+        uint8_t inner_tag = 0;
+        uint8_t field_index = 0;
+        const uint8_t* value = NULL;
+        const uint8_t* inner = NULL;
+        size_t value_len = 0;
+        size_t inner_len = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (rdp_der_read_tlv(&sequence, &tag, &value, &value_len) != LIBRDP_STATUS_OK || tag < 0xa0 ||
+            tag > 0xa2)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        field_index = (uint8_t)(tag - 0xa0u);
+        if ((seen & (uint8_t)(1u << field_index)) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        rdp_stream_init(&field, value, value_len);
+        if (rdp_der_read_tlv(&field, &inner_tag, &inner, &inner_len) != LIBRDP_STATUS_OK || inner_tag != 0x04 ||
+            rdp_stream_remaining(&field) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = rdp_credssp_set_password_field(credentials, field_index, inner, inner_len);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        seen |= (uint8_t)(1u << field_index);
+    }
+    return seen == 0x07u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_credssp_parse_password_credentials(const uint8_t* data,
+                                                            size_t length,
+                                                            rdp_credssp_password_credentials* credentials)
+{
+    rdp_stream outer;
+    rdp_stream fields;
+    uint8_t tag = 0;
+    uint8_t seen = 0;
+    uint32_t credential_type = 0;
+    const uint8_t* value = NULL;
+    size_t value_len = 0;
+
+    if (!data || length == 0 || !credentials)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    memset(credentials, 0, sizeof(*credentials));
+    rdp_stream_init(&outer, data, length);
+    if (rdp_der_read_tlv(&outer, &tag, &value, &value_len) != LIBRDP_STATUS_OK || tag != 0x30 ||
+        rdp_stream_remaining(&outer) != 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_stream_init(&fields, value, value_len);
+    while (rdp_stream_remaining(&fields) > 0)
+    {
+        rdp_stream field;
+        uint8_t inner_tag = 0;
+        const uint8_t* inner = NULL;
+        size_t inner_len = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (rdp_der_read_tlv(&fields, &tag, &value, &value_len) != LIBRDP_STATUS_OK ||
+            (tag != 0xa0 && tag != 0xa1))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        rdp_stream_init(&field, value, value_len);
+        if (tag == 0xa0)
+        {
+            if ((seen & 0x01u) != 0 ||
+                rdp_der_read_tlv(&field, &inner_tag, &inner, &inner_len) != LIBRDP_STATUS_OK ||
+                inner_tag != 0x02 ||
+                rdp_der_parse_integer(inner, inner_len, &credential_type) != LIBRDP_STATUS_OK ||
+                credential_type != 1u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            seen |= 0x01u;
+        }
+        else
+        {
+            if ((seen & 0x02u) != 0 ||
+                rdp_der_read_tlv(&field, &inner_tag, &inner, &inner_len) != LIBRDP_STATUS_OK ||
+                inner_tag != 0x04)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+            status = rdp_credssp_parse_password_sequence(inner, inner_len, credentials);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+            seen |= 0x02u;
+        }
+        if (rdp_stream_remaining(&field) != 0)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    return seen == 0x03u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
 librdp_status rdp_credssp_decrypt_password_credentials(rdp_ntlm_security_context* context,
                                                        const void* encrypted,
                                                        size_t encrypted_len)
@@ -2182,6 +2344,29 @@ librdp_status rdp_credssp_decrypt_password_credentials(rdp_ntlm_security_context
     status = rdp_credssp_ntlm_unwrap(context, encrypted, encrypted_len, &plain);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_validate_password_credentials(plain.data, plain.length);
+    if (plain.data)
+        OPENSSL_cleanse(plain.data, plain.length);
+    rdp_buffer_free(&plain);
+    return status;
+}
+
+librdp_status rdp_credssp_decrypt_password_credentials_ex(rdp_ntlm_security_context* context,
+                                                          const void* encrypted,
+                                                          size_t encrypted_len,
+                                                          rdp_credssp_password_credentials* credentials)
+{
+    rdp_buffer plain;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!context || !encrypted || encrypted_len == 0 || !credentials)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(credentials, 0, sizeof(*credentials));
+    rdp_buffer_init(&plain);
+    status = rdp_credssp_ntlm_unwrap(context, encrypted, encrypted_len, &plain);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_parse_password_credentials(plain.data, plain.length, credentials);
+    if (status != LIBRDP_STATUS_OK)
+        rdp_credssp_password_credentials_clear(credentials);
     if (plain.data)
         OPENSSL_cleanse(plain.data, plain.length);
     rdp_buffer_free(&plain);

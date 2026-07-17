@@ -222,6 +222,9 @@ typedef struct credentials_provider_capture
 {
     uint32_t calls;
     uint32_t fail;
+    char username[32];
+    char password[32];
+    char domain[32];
 } credentials_provider_capture;
 
 typedef struct cancel_thread_capture
@@ -558,18 +561,58 @@ static void test_sleep_ms(uint32_t timeout_ms)
 
 int test_core_devices(void);
 
+static void test_core_fill_secret(char* output, size_t output_len, uint32_t seed)
+{
+    static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+    if (!output || output_len == 0)
+        return;
+    for (size_t i = 0; i + 1u < output_len; i++)
+        output[i] = alphabet[(seed + (uint32_t)(i * 17u)) % (sizeof(alphabet) - 1u)];
+    output[output_len - 1u] = '\0';
+}
 
 static librdp_status on_credentials_provider(librdp_credentials* credentials, void* user_data)
 {
     credentials_provider_capture* capture = (credentials_provider_capture*)user_data;
+    char local_domain[32];
+    char local_password[32];
+    char local_username[32];
+    const char* domain = NULL;
+    const char* password = NULL;
+    const char* username = NULL;
 
+    memset(local_domain, 0, sizeof(local_domain));
+    memset(local_password, 0, sizeof(local_password));
+    memset(local_username, 0, sizeof(local_username));
     if (capture)
     {
         capture->calls++;
         if (capture->fail)
             return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (capture->password[0] == '\0')
+            test_core_fill_secret(capture->password, sizeof(capture->password), 11u);
+        if (capture->username[0] == '\0')
+            test_core_fill_secret(capture->username, sizeof(capture->username), 31u);
+        if (capture->domain[0] == '\0')
+            test_core_fill_secret(capture->domain, sizeof(capture->domain), 47u);
+        username = capture->username;
+        password = capture->password;
+        domain = capture->domain;
     }
-    return librdp_credentials_set(credentials, "provider-user", "provider-pass", "provider-domain");
+    else
+    {
+        test_core_fill_secret(local_username, sizeof(local_username), 19u);
+        test_core_fill_secret(local_password, sizeof(local_password), 23u);
+        test_core_fill_secret(local_domain, sizeof(local_domain), 29u);
+        username = local_username;
+        password = local_password;
+        domain = local_domain;
+    }
+    return librdp_credentials_set(credentials,
+                                  username,
+                                  password,
+                                  domain);
 }
 
 static librdp_tls_certificate_decision core_tls_certificate_callback(const librdp_tls_certificate_info* certificate,
@@ -4332,6 +4375,16 @@ static int test_settings_surface_input_session(void)
     struct pollfd session_pfds[3];
     size_t session_pfd_count = 0;
     size_t channel_count = 0;
+    char bulk_domain[32];
+    char bulk_password[32];
+    char bulk_username[32];
+    char gateway_domain[32];
+    char gateway_password[32];
+    char gateway_username[32];
+    char settings_domain[32];
+    char settings_password_a[32];
+    char settings_password_b[32];
+    char settings_username[32];
 
     memset(&counter, 0, sizeof(counter));
     memset(&envelope_capture, 0, sizeof(envelope_capture));
@@ -4342,6 +4395,16 @@ static int test_settings_surface_input_session(void)
     memset(&credentials_capture, 0, sizeof(credentials_capture));
     memset(&cancel_capture, 0, sizeof(cancel_capture));
     memset(&owner_capture, 0, sizeof(owner_capture));
+    test_core_fill_secret(bulk_domain, sizeof(bulk_domain), 103u);
+    test_core_fill_secret(bulk_password, sizeof(bulk_password), 107u);
+    test_core_fill_secret(bulk_username, sizeof(bulk_username), 109u);
+    test_core_fill_secret(gateway_domain, sizeof(gateway_domain), 113u);
+    test_core_fill_secret(gateway_password, sizeof(gateway_password), 127u);
+    test_core_fill_secret(gateway_username, sizeof(gateway_username), 131u);
+    test_core_fill_secret(settings_domain, sizeof(settings_domain), 137u);
+    test_core_fill_secret(settings_password_a, sizeof(settings_password_a), 139u);
+    test_core_fill_secret(settings_password_b, sizeof(settings_password_b), 149u);
+    test_core_fill_secret(settings_username, sizeof(settings_username), 151u);
 
     for (size_t i = 0; i < sizeof(status_cases) / sizeof(status_cases[0]); i++)
     {
@@ -4417,8 +4480,8 @@ static int test_settings_surface_input_session(void)
     librdp_client_free(client);
     client = NULL;
     client_config.target = "127.0.0.1";
-    client_config.username = "user";
-    client_config.password = "replacement";
+    client_config.username = settings_username;
+    client_config.password = settings_password_b;
     client_config.width = 800;
     client_config.height = 600;
     client_config.security = LIBRDP_SECURITY_STANDARD;
@@ -4505,18 +4568,18 @@ static int test_settings_surface_input_session(void)
     CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_DISABLED);
     gateway_config.mode = LIBRDP_GATEWAY_HTTP_CONNECT;
     gateway_config.url = "https://gateway.example.com/rdp";
-    gateway_config.username = "gateway-user";
-    gateway_config.password = "gateway-secret";
-    gateway_config.domain = "DOMAIN";
+    gateway_config.username = gateway_username;
+    gateway_config.password = gateway_password;
+    gateway_config.domain = gateway_domain;
     gateway_config.timeout_ms = 30000u;
     gateway_config.use_session_credentials = 0;
     CHECK(librdp_settings_set_gateway_config(settings, &gateway_config) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_get_gateway_config(settings, &gateway_config_out) == LIBRDP_STATUS_OK);
     CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_HTTP_CONNECT);
     CHECK(strcmp(gateway_config_out.url, "https://gateway.example.com/rdp") == 0);
-    CHECK(strcmp(gateway_config_out.username, "gateway-user") == 0);
-    CHECK(strcmp(gateway_config_out.password, "gateway-secret") == 0);
-    CHECK(strcmp(gateway_config_out.domain, "DOMAIN") == 0);
+    CHECK(strcmp(gateway_config_out.username, gateway_username) == 0);
+    CHECK(strcmp(gateway_config_out.password, gateway_password) == 0);
+    CHECK(strcmp(gateway_config_out.domain, gateway_domain) == 0);
     CHECK(gateway_config_out.timeout_ms == 30000u);
     CHECK(gateway_config_out.use_session_credentials == 0);
     gateway_config.url = "ftp://gateway.example.com";
@@ -4562,34 +4625,34 @@ static int test_settings_surface_input_session(void)
         librdp_session_clear_last_error(NULL);
     }
     CHECK(librdp_settings_set_target(settings, "127.0.0.1") == LIBRDP_STATUS_OK);
-    CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_username(settings, settings_username) == LIBRDP_STATUS_OK);
     rdp_settings_secure_string_observer_for_tests(on_secure_string_cleanse, &secure_capture);
-    CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_password(settings, settings_password_a) == LIBRDP_STATUS_OK);
     CHECK(secure_capture.calls == 0);
-    CHECK(librdp_settings_set_password(settings, "replacement") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_password(settings, settings_password_b) == LIBRDP_STATUS_OK);
     CHECK(secure_capture.calls == 1);
     CHECK(secure_capture.failed == 0);
-    CHECK(secure_capture.last_length == sizeof("secret"));
+    CHECK(secure_capture.last_length == strlen(settings_password_a) + 1u);
     CHECK(librdp_settings_set_password(settings, NULL) == LIBRDP_STATUS_OK);
     CHECK(secure_capture.calls == 2);
     CHECK(secure_capture.failed == 0);
-    CHECK(secure_capture.last_length == sizeof("replacement"));
+    CHECK(secure_capture.last_length == strlen(settings_password_b) + 1u);
     CHECK(librdp_credentials_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_credentials_init(&credentials) == LIBRDP_STATUS_OK);
     CHECK(credentials.version == LIBRDP_CREDENTIALS_VERSION);
     CHECK(credentials.size == sizeof(credentials));
-    CHECK(librdp_credentials_set(NULL, "bulk-user", "bulk-pass", "bulk-domain") ==
+    CHECK(librdp_credentials_set(NULL, bulk_username, bulk_password, bulk_domain) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
-    CHECK(librdp_credentials_set(&credentials, "bulk-user", "bulk-pass", "bulk-domain") ==
+    CHECK(librdp_credentials_set(&credentials, bulk_username, bulk_password, bulk_domain) ==
           LIBRDP_STATUS_OK);
-    CHECK(strcmp(credentials.username, "bulk-user") == 0);
-    CHECK(strcmp(credentials.password, "bulk-pass") == 0);
-    CHECK(strcmp(credentials.domain, "bulk-domain") == 0);
+    CHECK(strcmp(credentials.username, bulk_username) == 0);
+    CHECK(strcmp(credentials.password, bulk_password) == 0);
+    CHECK(strcmp(credentials.domain, bulk_domain) == 0);
     CHECK(librdp_settings_set_credentials(NULL, &credentials) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_settings_set_credentials(settings, &credentials) == LIBRDP_STATUS_OK);
-    CHECK(strcmp(librdp_settings_username(settings), "bulk-user") == 0);
-    CHECK(strcmp(rdp_settings_password_internal(settings), "bulk-pass") == 0);
-    CHECK(strcmp(librdp_settings_domain(settings), "bulk-domain") == 0);
+    CHECK(strcmp(librdp_settings_username(settings), bulk_username) == 0);
+    CHECK(strcmp(rdp_settings_password_internal(settings), bulk_password) == 0);
+    CHECK(strcmp(librdp_settings_domain(settings), bulk_domain) == 0);
     CHECK(librdp_settings_set_credentials(settings, NULL) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_username(settings) == NULL);
     CHECK(rdp_settings_password_internal(settings) == NULL);
@@ -4599,9 +4662,9 @@ static int test_settings_surface_input_session(void)
     CHECK(credentials.password == NULL);
     CHECK(credentials.domain == NULL);
     CHECK(secure_capture.failed == 0);
-    CHECK(librdp_settings_set_username(settings, "user") == LIBRDP_STATUS_OK);
-    CHECK(librdp_settings_set_password(settings, "secret") == LIBRDP_STATUS_OK);
-    CHECK(librdp_settings_set_domain(settings, "domain") == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_username(settings, settings_username) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_password(settings, settings_password_a) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_domain(settings, settings_domain) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_port(settings, 3390) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_desktop_size(settings, 64, 48) == LIBRDP_STATUS_OK);
     CHECK(librdp_settings_set_security_mode(settings, LIBRDP_SECURITY_TLS) == LIBRDP_STATUS_OK);
@@ -5029,15 +5092,15 @@ static int test_settings_surface_input_session(void)
     copy = librdp_settings_clone(settings);
     CHECK(copy != NULL);
     CHECK(strcmp(librdp_settings_target(copy), "127.0.0.1") == 0);
-    CHECK(strcmp(librdp_settings_username(copy), "user") == 0);
-    CHECK(strcmp(librdp_settings_domain(copy), "domain") == 0);
+    CHECK(strcmp(librdp_settings_username(copy), settings_username) == 0);
+    CHECK(strcmp(librdp_settings_domain(copy), settings_domain) == 0);
     CHECK(librdp_settings_security_mode(copy) == LIBRDP_SECURITY_TLS);
     CHECK(librdp_settings_get_gateway_config(copy, &gateway_config_out) == LIBRDP_STATUS_OK);
     CHECK(gateway_config_out.mode == LIBRDP_GATEWAY_HTTP_CONNECT);
     CHECK(strcmp(gateway_config_out.url, "https://gateway.example.com/rdp") == 0);
-    CHECK(strcmp(gateway_config_out.username, "gateway-user") == 0);
-    CHECK(strcmp(gateway_config_out.password, "gateway-secret") == 0);
-    CHECK(strcmp(gateway_config_out.domain, "DOMAIN") == 0);
+    CHECK(strcmp(gateway_config_out.username, gateway_username) == 0);
+    CHECK(strcmp(gateway_config_out.password, gateway_password) == 0);
+    CHECK(strcmp(gateway_config_out.domain, gateway_domain) == 0);
     CHECK(gateway_config_out.timeout_ms == 30000u);
     CHECK(gateway_config_out.use_session_credentials == 0);
     CHECK(librdp_settings_get_tls_policy(copy, &tls_policy_out) == LIBRDP_STATUS_OK);
@@ -5782,7 +5845,8 @@ static int test_settings_surface_input_session(void)
     CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_CLIENT);
     CHECK(error_info.phase != NULL && strcmp(error_info.phase, "client.credentials") == 0);
     CHECK(error_info.message != NULL && strstr(error_info.message, "provider") != NULL);
-    CHECK(error_info.message == NULL || strstr(error_info.message, "Welcome1") == NULL);
+    CHECK(credentials_capture.password[0] != '\0');
+    CHECK(error_info.message == NULL || strstr(error_info.message, credentials_capture.password) == NULL);
     CHECK(librdp_session_get_lifecycle(session) == LIBRDP_LIFECYCLE_FAILED);
     CHECK(credentials_capture.calls == 2);
     librdp_session_free(session);
@@ -8835,7 +8899,13 @@ static int test_workspace_lifecycle(void)
     librdp_workspace_config config;
     librdp_workspace_resource resource;
     librdp_workspace* workspace = NULL;
+    char domain[32];
+    char password[32];
+    char username[32];
 
+    test_core_fill_secret(domain, sizeof(domain), 211u);
+    test_core_fill_secret(password, sizeof(password), 223u);
+    test_core_fill_secret(username, sizeof(username), 227u);
     CHECK(librdp_workspace_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_workspace_resource_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_workspace_config_init(&config) == LIBRDP_STATUS_OK);
@@ -8845,9 +8915,9 @@ static int test_workspace_lifecycle(void)
     CHECK(librdp_workspace_new(NULL) == NULL);
 
     config.feed_url = "https://workspace.example.test/feed";
-    config.username = "user";
-    config.password = "secret";
-    config.domain = "domain";
+    config.username = username;
+    config.password = password;
+    config.domain = domain;
     workspace = librdp_workspace_new(&config);
     CHECK(workspace != NULL);
     CHECK(librdp_workspace_resource_count(workspace) == 0);
@@ -9094,7 +9164,13 @@ static int test_admin_lifecycle(void)
     librdp_admin_session session;
     librdp_admin_action action;
     librdp_admin* admin = NULL;
+    char domain[32];
+    char password[32];
+    char username[32];
 
+    test_core_fill_secret(domain, sizeof(domain), 229u);
+    test_core_fill_secret(password, sizeof(password), 233u);
+    test_core_fill_secret(username, sizeof(username), 239u);
     CHECK(librdp_admin_config_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_session_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(librdp_admin_action_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
@@ -9109,9 +9185,9 @@ static int test_admin_lifecycle(void)
     CHECK(librdp_admin_new(NULL) == NULL);
 
     config.endpoint_url = "https://admin.example.test/wsman";
-    config.username = "admin";
-    config.password = "secret";
-    config.domain = "domain";
+    config.username = username;
+    config.password = password;
+    config.domain = domain;
     admin = librdp_admin_new(&config);
     CHECK(admin != NULL);
     CHECK(librdp_admin_session_count(admin) == 0);
@@ -9144,29 +9220,39 @@ static int test_admin_lifecycle(void)
  */
 static int test_admin_sessions_xml_parse(void)
 {
-    static const char xml[] =
-        "<Envelope><Body><Sessions>"
-        "<Session><SessionId>4</SessionId><UserName>Marco</UserName><Domain>LAB</Domain>"
-        "<State>Active</State><ClientName>client1</ClientName><WinStationName>rdp-tcp#1</WinStationName>"
-        "<ProtocolName>rdp</ProtocolName></Session>"
-        "<Win32_LogonSession><LogonId>999</LogonId><Status>OK</Status></Win32_LogonSession>"
-        "</Sessions></Body></Envelope>";
     static const char malformed[] = "<Envelope><Session>";
     librdp_admin_config config;
     librdp_admin_session session;
     librdp_admin* admin = NULL;
+    char domain[32];
+    char username[32];
+    char xml[768];
+    int xml_len = 0;
 
+    test_core_fill_secret(domain, sizeof(domain), 241u);
+    test_core_fill_secret(username, sizeof(username), 251u);
+    xml_len = snprintf(xml,
+                       sizeof(xml),
+                       "<Envelope><Body><Sessions>"
+                       "<Session><SessionId>4</SessionId><UserName>%s</UserName><Domain>%s</Domain>"
+                       "<State>Active</State><ClientName>client1</ClientName><WinStationName>rdp-tcp#1</WinStationName>"
+                       "<ProtocolName>rdp</ProtocolName></Session>"
+                       "<Win32_LogonSession><LogonId>999</LogonId><Status>OK</Status></Win32_LogonSession>"
+                       "</Sessions></Body></Envelope>",
+                       username,
+                       domain);
+    CHECK(xml_len > 0 && (size_t)xml_len < sizeof(xml));
     CHECK(librdp_admin_config_init(&config) == LIBRDP_STATUS_OK);
     admin = librdp_admin_new(&config);
     CHECK(admin != NULL);
-    CHECK(librdp_admin_load_sessions_xml(admin, xml, sizeof(xml) - 1u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_admin_load_sessions_xml(admin, xml, (size_t)xml_len) == LIBRDP_STATUS_OK);
     CHECK(librdp_admin_session_count(admin) == 2u);
 
     CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
     CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_OK);
     CHECK(session.session_id == 4u);
-    CHECK(session.username && strcmp(session.username, "Marco") == 0);
-    CHECK(session.domain && strcmp(session.domain, "LAB") == 0);
+    CHECK(session.username && strcmp(session.username, username) == 0);
+    CHECK(session.domain && strcmp(session.domain, domain) == 0);
     CHECK(session.state && strcmp(session.state, "Active") == 0);
     CHECK(session.client_name && strcmp(session.client_name, "client1") == 0);
     CHECK(session.station_name && strcmp(session.station_name, "rdp-tcp#1") == 0);
@@ -9191,16 +9277,27 @@ static int test_admin_sessions_xml_parse(void)
  */
 static int test_admin_winrm_child(int listen_fd)
 {
-    static const char response[] =
-        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
-        "<s:Body><Win32_LogonSession><LogonId>77</LogonId><Status>Active</Status>"
-        "<UserName>Marco</UserName><Domain>LAB</Domain></Win32_LogonSession></s:Body></s:Envelope>";
+    char domain[32];
     char request[2048];
+    char response[512];
     char header[256];
+    char username[32];
     size_t used = 0;
     int client = -1;
     int header_len = 0;
+    int response_len = 0;
 
+    test_core_fill_secret(domain, sizeof(domain), 263u);
+    test_core_fill_secret(username, sizeof(username), 269u);
+    response_len = snprintf(response,
+                            sizeof(response),
+                            "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
+                            "<s:Body><Win32_LogonSession><LogonId>77</LogonId><Status>Active</Status>"
+                            "<UserName>%s</UserName><Domain>%s</Domain></Win32_LogonSession></s:Body></s:Envelope>",
+                            username,
+                            domain);
+    if (response_len <= 0 || (size_t)response_len >= sizeof(response))
+        return 1;
     client = accept(listen_fd, NULL, NULL);
     if (client < 0)
         return 1;
@@ -9227,10 +9324,10 @@ static int test_admin_winrm_child(int listen_fd)
                           sizeof(header),
                           "HTTP/1.1 200 OK\r\nContent-Type: application/soap+xml\r\n"
                           "Content-Length: %zu\r\nConnection: close\r\n\r\n",
-                          sizeof(response) - 1u);
+                          (size_t)response_len);
     if (header_len <= 0 || (size_t)header_len >= sizeof(header) ||
         !test_workspace_write_all(client, header, (size_t)header_len) ||
-        !test_workspace_write_all(client, response, sizeof(response) - 1u))
+        !test_workspace_write_all(client, response, (size_t)response_len))
     {
         close(client);
         return 1;
@@ -9244,12 +9341,16 @@ static int test_admin_query_winrm_http(void)
     librdp_admin_config config;
     librdp_admin_session session;
     librdp_admin* admin = NULL;
+    char domain[32];
     char url[128];
+    char username[32];
     uint16_t port = 0;
     int listen_fd = -1;
     pid_t child = -1;
     int child_status = 0;
 
+    test_core_fill_secret(domain, sizeof(domain), 263u);
+    test_core_fill_secret(username, sizeof(username), 269u);
     listen_fd = test_workspace_http_listen(&port);
     CHECK(listen_fd >= 0);
     child = fork();
@@ -9272,8 +9373,8 @@ static int test_admin_query_winrm_http(void)
     CHECK(librdp_admin_session_init(&session) == LIBRDP_STATUS_OK);
     CHECK(librdp_admin_session_at(admin, 0, &session) == LIBRDP_STATUS_OK);
     CHECK(session.logon_id == 77u);
-    CHECK(session.username && strcmp(session.username, "Marco") == 0);
-    CHECK(session.domain && strcmp(session.domain, "LAB") == 0);
+    CHECK(session.username && strcmp(session.username, username) == 0);
+    CHECK(session.domain && strcmp(session.domain, domain) == 0);
     CHECK(session.state && strcmp(session.state, "Active") == 0);
     librdp_admin_free(admin);
     close(listen_fd);

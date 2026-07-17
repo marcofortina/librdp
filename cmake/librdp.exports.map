@@ -46,8 +46,10 @@ LIBRDP_0.1 {
         librdp_server_dynamic_channel_info_init;
         librdp_server_extension_event_init;
         librdp_server_event_init;
+        librdp_server_credentials_request_init;
         librdp_server_status_init;
         librdp_server_metrics_init;
+        librdp_server_set_credentials_provider;
         librdp_server_enable_feature;
         librdp_server_enable_feature_provider;
         librdp_server_enable_extension_provider;
@@ -60,6 +62,7 @@ LIBRDP_0.1 {
         librdp_server_peer_set_extension_callback;
         librdp_server_peer_set_extension_family_callback;
         librdp_server_peer_set_event_callback;
+        librdp_server_peer_set_credentials_provider;
         librdp_server_peer_enable_feature_provider;
         librdp_server_peer_enable_extension_provider;
         librdp_server_peer_get_extension_provider_status;

@@ -17,6 +17,7 @@
 #include "server/server_internal.h"
 
 #include "common/buffer.h"
+#include "common/charset.h"
 #include "common/stream.h"
 #include "common/trace.h"
 #include "channels/audio_input.h"
@@ -65,6 +66,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509err.h>
+#include <ctype.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -580,6 +582,94 @@ static void rdp_server_secure_free(char* text)
     free(text);
 }
 
+static void rdp_server_credssp_expected_clear(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    free(peer->credssp_expected_domain);
+    free(peer->credssp_expected_username);
+    rdp_server_secure_free(peer->credssp_expected_password);
+    peer->credssp_expected_domain = NULL;
+    peer->credssp_expected_username = NULL;
+    peer->credssp_expected_password = NULL;
+}
+
+static librdp_status rdp_server_credssp_expected_set(librdp_server_peer* peer,
+                                                     const char* domain,
+                                                     const char* username,
+                                                     const char* password)
+{
+    char* domain_copy = NULL;
+    char* username_copy = NULL;
+    char* password_copy = NULL;
+
+    if (!peer || !username || username[0] == '\0' || !password || password[0] == '\0')
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (domain)
+    {
+        domain_copy = rdp_server_strdup_bounded(domain);
+        if (!domain_copy)
+            return LIBRDP_STATUS_NO_MEMORY;
+    }
+    username_copy = rdp_server_strdup_bounded(username);
+    if (!username_copy)
+    {
+        free(domain_copy);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    password_copy = rdp_server_secure_strdup_bounded(password);
+    if (!password_copy)
+    {
+        free(domain_copy);
+        free(username_copy);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    rdp_server_credssp_expected_clear(peer);
+    peer->credssp_expected_domain = domain_copy;
+    peer->credssp_expected_username = username_copy;
+    peer->credssp_expected_password = password_copy;
+    return LIBRDP_STATUS_OK;
+}
+
+static int rdp_server_account_equal_fold(const char* left, const char* right)
+{
+    if (!left || !right)
+        return left == right;
+    while (*left && *right)
+    {
+        unsigned char lch = (unsigned char)*left;
+        unsigned char rch = (unsigned char)*right;
+
+        if (lch < 0x80u && rch < 0x80u)
+        {
+            if (toupper(lch) != toupper(rch))
+                return 0;
+        }
+        else if (lch != rch)
+            return 0;
+        left++;
+        right++;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static int rdp_server_secret_equal(const char* left, const char* right)
+{
+    size_t left_len = left ? strlen(left) : 0;
+    size_t right_len = right ? strlen(right) : 0;
+    unsigned char diff = (unsigned char)(left_len ^ right_len);
+    size_t max_len = left_len > right_len ? left_len : right_len;
+
+    for (size_t i = 0; i < max_len; i++)
+    {
+        unsigned char lch = i < left_len ? (unsigned char)left[i] : 0;
+        unsigned char rch = i < right_len ? (unsigned char)right[i] : 0;
+
+        diff |= (unsigned char)(lch ^ rch);
+    }
+    return diff == 0;
+}
+
 static int rdp_server_tls_error_stack_has_key_mismatch(void)
 {
     unsigned long error = 0;
@@ -686,8 +776,11 @@ static int rdp_server_config_valid(const librdp_server_config* config)
         return 0;
     SSL_CTX_free(tls_context);
     if (config->security_mode == LIBRDP_SECURITY_NLA &&
-        (!config->nla_username || config->nla_username[0] == '\0' ||
-         !config->nla_password || config->nla_password[0] == '\0'))
+        ((config->nla_username != NULL) != (config->nla_password != NULL)))
+        return 0;
+    if (config->security_mode == LIBRDP_SECURITY_NLA &&
+        ((config->nla_username && config->nla_username[0] == '\0') ||
+         (config->nla_password && config->nla_password[0] == '\0')))
         return 0;
     return 1;
 }
@@ -757,6 +850,16 @@ librdp_status librdp_server_event_init(librdp_server_event* event)
     event->size = (uint32_t)sizeof(*event);
     event->status = LIBRDP_STATUS_OK;
     event->component = LIBRDP_ERROR_COMPONENT_NONE;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_credentials_request_init(librdp_server_credentials_request* request)
+{
+    if (!request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(request, 0, sizeof(*request));
+    request->version = LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION;
+    request->size = (uint32_t)sizeof(*request);
     return LIBRDP_STATUS_OK;
 }
 
@@ -1794,6 +1897,19 @@ librdp_server* librdp_server_new(const librdp_server_config* config)
     return server;
 }
 
+librdp_status librdp_server_set_credentials_provider(librdp_server* server,
+                                                     librdp_server_credentials_provider provider,
+                                                     void* user_data)
+{
+    if (!server)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (server->listen_fd >= 0)
+        return LIBRDP_STATUS_STATE;
+    server->credentials_provider = provider;
+    server->credentials_provider_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
 void librdp_server_free(librdp_server* server)
 {
     if (!server)
@@ -2041,6 +2157,8 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->requested_features = server->requested_features;
     accepted->backend_features = server->backend_features;
     accepted->backend_extension_families = server->backend_extension_families;
+    accepted->credentials_provider = server->credentials_provider;
+    accepted->credentials_provider_user_data = server->credentials_provider_user_data;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
     rdp_server_extension_states_reset(accepted, 0);
@@ -2372,8 +2490,11 @@ static int rdp_server_tls_material_available(const librdp_server_peer* peer)
 
 static int rdp_server_nla_material_available(const librdp_server_peer* peer)
 {
-    return rdp_server_tls_material_available(peer) &&
-           peer->nla_username && peer->nla_username[0] != '\0' &&
+    if (!rdp_server_tls_material_available(peer))
+        return 0;
+    if (peer->credentials_provider)
+        return 1;
+    return peer->nla_username && peer->nla_username[0] != '\0' &&
            peer->nla_password && peer->nla_password[0] != '\0';
 }
 
@@ -2865,6 +2986,125 @@ static librdp_status rdp_server_tls_public_key(librdp_server_peer* peer, rdp_buf
     return status;
 }
 
+static librdp_status rdp_server_credssp_accept_version(librdp_server_peer* peer, uint32_t version)
+{
+    if (!peer || version != 6u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (peer->credssp_ts_request_version == 0)
+        peer->credssp_ts_request_version = (uint8_t)version;
+    return peer->credssp_ts_request_version == version ? LIBRDP_STATUS_OK : LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+static librdp_status rdp_server_credssp_utf16_field(const uint8_t* data, size_t length, char** text)
+{
+    size_t text_len = 0;
+
+    if ((!data && length > 0) || (length % 2u) != 0 || !text)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *text = NULL;
+    return rdp_charset_utf16le_to_utf8_alloc(data, length, 0, text, &text_len);
+}
+
+static librdp_status rdp_server_credssp_resolve_expected_credentials(
+    librdp_server_peer* peer,
+    const rdp_ntlm_authenticate* authenticate,
+    uint32_t ts_request_version)
+{
+    char* claimed_domain = NULL;
+    char* claimed_username = NULL;
+    char* claimed_workstation = NULL;
+    librdp_credentials provider_credentials;
+    librdp_server_credentials_request request;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !authenticate)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(&provider_credentials, 0, sizeof(provider_credentials));
+    memset(&request, 0, sizeof(request));
+    status = rdp_server_credssp_utf16_field(authenticate->domain,
+                                            authenticate->domain_len,
+                                            &claimed_domain);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_utf16_field(authenticate->username,
+                                                authenticate->username_len,
+                                                &claimed_username);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_utf16_field(authenticate->workstation,
+                                                authenticate->workstation_len,
+                                                &claimed_workstation);
+    if (status == LIBRDP_STATUS_OK && (!claimed_username || claimed_username[0] == '\0'))
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && peer->credentials_provider)
+    {
+        status = librdp_credentials_init(&provider_credentials);
+        if (status == LIBRDP_STATUS_OK)
+            status = librdp_server_credentials_request_init(&request);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            request.domain = claimed_domain;
+            request.username = claimed_username;
+            request.workstation = claimed_workstation;
+            request.ts_request_version = ts_request_version;
+            request.failed_attempts = peer->nla_failed_attempts;
+            request.public_key_bound = peer->credssp_public_key_bound;
+            status = peer->credentials_provider(peer,
+                                                &request,
+                                                &provider_credentials,
+                                                peer->credentials_provider_user_data);
+        }
+        if (status == LIBRDP_STATUS_OK &&
+            (!provider_credentials.password || provider_credentials.password[0] == '\0'))
+            status = LIBRDP_STATUS_PROTOCOL_ERROR;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            const char* expected_domain = provider_credentials.domain ? provider_credentials.domain : claimed_domain;
+            const char* expected_username =
+                provider_credentials.username ? provider_credentials.username : claimed_username;
+
+            status = rdp_server_credssp_expected_set(peer,
+                                                     expected_domain,
+                                                     expected_username,
+                                                     provider_credentials.password);
+        }
+        librdp_credentials_clear(&provider_credentials);
+    }
+    else if (status == LIBRDP_STATUS_OK)
+    {
+        if (!peer->nla_username || peer->nla_username[0] == '\0' ||
+            !peer->nla_password || peer->nla_password[0] == '\0')
+            status = LIBRDP_STATUS_UNSUPPORTED;
+        else
+            status = rdp_server_credssp_expected_set(peer,
+                                                     peer->nla_domain ? peer->nla_domain : claimed_domain,
+                                                     peer->nla_username,
+                                                     peer->nla_password);
+    }
+    if (status != LIBRDP_STATUS_OK)
+        rdp_server_metric_add(&peer->metrics.errors, 1u);
+    free(claimed_workstation);
+    free(claimed_username);
+    free(claimed_domain);
+    return status;
+}
+
+static librdp_status rdp_server_credssp_check_final_credentials(
+    librdp_server_peer* peer,
+    const rdp_credssp_password_credentials* credentials)
+{
+    if (!peer || !credentials || !credentials->username || !credentials->password ||
+        !peer->credssp_expected_username || !peer->credssp_expected_password)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_server_account_equal_fold(credentials->username, peer->credssp_expected_username))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (peer->credssp_expected_domain &&
+        !rdp_server_account_equal_fold(credentials->domain ? credentials->domain : "",
+                                       peer->credssp_expected_domain))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_server_secret_equal(credentials->password, peer->credssp_expected_password))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* peer, int timeout_ms)
 {
     rdp_buffer packet;
@@ -2883,6 +3123,8 @@ static librdp_status rdp_server_handle_credssp_negotiate(librdp_server_peer* pee
     status = rdp_server_read_credssp_ts_request(peer, timeout_ms, &packet);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ts_request(packet.data, packet.length, &request);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_accept_version(peer, request.version);
     if (status == LIBRDP_STATUS_OK)
         status = request.client_nonce_len == sizeof(peer->credssp_client_nonce) ? LIBRDP_STATUS_OK
                                                                                 : LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -2935,6 +3177,7 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     rdp_buffer packet;
     rdp_credssp_ts_request request;
     rdp_ntlm_challenge challenge;
+    rdp_ntlm_authenticate authenticate;
     rdp_ntlm_authenticate_result result;
     const uint8_t* ntlm = NULL;
     size_t ntlm_len = 0;
@@ -2946,11 +3189,17 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ts_request(packet.data, packet.length, &request);
     if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_accept_version(peer, request.version);
+    if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_extract_ntlm_message(request.nego_token,
                                                   request.nego_token_len,
                                                   3,
                                                   &ntlm,
                                                   &ntlm_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_credssp_parse_ntlm_authenticate(ntlm, ntlm_len, &authenticate);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_resolve_expected_credentials(peer, &authenticate, request.version);
     if (status == LIBRDP_STATUS_OK)
     {
         memset(&challenge, 0, sizeof(challenge));
@@ -2965,8 +3214,8 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
         status = rdp_credssp_verify_ntlm_authenticate(ntlm,
                                                       ntlm_len,
                                                       &challenge,
-                                                      peer->nla_username,
-                                                      peer->nla_password,
+                                                      peer->credssp_expected_username,
+                                                      peer->credssp_expected_password,
                                                       &result);
     }
     if (status == LIBRDP_STATUS_OK)
@@ -2980,6 +3229,11 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     {
         peer->credssp_stage = 2;
         rdp_trace_event(RDP_TRACE_PROTOCOL, "server.credssp.authenticate.done", "username=redacted");
+    }
+    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT && status != LIBRDP_STATUS_AGAIN)
+    {
+        peer->nla_failed_attempts++;
+        rdp_server_credssp_expected_clear(peer);
     }
     OPENSSL_cleanse(&result, sizeof(result));
     rdp_buffer_free(&packet);
@@ -3000,6 +3254,8 @@ static librdp_status rdp_server_handle_credssp_pubkey(librdp_server_peer* peer, 
     status = rdp_server_read_credssp_ts_request(peer, timeout_ms, &packet);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ts_request(packet.data, packet.length, &request);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_accept_version(peer, request.version);
     if (status == LIBRDP_STATUS_OK && !peer->credssp_security_ready)
         status = LIBRDP_STATUS_STATE;
     if (status == LIBRDP_STATUS_OK)
@@ -3030,11 +3286,17 @@ static librdp_status rdp_server_handle_credssp_pubkey(librdp_server_peer* peer, 
                                                     pub_key_auth.length);
     if (status == LIBRDP_STATUS_OK)
     {
+        peer->credssp_public_key_bound = 1;
         peer->credssp_stage = 3;
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "server.credssp.pubkey.done",
                         "public_key_len=%u",
                         (unsigned)public_key.length);
+    }
+    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT && status != LIBRDP_STATUS_AGAIN)
+    {
+        peer->nla_failed_attempts++;
+        rdp_server_credssp_expected_clear(peer);
     }
     rdp_buffer_free(&pub_key_auth);
     rdp_buffer_free(&public_key);
@@ -3046,25 +3308,41 @@ static librdp_status rdp_server_handle_credssp_credentials(librdp_server_peer* p
 {
     rdp_buffer packet;
     rdp_credssp_ts_request request;
+    rdp_credssp_password_credentials credentials;
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&packet);
+    memset(&credentials, 0, sizeof(credentials));
     status = rdp_server_read_credssp_ts_request(peer, timeout_ms, &packet);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ts_request(packet.data, packet.length, &request);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_accept_version(peer, request.version);
     if (status == LIBRDP_STATUS_OK && !peer->credssp_security_ready)
         status = LIBRDP_STATUS_STATE;
+    if (status == LIBRDP_STATUS_OK && !peer->credssp_public_key_bound)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_credssp_decrypt_password_credentials(&peer->credssp_security,
-                                                          request.auth_info,
-                                                          request.auth_info_len);
+        status = rdp_credssp_decrypt_password_credentials_ex(&peer->credssp_security,
+                                                             request.auth_info,
+                                                             request.auth_info_len,
+                                                             &credentials);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_credssp_check_final_credentials(peer, &credentials);
     if (status == LIBRDP_STATUS_OK)
     {
         peer->nla_authenticated = 1;
         peer->credssp_stage = 4;
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_X224_CONFIRMED);
         rdp_trace_event(RDP_TRACE_PROTOCOL, "server.credssp.done", "credentials=redacted");
+        rdp_server_credssp_expected_clear(peer);
     }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        peer->nla_failed_attempts++;
+        rdp_server_credssp_expected_clear(peer);
+    }
+    rdp_credssp_password_credentials_clear(&credentials);
     rdp_buffer_free(&packet);
     return status;
 }
@@ -4074,6 +4352,20 @@ librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     peer->event_callback = callback;
     peer->event_callback_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_set_credentials_provider(librdp_server_peer* peer,
+                                                          librdp_server_credentials_provider provider,
+                                                          void* user_data)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->nla_authenticated || peer->state == LIBRDP_SERVER_PEER_FAILED ||
+        peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    peer->credentials_provider = provider;
+    peer->credentials_provider_user_data = user_data;
     return LIBRDP_STATUS_OK;
 }
 
@@ -8375,5 +8667,6 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     free(peer->nla_domain);
     free(peer->nla_username);
     rdp_server_secure_free(peer->nla_password);
+    rdp_server_credssp_expected_clear(peer);
     free(peer);
 }

@@ -36,6 +36,7 @@ extern "C" {
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_CLIPBOARD_STATE_VERSION 1u /**< Current librdp_server_clipboard_state version. */
 #define LIBRDP_SERVER_EXTENSION_STATE_VERSION 1u /**< Current librdp_server_extension_state version. */
+#define LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION 1u /**< Current librdp_server_credentials_request version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
 #define LIBRDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u /**< Dynamic-channel name storage including NUL. */
 #define LIBRDP_SERVER_PHASE_CAPACITY 32u /**< Server status phase storage including NUL. */
@@ -61,6 +62,31 @@ typedef struct librdp_server librdp_server;
  * @since 0.1.0
  */
 typedef struct librdp_server_peer librdp_server_peer;
+
+/**
+ * @brief Server-side NLA credential lookup request.
+ *
+ * The request is delivered during CredSSP authentication after the client NTLM
+ * authenticate token has been parsed and before the server verifies the NTLMv2
+ * proof. String fields are UTF-8, borrowed, nullable, and valid only until the
+ * credentials provider returns. The provider should fill the supplied
+ * librdp_credentials object with the expected account password, and may also
+ * normalize username or domain. Returning any status other than
+ * LIBRDP_STATUS_OK rejects the authentication attempt.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_credentials_request
+{
+    uint32_t version; /**< Struct version, LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION. */
+    uint32_t size; /**< Size of this struct in bytes. */
+    const char* domain; /**< Borrowed claimed account domain, or NULL when absent. */
+    const char* username; /**< Borrowed claimed account name, or NULL when absent. */
+    const char* workstation; /**< Borrowed claimed client workstation, or NULL when absent. */
+    uint32_t ts_request_version; /**< CredSSP TSRequest version accepted for this peer. */
+    uint32_t failed_attempts; /**< Previous failed NLA attempts observed on this peer. */
+    uint8_t public_key_bound; /**< Non-zero after the TLS public key binding step completed. */
+} librdp_server_credentials_request;
 
 /**
  * @brief Server-side peer lifecycle state.
@@ -588,6 +614,39 @@ typedef void (*librdp_server_event_callback)(librdp_server_peer* peer,
                                              void* user_data);
 
 /**
+ * @brief Server-side NLA credential provider.
+ *
+ * Called synchronously from librdp_server_peer_run_once() on the peer owner
+ * thread. The request is borrowed for the callback duration. credentials is an
+ * initialized caller-owned object; fill it with librdp_credentials_set() to
+ * provide the password used to verify the NTLMv2 proof. librdp clears the
+ * object immediately after the authentication attempt.
+ *
+ * @param[in,out] peer Peer being authenticated; never NULL.
+ * @param[in] request Borrowed credential lookup request; never NULL.
+ * @param[in,out] credentials Initialized credentials object to fill; never
+ * NULL.
+ * @param[in] user_data Opaque application pointer supplied at registration;
+ * may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK to use the returned credentials; any other status
+ * rejects the authentication attempt.
+ *
+ * @note Thread-safety: the callback runs synchronously from
+ * librdp_server_peer_run_once() on the peer owner thread. Do not drive the same
+ * peer reentrantly from the provider.
+ *
+ * @warning The provider handles plaintext account material. Do not log
+ * passwords, NTLM blobs, or authentication tokens.
+ * @since 0.1.0
+ */
+typedef librdp_status (*librdp_server_credentials_provider)(
+    librdp_server_peer* peer,
+    const librdp_server_credentials_request* request,
+    librdp_credentials* credentials,
+    void* user_data);
+
+/**
  * @brief Versioned server listener configuration.
  *
  * Initialize with librdp_server_config_init(). String fields are borrowed only
@@ -698,6 +757,26 @@ LIBRDP_API librdp_status librdp_server_extension_event_init(librdp_server_extens
 LIBRDP_API librdp_status librdp_server_event_init(librdp_server_event* event);
 
 /**
+ * @brief Initialize a server credential lookup request value.
+ *
+ * This initializer is mainly useful for tests and custom provider fixtures.
+ * Runtime requests delivered by librdp are initialized by the library.
+ *
+ * @param[out] request Caller-owned request object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * request is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @warning Credential lookup requests may contain account identifiers. Treat
+ * initialized runtime requests as sensitive metadata and avoid logging them
+ * together with authentication payloads.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_credentials_request_init(
+    librdp_server_credentials_request* request);
+
+/**
  * @brief Initialize a server status snapshot.
  *
  * @param[out] status Caller-owned status object; must not be NULL.
@@ -740,6 +819,37 @@ LIBRDP_API librdp_status librdp_server_metrics_init(librdp_server_metrics* metri
  * @since 0.1.0
  */
 LIBRDP_API librdp_server* librdp_server_new(const librdp_server_config* config);
+
+/**
+ * @brief Install or clear the listener NLA credential provider.
+ *
+ * The provider is copied into peers accepted after this call. Passing NULL
+ * clears the listener provider and leaves static NLA credentials from
+ * librdp_server_config, if present, as the compatibility fallback. The provider
+ * pointer and user_data are borrowed; librdp does not own application objects.
+ *
+ * @param[in,out] server Server listener; must not be NULL.
+ * @param[in] provider Provider callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque application pointer passed to provider; may be
+ * NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * server is NULL; LIBRDP_STATUS_STATE when the listener is already open.
+ *
+ * @note Callback context: accepted peers inherit the provider callback and the
+ * borrowed user_data pointer. The callback is invoked from the peer owner
+ * thread during NLA; librdp never owns or frees user_data.
+ *
+ * @note Thread-safety: call from the serialized server owner context before
+ * librdp_server_listen().
+ * @warning Providers handle plaintext credentials; keep user_data lifetime and
+ * cleanup under application control.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_set_credentials_provider(
+    librdp_server* server,
+    librdp_server_credentials_provider provider,
+    void* user_data);
 
 /**
  * @brief Close and free a server listener.
@@ -1219,6 +1329,37 @@ LIBRDP_API librdp_status librdp_server_peer_set_extension_family_callback(
 LIBRDP_API librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
                                                                librdp_server_event_callback callback,
                                                                void* user_data);
+
+/**
+ * @brief Install or clear the peer NLA credential provider.
+ *
+ * Use this when credential policy depends on the accepted peer. The provider
+ * runs synchronously from librdp_server_peer_run_once() during NLA. Passing
+ * NULL clears the peer provider and restores static peer credentials, if any,
+ * as the compatibility fallback.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] provider Provider callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque application pointer passed to provider; may be
+ * NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE after NLA has already completed or failed.
+ *
+ * @note Callback context: the provider callback and borrowed user_data pointer
+ * apply only to this peer. The callback is invoked from the peer owner thread
+ * during NLA; librdp never owns or frees user_data.
+ *
+ * @note Thread-safety: call from the serialized peer owner context before
+ * driving the NLA exchange.
+ * @warning Providers receive account identifiers and return plaintext
+ * passwords through librdp_credentials; never log those values.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_credentials_provider(
+    librdp_server_peer* peer,
+    librdp_server_credentials_provider provider,
+    void* user_data);
 
 /**
  * @brief Enable or disable an application provider for one peer feature.

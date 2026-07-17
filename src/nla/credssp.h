@@ -112,6 +112,13 @@ typedef struct rdp_ntlm_authenticate
     size_t encrypted_session_key_len;
 } rdp_ntlm_authenticate;
 
+typedef struct rdp_credssp_password_credentials
+{
+    char* domain;
+    char* username;
+    char* password;
+} rdp_credssp_password_credentials;
+
 librdp_status rdp_credssp_begin(bool enabled, rdp_credssp_state* state);
 librdp_status rdp_credssp_write_ntlm_negotiate(rdp_buffer* buffer, const char* workstation, const char* domain);
 uint32_t rdp_credssp_default_ntlm_challenge_flags(void);
@@ -223,5 +230,10 @@ librdp_status rdp_credssp_encrypt_password_credentials(rdp_ntlm_security_context
 librdp_status rdp_credssp_decrypt_password_credentials(rdp_ntlm_security_context* context,
                                                        const void* encrypted,
                                                        size_t encrypted_len);
+librdp_status rdp_credssp_decrypt_password_credentials_ex(rdp_ntlm_security_context* context,
+                                                          const void* encrypted,
+                                                          size_t encrypted_len,
+                                                          rdp_credssp_password_credentials* credentials);
+void rdp_credssp_password_credentials_clear(rdp_credssp_password_credentials* credentials);
 
 #endif
