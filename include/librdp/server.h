@@ -225,7 +225,8 @@ typedef enum librdp_server_extension_family
     LIBRDP_SERVER_EXTENSION_FILESYSTEM = 23,          /**< Drive filesystem traffic over device redirection. */
     LIBRDP_SERVER_EXTENSION_PRINTER = 24,             /**< Printer traffic over device redirection. */
     LIBRDP_SERVER_EXTENSION_SERIAL_PORT = 25,         /**< Serial-port traffic over device redirection. */
-    LIBRDP_SERVER_EXTENSION_PARALLEL_PORT = 26        /**< Parallel-port traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_PARALLEL_PORT = 26,       /**< Parallel-port traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING = 27    /**< Geometry tracking state used by video remoting. */
 } librdp_server_extension_family;
 
 /**
@@ -737,6 +738,53 @@ LIBRDP_API librdp_status librdp_server_enable_feature_provider(librdp_server* se
                                                                int enabled);
 
 /**
+ * @brief Enable or disable a provider for one server extension family.
+ *
+ * This typed variant records application backend availability for a concrete
+ * extension family such as clipboard, printer, USB, WebAuthn, RAIL, CR2, or
+ * geometry tracking. The family state is copied into peers accepted after the
+ * call. When the family maps to a public librdp_feature, feature-status queries
+ * treat the family provider as backend readiness for that feature. Families
+ * without a public feature bit remain queryable through
+ * librdp_server_get_extension_provider_status().
+ *
+ * @param[in,out] server Server listener; must not be NULL.
+ * @param[in] family Known extension family to update.
+ * @param[in] enabled Non-zero to mark the provider available, zero to clear it.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * server or an unknown family; LIBRDP_STATUS_STATE when the listener is already
+ * open and future peers could inherit inconsistent state.
+ *
+ * @note Thread-safety: call from the serialized server owner context before
+ * librdp_server_listen().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_enable_extension_provider(
+    librdp_server* server,
+    librdp_server_extension_family family,
+    int enabled);
+
+/**
+ * @brief Query listener-scope provider availability for an extension family.
+ *
+ * @param[in] server Server listener to query; must not be NULL.
+ * @param[in] family Known extension family to query.
+ * @param[out] enabled Receives non-zero when the family provider is available;
+ * must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers or an unknown family.
+ *
+ * @note Thread-safety: call from the serialized server owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_get_extension_provider_status(
+    const librdp_server* server,
+    librdp_server_extension_family family,
+    int* enabled);
+
+/**
  * @brief Query local server readiness for one optional feature.
  *
  * The function reports the requested state configured on the server object,
@@ -1077,6 +1125,47 @@ LIBRDP_API librdp_status librdp_server_peer_set_event_callback(librdp_server_pee
 LIBRDP_API librdp_status librdp_server_peer_enable_feature_provider(librdp_server_peer* peer,
                                                                     librdp_feature feature,
                                                                     int enabled);
+
+/**
+ * @brief Enable or disable a provider for one accepted peer extension family.
+ *
+ * The function updates only the supplied peer. It does not install callbacks
+ * and does not take ownership of application objects; payload routing continues
+ * through the channel and extension callbacks.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] family Known extension family to update.
+ * @param[in] enabled Non-zero to mark the provider available, zero to clear it.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * peer or an unknown family; LIBRDP_STATUS_STATE when the peer is closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_enable_extension_provider(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    int enabled);
+
+/**
+ * @brief Query peer-scope provider availability for an extension family.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[in] family Known extension family to query.
+ * @param[out] enabled Receives non-zero when the peer has a provider for the
+ * family; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers or an unknown family.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_extension_provider_status(
+    const librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    int* enabled);
 
 /**
  * @brief Return the number of static channels advertised by the client.

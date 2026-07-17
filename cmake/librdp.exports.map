@@ -50,6 +50,8 @@ LIBRDP_0.1 {
         librdp_server_metrics_init;
         librdp_server_enable_feature;
         librdp_server_enable_feature_provider;
+        librdp_server_enable_extension_provider;
+        librdp_server_get_extension_provider_status;
         librdp_server_get_feature_status;
         librdp_server_get_pollfds;
         librdp_server_peer_set_input_callback;
@@ -59,6 +61,8 @@ LIBRDP_0.1 {
         librdp_server_peer_set_extension_family_callback;
         librdp_server_peer_set_event_callback;
         librdp_server_peer_enable_feature_provider;
+        librdp_server_peer_enable_extension_provider;
+        librdp_server_peer_get_extension_provider_status;
         librdp_server_peer_get_pollfds;
         librdp_server_peer_notify_poll;
         librdp_server_peer_dispatch_pending;

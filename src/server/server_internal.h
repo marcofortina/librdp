@@ -29,7 +29,7 @@
 #define RDP_SERVER_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u
 #define RDP_SERVER_MAX_REDIRECTED_DEVICES 64u
-#define RDP_SERVER_EXTENSION_FAMILY_COUNT ((size_t)LIBRDP_SERVER_EXTENSION_PARALLEL_PORT + 1u)
+#define RDP_SERVER_EXTENSION_FAMILY_COUNT ((size_t)LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING + 1u)
 
 typedef struct rdp_server_dynamic_channel
 {
@@ -70,6 +70,7 @@ struct librdp_server
     uint32_t height;
     uint32_t requested_features;
     uint32_t backend_features;
+    uint64_t backend_extension_families;
     librdp_security_mode security_mode;
 };
 
@@ -90,6 +91,7 @@ struct librdp_server_peer
     char* nla_password;
     uint32_t requested_features;
     uint32_t backend_features;
+    uint64_t backend_extension_families;
     librdp_security_mode security_mode;
     SSL_CTX* tls_context;
     SSL* tls;

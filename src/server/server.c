@@ -129,7 +129,76 @@ static int rdp_server_valid_single_feature(librdp_feature feature)
 static int rdp_server_extension_family_valid(librdp_server_extension_family family)
 {
     return family > LIBRDP_SERVER_EXTENSION_UNKNOWN &&
-           family <= LIBRDP_SERVER_EXTENSION_PARALLEL_PORT;
+           family <= LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING;
+}
+
+static uint64_t rdp_server_extension_family_bit(librdp_server_extension_family family)
+{
+    if (!rdp_server_extension_family_valid(family) || (unsigned)family >= 64u)
+        return 0;
+    return UINT64_C(1) << (unsigned)family;
+}
+
+static int rdp_server_extension_provider_ready(uint64_t providers,
+                                               librdp_server_extension_family family)
+{
+    const uint64_t bit = rdp_server_extension_family_bit(family);
+
+    return bit != 0 && (providers & bit) != 0;
+}
+
+static librdp_feature rdp_server_feature_for_extension_family(librdp_server_extension_family family)
+{
+    switch (family)
+    {
+        case LIBRDP_SERVER_EXTENSION_AUDIO_OUTPUT:
+            return LIBRDP_FEATURE_AUDIO_OUTPUT;
+        case LIBRDP_SERVER_EXTENSION_AUDIO_INPUT:
+            return LIBRDP_FEATURE_AUDIO_INPUT;
+        case LIBRDP_SERVER_EXTENSION_VIDEO:
+            return LIBRDP_FEATURE_VIDEO;
+        case LIBRDP_SERVER_EXTENSION_CAMERA:
+            return LIBRDP_FEATURE_CAMERA;
+        case LIBRDP_SERVER_EXTENSION_SMARTCARD:
+            return LIBRDP_FEATURE_SMARTCARD;
+        case LIBRDP_SERVER_EXTENSION_USB:
+            return LIBRDP_FEATURE_USB;
+        case LIBRDP_SERVER_EXTENSION_PNP:
+            return LIBRDP_FEATURE_PNP;
+        case LIBRDP_SERVER_EXTENSION_WEBAUTHN:
+            return LIBRDP_FEATURE_WEBAUTHN;
+        case LIBRDP_SERVER_EXTENSION_RAIL:
+            return LIBRDP_FEATURE_RAIL;
+        case LIBRDP_SERVER_EXTENSION_CR2:
+            return LIBRDP_FEATURE_CR2;
+        case LIBRDP_SERVER_EXTENSION_ECHO:
+            return LIBRDP_FEATURE_ECHO;
+        case LIBRDP_SERVER_EXTENSION_DISPLAY_CONTROL:
+            return LIBRDP_FEATURE_DISPLAY_CONTROL;
+        case LIBRDP_SERVER_EXTENSION_TELEMETRY:
+            return LIBRDP_FEATURE_TELEMETRY;
+        case LIBRDP_SERVER_EXTENSION_DESKTOP_COMPOSITION:
+            return LIBRDP_FEATURE_DESKTOP_COMPOSITION;
+        case LIBRDP_SERVER_EXTENSION_MULTIPARTY:
+            return LIBRDP_FEATURE_MULTIPARTY;
+        case LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING:
+            return LIBRDP_FEATURE_GEOMETRY_TRACKING;
+        default:
+            return (librdp_feature)0;
+    }
+}
+
+static int rdp_server_feature_extension_provider_ready(uint64_t providers, librdp_feature feature)
+{
+    for (uint32_t family = (uint32_t)LIBRDP_SERVER_EXTENSION_UNKNOWN + 1u;
+         family <= (uint32_t)LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING;
+         family++)
+    {
+        if (rdp_server_feature_for_extension_family((librdp_server_extension_family)family) == feature &&
+            rdp_server_extension_provider_ready(providers, (librdp_server_extension_family)family))
+            return 1;
+    }
+    return 0;
 }
 
 static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
@@ -243,7 +312,9 @@ static int rdp_server_listener_feature_backend_ready(const librdp_server* server
         return 0;
     if (!rdp_server_feature_needs_application_backend(feature))
         return 1;
-    return server && (server->backend_features & (uint32_t)feature) != 0;
+    if (server && (server->backend_features & (uint32_t)feature) != 0)
+        return 1;
+    return server && rdp_server_feature_extension_provider_ready(server->backend_extension_families, feature);
 }
 
 static void rdp_server_fill_feature_status(uint32_t requested_features,
@@ -1436,6 +1507,35 @@ librdp_status librdp_server_enable_feature_provider(librdp_server* server,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_enable_extension_provider(librdp_server* server,
+                                                      librdp_server_extension_family family,
+                                                      int enabled)
+{
+    const uint64_t bit = rdp_server_extension_family_bit(family);
+
+    if (!server || bit == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (server->listen_fd >= 0)
+        return LIBRDP_STATUS_STATE;
+    if (enabled)
+        server->backend_extension_families |= bit;
+    else
+        server->backend_extension_families &= ~bit;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_get_extension_provider_status(const librdp_server* server,
+                                                          librdp_server_extension_family family,
+                                                          int* enabled)
+{
+    const uint64_t bit = rdp_server_extension_family_bit(family);
+
+    if (!server || !enabled || bit == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *enabled = (server->backend_extension_families & bit) != 0;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_get_feature_status(const librdp_server* server,
                                                librdp_feature feature,
                                                librdp_feature_status* status)
@@ -1521,6 +1621,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->height = (uint16_t)server->height;
     accepted->requested_features = server->requested_features;
     accepted->backend_features = server->backend_features;
+    accepted->backend_extension_families = server->backend_extension_families;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
     rdp_server_dynamic_channels_reset(accepted, 0);
@@ -3551,6 +3652,35 @@ librdp_status librdp_server_peer_enable_feature_provider(librdp_server_peer* pee
         peer->backend_features |= (uint32_t)feature;
     else
         peer->backend_features &= ~(uint32_t)feature;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_enable_extension_provider(librdp_server_peer* peer,
+                                                           librdp_server_extension_family family,
+                                                           int enabled)
+{
+    const uint64_t bit = rdp_server_extension_family_bit(family);
+
+    if (!peer || bit == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    if (enabled)
+        peer->backend_extension_families |= bit;
+    else
+        peer->backend_extension_families &= ~bit;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_get_extension_provider_status(const librdp_server_peer* peer,
+                                                               librdp_server_extension_family family,
+                                                               int* enabled)
+{
+    const uint64_t bit = rdp_server_extension_family_bit(family);
+
+    if (!peer || !enabled || bit == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *enabled = (peer->backend_extension_families & bit) != 0;
     return LIBRDP_STATUS_OK;
 }
 
@@ -5669,7 +5799,9 @@ static int rdp_server_peer_feature_backend_ready(const librdp_server_peer* peer,
         return 0;
     if (!rdp_server_feature_needs_application_backend(feature))
         return 1;
-    return peer && (peer->backend_features & (uint32_t)feature) != 0;
+    if (peer && (peer->backend_features & (uint32_t)feature) != 0)
+        return 1;
+    return peer && rdp_server_feature_extension_provider_ready(peer->backend_extension_families, feature);
 }
 
 /*

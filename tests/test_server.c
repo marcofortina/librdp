@@ -138,6 +138,7 @@ static int test_server_new_validates_metadata(void)
     librdp_server_config config;
     librdp_server* server = NULL;
     librdp_feature_status feature_status;
+    int extension_enabled = 0;
     char cert_path[128];
     char key_path[128];
     char cert_path_b[128];
@@ -240,6 +241,47 @@ static int test_server_new_validates_metadata(void)
            !feature_status.negotiated && !feature_status.active);
     SCHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_enable_feature_provider(server, LIBRDP_FEATURE_ECHO, 0) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_extension_provider_status(NULL,
+                                                       LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                       &extension_enabled) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_get_extension_provider_status(server,
+                                                       LIBRDP_SERVER_EXTENSION_UNKNOWN,
+                                                       &extension_enabled) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_get_extension_provider_status(server,
+                                                       LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                       NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_enable_extension_provider(NULL,
+                                                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_UNKNOWN,
+                                                   1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_extension_provider_status(server,
+                                                       LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                       &extension_enabled) == LIBRDP_STATUS_OK);
+    SCHECK(extension_enabled);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   0) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_extension_provider_status(server,
+                                                       LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                       &extension_enabled) == LIBRDP_STATUS_OK);
+    SCHECK(!extension_enabled);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_GEOMETRY_TRACKING, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_feature_status(server,
+                                            LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING,
+                                                   0) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_GEOMETRY_TRACKING, 0) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_ECHO, 0) == LIBRDP_STATUS_OK);
     librdp_server_free(server);
     librdp_server_free(NULL);
@@ -2009,6 +2051,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     size_t dynamic_fragmented_len = 0;
     int client_fd = -1;
     int response_len = 0;
+    int extension_enabled = 0;
     size_t poll_count = 0;
     struct pollfd pollfds[2];
     librdp_server_config config;
@@ -2113,6 +2156,21 @@ static int test_server_loopback_standard_activation_sequence(void)
                                             &feature_status) == LIBRDP_STATUS_OK);
     SCHECK(feature_status.requested && !feature_status.backend_ready &&
            feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_feature_status(server,
+                                            LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                            &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_get_extension_provider_status(server,
+                                                       LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                       &extension_enabled) == LIBRDP_STATUS_OK);
+    SCHECK(extension_enabled);
     SCHECK(librdp_server_get_feature_status(server,
                                             LIBRDP_FEATURE_MULTITRANSPORT,
                                             &feature_status) == LIBRDP_STATUS_OK);
@@ -2130,6 +2188,9 @@ static int test_server_loopback_standard_activation_sequence(void)
            feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_listen(server) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_feature(server, LIBRDP_FEATURE_VIDEO, 1) == LIBRDP_STATUS_STATE);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                   0) == LIBRDP_STATUS_STATE);
     SCHECK(librdp_server_get_pollfds(server, NULL, 0, &poll_count) == LIBRDP_STATUS_OK);
     SCHECK(poll_count == 1);
     SCHECK(librdp_server_get_pollfds(server, pollfds, 1, &poll_count) == LIBRDP_STATUS_OK);
@@ -2140,6 +2201,45 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(client_fd >= 0);
     SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
     SCHECK(peer != NULL);
+    SCHECK(librdp_server_peer_get_extension_provider_status(NULL,
+                                                            LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                            &extension_enabled) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_get_extension_provider_status(peer,
+                                                            LIBRDP_SERVER_EXTENSION_UNKNOWN,
+                                                            &extension_enabled) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_get_extension_provider_status(peer,
+                                                            LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                            NULL) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_get_extension_provider_status(peer,
+                                                            LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                            &extension_enabled) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(extension_enabled);
+    SCHECK(librdp_server_peer_enable_extension_provider(NULL,
+                                                        LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                                                        1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_enable_extension_provider(peer,
+                                                        LIBRDP_SERVER_EXTENSION_UNKNOWN,
+                                                        1) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_enable_extension_provider(peer,
+                                                        LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING,
+                                                        0) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && !feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE);
+    SCHECK(librdp_server_peer_enable_extension_provider(peer,
+                                                        LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING,
+                                                        1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                 LIBRDP_FEATURE_GEOMETRY_TRACKING,
+                                                 &feature_status) == LIBRDP_STATUS_OK);
+    SCHECK(feature_status.requested && feature_status.backend_ready &&
+           feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_ECHO,
                                                  &feature_status) == LIBRDP_STATUS_OK);
