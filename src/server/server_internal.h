@@ -59,6 +59,7 @@ struct librdp_server
     uint32_t width;
     uint32_t height;
     uint32_t requested_features;
+    uint32_t backend_features;
     librdp_security_mode security_mode;
 };
 
@@ -78,6 +79,7 @@ struct librdp_server_peer
     char* nla_username;
     char* nla_password;
     uint32_t requested_features;
+    uint32_t backend_features;
     librdp_security_mode security_mode;
     SSL_CTX* tls_context;
     SSL* tls;

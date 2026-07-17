@@ -195,10 +195,30 @@ static int rdp_server_feature_needs_application_backend(librdp_feature feature)
     }
 }
 
-static int rdp_server_listener_feature_backend_ready(librdp_feature feature)
+static int rdp_server_feature_provider_mask_valid(librdp_feature feature)
 {
-    return rdp_server_feature_has_runtime(feature) &&
-           !rdp_server_feature_needs_application_backend(feature);
+    uint32_t mask = (uint32_t)feature;
+    uint32_t bit = 1u;
+
+    if (!rdp_server_valid_feature_mask(feature))
+        return 0;
+    while (bit != 0)
+    {
+        if ((mask & bit) != 0 &&
+            !rdp_server_feature_needs_application_backend((librdp_feature)bit))
+            return 0;
+        bit <<= 1u;
+    }
+    return 1;
+}
+
+static int rdp_server_listener_feature_backend_ready(const librdp_server* server, librdp_feature feature)
+{
+    if (!rdp_server_feature_has_runtime(feature))
+        return 0;
+    if (!rdp_server_feature_needs_application_backend(feature))
+        return 1;
+    return server && (server->backend_features & (uint32_t)feature) != 0;
 }
 
 static void rdp_server_fill_feature_status(uint32_t requested_features,
@@ -1081,6 +1101,23 @@ librdp_status librdp_server_enable_feature(librdp_server* server, librdp_feature
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_enable_feature_provider(librdp_server* server,
+                                                    librdp_feature feature,
+                                                    int enabled)
+{
+    if (!server || !rdp_server_valid_feature_mask(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_server_feature_provider_mask_valid(feature))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (server->listen_fd >= 0)
+        return LIBRDP_STATUS_STATE;
+    if (enabled)
+        server->backend_features |= (uint32_t)feature;
+    else
+        server->backend_features &= ~(uint32_t)feature;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_get_feature_status(const librdp_server* server,
                                                librdp_feature feature,
                                                librdp_feature_status* status)
@@ -1089,7 +1126,7 @@ librdp_status librdp_server_get_feature_status(const librdp_server* server,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_server_fill_feature_status(server->requested_features,
                                    feature,
-                                   rdp_server_listener_feature_backend_ready(feature),
+                                   rdp_server_listener_feature_backend_ready(server, feature),
                                    status);
     return LIBRDP_STATUS_OK;
 }
@@ -1165,6 +1202,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->width = (uint16_t)server->width;
     accepted->height = (uint16_t)server->height;
     accepted->requested_features = server->requested_features;
+    accepted->backend_features = server->backend_features;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
     rdp_server_dynamic_channels_reset(accepted);
@@ -3112,6 +3150,23 @@ librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_peer_enable_feature_provider(librdp_server_peer* peer,
+                                                         librdp_feature feature,
+                                                         int enabled)
+{
+    if (!peer || !rdp_server_valid_feature_mask(feature))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!rdp_server_feature_provider_mask_valid(feature))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    if (enabled)
+        peer->backend_features |= (uint32_t)feature;
+    else
+        peer->backend_features &= ~(uint32_t)feature;
+    return LIBRDP_STATUS_OK;
+}
+
 uint32_t librdp_server_peer_static_channel_count(const librdp_server_peer* peer)
 {
     return peer ? peer->advertised_channel_count : 0;
@@ -4991,7 +5046,7 @@ static int rdp_server_peer_feature_backend_ready(const librdp_server_peer* peer,
         return 0;
     if (!rdp_server_feature_needs_application_backend(feature))
         return 1;
-    return peer && (peer->extension_callback || peer->channel_callback || peer->event_callback);
+    return peer && (peer->backend_features & (uint32_t)feature) != 0;
 }
 
 /*

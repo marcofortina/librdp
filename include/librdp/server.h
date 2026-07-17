@@ -663,6 +663,41 @@ LIBRDP_API librdp_status librdp_server_enable_feature(librdp_server* server,
                                                       int enabled);
 
 /**
+ * @brief Enable or disable an application-backed provider for server features.
+ *
+ * Feature providers are the application-owned runtime behind optional server
+ * extensions such as clipboard, audio, device redirection, WebAuthn, RAIL,
+ * telemetry, and graphics-adjacent virtual channels. Enabling a feature with
+ * librdp_server_enable_feature() records negotiation intent; this function
+ * separately records that the application can actually serve the requested
+ * feature. Side-transport features that are fully handled by the built-in
+ * server runtime do not accept providers and return LIBRDP_STATUS_UNSUPPORTED.
+ *
+ * The provider state controls backend availability in
+ * librdp_server_get_feature_status() and is copied into peers accepted after
+ * the call. Existing peers are not modified; use
+ * librdp_server_peer_enable_feature_provider() for per-peer changes.
+ *
+ * @param[in,out] server Server listener; must not be NULL.
+ * @param[in] feature Bitmask containing only known application-backed
+ * librdp_feature bits and at least one bit.
+ * @param[in] enabled Non-zero to mark the provider available, zero to clear it.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * server, zero feature, or unknown feature bits; LIBRDP_STATUS_UNSUPPORTED when
+ * the mask contains a feature served entirely by the built-in runtime;
+ * LIBRDP_STATUS_STATE when the listener is already open and future peers may
+ * inherit inconsistent configuration.
+ *
+ * @note Thread-safety: call from the serialized server owner context before
+ * librdp_server_listen().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_enable_feature_provider(librdp_server* server,
+                                                               librdp_feature feature,
+                                                               int enabled);
+
+/**
  * @brief Query local server readiness for one optional feature.
  *
  * The function reports the requested state configured on the server object,
@@ -917,6 +952,34 @@ LIBRDP_API librdp_status librdp_server_peer_set_extension_callback(librdp_server
 LIBRDP_API librdp_status librdp_server_peer_set_event_callback(librdp_server_peer* peer,
                                                                librdp_server_event_callback callback,
                                                                void* user_data);
+
+/**
+ * @brief Enable or disable an application provider for one peer feature.
+ *
+ * This peer-level override is useful when provider availability is decided only
+ * after accepting a connection, for example after authenticating a user or
+ * selecting a per-peer backend. It affects only feature status and negotiation
+ * readiness for the supplied peer. Payload delivery still uses the registered
+ * channel and extension callbacks; this function does not install callbacks
+ * and does not take ownership of application objects.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] feature Bitmask containing only known application-backed
+ * librdp_feature bits and at least one bit.
+ * @param[in] enabled Non-zero to mark the provider available, zero to clear it.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * peer, zero feature, or unknown feature bits; LIBRDP_STATUS_UNSUPPORTED when
+ * the mask contains a feature served entirely by the built-in runtime;
+ * LIBRDP_STATUS_STATE when the peer is closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. This
+ * function is not thread-safe against librdp_server_peer_run_once().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_enable_feature_provider(librdp_server_peer* peer,
+                                                                    librdp_feature feature,
+                                                                    int enabled);
 
 /**
  * @brief Return the number of static channels advertised by the client.
