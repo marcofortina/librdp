@@ -8054,6 +8054,10 @@ static int test_gdiplus_known_record_families_render_visuals(void)
     rdp_buffer_init(&payload);
 
     CHECK(rdp_buffer_append_u32_le(&payload, 0x12345678u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x90abcdefu) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x11223344u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x55667788u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
     CHECK(append_gdiplus_record(&stream, 0x4038u, 0x0000u, &payload));
     expected_records++;
     rdp_buffer_free(&payload);

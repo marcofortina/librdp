@@ -3851,6 +3851,19 @@ static librdp_status rdp_gdi_backend_render_gdiplus_draw_driver_string(
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status rdp_gdi_backend_render_gdiplus_serializable_object(const uint8_t* payload,
+                                                                        uint32_t data_size)
+{
+    uint32_t buffer_size = 0u;
+
+    if (!payload || data_size < 20u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    buffer_size = rdp_gdi_backend_read_u32_le(payload + 16u);
+    if (buffer_size > data_size - 20u || data_size != 20u + buffer_size)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_gdi_backend_gdiplus_set_clip_from_path(
     rdp_gdi_backend_gdiplus_context* context,
     const rdp_gdi_backend_gdiplus_object* object)
@@ -4702,10 +4715,7 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                            unsupported);
                 break;
             case RDP_GDIPLUS_RECORD_SERIALIZABLE_OBJECT:
-                if (!payload && data_size > 0u)
-                    status = LIBRDP_STATUS_INVALID_ARGUMENT;
-                else
-                    status = LIBRDP_STATUS_OK;
+                status = rdp_gdi_backend_render_gdiplus_serializable_object(payload, data_size);
                 break;
             default:
                 if (rdp_gdi_backend_gdiplus_is_state_only(type))
