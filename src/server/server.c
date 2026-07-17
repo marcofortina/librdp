@@ -3677,11 +3677,12 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
     rdp_buffer_init(&packet);
     if (data_len <= RDP_DYNAMIC_CHANNEL_SINGLE_MESSAGE_LIMIT)
     {
-        status = rdp_dynamic_channel_write_data(&packet,
-                                                dynamic_channel_id,
-                                                channel->channel_id_bytes,
-                                                data,
-                                                data_len);
+        status = rdp_dynamic_channel_write_data_ex(&packet,
+                                                   dynamic_channel_id,
+                                                   channel->channel_id_bytes,
+                                                   channel->priority,
+                                                   data,
+                                                   data_len);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_server_send_dynamic_packet(peer, &packet);
     }
@@ -3697,12 +3698,13 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
         if (first_capacity == 0 || data_capacity == 0 || data_len > UINT32_MAX)
             status = LIBRDP_STATUS_LIMIT_EXCEEDED;
         if (status == LIBRDP_STATUS_OK)
-            status = rdp_dynamic_channel_write_data_first(&packet,
-                                                          dynamic_channel_id,
-                                                          channel->channel_id_bytes,
-                                                          (uint32_t)data_len,
-                                                          bytes,
-                                                          chunk);
+            status = rdp_dynamic_channel_write_data_first_ex(&packet,
+                                                             dynamic_channel_id,
+                                                             channel->channel_id_bytes,
+                                                             channel->priority,
+                                                             (uint32_t)data_len,
+                                                             bytes,
+                                                             chunk);
         if (status == LIBRDP_STATUS_OK)
             status = rdp_server_send_dynamic_packet(peer, &packet);
         offset = chunk;
@@ -3710,11 +3712,12 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
         {
             chunk = data_len - offset < data_capacity ? data_len - offset : data_capacity;
             packet.length = 0;
-            status = rdp_dynamic_channel_write_data(&packet,
-                                                    dynamic_channel_id,
-                                                    channel->channel_id_bytes,
-                                                    bytes + offset,
-                                                    chunk);
+            status = rdp_dynamic_channel_write_data_ex(&packet,
+                                                       dynamic_channel_id,
+                                                       channel->channel_id_bytes,
+                                                       channel->priority,
+                                                       bytes + offset,
+                                                       chunk);
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_server_send_dynamic_packet(peer, &packet);
             offset += chunk;
