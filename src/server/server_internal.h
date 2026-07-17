@@ -141,6 +141,7 @@ struct librdp_server_peer
     uint8_t control_seen;
     uint8_t font_list_seen;
     uint8_t updates_suppressed;
+    uint8_t surface_repaint_pending;
     uint8_t* framebuffer;
     size_t framebuffer_len;
     size_t framebuffer_stride;

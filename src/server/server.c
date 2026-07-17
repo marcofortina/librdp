@@ -3223,6 +3223,7 @@ static librdp_status rdp_server_handle_input_events(librdp_server_peer* peer,
 static librdp_status rdp_server_handle_refresh_rect(librdp_server_peer* peer,
                                                     const uint8_t* payload,
                                                     size_t payload_len);
+static librdp_status rdp_server_surface_flush_repaint(librdp_server_peer* peer);
 
 static librdp_status rdp_server_handle_suppress_output(librdp_server_peer* peer,
                                                        const uint8_t* payload,
@@ -3252,6 +3253,8 @@ static librdp_status rdp_server_handle_suppress_output(librdp_server_peer* peer,
         event.height = (uint16_t)(bottom - event.y + 1u);
     }
     rdp_server_emit_input(peer, &event);
+    if (!peer->updates_suppressed && peer->surface_repaint_pending)
+        return rdp_server_surface_flush_repaint(peer);
     return LIBRDP_STATUS_OK;
 }
 
@@ -3293,6 +3296,7 @@ static librdp_status rdp_server_surface_allocate(librdp_server_peer* peer, uint3
     peer->framebuffer_stride = stride;
     peer->width = (uint16_t)width;
     peer->height = (uint16_t)height;
+    peer->surface_repaint_pending = 1u;
     return LIBRDP_STATUS_OK;
 }
 
@@ -3531,9 +3535,20 @@ static librdp_status rdp_server_surface_present_rect(librdp_server_peer* peer,
                           y,
                           width,
                           height);
+    if (x == 0 && y == 0 && width == peer->width && height == peer->height)
+        peer->surface_repaint_pending = 0;
     rdp_server_metric_add(&peer->metrics.surface_updates, 1u);
     rdp_server_emit_surface_event(peer, x, y, width, height);
     return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_surface_flush_repaint(librdp_server_peer* peer)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!peer->surface_repaint_pending || !peer->framebuffer || peer->updates_suppressed)
+        return LIBRDP_STATUS_OK;
+    return rdp_server_surface_present_rect(peer, 0, 0, peer->width, peer->height);
 }
 
 static librdp_status rdp_server_handle_refresh_rect(librdp_server_peer* peer,
@@ -5811,8 +5826,13 @@ static librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, co
             }
             status = rdp_server_send_font_map(peer);
             if (status == LIBRDP_STATUS_OK)
+            {
                 rdp_server_set_state(peer, LIBRDP_SERVER_PEER_ACTIVE);
+                status = rdp_server_surface_flush_repaint(peer);
+            }
             else
+                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
+            if (status != LIBRDP_STATUS_OK)
                 rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
             rdp_buffer_free(&security_payload);
             return status;

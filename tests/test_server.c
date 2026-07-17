@@ -3840,6 +3840,70 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(bitmap_update.count == 1 &&
            bitmap_update.rects[0].width == 800 &&
            bitmap_update.rects[0].height == 1);
+    SCHECK(librdp_server_peer_surface_resize(peer, 4, 4) == LIBRDP_STATUS_OK);
+    demand_plaintext.length = 0;
+    SCHECK(test_server_read_encrypted_mcs_payload(client_fd,
+                                                  response,
+                                                  sizeof(response),
+                                                  &client_security,
+                                                  &demand_plaintext));
+    SCHECK(rdp_slowpath_parse_demand_active(demand_plaintext.data,
+                                            demand_plaintext.length,
+                                            &demand) == LIBRDP_STATUS_OK);
+    SCHECK(demand.share_id == 0x00010001u);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVATING);
+    SCHECK(test_server_send_confirm_active(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
+                                                        response,
+                                                        sizeof(response),
+                                                        &client_security,
+                                                        &slowpath_plaintext,
+                                                        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_SYNCHRONIZE);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
+                                                        response,
+                                                        sizeof(response),
+                                                        &client_security,
+                                                        &slowpath_plaintext,
+                                                        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
+                                                        response,
+                                                        sizeof(response),
+                                                        &client_security,
+                                                        &slowpath_plaintext,
+                                                        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_CONTROL);
+    SCHECK(test_server_send_client_synchronize(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_control(client_fd, demand.share_id, attach_confirm.user_id, 4));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_control(client_fd, demand.share_id, attach_confirm.user_id, 1));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_client_font_list(client_fd, demand.share_id, attach_confirm.user_id));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_ACTIVE);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
+                                                        response,
+                                                        sizeof(response),
+                                                        &client_security,
+                                                        &slowpath_plaintext,
+                                                        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd,
+                                                        response,
+                                                        sizeof(response),
+                                                        &client_security,
+                                                        &slowpath_plaintext,
+                                                        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE);
+    SCHECK(runtime_context.surface_event_count == 4);
 
     SCHECK(test_server_send_keyboard_input(client_fd, demand.share_id, attach_confirm.user_id));
     status = librdp_server_peer_run_once(peer, 1000);
@@ -3887,7 +3951,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
     SCHECK(server_metrics.dynamic_channel_in == 4 && server_metrics.dynamic_channel_out == 18);
     SCHECK(server_metrics.dynamic_channel_bytes_in == 38 && server_metrics.dynamic_channel_bytes_out > 64);
-    SCHECK(server_metrics.surface_updates == 2);
+    SCHECK(server_metrics.surface_updates == 3);
     SCHECK(librdp_server_peer_reset_metrics(peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_metrics_init(&server_metrics) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_metrics(peer, &server_metrics) == LIBRDP_STATUS_OK);
