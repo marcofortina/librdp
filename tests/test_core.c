@@ -8537,6 +8537,60 @@ static int test_gdiplus_antialias_affects_line_edges(void)
 }
 
 /*
+ * Coverage: verifies that EMF+ clip state restricts later visual records to
+ * the clipped area. It catches regressions where SetClipRect updates parser
+ * state but FillRects still writes outside the active clip bounds.
+ */
+static int test_gdiplus_clip_limits_visual_output(void)
+{
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    const uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(6, 6, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(append_gdiplus_compressed_rect(&payload, 1, 1, 2, 2));
+    CHECK(append_gdiplus_record(&stream, 0x4032u, 0x0000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 0, 0, 5, 5));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 2u);
+    CHECK(rasterized == 1u);
+    CHECK(unsupported == 0u);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    CHECK(pixels != NULL && stride >= 6u * 4u);
+    CHECK(pixels[1u * stride + 1u * 4u + 2u] == 0xffu);
+    CHECK(pixels[0u * stride + 0u * 4u + 2u] == 0x00u);
+    CHECK(pixels[4u * stride + 4u * 4u + 2u] == 0x00u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
  * Coverage: validates that complex GDI alternate secondary orders have a
  * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes
  * direct EMF+ vector records, preserves window metadata and records desktop
@@ -9415,6 +9469,8 @@ int test_client_core(void)
     if (test_gdiplus_interpolation_and_metadata_objects() != 0)
         return 1;
     if (test_gdiplus_antialias_affects_line_edges() != 0)
+        return 1;
+    if (test_gdiplus_clip_limits_visual_output() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;
