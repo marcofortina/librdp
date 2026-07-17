@@ -63,6 +63,7 @@
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509err.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1903,29 +1904,74 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_server_start_tls(librdp_server_peer* peer, int timeout_ms)
+static int rdp_server_tls_error_stack_has_key_mismatch(void)
+{
+    unsigned long error = 0;
+    int mismatch = 0;
+
+    while ((error = ERR_get_error()) != 0u)
+    {
+        const int reason = ERR_GET_REASON(error);
+
+        if (reason == X509_R_KEY_VALUES_MISMATCH || reason == X509_R_KEY_TYPE_MISMATCH)
+            mismatch = 1;
+    }
+    return mismatch;
+}
+
+static librdp_status rdp_server_start_tls(librdp_server_peer* peer,
+                                          int timeout_ms,
+                                          const char** failure_message)
 {
     librdp_status status = LIBRDP_STATUS_OK;
     int rc = 0;
 
+    if (failure_message)
+        *failure_message = "server TLS handshake failed";
     if (!peer || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->tls_active)
         return LIBRDP_STATUS_OK;
     if (!rdp_server_tls_material_available(peer))
+    {
+        if (failure_message)
+            *failure_message = "server TLS certificate or private key is not configured";
         return LIBRDP_STATUS_UNSUPPORTED;
+    }
     if (!peer->tls_context)
     {
         peer->tls_context = SSL_CTX_new(TLS_server_method());
         if (!peer->tls_context)
             return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
-        if (SSL_CTX_use_certificate_file(peer->tls_context, peer->tls_certificate_path, SSL_FILETYPE_PEM) != 1 ||
-            SSL_CTX_use_PrivateKey_file(peer->tls_context, peer->tls_private_key_path, SSL_FILETYPE_PEM) != 1 ||
-            SSL_CTX_check_private_key(peer->tls_context) != 1)
+        if (SSL_CTX_use_certificate_file(peer->tls_context, peer->tls_certificate_path, SSL_FILETYPE_PEM) != 1)
         {
             SSL_CTX_free(peer->tls_context);
             peer->tls_context = NULL;
             ERR_clear_error();
+            if (failure_message)
+                *failure_message = "server TLS certificate load failed";
+            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+        }
+        if (SSL_CTX_use_PrivateKey_file(peer->tls_context, peer->tls_private_key_path, SSL_FILETYPE_PEM) != 1)
+        {
+            const int key_mismatch = rdp_server_tls_error_stack_has_key_mismatch();
+
+            SSL_CTX_free(peer->tls_context);
+            peer->tls_context = NULL;
+            if (failure_message)
+            {
+                *failure_message = key_mismatch ? "server TLS certificate and private key do not match"
+                                                : "server TLS private key load failed";
+            }
+            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+        }
+        if (SSL_CTX_check_private_key(peer->tls_context) != 1)
+        {
+            SSL_CTX_free(peer->tls_context);
+            peer->tls_context = NULL;
+            ERR_clear_error();
+            if (failure_message)
+                *failure_message = "server TLS certificate and private key do not match";
             return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
         }
     }
@@ -5319,7 +5365,9 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
         rdp_server_set_state(peer, LIBRDP_SERVER_PEER_NEGOTIATING);
     if (peer->state == LIBRDP_SERVER_PEER_TLS_HANDSHAKING)
     {
-        status = rdp_server_start_tls(peer, timeout_ms);
+        const char* tls_failure_message = "server TLS handshake failed";
+
+        status = rdp_server_start_tls(peer, timeout_ms, &tls_failure_message);
         if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
         {
             rdp_server_metric_add(&peer->metrics.errors, 1u);
@@ -5327,7 +5375,7 @@ librdp_status librdp_server_peer_run_once(librdp_server_peer* peer, int timeout_
                                      status,
                                      LIBRDP_ERROR_COMPONENT_TLS,
                                      "server.transport.tls.accept",
-                                     "server TLS handshake failed");
+                                     tls_failure_message);
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         }
         return status;

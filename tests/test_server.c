@@ -1283,6 +1283,86 @@ static int test_server_loopback_tls_handshake(void)
 }
 
 /*
+ * Fixture: negotiates X.224 TLS, then verifies that server-side TLS material
+ * validation rejects a certificate/private-key mismatch before handshake bytes
+ * are accepted. This catches collapsed TLS setup errors that would make
+ * diagnostics unusable for embedders.
+ */
+static int test_server_loopback_tls_mismatched_key(void)
+{
+    uint8_t response[65536];
+    rdp_buffer request;
+    rdp_buffer x224_request;
+    rdp_tpkt tpkt;
+    rdp_x224_connection_confirm confirm;
+    librdp_server_status server_status;
+    char cert_path_a[128];
+    char key_path_a[128];
+    char cert_path_b[128];
+    char key_path_b[128];
+    int client_fd = -1;
+    int response_len = 0;
+    librdp_server_config config;
+    librdp_server* server = NULL;
+    librdp_server_peer* peer = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint16_t port = 0;
+
+    rdp_buffer_init(&request);
+    rdp_buffer_init(&x224_request);
+    memset(cert_path_a, 0, sizeof(cert_path_a));
+    memset(key_path_a, 0, sizeof(key_path_a));
+    memset(cert_path_b, 0, sizeof(cert_path_b));
+    memset(key_path_b, 0, sizeof(key_path_b));
+    SCHECK(test_server_make_tls_files(cert_path_a, sizeof(cert_path_a), key_path_a, sizeof(key_path_a)));
+    SCHECK(test_server_make_tls_files(cert_path_b, sizeof(cert_path_b), key_path_b, sizeof(key_path_b)));
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.bind_address = "127.0.0.1";
+    config.security_mode = LIBRDP_SECURITY_TLS;
+    config.tls_certificate_path = cert_path_a;
+    config.tls_private_key_path = key_path_b;
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    SCHECK(librdp_server_listen(server) == LIBRDP_STATUS_OK);
+    port = librdp_server_local_port(server);
+    SCHECK(port != 0);
+    client_fd = test_server_connect_loopback(port);
+    SCHECK(client_fd >= 0);
+    SCHECK(test_server_set_nonblocking(client_fd));
+    SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
+    SCHECK(peer != NULL);
+    SCHECK(rdp_x224_build_connection_request(&x224_request, NULL, RDP_X224_PROTOCOL_TLS) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_tpkt_write(&request, x224_request.data, x224_request.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_all(client_fd, request.data, request.length));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    response_len = test_server_read_response(client_fd, response, sizeof(response));
+    SCHECK(response_len > 0);
+    SCHECK(rdp_tpkt_parse(response, (size_t)response_len, &tpkt) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_x224_parse_connection_confirm(tpkt.payload, tpkt.payload_len, &confirm) == LIBRDP_STATUS_OK);
+    SCHECK(confirm.negotiation.present && confirm.negotiation.selected_protocol == RDP_X224_PROTOCOL_TLS);
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED);
+    SCHECK(librdp_server_status_init(&server_status) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_last_status(peer, &server_status) == LIBRDP_STATUS_OK);
+    SCHECK(server_status.status == LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED);
+    SCHECK(strcmp(server_status.phase, "server.transport.tls.accept") == 0);
+    SCHECK(strstr(server_status.message, "do not match") != NULL);
+    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_FAILED);
+    rdp_buffer_free(&x224_request);
+    rdp_buffer_free(&request);
+    librdp_server_peer_free(peer);
+    librdp_server_close(server);
+    librdp_server_free(server);
+    close(client_fd);
+    unlink(cert_path_a);
+    unlink(key_path_a);
+    unlink(cert_path_b);
+    unlink(key_path_b);
+    return 0;
+}
+
+/*
  * Fixture: performs the complete server-side NLA exchange over a loopback TLS
  * transport, then sends one MCS Connect-Initial. It catches NLA negotiation
  * downgrades, NTLMv2 verification failures, public-key binding sequence bugs,
@@ -3200,6 +3280,8 @@ int main(void)
     if (test_server_loopback_negotiation_failure() != 0)
         return 1;
     if (test_server_loopback_tls_handshake() != 0)
+        return 1;
+    if (test_server_loopback_tls_mismatched_key() != 0)
         return 1;
     if (test_server_loopback_nla_handshake() != 0)
         return 1;
