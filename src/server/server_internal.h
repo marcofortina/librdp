@@ -28,6 +28,7 @@
 
 #define RDP_SERVER_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u
+#define RDP_SERVER_MAX_REDIRECTED_DEVICES 64u
 
 typedef struct rdp_server_dynamic_channel
 {
@@ -40,6 +41,13 @@ typedef struct rdp_server_dynamic_channel
     rdp_buffer fragment;
     uint32_t fragment_expected;
 } rdp_server_dynamic_channel;
+
+typedef struct rdp_server_redirected_device
+{
+    uint8_t present;
+    uint32_t device_id;
+    uint32_t device_type;
+} rdp_server_redirected_device;
 
 struct librdp_server
 {
@@ -112,6 +120,8 @@ struct librdp_server_peer
     uint8_t multitransport_udp2_active;
     uint32_t multitransport_flags;
     rdp_server_dynamic_channel dynamic_channels[RDP_SERVER_MAX_DYNAMIC_CHANNELS];
+    uint32_t redirected_device_count;
+    rdp_server_redirected_device redirected_devices[RDP_SERVER_MAX_REDIRECTED_DEVICES];
     uint8_t confirm_active_seen;
     uint8_t licensing_done;
     uint8_t client_info_seen;

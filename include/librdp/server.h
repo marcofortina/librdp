@@ -221,7 +221,11 @@ typedef enum librdp_server_extension_family
     LIBRDP_SERVER_EXTENSION_AUTH_REDIRECTION = 19,   /**< Authentication redirection dynamic channel. */
     LIBRDP_SERVER_EXTENSION_TELEMETRY = 20,          /**< Telemetry dynamic channel. */
     LIBRDP_SERVER_EXTENSION_DESKTOP_COMPOSITION = 21, /**< Desktop composition channel. */
-    LIBRDP_SERVER_EXTENSION_MULTIPARTY = 22          /**< Multiparty dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_MULTIPARTY = 22,          /**< Multiparty dynamic channel. */
+    LIBRDP_SERVER_EXTENSION_FILESYSTEM = 23,          /**< Drive filesystem traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_PRINTER = 24,             /**< Printer traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_SERIAL_PORT = 25,         /**< Serial-port traffic over device redirection. */
+    LIBRDP_SERVER_EXTENSION_PARALLEL_PORT = 26        /**< Parallel-port traffic over device redirection. */
 } librdp_server_extension_family;
 
 /**

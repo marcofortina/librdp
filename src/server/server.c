@@ -519,6 +519,196 @@ static int rdp_server_name_equals(const char* name, size_t name_len, const char*
     return name && expected && name_len == expected_len && memcmp(name, expected, expected_len) == 0;
 }
 
+static librdp_server_extension_family rdp_server_redirected_device_family(uint32_t device_type,
+                                                                          librdp_feature* feature)
+{
+    if (feature)
+        *feature = (librdp_feature)0;
+    switch (device_type)
+    {
+        case RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM:
+            return LIBRDP_SERVER_EXTENSION_FILESYSTEM;
+        case RDP_DEVICE_REDIRECTION_TYPE_PRINTER:
+            return LIBRDP_SERVER_EXTENSION_PRINTER;
+        case RDP_DEVICE_REDIRECTION_TYPE_SERIAL:
+            return LIBRDP_SERVER_EXTENSION_SERIAL_PORT;
+        case RDP_DEVICE_REDIRECTION_TYPE_PARALLEL:
+            return LIBRDP_SERVER_EXTENSION_PARALLEL_PORT;
+        case RDP_DEVICE_REDIRECTION_TYPE_SMARTCARD:
+            if (feature)
+                *feature = LIBRDP_FEATURE_SMARTCARD;
+            return LIBRDP_SERVER_EXTENSION_SMARTCARD;
+        default:
+            return LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION;
+    }
+}
+
+static rdp_server_redirected_device* rdp_server_find_redirected_device(librdp_server_peer* peer,
+                                                                       uint32_t device_id)
+{
+    if (!peer)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
+    {
+        if (peer->redirected_devices[i].present && peer->redirected_devices[i].device_id == device_id)
+            return &peer->redirected_devices[i];
+    }
+    return NULL;
+}
+
+static const rdp_server_redirected_device* rdp_server_find_redirected_device_const(
+    const librdp_server_peer* peer,
+    uint32_t device_id)
+{
+    if (!peer)
+        return NULL;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
+    {
+        if (peer->redirected_devices[i].present && peer->redirected_devices[i].device_id == device_id)
+            return &peer->redirected_devices[i];
+    }
+    return NULL;
+}
+
+static librdp_status rdp_server_store_redirected_device(librdp_server_peer* peer,
+                                                        uint32_t device_id,
+                                                        uint32_t device_type)
+{
+    rdp_server_redirected_device* slot = rdp_server_find_redirected_device(peer, device_id);
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (slot)
+    {
+        slot->device_type = device_type;
+        return LIBRDP_STATUS_OK;
+    }
+    if (peer->redirected_device_count >= RDP_SERVER_MAX_REDIRECTED_DEVICES)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
+    {
+        if (!peer->redirected_devices[i].present)
+        {
+            peer->redirected_devices[i].present = 1;
+            peer->redirected_devices[i].device_id = device_id;
+            peer->redirected_devices[i].device_type = device_type;
+            peer->redirected_device_count++;
+            return LIBRDP_STATUS_OK;
+        }
+    }
+    return LIBRDP_STATUS_LIMIT_EXCEEDED;
+}
+
+static void rdp_server_remove_redirected_device(librdp_server_peer* peer, uint32_t device_id)
+{
+    rdp_server_redirected_device* slot = rdp_server_find_redirected_device(peer, device_id);
+
+    if (!peer || !slot)
+        return;
+    memset(slot, 0, sizeof(*slot));
+    if (peer->redirected_device_count > 0)
+        peer->redirected_device_count--;
+}
+
+static void rdp_server_classify_device_payload(const librdp_server_peer* peer,
+                                               const uint8_t* data,
+                                               size_t data_len,
+                                               librdp_server_extension_family* family,
+                                               librdp_feature* feature)
+{
+    rdp_device_redirection_header header;
+    uint32_t device_id = 0;
+    const rdp_server_redirected_device* device = NULL;
+
+    if (!peer || !data || !family || !feature ||
+        rdp_device_redirection_parse_header(data, data_len, &header) != LIBRDP_STATUS_OK)
+        return;
+    if (header.component == RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER)
+    {
+        *family = LIBRDP_SERVER_EXTENSION_PRINTER;
+        return;
+    }
+    if (header.component != RDP_DEVICE_REDIRECTION_COMPONENT_CORE)
+        return;
+    if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOREQUEST)
+    {
+        rdp_device_redirection_io_request request;
+
+        if (rdp_device_redirection_parse_io_request(data, data_len, &request) != LIBRDP_STATUS_OK)
+            return;
+        device_id = request.device_id;
+    }
+    else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION)
+    {
+        rdp_device_redirection_io_completion completion;
+
+        if (rdp_device_redirection_parse_io_completion(data, data_len, &completion) != LIBRDP_STATUS_OK)
+            return;
+        device_id = completion.device_id;
+    }
+    else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_REPLY)
+    {
+        rdp_device_redirection_device_reply reply;
+
+        if (rdp_device_redirection_parse_device_reply(data, data_len, &reply) != LIBRDP_STATUS_OK)
+            return;
+        device_id = reply.device_id;
+    }
+    else
+        return;
+    device = rdp_server_find_redirected_device_const(peer, device_id);
+    if (device)
+        *family = rdp_server_redirected_device_family(device->device_type, feature);
+}
+
+static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* peer,
+                                                          const librdp_server_extension_event* event)
+{
+    rdp_device_redirection_header header;
+
+    if (!peer || !event || !event->payload ||
+        (event->family != LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION &&
+         event->family != LIBRDP_SERVER_EXTENSION_FILESYSTEM &&
+         event->family != LIBRDP_SERVER_EXTENSION_PRINTER &&
+         event->family != LIBRDP_SERVER_EXTENSION_SERIAL_PORT &&
+         event->family != LIBRDP_SERVER_EXTENSION_PARALLEL_PORT &&
+         event->family != LIBRDP_SERVER_EXTENSION_SMARTCARD))
+        return LIBRDP_STATUS_OK;
+    if (rdp_device_redirection_parse_header(event->payload, event->payload_len, &header) != LIBRDP_STATUS_OK ||
+        header.component != RDP_DEVICE_REDIRECTION_COMPONENT_CORE)
+        return LIBRDP_STATUS_OK;
+    if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE)
+    {
+        rdp_device_redirection_device_list list;
+
+        if (rdp_device_redirection_parse_device_list_announce(event->payload,
+                                                              event->payload_len,
+                                                              &list) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (uint32_t i = 0; i < list.count; i++)
+        {
+            librdp_status status = rdp_server_store_redirected_device(peer,
+                                                                      list.devices[i].device_id,
+                                                                      list.devices[i].device_type);
+
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+    }
+    else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_REMOVE)
+    {
+        rdp_device_redirection_device_remove remove;
+
+        if (rdp_device_redirection_parse_device_remove(event->payload,
+                                                       event->payload_len,
+                                                       &remove) != LIBRDP_STATUS_OK)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (uint32_t i = 0; i < remove.count; i++)
+            rdp_server_remove_redirected_device(peer, remove.device_ids[i]);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static void rdp_server_extension_classify_name(const char* name,
                                                size_t name_len,
                                                librdp_server_extension_family* family,
@@ -633,6 +823,11 @@ static librdp_status rdp_server_extension_validate(librdp_server_extension_event
             return status;
         }
         case LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION:
+        case LIBRDP_SERVER_EXTENSION_FILESYSTEM:
+        case LIBRDP_SERVER_EXTENSION_PRINTER:
+        case LIBRDP_SERVER_EXTENSION_SERIAL_PORT:
+        case LIBRDP_SERVER_EXTENSION_PARALLEL_PORT:
+        case LIBRDP_SERVER_EXTENSION_SMARTCARD:
         {
             rdp_device_redirection_header header;
             librdp_status status = rdp_device_redirection_parse_header(event->payload, event->payload_len, &header);
@@ -866,7 +1061,6 @@ static librdp_status rdp_server_extension_validate(librdp_server_extension_event
             return status;
         }
         case LIBRDP_SERVER_EXTENSION_UNKNOWN:
-        case LIBRDP_SERVER_EXTENSION_SMARTCARD:
         case LIBRDP_SERVER_EXTENSION_PNP:
         default:
             return LIBRDP_STATUS_OK;
@@ -896,7 +1090,11 @@ static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
     event.payload = data;
     event.payload_len = data_len;
     rdp_server_extension_classify_name(name, name_len, &event.family, &event.feature);
+    if (event.family == LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION)
+        rdp_server_classify_device_payload(peer, data, data_len, &event.family, &event.feature);
     event.status = rdp_server_extension_validate(&event);
+    if (event.status == LIBRDP_STATUS_OK)
+        event.status = rdp_server_update_redirected_devices(peer, &event);
     if (event.family != LIBRDP_SERVER_EXTENSION_UNKNOWN &&
         event.status == LIBRDP_STATUS_OK &&
         peer->extension_callback)
