@@ -640,9 +640,10 @@ LIBRDP_API uint16_t librdp_server_local_port(const librdp_server* server);
  * This function records application intent before peers are accepted. The
  * server runtime never advertises a feature unless it can negotiate and route
  * the corresponding server-side path. Feature requests are visible through
- * librdp_server_get_feature_status(), including backend availability for that
- * server-side path, and inherited by peers accepted after the change. Existing
- * peers keep the request set copied when they were accepted.
+ * librdp_server_get_feature_status(), including backend availability at
+ * listener scope. Features that require application callbacks become
+ * backend-ready only on accepted peers after the relevant callback is installed.
+ * Existing peers keep the request set copied when they were accepted.
  *
  * @param[in,out] server Server listener to update; must not be NULL.
  * @param[in] feature Feature bitmask containing only known librdp_feature bits
@@ -664,10 +665,11 @@ LIBRDP_API librdp_status librdp_server_enable_feature(librdp_server* server,
 /**
  * @brief Query local server readiness for one optional feature.
  *
- * The function reports the requested state configured on the server object and
- * whether a server-side runtime and backend are available for the feature.
- * Features without a server-side runtime are never reported as active by this
- * server API.
+ * The function reports the requested state configured on the server object,
+ * whether a server-side runtime is compiled, and whether a listener-scope
+ * backend exists. Features that depend on application callbacks report
+ * backend_ready as 0 here; use librdp_server_peer_get_feature_status() after
+ * accepting a peer and installing callbacks for peer-level backend readiness.
  *
  * @param[in] server Server listener to query; must not be NULL.
  * @param[in] feature Single known librdp_feature value to query; bitmasks with
@@ -979,10 +981,10 @@ LIBRDP_API librdp_status librdp_server_peer_dynamic_channel_at(const librdp_serv
  * @brief Query runtime readiness for one optional feature on a peer.
  *
  * The returned status starts from the feature requests copied from the server
- * object at accept time, then adds peer-observed negotiation and active state
- * for server runtimes that exist. Unsupported features keep backend_ready,
- * negotiated, and active clear even if the client advertised a related static
- * channel.
+ * object at accept time, then adds peer callback availability, peer-observed
+ * negotiation, and active state for server runtimes that exist. Unsupported
+ * features keep backend_ready, negotiated, and active clear even if the client
+ * advertised a related static channel.
  *
  * @param[in] peer Peer to query; must not be NULL.
  * @param[in] feature Single known librdp_feature value to query; bitmasks with

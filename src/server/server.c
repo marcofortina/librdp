@@ -165,15 +165,52 @@ static int rdp_server_feature_has_runtime(librdp_feature feature)
     }
 }
 
+static int rdp_server_feature_needs_application_backend(librdp_feature feature)
+{
+    switch (feature)
+    {
+        case LIBRDP_FEATURE_MULTITRANSPORT:
+        case LIBRDP_FEATURE_UDP_TRANSPORT:
+        case LIBRDP_FEATURE_UDP2_TRANSPORT:
+            return 0;
+        case LIBRDP_FEATURE_AUDIO_OUTPUT:
+        case LIBRDP_FEATURE_AUDIO_INPUT:
+        case LIBRDP_FEATURE_VIDEO:
+        case LIBRDP_FEATURE_CAMERA:
+        case LIBRDP_FEATURE_SMARTCARD:
+        case LIBRDP_FEATURE_USB:
+        case LIBRDP_FEATURE_PNP:
+        case LIBRDP_FEATURE_WEBAUTHN:
+        case LIBRDP_FEATURE_RAIL:
+        case LIBRDP_FEATURE_CR2:
+        case LIBRDP_FEATURE_ECHO:
+        case LIBRDP_FEATURE_TELEMETRY:
+        case LIBRDP_FEATURE_MULTIPARTY:
+        case LIBRDP_FEATURE_DESKTOP_COMPOSITION:
+        case LIBRDP_FEATURE_DISPLAY_CONTROL:
+        case LIBRDP_FEATURE_GEOMETRY_TRACKING:
+            return 1;
+        default:
+            return 1;
+    }
+}
+
+static int rdp_server_listener_feature_backend_ready(librdp_feature feature)
+{
+    return rdp_server_feature_has_runtime(feature) &&
+           !rdp_server_feature_needs_application_backend(feature);
+}
+
 static void rdp_server_fill_feature_status(uint32_t requested_features,
                                            librdp_feature feature,
+                                           int backend_ready,
                                            librdp_feature_status* status)
 {
     memset(status, 0, sizeof(*status));
     status->feature = feature;
     status->requested = (requested_features & (uint32_t)feature) != 0;
     status->built = rdp_server_feature_has_runtime(feature) ? 1 : 0;
-    status->backend_ready = rdp_server_feature_has_runtime(feature) ? 1 : 0;
+    status->backend_ready = status->built && backend_ready ? 1 : 0;
     if (!status->requested)
         status->reason = LIBRDP_FEATURE_REASON_NOT_REQUESTED;
     else if (!status->built)
@@ -1050,7 +1087,10 @@ librdp_status librdp_server_get_feature_status(const librdp_server* server,
 {
     if (!server || !status || !rdp_server_valid_single_feature(feature))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    rdp_server_fill_feature_status(server->requested_features, feature, status);
+    rdp_server_fill_feature_status(server->requested_features,
+                                   feature,
+                                   rdp_server_listener_feature_backend_ready(feature),
+                                   status);
     return LIBRDP_STATUS_OK;
 }
 
@@ -4945,6 +4985,15 @@ static void rdp_server_finish_peer_feature_status(librdp_feature_status* status,
         status->reason = LIBRDP_FEATURE_REASON_NONE;
 }
 
+static int rdp_server_peer_feature_backend_ready(const librdp_server_peer* peer, librdp_feature feature)
+{
+    if (!rdp_server_feature_has_runtime(feature))
+        return 0;
+    if (!rdp_server_feature_needs_application_backend(feature))
+        return 1;
+    return peer && (peer->extension_callback || peer->channel_callback || peer->event_callback);
+}
+
 /*
  * Resolve peer-local feature state from the negotiated server runtime, not from
  * parser availability. The requested/built/backend flags are prepared by the
@@ -5042,7 +5091,10 @@ librdp_status librdp_server_peer_get_feature_status(const librdp_server_peer* pe
 {
     if (!peer || !status || !rdp_server_valid_single_feature(feature))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    rdp_server_fill_feature_status(peer->requested_features, feature, status);
+    rdp_server_fill_feature_status(peer->requested_features,
+                                   feature,
+                                   rdp_server_peer_feature_backend_ready(peer, feature),
+                                   status);
     rdp_server_peer_fill_runtime_feature_status(peer, feature, status);
     return LIBRDP_STATUS_OK;
 }
