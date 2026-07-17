@@ -4613,13 +4613,68 @@ librdp_status librdp_server_peer_send_graphics_default_caps(librdp_server_peer* 
     librdp_status status = LIBRDP_STATUS_OK;
 
     rdp_buffer_init(&payload);
-    status = rdp_graphics_write_default_caps_advertise(&payload);
+    status = rdp_graphics_write_default_caps_advertise_for_avc(&payload, 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_dynamic_named_buffer(peer,
                                                       dynamic_channel_id,
                                                       RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
                                                       &payload);
     rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_graphics_bitmap_bgra32(librdp_server_peer* peer,
+                                                             uint32_t dynamic_channel_id,
+                                                             uint16_t surface_id,
+                                                             uint32_t x,
+                                                             uint32_t y,
+                                                             uint32_t width,
+                                                             uint32_t height,
+                                                             uint32_t stride,
+                                                             const void* pixels)
+{
+    const uint8_t* src = (const uint8_t*)pixels;
+    rdp_graphics_rect16 dest_rect;
+    rdp_buffer bitmap;
+    rdp_buffer payload;
+    size_t row_bytes = 0;
+    size_t total_bytes = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !pixels || width == 0 || height == 0 || x > UINT16_MAX || y > UINT16_MAX ||
+        width > UINT16_MAX || height > UINT16_MAX || width > UINT16_MAX - x ||
+        height > UINT16_MAX - y)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    row_bytes = (size_t)width * 4u;
+    if (stride < row_bytes || height > SIZE_MAX / row_bytes)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    total_bytes = row_bytes * (size_t)height;
+    if (total_bytes > UINT32_MAX)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+
+    dest_rect.left = (uint16_t)x;
+    dest_rect.top = (uint16_t)y;
+    dest_rect.right = (uint16_t)(x + width);
+    dest_rect.bottom = (uint16_t)(y + height);
+    rdp_buffer_init(&bitmap);
+    rdp_buffer_init(&payload);
+    for (uint32_t row = 0; status == LIBRDP_STATUS_OK && row < height; row++)
+        status = rdp_buffer_append(&bitmap, src + ((size_t)row * stride), row_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_graphics_write_wire_to_surface_1(&payload,
+                                                      surface_id,
+                                                      RDP_GRAPHICS_CODECID_UNCOMPRESSED,
+                                                      RDP_GRAPHICS_PIXEL_FORMAT_XRGB_8888,
+                                                      &dest_rect,
+                                                      bitmap.data,
+                                                      (uint32_t)bitmap.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&bitmap);
     return status;
 }
 

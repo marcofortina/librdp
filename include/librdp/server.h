@@ -1897,6 +1897,50 @@ LIBRDP_API librdp_status librdp_server_peer_send_graphics_default_caps(librdp_se
                                                                        uint32_t dynamic_channel_id);
 
 /**
+ * @brief Send a BGRA32 bitmap update through the RDP Graphics Pipeline.
+ *
+ * The helper packs the supplied BGRA32 rows into an uncompressed
+ * Wire-to-Surface command. The caller owns pixels and may release or reuse the
+ * buffer after the function returns.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] surface_id Destination graphics surface identifier.
+ * @param[in] x Destination left coordinate in the surface.
+ * @param[in] y Destination top coordinate in the surface.
+ * @param[in] width Bitmap width in pixels; must be non-zero and fit the
+ * 16-bit RDPGFX rectangle range together with x.
+ * @param[in] height Bitmap height in pixels; must be non-zero and fit the
+ * 16-bit RDPGFX rectangle range together with y.
+ * @param[in] stride Source row stride in bytes; must be at least
+ * width * 4.
+ * @param[in] pixels Source BGRA32 rows; must not be NULL. The buffer is
+ * borrowed for the duration of the call only and is copied into the outgoing
+ * PDU before return.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid geometry, stride, NULL pointers, or a non-graphics channel;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when the packed bitmap exceeds the RDPGFX PDU
+ * size range; LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport or
+ * allocation errors from the send path.
+ *
+ * @note This function intentionally sends only the uncompressed RDPGFX bitmap
+ * path. Compressed server codecs require a registered encoder path before they
+ * are advertised.
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_bitmap_bgra32(librdp_server_peer* peer,
+                                                                        uint32_t dynamic_channel_id,
+                                                                        uint16_t surface_id,
+                                                                        uint32_t x,
+                                                                        uint32_t y,
+                                                                        uint32_t width,
+                                                                        uint32_t height,
+                                                                        uint32_t stride,
+                                                                        const void* pixels);
+
+/**
  * @brief Send an RDP Graphics Pipeline Create Surface command.
  *
  * @param[in,out] peer Active peer; must not be NULL.

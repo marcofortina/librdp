@@ -98,6 +98,7 @@ LIBRDP_0.1 {
         librdp_server_peer_send_echo_response;
         librdp_server_peer_send_display_single_monitor_layout;
         librdp_server_peer_send_graphics_default_caps;
+        librdp_server_peer_send_graphics_bitmap_bgra32;
         librdp_server_peer_send_graphics_create_surface;
         librdp_server_peer_send_graphics_delete_surface;
         librdp_server_peer_send_graphics_reset;
