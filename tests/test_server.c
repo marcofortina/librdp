@@ -1864,6 +1864,8 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
 {
     uint8_t response[65536];
     uint8_t client_nonce[32];
+    uint8_t ntlm_client_challenge[8];
+    uint8_t ntlm_exported_key[16];
     rdp_buffer request;
     rdp_buffer reply;
     rdp_buffer x224_request;
@@ -1933,6 +1935,10 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
     provider_context.reject = (flags & TEST_SERVER_NLA_PROVIDER_REJECT) != 0;
     for (size_t i = 0; i < sizeof(client_nonce); i++)
         client_nonce[i] = (uint8_t)i;
+    for (size_t i = 0; i < sizeof(ntlm_client_challenge); i++)
+        ntlm_client_challenge[i] = (uint8_t)(0x80u + i);
+    for (size_t i = 0; i < sizeof(ntlm_exported_key); i++)
+        ntlm_exported_key[i] = (uint8_t)(0x40u + i);
     memset(cert_path, 0, sizeof(cert_path));
     memset(key_path, 0, sizeof(key_path));
 
@@ -2037,9 +2043,9 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
                                                authenticate_password,
                                                domain,
                                                workstation,
-                                               0,
-                                               NULL,
-                                               NULL,
+                                               132223104000000000ULL,
+                                               ntlm_client_challenge,
+                                               ntlm_exported_key,
                                                &auth_result) == LIBRDP_STATUS_OK);
     SCHECK(rdp_credssp_write_spnego_ntlm_authenticate(&spnego_authenticate,
                                                       ntlm_authenticate.data,
