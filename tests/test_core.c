@@ -8166,6 +8166,95 @@ static int test_gdiplus_known_record_families_render_visuals(void)
 }
 
 /*
+ * Coverage: verifies EMF+ state records whose effect is visible through later
+ * drawing. Page transform must affect geometry, compositing mode must affect
+ * alpha handling, and save/restore must preserve the expanded state snapshot.
+ */
+static int test_gdiplus_graphics_state_affects_rendering(void)
+{
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    const uint8_t* pixels = NULL;
+    size_t stride = 0;
+    uint32_t records = 0;
+    uint32_t rasterized = 0;
+    uint32_t unsupported = 0;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(10, 10, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 1, 1, 1, 1));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_record(&stream, 0x4023u, 0x0001u, &payload));
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x8000ff00u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 1, 1, 1, 1));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_record(&stream, 0x4030u, 0x0002u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_record(&stream, 0x4025u, 0x0000u, &payload));
+    CHECK(append_gdiplus_float(&payload, 3.0f));
+    CHECK(append_gdiplus_record(&stream, 0x4030u, 0x0002u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff0000ffu) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 1, 1, 1, 1));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_record(&stream, 0x4026u, 0x0000u, &payload));
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff00ffffu) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_rect(&payload, 2, 2, 1, 1));
+    CHECK(append_gdiplus_record(&stream, 0x400au, 0xc000u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 9u);
+    CHECK(rasterized == 4u);
+    CHECK(unsupported == 0u);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    CHECK(pixels != NULL && stride >= 10u * 4u);
+    CHECK(pixels[(1u * stride) + (1u * 4u)] == 0x00u &&
+          pixels[(1u * stride) + (1u * 4u) + 1u] == 0xffu &&
+          pixels[(1u * stride) + (1u * 4u) + 2u] == 0x00u);
+    CHECK(pixels[(3u * stride) + (3u * 4u)] == 0xffu &&
+          pixels[(3u * stride) + (3u * 4u) + 1u] == 0x00u &&
+          pixels[(3u * stride) + (3u * 4u) + 2u] == 0x00u);
+    CHECK(pixels[(4u * stride) + (4u * 4u)] == 0xffu &&
+          pixels[(4u * stride) + (4u * 4u) + 1u] == 0xffu &&
+          pixels[(4u * stride) + (4u * 4u) + 2u] == 0x00u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
  * Coverage: validates that complex GDI alternate secondary orders have a
  * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes
  * direct EMF+ vector records, preserves window metadata and records desktop
@@ -9030,6 +9119,8 @@ int test_client_core(void)
     if (test_gdiplus_object_table_solid_brush_and_pen() != 0)
         return 1;
     if (test_gdiplus_known_record_families_render_visuals() != 0)
+        return 1;
+    if (test_gdiplus_graphics_state_affects_rendering() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;

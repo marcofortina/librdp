@@ -13,6 +13,7 @@
  */
 
 
+#include "graphics/gdi_backend.h"
 #include "graphics/gdi_orders.h"
 
 #include <stddef.h>
@@ -36,6 +37,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_gdi_color_cache_capability color;
     rdp_gdi_ninegrid_capability ninegrid;
     rdp_gdi_gdiplus_capability gdiplus;
+    librdp_surface* surface = NULL;
     rdp_buffer buffer;
     uint32_t flags = 0;
     const uint8_t payload[] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -55,6 +57,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_gdi_parse_color_cache_capability(data, size, &color);
     (void)rdp_gdi_parse_ninegrid_capability(data, size, &ninegrid);
     (void)rdp_gdi_parse_gdiplus_capability(data, size, &gdiplus);
+    surface = librdp_surface_new(16, 16, LIBRDP_PIXEL_FORMAT_BGRA32);
+    if (surface)
+    {
+        (void)rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                    surface,
+                                                    data,
+                                                    size > 4096u ? 4096u : size,
+                                                    NULL,
+                                                    NULL,
+                                                    NULL);
+        librdp_surface_free(surface);
+    }
 
     rdp_buffer_init(&buffer);
     (void)rdp_gdi_write_primary_order(&buffer,

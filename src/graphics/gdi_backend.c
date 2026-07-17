@@ -1110,6 +1110,17 @@ typedef struct rdp_gdi_backend_gdiplus_state
 {
     float transform[6];
     rdp_gdi_backend_clip clip;
+    int32_t rendering_origin_x;
+    int32_t rendering_origin_y;
+    uint32_t anti_alias_mode;
+    uint32_t text_rendering_hint;
+    uint32_t text_contrast;
+    uint32_t interpolation_mode;
+    uint32_t pixel_offset_mode;
+    uint32_t compositing_mode;
+    uint32_t compositing_quality;
+    uint32_t page_unit;
+    float page_scale;
 } rdp_gdi_backend_gdiplus_state;
 
 typedef struct rdp_gdi_backend_gdiplus_context
@@ -1118,6 +1129,17 @@ typedef struct rdp_gdi_backend_gdiplus_context
     rdp_gdi_backend_gdiplus_partial_object partial;
     float transform[6];
     rdp_gdi_backend_clip clip;
+    int32_t rendering_origin_x;
+    int32_t rendering_origin_y;
+    uint32_t anti_alias_mode;
+    uint32_t text_rendering_hint;
+    uint32_t text_contrast;
+    uint32_t interpolation_mode;
+    uint32_t pixel_offset_mode;
+    uint32_t compositing_mode;
+    uint32_t compositing_quality;
+    uint32_t page_unit;
+    float page_scale;
     rdp_gdi_backend_gdiplus_state stack[RDP_GDIPLUS_STATE_STACK_SIZE];
     uint32_t stack_depth;
 } rdp_gdi_backend_gdiplus_context;
@@ -1167,6 +1189,47 @@ static void rdp_gdi_backend_gdiplus_context_init(rdp_gdi_backend_gdiplus_context
         return;
     memset(context, 0, sizeof(*context));
     rdp_gdi_backend_gdiplus_transform_identity(context->transform);
+    context->page_scale = 1.0f;
+}
+
+static void rdp_gdi_backend_gdiplus_state_capture(const rdp_gdi_backend_gdiplus_context* context,
+                                                  rdp_gdi_backend_gdiplus_state* state)
+{
+    if (!context || !state)
+        return;
+    memcpy(state->transform, context->transform, sizeof(state->transform));
+    state->clip = context->clip;
+    state->rendering_origin_x = context->rendering_origin_x;
+    state->rendering_origin_y = context->rendering_origin_y;
+    state->anti_alias_mode = context->anti_alias_mode;
+    state->text_rendering_hint = context->text_rendering_hint;
+    state->text_contrast = context->text_contrast;
+    state->interpolation_mode = context->interpolation_mode;
+    state->pixel_offset_mode = context->pixel_offset_mode;
+    state->compositing_mode = context->compositing_mode;
+    state->compositing_quality = context->compositing_quality;
+    state->page_unit = context->page_unit;
+    state->page_scale = context->page_scale;
+}
+
+static void rdp_gdi_backend_gdiplus_state_restore(rdp_gdi_backend_gdiplus_context* context,
+                                                  const rdp_gdi_backend_gdiplus_state* state)
+{
+    if (!context || !state)
+        return;
+    memcpy(context->transform, state->transform, sizeof(context->transform));
+    context->clip = state->clip;
+    context->rendering_origin_x = state->rendering_origin_x;
+    context->rendering_origin_y = state->rendering_origin_y;
+    context->anti_alias_mode = state->anti_alias_mode;
+    context->text_rendering_hint = state->text_rendering_hint;
+    context->text_contrast = state->text_contrast;
+    context->interpolation_mode = state->interpolation_mode;
+    context->pixel_offset_mode = state->pixel_offset_mode;
+    context->compositing_mode = state->compositing_mode;
+    context->compositing_quality = state->compositing_quality;
+    context->page_unit = state->page_unit;
+    context->page_scale = state->page_scale;
 }
 
 static void rdp_gdi_backend_gdiplus_path_free(rdp_gdi_backend_gdiplus_path* path)
@@ -1416,6 +1479,15 @@ static librdp_status rdp_gdi_backend_render_gdiplus_object(rdp_gdi_backend_gdipl
     return LIBRDP_STATUS_OK;
 }
 
+static void rdp_gdi_backend_gdiplus_apply_compositing(const rdp_gdi_backend_gdiplus_context* context,
+                                                      uint32_t* color)
+{
+    if (!context || !color)
+        return;
+    if (context->compositing_mode == 1u)
+        *color = 0xff000000u | (*color & 0x00ffffffu);
+}
+
 static int rdp_gdi_backend_gdiplus_resolve_draw_color(const rdp_gdi_backend_gdiplus_context* context,
                                                       uint16_t flags,
                                                       uint32_t token,
@@ -1433,6 +1505,7 @@ static int rdp_gdi_backend_gdiplus_resolve_draw_color(const rdp_gdi_backend_gdip
     {
         *color = rdp_gdi_backend_argb_to_color(token);
         *pen_width = 1u;
+        rdp_gdi_backend_gdiplus_apply_compositing(context, color);
         return 1;
     }
     if (!context || object_id >= RDP_GDIPLUS_OBJECT_TABLE_SIZE)
@@ -1444,10 +1517,12 @@ static int rdp_gdi_backend_gdiplus_resolve_draw_color(const rdp_gdi_backend_gdip
     {
         *color = object->color;
         *pen_width = object->pen_width == 0u ? 1u : object->pen_width;
+        rdp_gdi_backend_gdiplus_apply_compositing(context, color);
         return object->kind == RDP_GDIPLUS_OBJECT_KIND_GENERIC;
     }
     *color = object->color;
     *pen_width = object->pen_width == 0u ? 1u : object->pen_width;
+    rdp_gdi_backend_gdiplus_apply_compositing(context, color);
     return 1;
 }
 
@@ -1489,6 +1564,25 @@ static void rdp_gdi_backend_gdiplus_transform_point(const float transform[6],
     point->y = rdp_gdi_backend_gdiplus_round_i32(y);
 }
 
+static void rdp_gdi_backend_gdiplus_transform_context_point(
+    const rdp_gdi_backend_gdiplus_context* context,
+    rdp_gdi_backend_point* point)
+{
+    float scale = 1.0f;
+
+    if (!point)
+        return;
+    if (!context)
+        return;
+    rdp_gdi_backend_gdiplus_transform_point(context->transform, point);
+    scale = context->page_scale > 0.0f ? context->page_scale : 1.0f;
+    if (scale != 1.0f)
+    {
+        point->x = rdp_gdi_backend_gdiplus_round_i32((float)point->x * scale);
+        point->y = rdp_gdi_backend_gdiplus_round_i32((float)point->y * scale);
+    }
+}
+
 static librdp_status rdp_gdi_backend_gdiplus_transform_rect(const rdp_gdi_backend_gdiplus_context* context,
                                                             int32_t* x,
                                                             int32_t* y,
@@ -1513,7 +1607,7 @@ static librdp_status rdp_gdi_backend_gdiplus_transform_rect(const rdp_gdi_backen
     points[3].x = *x + (int32_t)(*width - 1u);
     points[3].y = *y + (int32_t)(*height - 1u);
     for (i = 0; i < 4u; i++)
-        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[i]);
+        rdp_gdi_backend_gdiplus_transform_context_point(context, &points[i]);
     left = points[0].x;
     right = points[0].x;
     top = points[0].y;
@@ -1682,7 +1776,7 @@ static int rdp_gdi_backend_gdiplus_append_flattened_point(rdp_gdi_backend_point*
  * overlarge paths fail before any caller-visible drawing is attempted.
  */
 static int rdp_gdi_backend_gdiplus_flatten_path(const rdp_gdi_backend_gdiplus_path* path,
-                                                const float transform[6],
+                                                const rdp_gdi_backend_gdiplus_context* context,
                                                 rdp_gdi_backend_point** flattened,
                                                 uint32_t* flattened_count)
 {
@@ -1707,7 +1801,7 @@ static int rdp_gdi_backend_gdiplus_flatten_path(const rdp_gdi_backend_gdiplus_pa
         uint8_t close = path->types[i] & RDP_GDIPLUS_PATH_POINT_TYPE_CLOSE;
         rdp_gdi_backend_point point = path->points[i];
 
-        rdp_gdi_backend_gdiplus_transform_point(transform, &point);
+        rdp_gdi_backend_gdiplus_transform_context_point(context, &point);
         if (type == RDP_GDIPLUS_PATH_POINT_TYPE_START || !have_current)
         {
             current = point;
@@ -1727,8 +1821,8 @@ static int rdp_gdi_backend_gdiplus_flatten_path(const rdp_gdi_backend_gdiplus_pa
             rdp_gdi_backend_point p3 = path->points[i + 2u];
             uint32_t step = 0u;
 
-            rdp_gdi_backend_gdiplus_transform_point(transform, &p2);
-            rdp_gdi_backend_gdiplus_transform_point(transform, &p3);
+            rdp_gdi_backend_gdiplus_transform_context_point(context, &p2);
+            rdp_gdi_backend_gdiplus_transform_context_point(context, &p3);
             for (step = 1u; step <= 16u; step++)
             {
                 float t = (float)step / 16.0f;
@@ -1962,7 +2056,7 @@ static void rdp_gdi_backend_gdiplus_transform_points(const rdp_gdi_backend_gdipl
     if (!points)
         return;
     for (i = 0u; i < count; i++)
-        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[i]);
+        rdp_gdi_backend_gdiplus_transform_context_point(context, &points[i]);
 }
 
 static librdp_status rdp_gdi_backend_gdiplus_draw_polyline(rdp_gdi_backend_kind backend,
@@ -3013,10 +3107,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_path_object(
     status = rdp_gdi_backend_gdiplus_parse_path_object(object, &path);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (!rdp_gdi_backend_gdiplus_flatten_path(&path,
-                                              context ? context->transform : NULL,
-                                              &flattened,
-                                              &flattened_count))
+    if (!rdp_gdi_backend_gdiplus_flatten_path(&path, context, &flattened, &flattened_count))
     {
         rdp_gdi_backend_gdiplus_path_free(&path);
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -3884,7 +3975,7 @@ static librdp_status rdp_gdi_backend_gdiplus_set_clip_from_path(
     status = rdp_gdi_backend_gdiplus_parse_path_object(object, &path);
     if (status != LIBRDP_STATUS_OK)
         return status;
-    if (!rdp_gdi_backend_gdiplus_flatten_path(&path, context->transform, &flattened, &count))
+    if (!rdp_gdi_backend_gdiplus_flatten_path(&path, context, &flattened, &count))
     {
         rdp_gdi_backend_gdiplus_path_free(&path);
         return LIBRDP_STATUS_PROTOCOL_ERROR;
@@ -4302,10 +4393,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_state_only(rdp_gdi_backend_g
     {
         if (context->stack_depth >= RDP_GDIPLUS_STATE_STACK_SIZE)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
-        memcpy(context->stack[context->stack_depth].transform,
-               context->transform,
-               sizeof(context->transform));
-        context->stack[context->stack_depth].clip = context->clip;
+        rdp_gdi_backend_gdiplus_state_capture(context, &context->stack[context->stack_depth]);
         context->stack_depth++;
         return LIBRDP_STATUS_OK;
     }
@@ -4314,10 +4402,65 @@ static librdp_status rdp_gdi_backend_render_gdiplus_state_only(rdp_gdi_backend_g
         if (context->stack_depth == 0u)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         context->stack_depth--;
-        memcpy(context->transform,
-               context->stack[context->stack_depth].transform,
-               sizeof(context->transform));
-        context->clip = context->stack[context->stack_depth].clip;
+        rdp_gdi_backend_gdiplus_state_restore(context, &context->stack[context->stack_depth]);
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_RENDERING_ORIGIN)
+    {
+        if (data_size < 8u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        context->rendering_origin_x = (int32_t)rdp_gdi_backend_read_u32_le(payload);
+        context->rendering_origin_y = (int32_t)rdp_gdi_backend_read_u32_le(payload + 4u);
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_ANTI_ALIAS_MODE)
+    {
+        context->anti_alias_mode = flags & 0xffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_TEXT_RENDERING_HINT)
+    {
+        context->text_rendering_hint = flags & 0xffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_TEXT_CONTRAST)
+    {
+        context->text_contrast = flags & 0x0fffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_INTERPOLATION_MODE)
+    {
+        context->interpolation_mode = flags & 0xffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_PIXEL_OFFSET_MODE)
+    {
+        context->pixel_offset_mode = flags & 0xffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_COMPOSITING_MODE)
+    {
+        context->compositing_mode = flags & 0xffu;
+        if (context->compositing_mode > 1u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_COMPOSITING_QUALITY)
+    {
+        context->compositing_quality = flags & 0xffu;
+        return LIBRDP_STATUS_OK;
+    }
+    if (type == RDP_GDIPLUS_RECORD_SET_PAGE_TRANSFORM)
+    {
+        float page_scale = 0.0f;
+
+        if (data_size < 4u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        page_scale = rdp_gdi_backend_read_float_le(payload);
+        if (!(page_scale > 0.0f && page_scale <= 1024.0f))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        context->page_unit = flags & 0xffu;
+        context->page_scale = page_scale;
         return LIBRDP_STATUS_OK;
     }
     if (type == RDP_GDIPLUS_RECORD_RESET_CLIP)
