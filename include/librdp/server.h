@@ -33,6 +33,7 @@ extern "C" {
 #define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_CLIPBOARD_STATE_VERSION 1u /**< Current librdp_server_clipboard_state version. */
+#define LIBRDP_SERVER_EXTENSION_STATE_VERSION 1u /**< Current librdp_server_extension_state version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
 #define LIBRDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u /**< Dynamic-channel name storage including NUL. */
 #define LIBRDP_SERVER_PHASE_CAPACITY 32u /**< Server status phase storage including NUL. */
@@ -325,6 +326,47 @@ typedef struct librdp_server_extension_event
     const uint8_t* payload;      /**< Borrowed extension payload; may be NULL only when payload_len is zero. */
     size_t payload_len;          /**< Extension payload length in bytes. */
 } librdp_server_extension_event;
+
+/**
+ * @brief Versioned runtime state snapshot for one server extension family.
+ *
+ * The structure contains negotiated state, request counters, and channel
+ * identifiers owned by the server peer. It never stores extension payload bytes,
+ * filenames, APDUs, media samples, credentials, or user content. The caller owns
+ * the snapshot and must initialize it with librdp_server_extension_state_init().
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_extension_state
+{
+    size_t size;      /**< Structure size in bytes, set by init. */
+    uint32_t version; /**< Structure version, LIBRDP_SERVER_EXTENSION_STATE_VERSION. */
+    librdp_server_extension_family family; /**< Extension family described by this snapshot. */
+    librdp_feature feature; /**< Public feature bit associated with family, or zero. */
+    uint8_t provider_ready; /**< Application provider is enabled for this family. */
+    uint8_t negotiated;     /**< Matching channel or runtime path was negotiated. */
+    uint8_t active;         /**< Runtime path is open and can process data. */
+    uint8_t capability_seen; /**< Capability or setup message was observed for the family. */
+    uint8_t open;           /**< Static or dynamic channel is open for this family. */
+    uint8_t pending_open;   /**< A server-initiated dynamic open is awaiting a response. */
+    uint8_t closing;        /**< A close is in progress for this family. */
+    uint8_t cancelled;      /**< Pending family work was cancelled by the application. */
+    uint16_t static_channel_id; /**< Joined static channel id, or zero. */
+    uint32_t dynamic_channel_id; /**< Open dynamic channel id, or zero. */
+    uint8_t dynamic_priority;    /**< Dynamic channel priority, or zero. */
+    uint32_t last_message_type;  /**< Last validated message type for this family. */
+    uint32_t last_flags;         /**< Last protocol-specific flags for this family. */
+    uint64_t rx_messages;        /**< Validated inbound messages for this family. */
+    uint64_t tx_messages;        /**< Outbound messages sent for this family. */
+    uint64_t rx_bytes;           /**< Validated inbound payload bytes for this family. */
+    uint64_t tx_bytes;           /**< Outbound payload bytes sent for this family. */
+    uint32_t pending_requests;   /**< Family-level pending request count. */
+    uint32_t open_count;         /**< Number of successful opens observed for this family. */
+    uint32_t close_count;        /**< Number of closes or cleanup resets observed for this family. */
+    uint32_t timeout_count;      /**< Timeouts recorded for this family. */
+    uint32_t reconnect_generation; /**< Incremented when family state resets for reconnect. */
+    librdp_status last_status;   /**< Last family-specific status, or LIBRDP_STATUS_OK. */
+} librdp_server_extension_state;
 
 /**
  * @brief Server event discriminator.
@@ -1625,6 +1667,85 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_extension_data(
     uint32_t dynamic_channel_id,
     const void* payload,
     size_t payload_len);
+
+/**
+ * @brief Initialize a server extension runtime state snapshot.
+ *
+ * @param[out] state Destination structure; must not be NULL. The function
+ * clears all fields, sets size to sizeof(*state), sets version to the current
+ * structure version, and sets last_status to LIBRDP_STATUS_OK.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a NULL
+ * state pointer.
+ *
+ * @note Thread-safety: independent of any server object.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_extension_state_init(librdp_server_extension_state* state);
+
+/**
+ * @brief Query server-side runtime state for one extension family.
+ *
+ * The returned snapshot is copied from peer-owned state and remains valid after
+ * the call returns. Payload data is never included. provider_ready is derived
+ * from the peer provider mask at query time, so it reflects the current
+ * application registration state.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[in] family Extension family to query; must be a known family.
+ * @param[out] state Destination snapshot; must not be NULL and must have been
+ * initialized with librdp_server_extension_state_init().
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * pointers, unknown families, or incompatible state structures.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_extension_state(
+    const librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    librdp_server_extension_state* state);
+
+/**
+ * @brief Cancel pending server work for one extension family.
+ *
+ * The function clears family-level pending request/open/closing state and marks
+ * the runtime snapshot as cancelled. It does not synthesize protocol payloads and
+ * does not close unrelated channels; protocol close helpers remain explicit.
+ *
+ * @param[in,out] peer Peer whose extension state is updated; must not be NULL.
+ * @param[in] family Extension family to cancel; must be known.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a NULL
+ * peer or unknown family; LIBRDP_STATUS_STATE when the peer is closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_cancel_extension(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family);
+
+/**
+ * @brief Record a timeout for one server extension family.
+ *
+ * Applications use this when an application-owned provider times out while
+ * handling a server extension request. The function updates only runtime state
+ * and metrics; it does not close channels and does not send protocol PDUs.
+ *
+ * @param[in,out] peer Peer whose extension state is updated; must not be NULL.
+ * @param[in] family Extension family that timed out; must be known.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a NULL
+ * peer or unknown family; LIBRDP_STATUS_STATE when the peer is closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_record_extension_timeout(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family);
 
 /**
  * @brief Initialize a server clipboard state snapshot.

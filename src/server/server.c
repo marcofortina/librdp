@@ -239,11 +239,160 @@ static void rdp_server_clipboard_state_reset(librdp_server_peer* peer, int recon
         peer->clipboard_reconnect_generation++;
 }
 
+static librdp_server_extension_state* rdp_server_extension_state_mut(librdp_server_peer* peer,
+                                                                     librdp_server_extension_family family)
+{
+    if (!peer || !rdp_server_extension_family_valid(family))
+        return NULL;
+    return &peer->extension_states[(size_t)family];
+}
+
+static void rdp_server_extension_state_prepare(librdp_server_extension_state* state,
+                                               librdp_server_extension_family family,
+                                               uint32_t reconnect_generation)
+{
+    if (!state)
+        return;
+    (void)librdp_server_extension_state_init(state);
+    state->family = family;
+    state->feature = rdp_server_feature_for_extension_family(family);
+    state->reconnect_generation = reconnect_generation;
+}
+
+static void rdp_server_extension_states_reset(librdp_server_peer* peer, int reconnect)
+{
+    if (!peer)
+        return;
+    for (uint32_t family = (uint32_t)LIBRDP_SERVER_EXTENSION_UNKNOWN + 1u;
+         family <= (uint32_t)LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING;
+         family++)
+    {
+        librdp_server_extension_state* state =
+            &peer->extension_states[(size_t)family];
+        uint32_t generation = state->reconnect_generation;
+
+        if (reconnect)
+            generation++;
+        rdp_server_extension_state_prepare(state,
+                                           (librdp_server_extension_family)family,
+                                           generation);
+        if (reconnect)
+            state->close_count++;
+    }
+}
+
+static void rdp_server_extension_state_mark_open(librdp_server_peer* peer,
+                                                 librdp_server_extension_family family,
+                                                 uint16_t static_channel_id,
+                                                 uint32_t dynamic_channel_id,
+                                                 uint8_t dynamic_priority)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!state)
+        return;
+    state->negotiated = 1u;
+    state->active = 1u;
+    state->open = 1u;
+    state->capability_seen = 1u;
+    if (state->pending_open && state->pending_requests > 0)
+        state->pending_requests--;
+    state->pending_open = 0;
+    state->closing = 0;
+    state->cancelled = 0;
+    if (static_channel_id != 0)
+        state->static_channel_id = static_channel_id;
+    if (dynamic_channel_id != 0)
+        state->dynamic_channel_id = dynamic_channel_id;
+    state->dynamic_priority = dynamic_priority;
+    if (state->open_count != UINT32_MAX)
+        state->open_count++;
+}
+
+static void rdp_server_extension_state_mark_pending_open(librdp_server_peer* peer,
+                                                         librdp_server_extension_family family,
+                                                         uint32_t dynamic_channel_id,
+                                                         uint8_t dynamic_priority)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!state)
+        return;
+    state->negotiated = 1u;
+    state->capability_seen = 1u;
+    state->pending_open = 1u;
+    state->cancelled = 0;
+    state->dynamic_channel_id = dynamic_channel_id;
+    state->dynamic_priority = dynamic_priority;
+    if (state->pending_requests != UINT32_MAX)
+        state->pending_requests++;
+}
+
+static void rdp_server_extension_state_mark_close(librdp_server_peer* peer,
+                                                  librdp_server_extension_family family)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!state)
+        return;
+    state->open = 0;
+    state->active = 0;
+    state->pending_open = 0;
+    state->closing = 0;
+    state->pending_requests = 0;
+    if (state->close_count != UINT32_MAX)
+        state->close_count++;
+}
+
+static void rdp_server_extension_state_mark_tx(librdp_server_peer* peer,
+                                               librdp_server_extension_family family,
+                                               size_t payload_len)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!state)
+        return;
+    rdp_server_metric_add(&state->tx_messages, 1u);
+    rdp_server_metric_add(&state->tx_bytes, (uint64_t)payload_len);
+    state->last_status = LIBRDP_STATUS_OK;
+}
+
+static void rdp_server_extension_state_mark_rx(librdp_server_peer* peer,
+                                               const librdp_server_extension_event* event)
+{
+    librdp_server_extension_state* state =
+        event ? rdp_server_extension_state_mut(peer, event->family) : NULL;
+
+    if (!state || !event)
+        return;
+    state->negotiated = 1u;
+    state->active = 1u;
+    if (event->channel_id != 0)
+        state->static_channel_id = event->channel_id;
+    if (event->dynamic_channel_id != 0)
+    {
+        state->dynamic_channel_id = event->dynamic_channel_id;
+        state->dynamic_priority = event->dynamic_priority;
+    }
+    state->open = 1u;
+    state->last_message_type = event->message_type;
+    state->last_flags = event->flags;
+    state->last_status = event->status;
+    state->capability_seen = state->capability_seen ||
+                             event->message_type == RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES;
+    rdp_server_metric_add(&state->rx_messages, 1u);
+    rdp_server_metric_add(&state->rx_bytes, (uint64_t)event->payload_len);
+}
+
 static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
                                                   const rdp_server_dynamic_channel* channel,
                                                   librdp_server_channel_event_type type,
                                                   const uint8_t* data,
                                                   size_t data_len);
+static void rdp_server_extension_classify_name(const char* name,
+                                               size_t name_len,
+                                               librdp_server_extension_family* family,
+                                               librdp_feature* feature);
 
 static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events)
 {
@@ -255,11 +404,21 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit
             (peer->dynamic_channels[i].open ||
              peer->dynamic_channels[i].pending_open ||
              peer->dynamic_channels[i].closing))
+        {
+            librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+            librdp_feature feature = (librdp_feature)0;
+
+            rdp_server_extension_classify_name(peer->dynamic_channels[i].name,
+                                               strlen(peer->dynamic_channels[i].name),
+                                               &family,
+                                               &feature);
+            rdp_server_extension_state_mark_close(peer, family);
             rdp_server_emit_dynamic_channel_event(peer,
                                                   &peer->dynamic_channels[i],
                                                   LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE,
                                                   NULL,
                                                   0);
+        }
         rdp_buffer_free(&peer->dynamic_channels[i].fragment);
     }
     memset(peer->dynamic_channels, 0, sizeof(peer->dynamic_channels));
@@ -619,6 +778,17 @@ librdp_status librdp_server_clipboard_state_init(librdp_server_clipboard_state* 
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_extension_state_init(librdp_server_extension_state* state)
+{
+    if (!state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(state, 0, sizeof(*state));
+    state->version = LIBRDP_SERVER_EXTENSION_STATE_VERSION;
+    state->size = sizeof(*state);
+    state->last_status = LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_server_status_valid(const librdp_server_status* status)
 {
     return status && status->version == LIBRDP_SERVER_STATUS_VERSION &&
@@ -629,6 +799,12 @@ static int rdp_server_clipboard_state_valid(const librdp_server_clipboard_state*
 {
     return state && state->version == LIBRDP_SERVER_CLIPBOARD_STATE_VERSION &&
            state->size >= sizeof(librdp_server_clipboard_state);
+}
+
+static int rdp_server_extension_state_valid(const librdp_server_extension_state* state)
+{
+    return state && state->version == LIBRDP_SERVER_EXTENSION_STATE_VERSION &&
+           state->size >= sizeof(librdp_server_extension_state);
 }
 
 static void rdp_server_copy_token(char* output, size_t output_len, const char* input)
@@ -924,12 +1100,16 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         for (uint32_t i = 0; i < list.count; i++)
         {
+            librdp_feature device_feature = (librdp_feature)0;
+            librdp_server_extension_family device_family =
+                rdp_server_redirected_device_family(list.devices[i].device_type, &device_feature);
             librdp_status status = rdp_server_store_redirected_device(peer,
                                                                       list.devices[i].device_id,
                                                                       list.devices[i].device_type);
 
             if (status != LIBRDP_STATUS_OK)
                 return status;
+            rdp_server_extension_state_mark_open(peer, device_family, event->channel_id, 0, 0);
         }
     }
     else if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_REMOVE)
@@ -941,7 +1121,20 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
                                                        &remove) != LIBRDP_STATUS_OK)
             return LIBRDP_STATUS_PROTOCOL_ERROR;
         for (uint32_t i = 0; i < remove.count; i++)
+        {
+            const rdp_server_redirected_device* device =
+                rdp_server_find_redirected_device_const(peer, remove.device_ids[i]);
+
+            if (device)
+            {
+                librdp_feature device_feature = (librdp_feature)0;
+                librdp_server_extension_family device_family =
+                    rdp_server_redirected_device_family(device->device_type, &device_feature);
+
+                rdp_server_extension_state_mark_close(peer, device_family);
+            }
             rdp_server_remove_redirected_device(peer, remove.device_ids[i]);
+        }
     }
     return LIBRDP_STATUS_OK;
 }
@@ -1442,6 +1635,8 @@ static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
         event.status = rdp_server_update_clipboard_state(peer, &event);
     if (event.status == LIBRDP_STATUS_OK)
         event.status = rdp_server_update_redirected_devices(peer, &event);
+    if (event.status == LIBRDP_STATUS_OK)
+        rdp_server_extension_state_mark_rx(peer, &event);
     if (event.status == LIBRDP_STATUS_OK && rdp_server_extension_family_valid(event.family))
     {
         librdp_server_extension_callback callback =
@@ -1789,6 +1984,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->backend_extension_families = server->backend_extension_families;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
+    rdp_server_extension_states_reset(accepted, 0);
     rdp_server_dynamic_channels_reset(accepted, 0);
     if (server->server_name)
     {
@@ -2911,7 +3107,10 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (status == LIBRDP_STATUS_OK)
     {
+        int reconnect = peer->advertised_channel_count > 0 ? 1 : 0;
+
         rdp_server_clipboard_state_reset(peer, peer->advertised_channel_count > 0 ? 1 : 0);
+        rdp_server_extension_states_reset(peer, reconnect);
         peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
         peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;
         peer->advertised_channel_count = client_data.channel_count;
@@ -4058,8 +4257,15 @@ librdp_status librdp_server_peer_send_channel_data(librdp_server_peer* peer,
         status = rdp_server_send_mcs_pdu(peer, &mcs);
     if (status == LIBRDP_STATUS_OK)
     {
+        char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         rdp_server_metric_add(&peer->metrics.static_channel_out, 1u);
         rdp_server_metric_add(&peer->metrics.static_channel_bytes_out, (uint64_t)data_len);
+        rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
+        rdp_server_extension_classify_name(name, strlen(name), &family, &feature);
+        rdp_server_extension_state_mark_tx(peer, family, data_len);
     }
     else
         rdp_server_record_status(peer,
@@ -4118,6 +4324,9 @@ librdp_status librdp_server_peer_open_dynamic_channel(librdp_server_peer* peer,
         status = rdp_server_send_dynamic_packet(peer, &packet);
     if (status == LIBRDP_STATUS_OK)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         memset(channel, 0, sizeof(*channel));
         channel->channel_id = dynamic_channel_id;
         channel->channel_id_bytes = channel_id_bytes;
@@ -4125,6 +4334,8 @@ librdp_status librdp_server_peer_open_dynamic_channel(librdp_server_peer* peer,
         channel->pending_open = 1;
         memcpy(channel->name, name, name_len);
         channel->name[name_len] = '\0';
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_pending_open(peer, family, dynamic_channel_id, priority);
         rdp_buffer_init(&channel->fragment);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "server.dvc.open.request",
@@ -4228,8 +4439,13 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
     }
     if (status == LIBRDP_STATUS_OK)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         rdp_server_metric_add(&peer->metrics.dynamic_channel_out, 1u);
         rdp_server_metric_add(&peer->metrics.dynamic_channel_bytes_out, (uint64_t)data_len);
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_tx(peer, family, data_len);
     }
     else
         rdp_server_record_status(peer,
@@ -4538,6 +4754,59 @@ librdp_status librdp_server_peer_send_dynamic_extension_data(librdp_server_peer*
     if (status != LIBRDP_STATUS_OK)
         return status;
     return librdp_server_peer_send_dynamic_channel_data(peer, dynamic_channel_id, payload, payload_len);
+}
+
+librdp_status librdp_server_peer_get_extension_state(const librdp_server_peer* peer,
+                                                     librdp_server_extension_family family,
+                                                     librdp_server_extension_state* state)
+{
+    if (!peer || !state || !rdp_server_extension_family_valid(family) ||
+        !rdp_server_extension_state_valid(state))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *state = peer->extension_states[(size_t)family];
+    state->provider_ready =
+        rdp_server_extension_provider_ready(peer->backend_extension_families, family) ||
+        (state->feature != 0 &&
+         rdp_server_feature_extension_provider_ready(peer->backend_extension_families, state->feature)) ||
+        (state->feature != 0 && (peer->backend_features & (uint32_t)state->feature) != 0);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_cancel_extension(librdp_server_peer* peer,
+                                                  librdp_server_extension_family family)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!peer || !state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    state->pending_open = 0;
+    state->closing = 0;
+    state->pending_requests = 0;
+    state->cancelled = 1u;
+    state->last_status = LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_record_extension_timeout(librdp_server_peer* peer,
+                                                          librdp_server_extension_family family)
+{
+    librdp_server_extension_state* state = rdp_server_extension_state_mut(peer, family);
+
+    if (!peer || !state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    if (state->timeout_count != UINT32_MAX)
+        state->timeout_count++;
+    state->last_status = LIBRDP_STATUS_TIMEOUT;
+    rdp_server_record_status(peer,
+                             LIBRDP_STATUS_TIMEOUT,
+                             LIBRDP_ERROR_COMPONENT_CHANNEL,
+                             "server.extension.timeout",
+                             "extension provider timeout");
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status librdp_server_peer_get_clipboard_state(const librdp_server_peer* peer,
@@ -5258,11 +5527,16 @@ librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer,
         status = rdp_server_send_dynamic_packet(peer, &packet);
     if (status == LIBRDP_STATUS_OK)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
             rdp_server_graphics_frame_state_reset(peer);
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
         channel->open = 0;
         channel->closing = 1;
         peer->dynamic_channel_count--;
+        rdp_server_extension_state_mark_close(peer, family);
         rdp_buffer_free(&channel->fragment);
         rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
     }
@@ -5403,6 +5677,9 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         (void)rdp_server_send_dynamic_packet(peer, &response);
     if (status == LIBRDP_STATUS_OK && accepted && channel)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         memset(channel, 0, sizeof(*channel));
         channel->channel_id = request.channel_id;
         channel->channel_id_bytes = request.channel_id_bytes;
@@ -5410,6 +5687,8 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         channel->open = 1;
         memcpy(channel->name, request.name, request.name_len);
         channel->name[request.name_len] = '\0';
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_open(peer, family, 0, request.channel_id, request.priority);
         rdp_buffer_init(&channel->fragment);
         peer->dynamic_channel_count++;
         rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_OPEN, NULL, 0);
@@ -5435,6 +5714,11 @@ static librdp_status rdp_server_dynamic_handle_create_response(librdp_server_pee
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (response->status_code != RDP_DYNAMIC_CHANNEL_STATUS_OK)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_close(peer, family);
         rdp_trace_event(RDP_TRACE_PROTOCOL,
                         "server.dvc.open.rejected",
                         "channel_id=%u status=0x%08x",
@@ -5446,6 +5730,13 @@ static librdp_status rdp_server_dynamic_handle_create_response(librdp_server_pee
     }
     channel->pending_open = 0;
     channel->open = 1;
+    {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_open(peer, family, 0, channel->channel_id, channel->priority);
+    }
     peer->dynamic_channel_count++;
     rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_OPEN, NULL, 0);
     rdp_trace_event(RDP_TRACE_PROTOCOL,
@@ -5534,8 +5825,13 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (channel->closing)
     {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
         if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
             rdp_server_graphics_frame_state_reset(peer);
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_close(peer, family);
         rdp_buffer_free(&channel->fragment);
         memset(channel, 0, sizeof(*channel));
         return LIBRDP_STATUS_OK;
@@ -5544,6 +5840,13 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     channel->open = 0;
     peer->dynamic_channel_count--;
+    {
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
+
+        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
+        rdp_server_extension_state_mark_close(peer, family);
+    }
     if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
         rdp_server_graphics_frame_state_reset(peer);
     rdp_buffer_free(&channel->fragment);
@@ -5669,9 +5972,15 @@ static librdp_status rdp_server_handle_channel_join(librdp_server_peer* peer, co
     if (rdp_server_static_channel_index(peer, request.channel_id, NULL))
     {
         uint16_t channel_index = 0;
+        char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
+        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+        librdp_feature feature = (librdp_feature)0;
 
         (void)rdp_server_static_channel_index(peer, request.channel_id, &channel_index);
         peer->advertised_channel_joined[channel_index] = 1;
+        rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
+        rdp_server_extension_classify_name(name, strlen(name), &family, &feature);
+        rdp_server_extension_state_mark_open(peer, family, request.channel_id, 0, 0);
         rdp_server_emit_channel_joined_event(peer, request.channel_id);
     }
     peer->joined_channel_count++;

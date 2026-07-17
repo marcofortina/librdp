@@ -156,6 +156,7 @@ struct librdp_server_peer
     uint32_t clipboard_pending_file_stream_id;
     uint32_t clipboard_locked_clip_data_id;
     uint32_t clipboard_reconnect_generation;
+    librdp_server_extension_state extension_states[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     uint8_t* framebuffer;
     size_t framebuffer_len;
     size_t framebuffer_stride;
