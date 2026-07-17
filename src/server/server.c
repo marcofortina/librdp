@@ -218,6 +218,27 @@ static void rdp_server_graphics_frame_state_reset(librdp_server_peer* peer)
         peer->graphics_frame_queue_limit = RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT;
 }
 
+static void rdp_server_clipboard_state_reset(librdp_server_peer* peer, int reconnect)
+{
+    if (!peer)
+        return;
+    peer->clipboard_monitor_ready_sent = 0;
+    peer->clipboard_monitor_ready_received = 0;
+    peer->clipboard_capabilities_sent = 0;
+    peer->clipboard_capabilities_received = 0;
+    peer->clipboard_formats_sent = 0;
+    peer->clipboard_formats_accepted = 0;
+    peer->clipboard_pending_format = 0;
+    peer->clipboard_pending_file = 0;
+    peer->clipboard_locked = 0;
+    peer->clipboard_format_count = 0;
+    peer->clipboard_pending_format_id = 0;
+    peer->clipboard_pending_file_stream_id = 0;
+    peer->clipboard_locked_clip_data_id = 0;
+    if (reconnect)
+        peer->clipboard_reconnect_generation++;
+}
+
 static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
                                                   const rdp_server_dynamic_channel* channel,
                                                   librdp_server_channel_event_type type,
@@ -588,10 +609,26 @@ librdp_status librdp_server_metrics_init(librdp_server_metrics* metrics)
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_clipboard_state_init(librdp_server_clipboard_state* state)
+{
+    if (!state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(state, 0, sizeof(*state));
+    state->version = LIBRDP_SERVER_CLIPBOARD_STATE_VERSION;
+    state->size = sizeof(*state);
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_server_status_valid(const librdp_server_status* status)
 {
     return status && status->version == LIBRDP_SERVER_STATUS_VERSION &&
            status->size >= sizeof(librdp_server_status);
+}
+
+static int rdp_server_clipboard_state_valid(const librdp_server_clipboard_state* state)
+{
+    return state && state->version == LIBRDP_SERVER_CLIPBOARD_STATE_VERSION &&
+           state->size >= sizeof(librdp_server_clipboard_state);
 }
 
 static void rdp_server_copy_token(char* output, size_t output_len, const char* input)
@@ -1267,6 +1304,114 @@ static librdp_status rdp_server_extension_validate(librdp_server_extension_event
     }
 }
 
+/*
+ * Purpose: update the server-side clipboard runtime snapshot from client-origin
+ * CLIPRDR PDUs before the generic channel callback observes the event. The
+ * function never owns event buffers; it only validates framing, records
+ * capability/format readiness, and enforces request correlation for file
+ * contents replies so stale or cross-request responses fail before application
+ * code can act on them.
+ */
+static librdp_status rdp_server_update_clipboard_state(librdp_server_peer* peer,
+                                                       const librdp_server_extension_event* event)
+{
+    rdp_clipboard_packet packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !event || event->family != LIBRDP_SERVER_EXTENSION_CLIPBOARD)
+        return LIBRDP_STATUS_OK;
+    status = rdp_clipboard_parse_packet(event->payload, event->payload_len, &packet);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    switch (packet.type)
+    {
+        case RDP_CLIPBOARD_CB_MONITOR_READY:
+            peer->clipboard_monitor_ready_received = 1u;
+            break;
+        case RDP_CLIPBOARD_CB_CLIP_CAPS:
+        {
+            rdp_clipboard_capabilities capabilities;
+
+            status = rdp_clipboard_parse_capabilities(&packet, &capabilities);
+            if (status == LIBRDP_STATUS_OK)
+                peer->clipboard_capabilities_received = 1u;
+            break;
+        }
+        case RDP_CLIPBOARD_CB_FORMAT_LIST:
+        {
+            rdp_clipboard_format_list list;
+            uint32_t count = 0;
+            int long_names = (packet.flags & RDP_CLIPBOARD_CB_ASCII_NAMES) == 0;
+
+            status = rdp_clipboard_parse_format_list(&packet, &list);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_clipboard_format_list_entry_count(&list, long_names, &count);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                peer->clipboard_format_count = count;
+                peer->clipboard_formats_accepted = 0;
+            }
+            break;
+        }
+        case RDP_CLIPBOARD_CB_FORMAT_LIST_RESPONSE:
+            peer->clipboard_formats_accepted =
+                (packet.flags & RDP_CLIPBOARD_CB_RESPONSE_OK) != 0 ? 1u : 0u;
+            break;
+        case RDP_CLIPBOARD_CB_FORMAT_DATA_RESPONSE:
+            if (peer->clipboard_pending_format)
+            {
+                peer->clipboard_pending_format = 0;
+                peer->clipboard_pending_format_id = 0;
+            }
+            break;
+        case RDP_CLIPBOARD_CB_FILECONTENTS_RESPONSE:
+        {
+            rdp_clipboard_file_contents_response response;
+
+            status = rdp_clipboard_parse_file_contents_response(&packet, &response);
+            if (status == LIBRDP_STATUS_OK && peer->clipboard_pending_file)
+            {
+                if (response.stream_id != peer->clipboard_pending_file_stream_id)
+                    status = LIBRDP_STATUS_PROTOCOL_ERROR;
+                else
+                {
+                    peer->clipboard_pending_file = 0;
+                    peer->clipboard_pending_file_stream_id = 0;
+                }
+            }
+            break;
+        }
+        case RDP_CLIPBOARD_CB_LOCK_CLIPDATA:
+        {
+            rdp_clipboard_lock lock;
+
+            status = rdp_clipboard_parse_lock(&packet, &lock);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                peer->clipboard_locked = 1u;
+                peer->clipboard_locked_clip_data_id = lock.clip_data_id;
+            }
+            break;
+        }
+        case RDP_CLIPBOARD_CB_UNLOCK_CLIPDATA:
+        {
+            rdp_clipboard_lock lock;
+
+            status = rdp_clipboard_parse_unlock(&packet, &lock);
+            if (status == LIBRDP_STATUS_OK &&
+                (!peer->clipboard_locked || peer->clipboard_locked_clip_data_id == lock.clip_data_id))
+            {
+                peer->clipboard_locked = 0;
+                peer->clipboard_locked_clip_data_id = 0;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return status;
+}
+
 static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
                                                      const char* name,
                                                      size_t name_len,
@@ -1293,6 +1438,8 @@ static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
     if (event.family == LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION)
         rdp_server_classify_device_payload(peer, data, data_len, &event.family, &event.feature);
     event.status = rdp_server_extension_validate(&event);
+    if (event.status == LIBRDP_STATUS_OK)
+        event.status = rdp_server_update_clipboard_state(peer, &event);
     if (event.status == LIBRDP_STATUS_OK)
         event.status = rdp_server_update_redirected_devices(peer, &event);
     if (event.status == LIBRDP_STATUS_OK && rdp_server_extension_family_valid(event.family))
@@ -2764,6 +2911,7 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (status == LIBRDP_STATUS_OK)
     {
+        rdp_server_clipboard_state_reset(peer, peer->advertised_channel_count > 0 ? 1 : 0);
         peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
         peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;
         peer->advertised_channel_count = client_data.channel_count;
@@ -4392,6 +4540,41 @@ librdp_status librdp_server_peer_send_dynamic_extension_data(librdp_server_peer*
     return librdp_server_peer_send_dynamic_channel_data(peer, dynamic_channel_id, payload, payload_len);
 }
 
+librdp_status librdp_server_peer_get_clipboard_state(const librdp_server_peer* peer,
+                                                     librdp_server_clipboard_state* state)
+{
+    if (!peer || !rdp_server_clipboard_state_valid(state))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    state->monitor_ready_sent = peer->clipboard_monitor_ready_sent;
+    state->monitor_ready_received = peer->clipboard_monitor_ready_received;
+    state->capabilities_sent = peer->clipboard_capabilities_sent;
+    state->capabilities_received = peer->clipboard_capabilities_received;
+    state->formats_sent = peer->clipboard_formats_sent;
+    state->formats_accepted = peer->clipboard_formats_accepted;
+    state->pending_format_request = peer->clipboard_pending_format;
+    state->pending_file_request = peer->clipboard_pending_file;
+    state->locked = peer->clipboard_locked;
+    state->format_count = peer->clipboard_format_count;
+    state->pending_format_id = peer->clipboard_pending_format_id;
+    state->pending_file_stream_id = peer->clipboard_pending_file_stream_id;
+    state->locked_clip_data_id = peer->clipboard_locked_clip_data_id;
+    state->reconnect_generation = peer->clipboard_reconnect_generation;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_cancel_clipboard_requests(librdp_server_peer* peer)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    peer->clipboard_pending_format = 0;
+    peer->clipboard_pending_file = 0;
+    peer->clipboard_pending_format_id = 0;
+    peer->clipboard_pending_file_stream_id = 0;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_peer_send_clipboard_monitor_ready(librdp_server_peer* peer, uint16_t channel_id)
 {
     rdp_buffer payload;
@@ -4401,6 +4584,8 @@ librdp_status librdp_server_peer_send_clipboard_monitor_ready(librdp_server_peer
     status = rdp_clipboard_write_monitor_ready(&payload);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+        peer->clipboard_monitor_ready_sent = 1u;
     rdp_buffer_free(&payload);
     return status;
 }
@@ -4416,6 +4601,8 @@ librdp_status librdp_server_peer_send_clipboard_capabilities(librdp_server_peer*
     status = rdp_clipboard_write_capabilities(&payload, general_flags);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+        peer->clipboard_capabilities_sent = 1u;
     rdp_buffer_free(&payload);
     return status;
 }
@@ -4455,6 +4642,12 @@ librdp_status librdp_server_peer_send_clipboard_format_list(
     status = rdp_clipboard_write_format_list(&payload, entries, count, long_names ? 1 : 0);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+    {
+        peer->clipboard_formats_sent = 1u;
+        peer->clipboard_formats_accepted = 0;
+        peer->clipboard_format_count = count;
+    }
     rdp_buffer_free(&payload);
     free(entries);
     return status;
@@ -4486,6 +4679,11 @@ librdp_status librdp_server_peer_send_clipboard_format_data_request(librdp_serve
     status = rdp_clipboard_write_format_data_request(&payload, format_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+    {
+        peer->clipboard_pending_format = 1u;
+        peer->clipboard_pending_format_id = format_id;
+    }
     rdp_buffer_free(&payload);
     return status;
 }
@@ -4530,6 +4728,11 @@ librdp_status librdp_server_peer_send_clipboard_file_contents_request(
                                                        clip_data_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+    {
+        peer->clipboard_pending_file = 1u;
+        peer->clipboard_pending_file_stream_id = stream_id;
+    }
     rdp_buffer_free(&payload);
     return status;
 }
@@ -4564,6 +4767,11 @@ librdp_status librdp_server_peer_send_clipboard_lock(librdp_server_peer* peer,
     status = rdp_clipboard_write_lock(&payload, clip_data_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer)
+    {
+        peer->clipboard_locked = 1u;
+        peer->clipboard_locked_clip_data_id = clip_data_id;
+    }
     rdp_buffer_free(&payload);
     return status;
 }
@@ -4579,6 +4787,12 @@ librdp_status librdp_server_peer_send_clipboard_unlock(librdp_server_peer* peer,
     status = rdp_clipboard_write_unlock(&payload, clip_data_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    if (status == LIBRDP_STATUS_OK && peer &&
+        peer->clipboard_locked_clip_data_id == clip_data_id)
+    {
+        peer->clipboard_locked = 0;
+        peer->clipboard_locked_clip_data_id = 0;
+    }
     rdp_buffer_free(&payload);
     return status;
 }

@@ -85,6 +85,9 @@ LIBRDP_0.1 {
         librdp_server_peer_process_udp2_datagram;
         librdp_server_peer_send_static_extension_data;
         librdp_server_peer_send_dynamic_extension_data;
+        librdp_server_clipboard_state_init;
+        librdp_server_peer_get_clipboard_state;
+        librdp_server_peer_cancel_clipboard_requests;
         librdp_server_peer_send_clipboard_monitor_ready;
         librdp_server_peer_send_clipboard_capabilities;
         librdp_server_peer_send_clipboard_format_list;

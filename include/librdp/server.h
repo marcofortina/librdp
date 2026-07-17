@@ -32,6 +32,7 @@ extern "C" {
 #define LIBRDP_SERVER_EVENT_VERSION 1u /**< Current librdp_server_event version. */
 #define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
+#define LIBRDP_SERVER_CLIPBOARD_STATE_VERSION 1u /**< Current librdp_server_clipboard_state version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
 #define LIBRDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u /**< Dynamic-channel name storage including NUL. */
 #define LIBRDP_SERVER_PHASE_CAPACITY 32u /**< Server status phase storage including NUL. */
@@ -245,6 +246,34 @@ typedef struct librdp_server_clipboard_format
     const void* name;   /**< Borrowed format-name bytes, or NULL for unnamed formats. */
     size_t name_len;    /**< Number of bytes available at name. */
 } librdp_server_clipboard_format;
+
+/**
+ * @brief Snapshot of server-side clipboard runtime state.
+ *
+ * The structure contains protocol state and request correlation identifiers
+ * only. Clipboard payload bytes and format names are never stored here.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_clipboard_state
+{
+    size_t size;      /**< Structure size in bytes, set by init. */
+    uint32_t version; /**< Structure version, LIBRDP_SERVER_CLIPBOARD_STATE_VERSION. */
+    uint8_t monitor_ready_sent;     /**< Server Monitor Ready PDU has been sent. */
+    uint8_t monitor_ready_received; /**< Client Monitor Ready PDU has been accepted. */
+    uint8_t capabilities_sent;      /**< Server clipboard capabilities have been sent. */
+    uint8_t capabilities_received;  /**< Client clipboard capabilities have been accepted. */
+    uint8_t formats_sent;           /**< Server format list has been sent. */
+    uint8_t formats_accepted;       /**< Client acknowledged the latest server format list. */
+    uint8_t pending_format_request; /**< A server format-data request is awaiting a response. */
+    uint8_t pending_file_request;   /**< A server file-contents request is awaiting a response. */
+    uint8_t locked;                 /**< A clipboard lock is currently tracked. */
+    uint32_t format_count;          /**< Last accepted or sent format-count metadata. */
+    uint32_t pending_format_id;     /**< Format identifier for the pending data request, if any. */
+    uint32_t pending_file_stream_id; /**< Stream id for the pending file request, if any. */
+    uint32_t locked_clip_data_id;   /**< Lock identifier when locked is non-zero. */
+    uint32_t reconnect_generation;  /**< Incremented when clipboard runtime state is reset for reconnect. */
+} librdp_server_clipboard_state;
 
 /**
  * @brief Server-side static virtual-channel data event.
@@ -1596,6 +1625,59 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_extension_data(
     uint32_t dynamic_channel_id,
     const void* payload,
     size_t payload_len);
+
+/**
+ * @brief Initialize a server clipboard state snapshot.
+ *
+ * @param[out] state Destination structure; must not be NULL. The function
+ * clears all fields, sets size to sizeof(*state), and sets version to the
+ * current structure version.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL state pointer.
+ *
+ * @note Thread-safety: independent of any server object.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_clipboard_state_init(librdp_server_clipboard_state* state);
+
+/**
+ * @brief Query server-side clipboard runtime state for a peer.
+ *
+ * The returned snapshot contains state flags and request identifiers only. It
+ * does not expose clipboard payload bytes, filenames, or format-name strings.
+ *
+ * @param[in] peer Peer to query; must not be NULL.
+ * @param[out] state Destination snapshot; must not be NULL and must have been
+ * initialized with librdp_server_clipboard_state_init().
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * NULL pointers or an incompatible state structure.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_clipboard_state(
+    const librdp_server_peer* peer,
+    librdp_server_clipboard_state* state);
+
+/**
+ * @brief Cancel pending server clipboard requests tracked for a peer.
+ *
+ * The function clears server-side format-data and file-contents request
+ * correlation state. It does not send a protocol PDU and does not discard
+ * clipboard payload data because the server does not retain payload bytes.
+ *
+ * @param[in,out] peer Peer whose pending clipboard request state is cleared;
+ * must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer; LIBRDP_STATUS_STATE when the peer is already closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_cancel_clipboard_requests(librdp_server_peer* peer);
 
 /**
  * @brief Send a clipboard Monitor Ready PDU on a joined clipboard channel.
