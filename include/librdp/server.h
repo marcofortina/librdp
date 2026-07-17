@@ -1959,6 +1959,107 @@ LIBRDP_API librdp_status librdp_server_peer_send_graphics_reset(librdp_server_pe
                                                                 uint32_t height);
 
 /**
+ * @brief Configure the maximum number of unacknowledged GFX frames.
+ *
+ * The limit is stored on the peer and is enforced by
+ * librdp_server_peer_send_graphics_start_frame(). It controls server-side
+ * backpressure only; it does not change any wire capability advertised to the
+ * client.
+ *
+ * @param[in,out] peer Accepted server peer; must not be NULL.
+ * @param[in] frame_limit Maximum pending frame count. Must be in the supported
+ * implementation range and must not be lower than the current pending count.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or unsupported limit; LIBRDP_STATUS_STATE when the current pending
+ * frame count is already above frame_limit.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_graphics_frame_queue_limit(librdp_server_peer* peer,
+                                                                           uint32_t frame_limit);
+
+/**
+ * @brief Query server-side GFX frame acknowledgement state.
+ *
+ * Any output pointer may be NULL. The values are snapshots of the peer-owned
+ * state and remain valid only for the duration of the call.
+ *
+ * @param[in] peer Accepted server peer; must not be NULL.
+ * @param[out] pending_frames Optional destination for the number of frames
+ * sent with End Frame and not yet acknowledged by the client; may be NULL to
+ * skip this value.
+ * @param[out] frame_limit Optional destination for the active queue limit; may
+ * be NULL to skip this value.
+ * @param[out] last_ack_frame_id Optional destination for the latest client
+ * Frame Acknowledge frame identifier accepted by the server; may be NULL to
+ * skip this value.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_get_graphics_frame_state(const librdp_server_peer* peer,
+                                                                     uint32_t* pending_frames,
+                                                                     uint32_t* frame_limit,
+                                                                     uint32_t* last_ack_frame_id);
+
+/**
+ * @brief Send an RDP Graphics Pipeline Start Frame command.
+ *
+ * The server generates a monotonic frame identifier and stores it in frame_id
+ * after the command has been written successfully. A frame must be completed
+ * with librdp_server_peer_send_graphics_end_frame() before another frame can be
+ * started.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] timestamp Server timestamp value to place in the Start Frame PDU.
+ * @param[out] frame_id Destination for the generated frame identifier; must
+ * not be NULL. It is set to zero before the send attempt and populated only on
+ * success.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer, NULL frame_id, or non-graphics channel;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when the configured queue limit would be
+ * exceeded; LIBRDP_STATUS_STATE when the peer is not ACTIVE or another frame
+ * is already open; transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_start_frame(librdp_server_peer* peer,
+                                                                      uint32_t dynamic_channel_id,
+                                                                      uint32_t timestamp,
+                                                                      uint32_t* frame_id);
+
+/**
+ * @brief Send an RDP Graphics Pipeline End Frame command.
+ *
+ * The frame_id must be the identifier returned by the currently open
+ * librdp_server_peer_send_graphics_start_frame() call. On success the frame is
+ * counted as pending until a client Frame Acknowledge PDU advances past it.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Graphics Pipeline dynamic channel id.
+ * @param[in] frame_id Frame identifier returned by the matching Start Frame.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer, zero frame_id, or non-graphics channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE or frame_id does not match the currently open frame;
+ * transport or allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_graphics_end_frame(librdp_server_peer* peer,
+                                                                    uint32_t dynamic_channel_id,
+                                                                    uint32_t frame_id);
+
+/**
  * @brief Send a Core Input initialization request.
  *
  * @param[in,out] peer Active peer; must not be NULL.

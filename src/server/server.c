@@ -88,6 +88,8 @@
 #define RDP_SERVER_CREDSSP_MESSAGE_MAX 1048576u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
+#define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT 4u
+#define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_MAX 1024u
 #define RDP_SERVER_MAX_CLIPBOARD_FORMATS 4096u
 #define RDP_SERVER_CLIPBOARD_CHANNEL_NAME "cliprdr"
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
@@ -201,6 +203,21 @@ static int rdp_server_feature_extension_provider_ready(uint64_t providers, librd
     return 0;
 }
 
+static void rdp_server_graphics_frame_state_reset(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    peer->graphics_next_frame_id = 1u;
+    peer->graphics_last_sent_frame_id = 0;
+    peer->graphics_last_ack_frame_id = 0;
+    peer->graphics_total_acked_frames = 0;
+    peer->graphics_pending_frames = 0;
+    peer->graphics_open_frame_id = 0;
+    peer->graphics_frame_open = 0;
+    if (peer->graphics_frame_queue_limit == 0)
+        peer->graphics_frame_queue_limit = RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT;
+}
+
 static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
                                                   const rdp_server_dynamic_channel* channel,
                                                   librdp_server_channel_event_type type,
@@ -228,6 +245,7 @@ static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit
     peer->dynamic_channel_count = 0;
     peer->dynamic_channel_static_index = UINT16_MAX;
     peer->dynamic_channels_ready = 0;
+    rdp_server_graphics_frame_state_reset(peer);
 }
 
 static int rdp_server_feature_has_runtime(librdp_feature feature)
@@ -4663,6 +4681,117 @@ librdp_status librdp_server_peer_send_graphics_reset(librdp_server_peer* peer,
     return status;
 }
 
+librdp_status librdp_server_peer_set_graphics_frame_queue_limit(librdp_server_peer* peer,
+                                                                uint32_t frame_limit)
+{
+    if (!peer || frame_limit == 0 || frame_limit > RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->graphics_pending_frames > frame_limit)
+        return LIBRDP_STATUS_STATE;
+    peer->graphics_frame_queue_limit = frame_limit;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_get_graphics_frame_state(const librdp_server_peer* peer,
+                                                          uint32_t* pending_frames,
+                                                          uint32_t* frame_limit,
+                                                          uint32_t* last_ack_frame_id)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (pending_frames)
+        *pending_frames = peer->graphics_pending_frames;
+    if (frame_limit)
+        *frame_limit = peer->graphics_frame_queue_limit
+                           ? peer->graphics_frame_queue_limit
+                           : RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT;
+    if (last_ack_frame_id)
+        *last_ack_frame_id = peer->graphics_last_ack_frame_id;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_send_graphics_start_frame(librdp_server_peer* peer,
+                                                           uint32_t dynamic_channel_id,
+                                                           uint32_t timestamp,
+                                                           uint32_t* frame_id)
+{
+    rdp_buffer payload;
+    uint32_t next_frame_id = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !frame_id)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *frame_id = 0;
+    if (peer->graphics_frame_open)
+        return LIBRDP_STATUS_STATE;
+    if (peer->graphics_frame_queue_limit == 0)
+        peer->graphics_frame_queue_limit = RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT;
+    if (peer->graphics_pending_frames >= peer->graphics_frame_queue_limit ||
+        peer->graphics_next_frame_id == UINT32_MAX)
+    {
+        rdp_server_metric_add(&peer->metrics.limits_rejected, 1u);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    next_frame_id = peer->graphics_next_frame_id ? peer->graphics_next_frame_id : 1u;
+
+    rdp_buffer_init(&payload);
+    status = rdp_graphics_write_start_frame(&payload, timestamp, next_frame_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
+                                                      &payload);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->graphics_open_frame_id = next_frame_id;
+        peer->graphics_frame_open = 1u;
+        peer->graphics_last_sent_frame_id = next_frame_id;
+        peer->graphics_next_frame_id = next_frame_id + 1u;
+        *frame_id = next_frame_id;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.gfx.frame.start",
+                        "frame_id=%u pending=%u",
+                        next_frame_id,
+                        peer->graphics_pending_frames);
+    }
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_graphics_end_frame(librdp_server_peer* peer,
+                                                         uint32_t dynamic_channel_id,
+                                                         uint32_t frame_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || frame_id == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!peer->graphics_frame_open || peer->graphics_open_frame_id != frame_id)
+        return LIBRDP_STATUS_STATE;
+
+    rdp_buffer_init(&payload);
+    status = rdp_graphics_write_end_frame(&payload, frame_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_GRAPHICS_PIPELINE_CHANNEL_NAME,
+                                                      &payload);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->graphics_frame_open = 0;
+        peer->graphics_open_frame_id = 0;
+        peer->graphics_pending_frames++;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.gfx.frame.end",
+                        "frame_id=%u pending=%u",
+                        frame_id,
+                        peer->graphics_pending_frames);
+    }
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_core_input_init(librdp_server_peer* peer, uint32_t dynamic_channel_id)
 {
     rdp_buffer payload;
@@ -4845,6 +4974,8 @@ librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer,
         status = rdp_server_send_dynamic_packet(peer, &packet);
     if (status == LIBRDP_STATUS_OK)
     {
+        if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
+            rdp_server_graphics_frame_state_reset(peer);
         channel->open = 0;
         channel->closing = 1;
         peer->dynamic_channel_count--;
@@ -4861,6 +4992,59 @@ librdp_status librdp_server_peer_close_dynamic_channel(librdp_server_peer* peer,
     return status;
 }
 
+static librdp_status rdp_server_graphics_handle_frame_ack(librdp_server_peer* peer,
+                                                          const uint8_t* data,
+                                                          size_t data_len)
+{
+    rdp_graphics_header header;
+    rdp_graphics_frame_ack ack;
+    uint32_t acked_delta = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_graphics_parse_header(data, data_len, &header);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (header.cmd_id != RDP_GRAPHICS_CMDID_FRAME_ACKNOWLEDGE)
+        return LIBRDP_STATUS_OK;
+    status = rdp_graphics_parse_frame_ack(data, data_len, &ack);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (ack.frame_id > peer->graphics_last_sent_frame_id ||
+        (ack.frame_id == 0 && peer->graphics_last_sent_frame_id != 0))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (ack.frame_id > peer->graphics_last_ack_frame_id)
+    {
+        acked_delta = ack.frame_id - peer->graphics_last_ack_frame_id;
+        peer->graphics_pending_frames = acked_delta >= peer->graphics_pending_frames
+                                             ? 0
+                                             : peer->graphics_pending_frames - acked_delta;
+        peer->graphics_last_ack_frame_id = ack.frame_id;
+    }
+    peer->graphics_total_acked_frames = ack.total_frames_decoded;
+    rdp_trace_event(RDP_TRACE_PROTOCOL,
+                    "server.gfx.frame.ack",
+                    "frame_id=%u pending=%u queue_depth=%u decoded=%u",
+                    ack.frame_id,
+                    peer->graphics_pending_frames,
+                    ack.queue_depth,
+                    ack.total_frames_decoded);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_dynamic_apply_channel_state(librdp_server_peer* peer,
+                                                            const rdp_server_dynamic_channel* channel,
+                                                            const uint8_t* data,
+                                                            size_t data_len)
+{
+    if (!peer || !channel || (!data && data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
+        return rdp_server_graphics_handle_frame_ack(peer, data, data_len);
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* peer,
                                                          rdp_server_dynamic_channel* channel,
                                                          const uint8_t* data,
@@ -4870,6 +5054,9 @@ static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* pee
 
     if (!peer || !channel || (!data && data_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_dynamic_apply_channel_state(peer, channel, data, data_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     status = rdp_server_emit_extension_event(peer,
                                              channel->name,
                                              strlen(channel->name),
@@ -5063,6 +5250,8 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if (channel->closing)
     {
+        if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
+            rdp_server_graphics_frame_state_reset(peer);
         rdp_buffer_free(&channel->fragment);
         memset(channel, 0, sizeof(*channel));
         return LIBRDP_STATUS_OK;
@@ -5071,6 +5260,8 @@ static librdp_status rdp_server_dynamic_handle_close(librdp_server_peer* peer,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     channel->open = 0;
     peer->dynamic_channel_count--;
+    if (strcmp(channel->name, RDP_GRAPHICS_PIPELINE_CHANNEL_NAME) == 0)
+        rdp_server_graphics_frame_state_reset(peer);
     rdp_buffer_free(&channel->fragment);
     rdp_server_emit_dynamic_channel_event(peer, channel, LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE, NULL, 0);
     memset(channel, 0, sizeof(*channel));

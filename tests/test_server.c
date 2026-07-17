@@ -2002,6 +2002,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_graphics_create_surface graphics_create;
     rdp_graphics_delete_surface graphics_delete;
     rdp_graphics_reset graphics_reset;
+    rdp_graphics_start_frame graphics_start;
+    rdp_graphics_end_frame graphics_end;
     rdp_core_input_header core_input_header;
     rdp_input_channel_header input_channel_header;
     rdp_input_channel_sc_ready input_ready;
@@ -2026,6 +2028,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer slowpath_plaintext;
     rdp_buffer channel_plaintext;
     rdp_buffer dvc_packet;
+    rdp_buffer graphics_payload;
     rdp_buffer geometry_payload;
     rdp_buffer geometry_rect_payload;
     rdp_buffer udp2_payload;
@@ -2075,6 +2078,10 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint32_t error_count_before_surface = 0;
     uint32_t dynamic_close_count_before_peer_close = 0;
     uint32_t dynamic_count_before_peer_close = 0;
+    uint32_t graphics_frame_id = 0;
+    uint32_t graphics_pending_frames = 0;
+    uint32_t graphics_frame_limit = 0;
+    uint32_t graphics_last_ack_frame_id = 0;
     uint64_t limits_before_dvc_limit = 0;
     size_t dvc_oversize_len = ((size_t)64u * 1024u * 1024u) + 1u;
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
@@ -2102,6 +2109,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&slowpath_plaintext);
     rdp_buffer_init(&channel_plaintext);
     rdp_buffer_init(&dvc_packet);
+    rdp_buffer_init(&graphics_payload);
     rdp_buffer_init(&geometry_payload);
     rdp_buffer_init(&geometry_rect_payload);
     rdp_buffer_init(&udp2_payload);
@@ -3224,6 +3232,95 @@ static int test_server_loopback_standard_activation_sequence(void)
                                     dvc_data_response.data_len,
                                     &graphics_reset) == LIBRDP_STATUS_OK);
     SCHECK(graphics_reset.width == 800 && graphics_reset.height == 600);
+    SCHECK(librdp_server_peer_set_graphics_frame_queue_limit(peer, 1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_graphics_frame_state(peer,
+                                                       &graphics_pending_frames,
+                                                       &graphics_frame_limit,
+                                                       &graphics_last_ack_frame_id) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_pending_frames == 0 && graphics_frame_limit == 1 && graphics_last_ack_frame_id == 0);
+    SCHECK(librdp_server_peer_send_graphics_start_frame(peer, 9, 1234, &graphics_frame_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(graphics_frame_id == 1);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    9,
+                                                    &dvc_data_response));
+    SCHECK(rdp_graphics_parse_start_frame(dvc_data_response.data,
+                                          dvc_data_response.data_len,
+                                          &graphics_start) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_start.timestamp == 1234 && graphics_start.frame_id == graphics_frame_id);
+    SCHECK(librdp_server_peer_send_graphics_end_frame(peer, 9, graphics_frame_id) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    9,
+                                                    &dvc_data_response));
+    SCHECK(rdp_graphics_parse_end_frame(dvc_data_response.data,
+                                        dvc_data_response.data_len,
+                                        &graphics_end) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_end.frame_id == graphics_frame_id);
+    SCHECK(librdp_server_peer_get_graphics_frame_state(peer,
+                                                       &graphics_pending_frames,
+                                                       &graphics_frame_limit,
+                                                       &graphics_last_ack_frame_id) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_pending_frames == 1 && graphics_frame_limit == 1 && graphics_last_ack_frame_id == 0);
+    SCHECK(librdp_server_peer_send_graphics_start_frame(peer, 9, 2234, &graphics_frame_id) ==
+           LIBRDP_STATUS_LIMIT_EXCEEDED);
+    SCHECK(graphics_frame_id == 0);
+    graphics_payload.length = 0;
+    dvc_packet.length = 0;
+    SCHECK(rdp_graphics_write_frame_ack(&graphics_payload, 0, 1, 1) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_dynamic_channel_write_data(&dvc_packet,
+                                          9,
+                                          1,
+                                          graphics_payload.data,
+                                          graphics_payload.length) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_channel_payload(client_fd,
+                                            attach_confirm.user_id,
+                                            dynamic_static_channel_id,
+                                            &dvc_packet));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_graphics_frame_state(peer,
+                                                       &graphics_pending_frames,
+                                                       &graphics_frame_limit,
+                                                       &graphics_last_ack_frame_id) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_pending_frames == 0 && graphics_frame_limit == 1 && graphics_last_ack_frame_id == 1);
+    SCHECK(librdp_server_peer_send_graphics_start_frame(peer, 9, 2234, &graphics_frame_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(graphics_frame_id == 2);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    9,
+                                                    &dvc_data_response));
+    SCHECK(rdp_graphics_parse_start_frame(dvc_data_response.data,
+                                          dvc_data_response.data_len,
+                                          &graphics_start) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_start.timestamp == 2234 && graphics_start.frame_id == graphics_frame_id);
+    SCHECK(librdp_server_peer_send_graphics_end_frame(peer, 9, graphics_frame_id) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_dynamic_channel_payload(client_fd,
+                                                              response,
+                                                              sizeof(response),
+                                                              &client_security,
+                                                              &channel_plaintext,
+                                                              dynamic_static_channel_id,
+                                                    9,
+                                                    &dvc_data_response));
+    SCHECK(rdp_graphics_parse_end_frame(dvc_data_response.data,
+                                        dvc_data_response.data_len,
+                                        &graphics_end) == LIBRDP_STATUS_OK);
+    SCHECK(graphics_end.frame_id == graphics_frame_id);
 
     SCHECK(test_server_open_client_dynamic_channel(client_fd,
                                                    peer,
@@ -3729,8 +3826,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(server_metrics.input_events == runtime_context.input_count);
     SCHECK(server_metrics.static_channel_in == 5 && server_metrics.static_channel_out >= 2);
     SCHECK(server_metrics.static_channel_bytes_in > 4 && server_metrics.static_channel_bytes_out >= 4);
-    SCHECK(server_metrics.dynamic_channel_in == 3 && server_metrics.dynamic_channel_out == 13);
-    SCHECK(server_metrics.dynamic_channel_bytes_in == 18 && server_metrics.dynamic_channel_bytes_out > 64);
+    SCHECK(server_metrics.dynamic_channel_in == 4 && server_metrics.dynamic_channel_out == 17);
+    SCHECK(server_metrics.dynamic_channel_bytes_in == 38 && server_metrics.dynamic_channel_bytes_out > 64);
     SCHECK(server_metrics.surface_updates == 2);
     SCHECK(librdp_server_peer_reset_metrics(peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_metrics_init(&server_metrics) == LIBRDP_STATUS_OK);
@@ -3767,6 +3864,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_free(&channel_plaintext);
     rdp_buffer_free(&geometry_rect_payload);
     rdp_buffer_free(&geometry_payload);
+    rdp_buffer_free(&graphics_payload);
     rdp_buffer_free(&udp2_unwrapped);
     rdp_buffer_free(&udp2_wire);
     rdp_buffer_free(&udp2_payload);

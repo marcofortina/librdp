@@ -123,6 +123,14 @@ struct librdp_server_peer
     uint8_t multitransport_udp_active;
     uint8_t multitransport_udp2_active;
     uint32_t multitransport_flags;
+    uint32_t graphics_next_frame_id;
+    uint32_t graphics_last_sent_frame_id;
+    uint32_t graphics_last_ack_frame_id;
+    uint32_t graphics_total_acked_frames;
+    uint32_t graphics_pending_frames;
+    uint32_t graphics_frame_queue_limit;
+    uint32_t graphics_open_frame_id;
+    uint8_t graphics_frame_open;
     rdp_server_dynamic_channel dynamic_channels[RDP_SERVER_MAX_DYNAMIC_CHANNELS];
     uint32_t redirected_device_count;
     rdp_server_redirected_device redirected_devices[RDP_SERVER_MAX_REDIRECTED_DEVICES];
