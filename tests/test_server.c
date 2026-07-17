@@ -1812,6 +1812,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint32_t error_count_before_udp2 = 0;
     uint32_t error_count_before_dvc_limit = 0;
     uint32_t error_count_before_surface = 0;
+    uint32_t dynamic_close_count_before_peer_close = 0;
+    uint32_t dynamic_count_before_peer_close = 0;
     uint64_t limits_before_dvc_limit = 0;
     size_t dvc_oversize_len = ((size_t)64u * 1024u * 1024u) + 1u;
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
@@ -3357,8 +3359,14 @@ static int test_server_loopback_standard_activation_sequence(void)
                                                      &dvc_create_response) == LIBRDP_STATUS_OK);
     SCHECK(dvc_create_response.channel_id == 9 &&
            dvc_create_response.status_code == RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED);
+    dynamic_count_before_peer_close = librdp_server_peer_dynamic_channel_count(peer);
+    dynamic_close_count_before_peer_close = runtime_context.dynamic_close_count;
+    SCHECK(dynamic_count_before_peer_close > 0);
     SCHECK(librdp_server_peer_close(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_close(peer) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_dynamic_channel_count(peer) == 0);
+    SCHECK(runtime_context.dynamic_close_count ==
+           dynamic_close_count_before_peer_close + dynamic_count_before_peer_close);
     SCHECK(librdp_server_peer_close(peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_CLOSED);
     memset(client_random, 0, sizeof(client_random));

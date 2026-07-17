@@ -132,12 +132,29 @@ static int rdp_server_extension_family_valid(librdp_server_extension_family fami
            family <= LIBRDP_SERVER_EXTENSION_PARALLEL_PORT;
 }
 
-static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
+static void rdp_server_emit_dynamic_channel_event(librdp_server_peer* peer,
+                                                  const rdp_server_dynamic_channel* channel,
+                                                  librdp_server_channel_event_type type,
+                                                  const uint8_t* data,
+                                                  size_t data_len);
+
+static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events)
 {
     if (!peer)
         return;
     for (uint32_t i = 0; i < RDP_SERVER_MAX_DYNAMIC_CHANNELS; i++)
+    {
+        if (emit_close_events &&
+            (peer->dynamic_channels[i].open ||
+             peer->dynamic_channels[i].pending_open ||
+             peer->dynamic_channels[i].closing))
+            rdp_server_emit_dynamic_channel_event(peer,
+                                                  &peer->dynamic_channels[i],
+                                                  LIBRDP_SERVER_CHANNEL_EVENT_DYNAMIC_CLOSE,
+                                                  NULL,
+                                                  0);
         rdp_buffer_free(&peer->dynamic_channels[i].fragment);
+    }
     memset(peer->dynamic_channels, 0, sizeof(peer->dynamic_channels));
     peer->dynamic_channel_count = 0;
     peer->dynamic_channel_static_index = UINT16_MAX;
@@ -1498,7 +1515,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->backend_features = server->backend_features;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
-    rdp_server_dynamic_channels_reset(accepted);
+    rdp_server_dynamic_channels_reset(accepted, 0);
     if (server->server_name)
     {
         accepted->server_name = rdp_server_strdup_bounded(server->server_name);
@@ -2585,7 +2602,7 @@ static librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* p
         peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
         peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;
         peer->advertised_channel_count = client_data.channel_count;
-        rdp_server_dynamic_channels_reset(peer);
+        rdp_server_dynamic_channels_reset(peer, peer->dynamic_channel_count > 0 ? 1 : 0);
         memset(peer->advertised_channels, 0, sizeof(peer->advertised_channels));
         memset(peer->advertised_channel_ids, 0, sizeof(peer->advertised_channel_ids));
         memset(peer->advertised_channel_joined, 0, sizeof(peer->advertised_channel_joined));
@@ -5734,6 +5751,7 @@ librdp_status librdp_server_peer_close(librdp_server_peer* peer)
 {
     if (!peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_server_dynamic_channels_reset(peer, 1);
     rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
     return LIBRDP_STATUS_OK;
 }
@@ -5752,7 +5770,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
         SSL_CTX_free(peer->tls_context);
     EVP_PKEY_free(peer->standard_private_key);
     rdp_security_standard_clear(&peer->standard_security);
-    rdp_server_dynamic_channels_reset(peer);
+    rdp_server_dynamic_channels_reset(peer, 0);
     if (peer->credssp_security_ready)
     {
         OPENSSL_cleanse(&peer->credssp_security, sizeof(peer->credssp_security));
