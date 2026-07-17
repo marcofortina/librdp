@@ -1748,6 +1748,72 @@ LIBRDP_API librdp_status librdp_server_peer_record_extension_timeout(
     librdp_server_extension_family family);
 
 /**
+ * @brief Send a typed device-redirection device reply.
+ *
+ * The helper validates that device_id is known for family before serializing the
+ * rdpdr Device Reply PDU on the joined device-redirection channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined device-redirection static channel identifier.
+ * @param[in] family Expected device family: filesystem, printer, smartcard,
+ * serial port, or parallel port.
+ * @param[in] device_id Device identifier announced by the client.
+ * @param[in] result_code Device acceptance status to send.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid family, unknown device, family mismatch, or non-rdpdr channel;
+ * LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport or allocation
+ * errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_device_reply(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    librdp_server_extension_family family,
+    uint32_t device_id,
+    uint32_t result_code);
+
+/**
+ * @brief Send a typed device-redirection IO completion.
+ *
+ * The helper validates that device_id belongs to family and serializes one rdpdr
+ * IO Completion PDU. payload is borrowed only for the duration of the call and
+ * may be NULL only when payload_len is zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined device-redirection static channel identifier.
+ * @param[in] family Expected device family: filesystem, printer, smartcard,
+ * serial port, or parallel port.
+ * @param[in] device_id Device identifier announced by the client.
+ * @param[in] completion_id Completion identifier from the matching IO request.
+ * @param[in] io_status Protocol status value to return.
+ * @param[in] payload Optional borrowed completion payload; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid family, unknown device, family mismatch, invalid payload, or non-rdpdr
+ * channel; LIBRDP_STATUS_STATE when the peer is not ACTIVE; transport or
+ * allocation errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Completion payloads can contain file data, APDUs, or device data and
+ * remain redacted by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_device_io_completion(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    librdp_server_extension_family family,
+    uint32_t device_id,
+    uint32_t completion_id,
+    uint32_t io_status,
+    const void* payload,
+    size_t payload_len);
+
+/**
  * @brief Initialize a server clipboard state snapshot.
  *
  * @param[out] state Destination structure; must not be NULL. The function

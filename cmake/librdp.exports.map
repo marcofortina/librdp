@@ -89,6 +89,8 @@ LIBRDP_0.1 {
         librdp_server_peer_get_extension_state;
         librdp_server_peer_cancel_extension;
         librdp_server_peer_record_extension_timeout;
+        librdp_server_peer_send_device_reply;
+        librdp_server_peer_send_device_io_completion;
         librdp_server_clipboard_state_init;
         librdp_server_peer_get_clipboard_state;
         librdp_server_peer_cancel_clipboard_requests;

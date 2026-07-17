@@ -4650,6 +4650,32 @@ static librdp_status rdp_server_send_static_named_buffer(librdp_server_peer* pee
     return librdp_server_peer_send_channel_data(peer, channel_id, buffer->data, buffer->length);
 }
 
+static int rdp_server_device_family_typed(librdp_server_extension_family family)
+{
+    return family == LIBRDP_SERVER_EXTENSION_FILESYSTEM ||
+           family == LIBRDP_SERVER_EXTENSION_PRINTER ||
+           family == LIBRDP_SERVER_EXTENSION_SMARTCARD ||
+           family == LIBRDP_SERVER_EXTENSION_SERIAL_PORT ||
+           family == LIBRDP_SERVER_EXTENSION_PARALLEL_PORT;
+}
+
+static librdp_status rdp_server_validate_device_family(const librdp_server_peer* peer,
+                                                       librdp_server_extension_family family,
+                                                       uint32_t device_id)
+{
+    const rdp_server_redirected_device* device = NULL;
+    librdp_feature feature = (librdp_feature)0;
+    librdp_server_extension_family actual = LIBRDP_SERVER_EXTENSION_UNKNOWN;
+
+    if (!peer || !rdp_server_device_family_typed(family))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    device = rdp_server_find_redirected_device_const(peer, device_id);
+    if (!device)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    actual = rdp_server_redirected_device_family(device->device_type, &feature);
+    return actual == family ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 static librdp_status rdp_server_send_dynamic_named_buffer(librdp_server_peer* peer,
                                                          uint32_t dynamic_channel_id,
                                                          const char* expected_name,
@@ -4671,7 +4697,8 @@ static int rdp_server_extension_family_compatible(librdp_server_extension_family
         return 1;
     return actual == LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION &&
            (expected == LIBRDP_SERVER_EXTENSION_SMARTCARD ||
-            expected == LIBRDP_SERVER_EXTENSION_PNP);
+            expected == LIBRDP_SERVER_EXTENSION_PNP ||
+            rdp_server_device_family_typed(expected));
 }
 
 static librdp_status rdp_server_validate_outgoing_extension(librdp_server_extension_family family,
@@ -4807,6 +4834,66 @@ librdp_status librdp_server_peer_record_extension_timeout(librdp_server_peer* pe
                              "server.extension.timeout",
                              "extension provider timeout");
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_send_device_reply(librdp_server_peer* peer,
+                                                   uint16_t channel_id,
+                                                   librdp_server_extension_family family,
+                                                   uint32_t device_id,
+                                                   uint32_t result_code)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_validate_device_family(peer, family, device_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_device_redirection_write_device_reply(&payload, device_id, result_code);
+    if (status == LIBRDP_STATUS_OK)
+        status = librdp_server_peer_send_static_extension_data(peer,
+                                                               family,
+                                                               channel_id,
+                                                               payload.data,
+                                                               payload.length);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_device_io_completion(librdp_server_peer* peer,
+                                                           uint16_t channel_id,
+                                                           librdp_server_extension_family family,
+                                                           uint32_t device_id,
+                                                           uint32_t completion_id,
+                                                           uint32_t io_status,
+                                                           const void* payload_data,
+                                                           size_t payload_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || (!payload_data && payload_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_server_validate_device_family(peer, family, device_id);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_device_redirection_write_io_completion(&payload,
+                                                        device_id,
+                                                        completion_id,
+                                                        io_status,
+                                                        payload_data,
+                                                        payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = librdp_server_peer_send_static_extension_data(peer,
+                                                               family,
+                                                               channel_id,
+                                                               payload.data,
+                                                               payload.length);
+    rdp_buffer_free(&payload);
+    return status;
 }
 
 librdp_status librdp_server_peer_get_clipboard_state(const librdp_server_peer* peer,
