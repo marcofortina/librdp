@@ -650,13 +650,14 @@ static int cocoa_camera_copy_jpeg_sample(cocoa_camera_source* camera,
     color_space = CGColorSpaceCreateDeviceRGB();
     if (base && color_space)
     {
-        context = CGBitmapContextCreate(base,
-                                        width,
-                                        height,
-                                        8u,
-                                        stride,
-                                        color_space,
-                                        kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
+        context = CGBitmapContextCreate(
+            base,
+            width,
+            height,
+            8u,
+            stride,
+            color_space,
+            (CGBitmapInfo)((uint32_t)kCGBitmapByteOrder32Little | (uint32_t)kCGImageAlphaNoneSkipFirst));
         if (context)
             image = CGBitmapContextCreateImage(context);
     }

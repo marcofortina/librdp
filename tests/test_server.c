@@ -749,6 +749,39 @@ static int test_server_tls_read_exact(SSL* tls, uint8_t* data, size_t length)
     return 1;
 }
 
+static int test_server_tls_read_tpkt(SSL* tls, uint8_t* data, size_t capacity)
+{
+    uint16_t length = 0;
+
+    if (!tls || !data || capacity < 4u)
+        return 0;
+    if (!test_server_tls_read_exact(tls, data, 4u))
+        return 0;
+    length = (uint16_t)(((uint32_t)data[2] << 8) | (uint32_t)data[3]);
+    if (length < 4u || length > capacity)
+        return 0;
+    if (!test_server_tls_read_exact(tls, data + 4u, (size_t)length - 4u))
+        return 0;
+    return (int)length;
+}
+
+static int test_server_wait_peer_state(librdp_server_peer* peer, librdp_server_peer_state state)
+{
+    if (!peer)
+        return 0;
+    for (int attempt = 0; attempt < 100; attempt++)
+    {
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (librdp_server_peer_get_state(peer) == state)
+            return 1;
+        status = librdp_server_peer_run_once(peer, 10);
+        if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT)
+            return 0;
+    }
+    return librdp_server_peer_get_state(peer) == state;
+}
+
 static int test_server_tls_read_credssp(SSL* tls, rdp_buffer* packet)
 {
     uint8_t header[6];
@@ -1717,12 +1750,12 @@ static int test_server_loopback_tls_handshake(void)
             break;
     }
     SCHECK(tls_ready);
-    SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_X224_CONFIRMED);
+    SCHECK(test_server_wait_peer_state(peer, LIBRDP_SERVER_PEER_X224_CONFIRMED));
     SCHECK(test_server_build_client_mcs_connect_initial(&mcs_initial));
     SCHECK(test_server_tls_write_all(client_tls, mcs_initial.data, mcs_initial.length));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
-    response_len = SSL_read(client_tls, response, sizeof(response));
+    response_len = test_server_tls_read_tpkt(client_tls, response, sizeof(response));
     SCHECK(response_len > 0);
     SCHECK(rdp_tpkt_parse(response, (size_t)response_len, &tpkt) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_MCS_CONNECTED);
@@ -2116,7 +2149,7 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
     SCHECK(test_server_tls_write_all(client_tls, mcs_initial.data, mcs_initial.length));
     status = librdp_server_peer_run_once(peer, 1000);
     SCHECK(status == LIBRDP_STATUS_OK);
-    response_len = SSL_read(client_tls, response, sizeof(response));
+    response_len = test_server_tls_read_tpkt(client_tls, response, sizeof(response));
     SCHECK(response_len > 0);
     SCHECK(rdp_tpkt_parse(response, (size_t)response_len, &tpkt) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_MCS_CONNECTED);
