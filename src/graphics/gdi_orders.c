@@ -199,7 +199,7 @@ static librdp_status rdp_gdi_altsec_payload_length(uint8_t order_type,
             break;
         }
         case RDP_GDI_ALTSEC_COMPDESK_FIRST:
-            need = 0;
+            need = available;
             break;
         default:
             return LIBRDP_STATUS_UNSUPPORTED;

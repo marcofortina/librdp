@@ -5937,6 +5937,269 @@ librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server_peer* peer
     return status;
 }
 
+static librdp_status rdp_server_audio_format_from_public(const librdp_audio_format* source,
+                                                         rdp_audio_format* target)
+{
+    if (!source || !target || (!source->extra_data && source->extra_data_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(target, 0, sizeof(*target));
+    target->format_tag = source->format_tag;
+    target->channels = source->channels;
+    target->samples_per_sec = source->samples_per_sec;
+    target->avg_bytes_per_sec = source->avg_bytes_per_sec;
+    target->block_align = source->block_align;
+    target->bits_per_sample = source->bits_per_sample;
+    target->extra_data = source->extra_data;
+    target->extra_data_len = source->extra_data_len;
+    return rdp_audio_format_encoded_size(target) > 0 ? LIBRDP_STATUS_OK :
+                                                       LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
+static librdp_status rdp_server_audio_formats_from_public(const librdp_audio_format* formats,
+                                                          uint32_t format_count,
+                                                          rdp_audio_format* converted,
+                                                          uint32_t converted_capacity)
+{
+    if ((!formats && format_count > 0) || !converted || format_count > converted_capacity)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (uint32_t i = 0; i < format_count; i++)
+    {
+        librdp_status status = rdp_server_audio_format_from_public(&formats[i], &converted[i]);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_server_video_capture_media_from_public(const librdp_video_capture_media* source,
+                                                       rdp_video_capture_media_type* target)
+{
+    memset(target, 0, sizeof(*target));
+    target->format = source->format;
+    target->width = source->width;
+    target->height = source->height;
+    target->frame_rate_numerator = source->frame_rate_numerator;
+    target->frame_rate_denominator = source->frame_rate_denominator;
+    target->pixel_aspect_ratio_numerator = source->pixel_aspect_ratio_numerator;
+    target->pixel_aspect_ratio_denominator = source->pixel_aspect_ratio_denominator;
+    target->flags = source->flags;
+}
+
+static librdp_status rdp_server_video_capture_media_list_from_public(
+    const librdp_video_capture_media* media,
+    uint8_t media_count,
+    rdp_video_capture_media_type* converted,
+    uint8_t converted_capacity)
+{
+    if ((!media && media_count > 0) || !converted || media_count == 0 || media_count > converted_capacity)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (uint8_t i = 0; i < media_count; i++)
+        rdp_server_video_capture_media_from_public(&media[i], &converted[i]);
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_send_mouse_cursor_update(librdp_server_peer* peer,
+                                                          uint32_t dynamic_channel_id,
+                                                          uint32_t kind,
+                                                          uint16_t cache_index,
+                                                          uint16_t x,
+                                                          uint16_t y,
+                                                          uint16_t hot_x,
+                                                          uint16_t hot_y,
+                                                          uint16_t width,
+                                                          uint16_t height,
+                                                          uint16_t xor_bpp,
+                                                          const void* xor_mask,
+                                                          size_t xor_mask_len,
+                                                          const void* and_mask,
+                                                          size_t and_mask_len)
+{
+    rdp_buffer payload;
+    rdp_pointer_update update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    memset(&update, 0, sizeof(update));
+    update.kind = (rdp_pointer_update_kind)kind;
+    update.cache_index = cache_index;
+    update.x = x;
+    update.y = y;
+    update.hot_x = hot_x;
+    update.hot_y = hot_y;
+    update.width = width;
+    update.height = height;
+    update.xor_bpp = xor_bpp;
+    update.xor_mask = (const uint8_t*)xor_mask;
+    update.xor_mask_len = xor_mask_len;
+    update.and_mask = (const uint8_t*)and_mask;
+    update.and_mask_len = and_mask_len;
+    rdp_buffer_init(&payload);
+    status = rdp_mouse_cursor_write_update(&payload, &update);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_MOUSE_CURSOR_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_output_formats(librdp_server_peer* peer,
+                                                           uint16_t channel_id,
+                                                           uint32_t flags,
+                                                           uint32_t volume,
+                                                           uint32_t pitch,
+                                                           uint16_t datagram_port,
+                                                           uint8_t last_block_confirmed,
+                                                           uint16_t protocol_version,
+                                                           const librdp_audio_format* formats,
+                                                           uint16_t format_count)
+{
+    rdp_audio_format converted[RDP_AUDIO_FORMAT_MAX_COUNT];
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_server_audio_formats_from_public(formats,
+                                                  format_count,
+                                                  converted,
+                                                  RDP_AUDIO_FORMAT_MAX_COUNT);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_audio_output_write_client_formats(&payload,
+                                                   flags,
+                                                   volume,
+                                                   pitch,
+                                                   datagram_port,
+                                                   last_block_confirmed,
+                                                   protocol_version,
+                                                   converted,
+                                                   format_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_AUDIO_OUTPUT_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_output_wave2(librdp_server_peer* peer,
+                                                         uint16_t channel_id,
+                                                         uint16_t timestamp,
+                                                         uint16_t format_no,
+                                                         uint8_t block_no,
+                                                         uint32_t audio_timestamp,
+                                                         const void* data,
+                                                         uint16_t data_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_audio_output_write_wave2(&payload,
+                                          timestamp,
+                                          format_no,
+                                          block_no,
+                                          audio_timestamp,
+                                          data,
+                                          data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_AUDIO_OUTPUT_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_output_close(librdp_server_peer* peer,
+                                                         uint16_t channel_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_audio_output_write_close(&payload);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_AUDIO_OUTPUT_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_input_version(librdp_server_peer* peer,
+                                                          uint32_t dynamic_channel_id,
+                                                          uint32_t protocol_version)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_audio_input_write_version(&payload, protocol_version);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_AUDIO_INPUT_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_input_formats(librdp_server_peer* peer,
+                                                          uint32_t dynamic_channel_id,
+                                                          const librdp_audio_format* formats,
+                                                          uint32_t format_count)
+{
+    rdp_audio_format converted[RDP_AUDIO_FORMAT_MAX_COUNT];
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_server_audio_formats_from_public(formats,
+                                                  format_count,
+                                                  converted,
+                                                  RDP_AUDIO_FORMAT_MAX_COUNT);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_audio_input_write_formats(&payload, converted, format_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_AUDIO_INPUT_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_audio_input_open(librdp_server_peer* peer,
+                                                       uint32_t dynamic_channel_id,
+                                                       uint32_t frames_per_packet,
+                                                       uint32_t initial_format,
+                                                       const librdp_audio_format* format)
+{
+    rdp_audio_format converted;
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_server_audio_format_from_public(format, &converted);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_audio_input_write_open(&payload,
+                                        frames_per_packet,
+                                        initial_format,
+                                        &converted);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_AUDIO_INPUT_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_video_geometry_update(librdp_server_peer* peer,
                                                             uint16_t channel_id,
                                                             uint32_t message_id,
@@ -5962,6 +6225,412 @@ librdp_status librdp_server_peer_send_video_geometry_update(librdp_server_peer* 
                                                      channel_id,
                                                      RDP_VIDEO_REDIRECTION_CHANNEL_NAME,
                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_video_capability_response(librdp_server_peer* peer,
+                                                                uint16_t channel_id,
+                                                                uint32_t message_id,
+                                                                uint32_t result)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_redirection_write_exchange_capabilities_response(&payload,
+                                                                        message_id,
+                                                                        NULL,
+                                                                        0,
+                                                                        result);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_VIDEO_REDIRECTION_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_video_sample(librdp_server_peer* peer,
+                                                   uint16_t channel_id,
+                                                   uint32_t message_id,
+                                                   const uint8_t presentation_id[16],
+                                                   uint32_t stream_id,
+                                                   const void* data,
+                                                   uint32_t data_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_redirection_write_sample_message(&payload,
+                                                        message_id,
+                                                        presentation_id,
+                                                        stream_id,
+                                                        data,
+                                                        data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_VIDEO_REDIRECTION_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_video_optimized_data(librdp_server_peer* peer,
+                                                           uint32_t dynamic_channel_id,
+                                                           uint8_t presentation_id,
+                                                           uint8_t flags,
+                                                           uint64_t timestamp,
+                                                           uint64_t duration,
+                                                           uint16_t current_packet_index,
+                                                           uint16_t packets_in_sample,
+                                                           uint32_t sample_number,
+                                                           const void* sample,
+                                                           uint32_t sample_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_optimized_write_video_data(&payload,
+                                                  presentation_id,
+                                                  flags,
+                                                  timestamp,
+                                                  duration,
+                                                  current_packet_index,
+                                                  packets_in_sample,
+                                                  sample_number,
+                                                  sample,
+                                                  sample_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_VIDEO_OPTIMIZED_DATA_CHANNEL,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_camera_device_added(librdp_server_peer* peer,
+                                                          uint32_t dynamic_channel_id,
+                                                          uint8_t version,
+                                                          const void* device_name_utf16le,
+                                                          size_t device_name_len,
+                                                          const char* channel_name)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_capture_write_device_added(&payload,
+                                                  version,
+                                                  device_name_utf16le,
+                                                  device_name_len,
+                                                  channel_name);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_VIDEO_CAPTURE_CONTROL_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_camera_media_list(librdp_server_peer* peer,
+                                                        uint32_t dynamic_channel_id,
+                                                        uint8_t version,
+                                                        uint8_t message_id,
+                                                        const librdp_video_capture_media* media,
+                                                        uint8_t media_count)
+{
+    rdp_video_capture_media_type converted[RDP_VIDEO_CAPTURE_MAX_STREAMS];
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    status = rdp_server_video_capture_media_list_from_public(media,
+                                                             media_count,
+                                                             converted,
+                                                             RDP_VIDEO_CAPTURE_MAX_STREAMS);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_buffer_init(&payload);
+    status = rdp_video_capture_write_media_list(&payload,
+                                                version,
+                                                message_id,
+                                                converted,
+                                                media_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_VIDEO_CAPTURE_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_camera_sample(librdp_server_peer* peer,
+                                                    uint32_t dynamic_channel_id,
+                                                    uint8_t version,
+                                                    uint8_t stream_index,
+                                                    const void* sample,
+                                                    size_t sample_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_video_capture_write_sample(&payload,
+                                            version,
+                                            stream_index,
+                                            sample,
+                                            sample_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_VIDEO_CAPTURE_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_webauthn_response(librdp_server_peer* peer,
+                                                        uint32_t dynamic_channel_id,
+                                                        uint32_t hresult,
+                                                        const void* payload_data,
+                                                        size_t payload_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_webauthn_write_response(&payload, hresult, payload_data, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_WEBAUTHN_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_rail_handshake_ex(librdp_server_peer* peer,
+                                                        uint16_t channel_id,
+                                                        uint32_t build_number,
+                                                        uint32_t flags)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_remote_programs_write_handshake_ex(&payload, build_number, flags);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_REMOTE_PROGRAMS_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_rail_exec_result(librdp_server_peer* peer,
+                                                       uint16_t channel_id,
+                                                       uint16_t flags,
+                                                       uint16_t exec_result,
+                                                       uint32_t raw_result,
+                                                       const void* exe_or_file,
+                                                       uint16_t exe_or_file_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_remote_programs_write_exec_result(&payload,
+                                                   flags,
+                                                   exec_result,
+                                                   raw_result,
+                                                   exe_or_file,
+                                                   exe_or_file_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_REMOTE_PROGRAMS_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_rail_windowmove(librdp_server_peer* peer,
+                                                      uint16_t channel_id,
+                                                      uint32_t window_id,
+                                                      int16_t left,
+                                                      int16_t top,
+                                                      int16_t right,
+                                                      int16_t bottom)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_remote_programs_write_windowmove(&payload,
+                                                  window_id,
+                                                  left,
+                                                  top,
+                                                  right,
+                                                  bottom);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer,
+                                                     channel_id,
+                                                     RDP_REMOTE_PROGRAMS_CHANNEL_NAME,
+                                                     &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_cr2_version_reply(librdp_server_peer* peer,
+                                                        uint32_t dynamic_channel_id,
+                                                        const uint32_t* versions,
+                                                        uint32_t version_count)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_composited_write_version_reply(&payload, versions, version_count);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_COMPOSITED_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_cr2_window_node_create(librdp_server_peer* peer,
+                                                             uint32_t dynamic_channel_id,
+                                                             uint32_t target_resource,
+                                                             uint64_t sprite_id,
+                                                             uint64_t window_id,
+                                                             uint32_t caching_mode)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_composited_write_window_node_create(&payload,
+                                                     target_resource,
+                                                     sprite_id,
+                                                     window_id,
+                                                     caching_mode);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_COMPOSITED_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+static librdp_status rdp_server_peer_send_desktop_composition_payload(librdp_server_peer* peer,
+                                                                      const rdp_buffer* order_payload)
+{
+    rdp_buffer order;
+    rdp_buffer update;
+    rdp_buffer slowpath;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !order_payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE || peer->updates_suppressed)
+        return LIBRDP_STATUS_STATE;
+    rdp_buffer_init(&order);
+    rdp_buffer_init(&update);
+    rdp_buffer_init(&slowpath);
+    status = rdp_gdi_write_altsec_order(&order,
+                                        RDP_GDI_ALTSEC_COMPDESK_FIRST,
+                                        order_payload->data,
+                                        order_payload->length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_gdi_write_slow_orders_update_payload(&update, 1, order.data, order.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_slowpath_write_data_pdu(&slowpath,
+                                             peer->share_id,
+                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                                             RDP_SLOWPATH_DATA_PDU_UPDATE,
+                                             update.data,
+                                             update.length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_slowpath(peer, &slowpath);
+    rdp_buffer_free(&slowpath);
+    rdp_buffer_free(&update);
+    rdp_buffer_free(&order);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_desktop_composition_toggle(librdp_server_peer* peer,
+                                                                 uint8_t event_type)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_desktop_composition_write_toggle(&payload, event_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_peer_send_desktop_composition_payload(peer, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_desktop_composition_lsurface(librdp_server_peer* peer,
+                                                                   int create,
+                                                                   uint8_t flags,
+                                                                   uint64_t surface_id,
+                                                                   uint32_t width,
+                                                                   uint32_t height,
+                                                                   uint64_t window_id,
+                                                                   uint64_t luid)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_desktop_composition_write_lsurface(&payload,
+                                                    create ? 1u : 0u,
+                                                    flags,
+                                                    surface_id,
+                                                    width,
+                                                    height,
+                                                    window_id,
+                                                    luid);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_peer_send_desktop_composition_payload(peer, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_auth_redirection_response(librdp_server_peer* peer,
+                                                                uint32_t dynamic_channel_id,
+                                                                uint32_t call_id,
+                                                                uint32_t status_code,
+                                                                const void* payload_data,
+                                                                size_t payload_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_auth_redirection_write_response(&payload,
+                                                 call_id,
+                                                 status_code,
+                                                 payload_data,
+                                                 payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_AUTH_REDIRECTION_CHANNEL_NAME,
+                                                      &payload);
     rdp_buffer_free(&payload);
     return status;
 }

@@ -55,6 +55,7 @@ typedef struct rdp_mouse_cursor_capset
 } rdp_mouse_cursor_capset;
 
 librdp_status rdp_mouse_cursor_write_caps_advertise(rdp_buffer* buffer);
+librdp_status rdp_mouse_cursor_write_update(rdp_buffer* buffer, const rdp_pointer_update* update);
 librdp_status rdp_mouse_cursor_parse_header(const void* data, size_t length, rdp_mouse_cursor_header* header);
 librdp_status rdp_mouse_cursor_parse_caps_confirm(const void* data,
                                                   size_t length,

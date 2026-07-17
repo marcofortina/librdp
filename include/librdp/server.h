@@ -10,8 +10,10 @@
 #include <stdint.h>
 #include <poll.h>
 
+#include <librdp/audio.h>
 #include <librdp/error.h>
 #include <librdp/settings.h>
+#include <librdp/video.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -2836,6 +2838,207 @@ LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server
                                                                    uint32_t dynamic_channel_id);
 
 /**
+ * @brief Send one Mouse Cursor virtual-channel pointer update.
+ *
+ * The payload is normalized by kind: NULL/default updates ignore coordinates,
+ * position updates use x and y, cached updates use cache_index, and shape
+ * updates copy the supplied XOR/AND masks into the outgoing PDU.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open Mouse-Cursor dynamic channel id.
+ * @param[in] kind Pointer update kind: 0 null, 1 default, 2 position,
+ * 3 cached, 4 shape.
+ * @param[in] cache_index Pointer cache index used by cached and shape
+ * updates.
+ * @param[in] x Pointer X coordinate for position updates.
+ * @param[in] y Pointer Y coordinate for position updates.
+ * @param[in] hot_x Shape hotspot X coordinate.
+ * @param[in] hot_y Shape hotspot Y coordinate.
+ * @param[in] width Shape width in pixels.
+ * @param[in] height Shape height in pixels.
+ * @param[in] xor_bpp Shape XOR mask bits per pixel.
+ * @param[in] xor_mask Borrowed XOR mask bytes; may be NULL only when
+ * xor_mask_len is zero.
+ * @param[in] xor_mask_len Number of bytes in xor_mask.
+ * @param[in] and_mask Borrowed AND mask bytes; may be NULL only when
+ * and_mask_len is zero.
+ * @param[in] and_mask_len Number of bytes in and_mask.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-Mouse-Cursor channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; LIBRDP_STATUS_UNSUPPORTED for unknown kind values;
+ * allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_update(librdp_server_peer* peer,
+                                                                     uint32_t dynamic_channel_id,
+                                                                     uint32_t kind,
+                                                                     uint16_t cache_index,
+                                                                     uint16_t x,
+                                                                     uint16_t y,
+                                                                     uint16_t hot_x,
+                                                                     uint16_t hot_y,
+                                                                     uint16_t width,
+                                                                     uint16_t height,
+                                                                     uint16_t xor_bpp,
+                                                                     const void* xor_mask,
+                                                                     size_t xor_mask_len,
+                                                                     const void* and_mask,
+                                                                     size_t and_mask_len);
+
+/**
+ * @brief Send audio-output format capabilities on a joined rdpsnd channel.
+ *
+ * Format entries are copied from the caller-owned public format array and are
+ * not retained after the call returns.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined audio-output static channel id.
+ * @param[in] flags Audio-output capability flags.
+ * @param[in] volume Initial server volume.
+ * @param[in] pitch Initial server pitch.
+ * @param[in] datagram_port Optional UDP datagram port, or zero.
+ * @param[in] last_block_confirmed Last audio block confirmed by the server.
+ * @param[in] protocol_version Audio-output protocol version.
+ * @param[in] formats Borrowed public audio format array; must not be NULL
+ * when format_count is non-zero.
+ * @param[in] format_count Number of entries in formats.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid formats, a NULL peer, or a non-audio-output channel;
+ * LIBRDP_STATUS_STATE when the peer is not ACTIVE; allocation or transport
+ * errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Audio format metadata is safe to trace, but payload-bearing audio
+ * PDUs remain redacted by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_output_formats(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    uint32_t flags,
+    uint32_t volume,
+    uint32_t pitch,
+    uint16_t datagram_port,
+    uint8_t last_block_confirmed,
+    uint16_t protocol_version,
+    const librdp_audio_format* formats,
+    uint16_t format_count);
+
+/**
+ * @brief Send one audio-output Wave2 packet on a joined rdpsnd channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined audio-output static channel id.
+ * @param[in] timestamp Server audio timestamp.
+ * @param[in] format_no Negotiated audio format index.
+ * @param[in] block_no Server audio block number.
+ * @param[in] audio_timestamp Stream timestamp carried in Wave2.
+ * @param[in] data Borrowed encoded audio bytes; may be NULL only when
+ * data_len is zero.
+ * @param[in] data_len Number of bytes in data.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-audio-output channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Audio payloads can contain sensitive media and are redacted by
+ * default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_output_wave2(librdp_server_peer* peer,
+                                                                    uint16_t channel_id,
+                                                                    uint16_t timestamp,
+                                                                    uint16_t format_no,
+                                                                    uint8_t block_no,
+                                                                    uint32_t audio_timestamp,
+                                                                    const void* data,
+                                                                    uint16_t data_len);
+
+/**
+ * @brief Close a joined audio-output channel stream.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined audio-output static channel id.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-audio-output channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_output_close(librdp_server_peer* peer,
+                                                                    uint16_t channel_id);
+
+/**
+ * @brief Send audio-input protocol version on an open AUDIO_INPUT channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open audio-input dynamic channel id.
+ * @param[in] protocol_version Audio-input protocol version to advertise.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-audio-input channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_input_version(librdp_server_peer* peer,
+                                                                     uint32_t dynamic_channel_id,
+                                                                     uint32_t protocol_version);
+
+/**
+ * @brief Send audio-input capture formats on an open AUDIO_INPUT channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open audio-input dynamic channel id.
+ * @param[in] formats Borrowed public audio format array; must not be NULL
+ * when format_count is non-zero.
+ * @param[in] format_count Number of entries in formats.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid formats or a non-audio-input channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_input_formats(librdp_server_peer* peer,
+                                                                     uint32_t dynamic_channel_id,
+                                                                     const librdp_audio_format* formats,
+                                                                     uint32_t format_count);
+
+/**
+ * @brief Send an audio-input open request on an open AUDIO_INPUT channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open audio-input dynamic channel id.
+ * @param[in] frames_per_packet Capture frames requested per packet.
+ * @param[in] initial_format Initial format index.
+ * @param[in] format Selected public audio format; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-audio-input channel; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Opening audio input can capture user speech. Applications must
+ * enforce user consent before calling this function.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_audio_input_open(librdp_server_peer* peer,
+                                                                  uint32_t dynamic_channel_id,
+                                                                  uint32_t frames_per_packet,
+                                                                  uint32_t initial_format,
+                                                                  const librdp_audio_format* format);
+
+/**
  * @brief Send a video geometry update on the joined TSMF static channel.
  *
  * The helper serializes one geometry update for an existing presentation. The
@@ -2870,6 +3073,388 @@ LIBRDP_API librdp_status librdp_server_peer_send_video_geometry_update(librdp_se
                                                                        uint32_t geometry_len,
                                                                        const void* visible_rect,
                                                                        uint32_t visible_rect_len);
+
+/**
+ * @brief Send a video-redirection capability response on the TSMF channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined TSMF static channel identifier.
+ * @param[in] message_id Request correlation identifier.
+ * @param[in] result HRESULT-style result to encode.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-TSMF channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_video_capability_response(librdp_server_peer* peer,
+                                                                           uint16_t channel_id,
+                                                                           uint32_t message_id,
+                                                                           uint32_t result);
+
+/**
+ * @brief Send a video-redirection sample message on the TSMF channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined TSMF static channel identifier.
+ * @param[in] message_id Request correlation identifier.
+ * @param[in] presentation_id Presentation GUID; must point to 16 bytes and
+ * must not be NULL.
+ * @param[in] stream_id Presentation stream identifier.
+ * @param[in] data Borrowed sample bytes; may be NULL only when data_len is
+ * zero.
+ * @param[in] data_len Number of bytes in data.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-TSMF channel; LIBRDP_STATUS_STATE when the peer
+ * is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Video sample payloads can contain user content and are redacted by
+ * default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_video_sample(librdp_server_peer* peer,
+                                                              uint16_t channel_id,
+                                                              uint32_t message_id,
+                                                              const uint8_t presentation_id[16],
+                                                              uint32_t stream_id,
+                                                              const void* data,
+                                                              uint32_t data_len);
+
+/**
+ * @brief Send optimized-video data on an open video data channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open optimized-video data dynamic channel id.
+ * @param[in] presentation_id Presentation identifier.
+ * @param[in] flags Video-data flags.
+ * @param[in] timestamp Sample timestamp.
+ * @param[in] duration Sample duration.
+ * @param[in] current_packet_index Fragment index within the sample.
+ * @param[in] packets_in_sample Total fragments in the sample.
+ * @param[in] sample_number Monotonic sample number.
+ * @param[in] sample Borrowed sample bytes; may be NULL only when sample_len
+ * is zero.
+ * @param[in] sample_len Number of bytes in sample.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-optimized-video channel; LIBRDP_STATUS_STATE
+ * when the peer is not ACTIVE; allocation or transport errors from the send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Video payloads can contain user content and are redacted by default
+ * trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_video_optimized_data(librdp_server_peer* peer,
+                                                                      uint32_t dynamic_channel_id,
+                                                                      uint8_t presentation_id,
+                                                                      uint8_t flags,
+                                                                      uint64_t timestamp,
+                                                                      uint64_t duration,
+                                                                      uint16_t current_packet_index,
+                                                                      uint16_t packets_in_sample,
+                                                                      uint32_t sample_number,
+                                                                      const void* sample,
+                                                                      uint32_t sample_len);
+
+/**
+ * @brief Announce a redirected camera device on the camera control channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open camera control dynamic channel id.
+ * @param[in] version Camera protocol version.
+ * @param[in] device_name_utf16le Borrowed UTF-16LE device name; must not be
+ * NULL when device_name_len is non-zero.
+ * @param[in] device_name_len Number of bytes in device_name_utf16le.
+ * @param[in] channel_name Camera stream channel name; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-camera channel; LIBRDP_STATUS_STATE when the peer
+ * is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Camera device names can reveal local hardware metadata.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_camera_device_added(librdp_server_peer* peer,
+                                                                     uint32_t dynamic_channel_id,
+                                                                     uint8_t version,
+                                                                     const void* device_name_utf16le,
+                                                                     size_t device_name_len,
+                                                                     const char* channel_name);
+
+/**
+ * @brief Send a camera media-type list response.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open camera dynamic channel id.
+ * @param[in] version Camera protocol version.
+ * @param[in] message_id Camera message identifier to encode.
+ * @param[in] media Borrowed public media array; must not be NULL when
+ * media_count is non-zero.
+ * @param[in] media_count Number of entries in media.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-camera channel; LIBRDP_STATUS_STATE when the peer
+ * is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_camera_media_list(librdp_server_peer* peer,
+                                                                   uint32_t dynamic_channel_id,
+                                                                   uint8_t version,
+                                                                   uint8_t message_id,
+                                                                   const librdp_video_capture_media* media,
+                                                                   uint8_t media_count);
+
+/**
+ * @brief Send one camera sample response.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open camera dynamic channel id.
+ * @param[in] version Camera protocol version.
+ * @param[in] stream_index Camera stream index.
+ * @param[in] sample Borrowed sample bytes; may be NULL only when sample_len
+ * is zero.
+ * @param[in] sample_len Number of bytes in sample.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-camera channel; LIBRDP_STATUS_STATE when the peer
+ * is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Camera frames can contain sensitive user content and are redacted
+ * by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_camera_sample(librdp_server_peer* peer,
+                                                               uint32_t dynamic_channel_id,
+                                                               uint8_t version,
+                                                               uint8_t stream_index,
+                                                               const void* sample,
+                                                               size_t sample_len);
+
+/**
+ * @brief Send a WebAuthn channel response.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open WebAuthn dynamic channel id.
+ * @param[in] hresult HRESULT-style result.
+ * @param[in] payload Borrowed response payload; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-WebAuthn channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning WebAuthn payloads can contain authenticator material and are
+ * redacted by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_webauthn_response(librdp_server_peer* peer,
+                                                                   uint32_t dynamic_channel_id,
+                                                                   uint32_t hresult,
+                                                                   const void* payload,
+                                                                   size_t payload_len);
+
+/**
+ * @brief Send a Remote Programs handshake-ex order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined RAIL static channel id.
+ * @param[in] build_number Server build number to advertise.
+ * @param[in] flags RAIL handshake flags.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-RAIL channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_rail_handshake_ex(librdp_server_peer* peer,
+                                                                   uint16_t channel_id,
+                                                                   uint32_t build_number,
+                                                                   uint32_t flags);
+
+/**
+ * @brief Send a Remote Programs Exec Result order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined RAIL static channel id.
+ * @param[in] flags RAIL exec-result flags.
+ * @param[in] exec_result RAIL exec-result code.
+ * @param[in] raw_result Platform-specific raw result.
+ * @param[in] exe_or_file Borrowed UTF-16LE executable/file name; may be NULL
+ * only when exe_or_file_len is zero.
+ * @param[in] exe_or_file_len Number of bytes in exe_or_file.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-RAIL channel; LIBRDP_STATUS_STATE when the peer
+ * is not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning RemoteApp executable names can expose application metadata.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_rail_exec_result(librdp_server_peer* peer,
+                                                                  uint16_t channel_id,
+                                                                  uint16_t flags,
+                                                                  uint16_t exec_result,
+                                                                  uint32_t raw_result,
+                                                                  const void* exe_or_file,
+                                                                  uint16_t exe_or_file_len);
+
+/**
+ * @brief Send a Remote Programs window move order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined RAIL static channel id.
+ * @param[in] window_id RemoteApp window identifier.
+ * @param[in] left Window left coordinate.
+ * @param[in] top Window top coordinate.
+ * @param[in] right Window right coordinate.
+ * @param[in] bottom Window bottom coordinate.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-RAIL channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_rail_windowmove(librdp_server_peer* peer,
+                                                                 uint16_t channel_id,
+                                                                 uint32_t window_id,
+                                                                 int16_t left,
+                                                                 int16_t top,
+                                                                 int16_t right,
+                                                                 int16_t bottom);
+
+/**
+ * @brief Send a CR2 version reply on an open composited-remoting channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open CR2 dynamic channel id.
+ * @param[in] versions Borrowed protocol version array; must not be NULL when
+ * version_count is non-zero.
+ * @param[in] version_count Number of version entries.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-CR2 channel; LIBRDP_STATUS_STATE when the peer is
+ * not ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_cr2_version_reply(librdp_server_peer* peer,
+                                                                   uint32_t dynamic_channel_id,
+                                                                   const uint32_t* versions,
+                                                                   uint32_t version_count);
+
+/**
+ * @brief Send a CR2 window-node create order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open CR2 dynamic channel id.
+ * @param[in] target_resource CR2 resource identifier.
+ * @param[in] sprite_id Sprite identifier.
+ * @param[in] window_id Window identifier.
+ * @param[in] caching_mode CR2 caching mode.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-CR2 channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_cr2_window_node_create(librdp_server_peer* peer,
+                                                                        uint32_t dynamic_channel_id,
+                                                                        uint32_t target_resource,
+                                                                        uint64_t sprite_id,
+                                                                        uint64_t window_id,
+                                                                        uint32_t caching_mode);
+
+/**
+ * @brief Send a desktop-composition toggle order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] event_type Desktop-composition event type to encode.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE when the peer is not ACTIVE or output is
+ * suppressed; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_desktop_composition_toggle(librdp_server_peer* peer,
+                                                                            uint8_t event_type);
+
+/**
+ * @brief Send a desktop-composition logical-surface order.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] create Non-zero creates the logical surface; zero destroys it.
+ * @param[in] flags Logical-surface flags.
+ * @param[in] surface_id Logical surface identifier.
+ * @param[in] width Surface width in pixels.
+ * @param[in] height Surface height in pixels.
+ * @param[in] window_id Associated window identifier.
+ * @param[in] luid Locally unique identifier for the surface.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE when the peer is not ACTIVE or output is
+ * suppressed; allocation or transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_desktop_composition_lsurface(librdp_server_peer* peer,
+                                                                              int create,
+                                                                              uint8_t flags,
+                                                                              uint64_t surface_id,
+                                                                              uint32_t width,
+                                                                              uint32_t height,
+                                                                              uint64_t window_id,
+                                                                              uint64_t luid);
+
+/**
+ * @brief Send an authentication-redirection response.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open authentication-redirection channel id.
+ * @param[in] call_id Request call identifier.
+ * @param[in] status_code Protocol status value.
+ * @param[in] payload Borrowed response payload; may be NULL only when
+ * payload_len is zero.
+ * @param[in] payload_len Number of bytes in payload.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-auth-redirection channel; LIBRDP_STATUS_STATE
+ * when the peer is not ACTIVE; allocation or transport errors from the send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Authentication redirection payloads may contain tokens and are
+ * redacted by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_auth_redirection_response(librdp_server_peer* peer,
+                                                                           uint32_t dynamic_channel_id,
+                                                                           uint32_t call_id,
+                                                                           uint32_t status_code,
+                                                                           const void* payload,
+                                                                           size_t payload_len);
 
 /**
  * @brief Send telemetry timing metrics on an open telemetry dynamic channel.

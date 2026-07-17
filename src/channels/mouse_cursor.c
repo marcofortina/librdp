@@ -116,6 +116,107 @@ librdp_status rdp_mouse_cursor_write_caps_advertise(rdp_buffer* buffer)
     return status;
 }
 
+static librdp_status rdp_mouse_cursor_write_header(rdp_buffer* buffer, uint8_t update_type)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_buffer_append_u8(buffer, RDP_MOUSE_CURSOR_PDU_SC_MOUSEPTR_UPDATE);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(buffer, update_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, 0);
+    return status;
+}
+
+/*
+ * Serialize a normalized pointer update for the Mouse Cursor virtual channel.
+ * Shape payloads are accepted only after hotspot, dimension, length and
+ * mask-pointer invariants match the parser, keeping cache state symmetric
+ * between server tests and client cursor handling.
+ */
+librdp_status rdp_mouse_cursor_write_update(rdp_buffer* buffer, const rdp_pointer_update* update)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t update_type = 0;
+    int large_lengths = 0;
+
+    if (!buffer || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    switch (update->kind)
+    {
+        case RDP_POINTER_UPDATE_KIND_NULL:
+            return rdp_mouse_cursor_write_header(buffer, RDP_MOUSE_CURSOR_UPDATE_NULL);
+        case RDP_POINTER_UPDATE_KIND_DEFAULT:
+            return rdp_mouse_cursor_write_header(buffer, RDP_MOUSE_CURSOR_UPDATE_DEFAULT);
+        case RDP_POINTER_UPDATE_KIND_POSITION:
+            status = rdp_mouse_cursor_write_header(buffer, RDP_MOUSE_CURSOR_UPDATE_POSITION);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->x);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->y);
+            return status;
+        case RDP_POINTER_UPDATE_KIND_CACHED:
+            status = rdp_mouse_cursor_write_header(buffer, RDP_MOUSE_CURSOR_UPDATE_CACHED);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->cache_index);
+            return status;
+        case RDP_POINTER_UPDATE_KIND_SHAPE:
+            break;
+        default:
+            return LIBRDP_STATUS_UNSUPPORTED;
+    }
+
+    if (update->width == 0 || update->height == 0 ||
+        update->width > RDP_POINTER_MAX_DIMENSION ||
+        update->height > RDP_POINTER_MAX_DIMENSION ||
+        update->hot_x >= update->width || update->hot_y >= update->height ||
+        (!update->xor_mask && update->xor_mask_len > 0) ||
+        (!update->and_mask && update->and_mask_len > 0))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    large_lengths = update->xor_mask_len > 0xffffu || update->and_mask_len > 0xffffu;
+    if (!large_lengths && (update->xor_mask_len > 0xffffu || update->and_mask_len > 0xffffu))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (update->xor_mask_len > UINT32_MAX || update->and_mask_len > UINT32_MAX)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+
+    update_type = large_lengths ? RDP_MOUSE_CURSOR_UPDATE_LARGE_POINTER :
+                                  RDP_MOUSE_CURSOR_UPDATE_POINTER;
+    status = rdp_mouse_cursor_write_header(buffer, update_type);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->xor_bpp);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->cache_index);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->hot_x);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->hot_y);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->width);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_le(buffer, update->height);
+    if (large_lengths)
+    {
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(buffer, (uint32_t)update->and_mask_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u32_le(buffer, (uint32_t)update->xor_mask_len);
+    }
+    else
+    {
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(buffer, (uint16_t)update->and_mask_len);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_buffer_append_u16_le(buffer, (uint16_t)update->xor_mask_len);
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, update->xor_mask, update->xor_mask_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, update->and_mask, update->and_mask_len);
+    return status;
+}
+
 librdp_status rdp_mouse_cursor_parse_header(const void* data, size_t length, rdp_mouse_cursor_header* header)
 {
     rdp_stream stream;
