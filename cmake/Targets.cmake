@@ -128,6 +128,13 @@ set(LIBRDP_TRANSPORT_SOURCES
 
 set(LIBRDP_SERVER_SOURCES
     src/server/server.c
+    src/server/server_channels.c
+    src/server/server_extensions.c
+    src/server/server_features.c
+    src/server/server_graphics.c
+    src/server/server_peer.c
+    src/server/server_protocol.c
+    src/server/server_security.c
 )
 
 set(LIBRDP_SOURCES
