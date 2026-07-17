@@ -31,6 +31,9 @@ jobs:
               pkg install -y "${package}" || true
             done
           run: |
+            export OPENSSL_MODULES=/usr/local/lib/ossl-modules
+            test -f "${OPENSSL_MODULES}/legacy.so"
+            openssl list -providers -provider-path "${OPENSSL_MODULES}" -provider legacy | grep -q "legacy"
             cmake -S . -B build-freebsd-core-no-viewer -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
               -DOPENSSL_ROOT_DIR=/usr/local \
@@ -62,6 +65,9 @@ jobs:
           prepare: |
             pkg install -y cmake ninja pkgconf openssl libiconv python3 doxygen graphviz
           run: |
+            export OPENSSL_MODULES=/usr/local/lib/ossl-modules
+            test -f "${OPENSSL_MODULES}/legacy.so"
+            openssl list -providers -provider-path "${OPENSSL_MODULES}" -provider legacy | grep -q "legacy"
             cmake -S . -B build-freebsd-core-no-backends -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
               -DOPENSSL_ROOT_DIR=/usr/local \
