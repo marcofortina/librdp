@@ -64,7 +64,18 @@ if(LIBRDP_BUILD_TESTS)
         librdp_apply_sanitizer_link_options(${target})
     endfunction()
 
-    add_library(test_core_units OBJECT tests/test_core.c)
+    add_library(test_core_units OBJECT
+        tests/test_core.c
+        tests/test_core_channels.c
+        tests/test_core_common.c
+        tests/test_core_enterprise.c
+        tests/test_core_features.c
+        tests/test_core_graphics.c
+        tests/test_core_licensing.c
+        tests/test_core_settings.c
+        tests/test_core_storage.c
+        tests/test_core_support.c
+    )
     target_compile_definitions(test_core_units PRIVATE LIBRDP_TEST_NO_MAIN)
     librdp_configure_test_compile(test_core_units)
 
@@ -172,6 +183,13 @@ if(LIBRDP_BUILD_TESTS)
 
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
+    add_test(NAME core_settings_session_error_metrics COMMAND test_core settings)
+    add_test(NAME core_features COMMAND test_core features)
+    add_test(NAME core_channels COMMAND test_core channels)
+    add_test(NAME core_storage_devices COMMAND test_core storage)
+    add_test(NAME core_graphics COMMAND test_core graphics)
+    add_test(NAME core_licensing COMMAND test_core licensing)
+    add_test(NAME core_workspace_admin COMMAND test_core enterprise)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME protocol_core COMMAND test_protocol core)
     add_test(NAME protocol_channels COMMAND test_protocol channels)
@@ -206,7 +224,17 @@ if(LIBRDP_BUILD_TESTS)
         server_graphics
         PROPERTIES TIMEOUT 30
     )
-    set_tests_properties(core PROPERTIES TIMEOUT 60)
+    set_tests_properties(
+        core
+        core_settings_session_error_metrics
+        core_channels
+        core_storage_devices
+        core_graphics
+        core_licensing
+        core_workspace_admin
+        PROPERTIES TIMEOUT 60
+    )
+    set_tests_properties(core_features PROPERTIES TIMEOUT 30)
     set_tests_properties(
         protocol
         protocol_channels

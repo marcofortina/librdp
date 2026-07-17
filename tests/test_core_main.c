@@ -12,9 +12,13 @@
  * peers only.
  */
 
-int test_client_core(void);
+#include "test_core_suites.h"
 
-int main(void)
+int main(int argc, char** argv)
 {
+    if (argc == 2)
+        return test_client_core_named(argv[1]);
+    if (argc != 1)
+        return 2;
     return test_client_core();
 }
