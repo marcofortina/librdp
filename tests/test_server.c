@@ -1810,6 +1810,10 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint32_t channel_count_before_static = 0;
     uint32_t extension_count_before_static = 0;
     uint32_t error_count_before_udp2 = 0;
+    uint32_t error_count_before_dvc_limit = 0;
+    uint32_t error_count_before_surface = 0;
+    uint64_t limits_before_dvc_limit = 0;
+    size_t dvc_oversize_len = ((size_t)64u * 1024u * 1024u) + 1u;
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
     static const uint8_t clipboard_name_utf16[] = {'T', 0, 'e', 0, 'x', 0, 't', 0};
     uint32_t clipboard_clip_data_id = 0x8899aabbu;
@@ -2696,6 +2700,19 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(runtime_context.last_dynamic_channel_id == 7);
     SCHECK(runtime_context.channel_payload_len == 4 &&
            memcmp(runtime_context.channel_payload, "ping", 4) == 0);
+    SCHECK(librdp_server_metrics_init(&server_metrics) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_get_metrics(peer, &server_metrics) == LIBRDP_STATUS_OK);
+    limits_before_dvc_limit = server_metrics.limits_rejected;
+    error_count_before_dvc_limit = runtime_context.error_event_count;
+    SCHECK(librdp_server_peer_send_dynamic_channel_data(peer,
+                                                        7,
+                                                        dynamic_large_payload,
+                                                        dvc_oversize_len) ==
+           LIBRDP_STATUS_LIMIT_EXCEEDED);
+    SCHECK(librdp_server_peer_get_metrics(peer, &server_metrics) == LIBRDP_STATUS_OK);
+    SCHECK(server_metrics.limits_rejected == limits_before_dvc_limit + 1u);
+    SCHECK(runtime_context.error_event_count == error_count_before_dvc_limit + 1u);
+    SCHECK(runtime_context.last_error_status == LIBRDP_STATUS_LIMIT_EXCEEDED);
 
     dvc_packet.length = 0;
     SCHECK(rdp_dynamic_channel_write_data_first_ex(&dvc_packet,
@@ -3292,8 +3309,9 @@ static int test_server_loopback_standard_activation_sequence(void)
            static_payload_len == 4 &&
            static_payload[0] == pixels[0] &&
            static_payload[3] == pixels[3]);
+    error_count_before_surface = runtime_context.error_event_count;
     SCHECK(librdp_server_peer_surface_present(peer, 900, 0, 1, 1) == LIBRDP_STATUS_INVALID_ARGUMENT);
-    SCHECK(runtime_context.error_event_count == 2);
+    SCHECK(runtime_context.error_event_count == error_count_before_surface + 1u);
     SCHECK(runtime_context.last_error_status == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_status_init(&server_status) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_last_status(peer, &server_status) == LIBRDP_STATUS_OK);

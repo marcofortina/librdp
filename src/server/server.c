@@ -3781,7 +3781,15 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
     if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
         return LIBRDP_STATUS_STATE;
     if (data_len > RDP_SERVER_DYNAMIC_MESSAGE_MAX)
+    {
+        rdp_server_metric_add(&peer->metrics.limits_rejected, 1u);
+        rdp_server_record_status(peer,
+                                 LIBRDP_STATUS_LIMIT_EXCEEDED,
+                                 LIBRDP_ERROR_COMPONENT_CHANNEL,
+                                 "server.dvc.flow_control",
+                                 "dynamic channel send exceeded flow-control limit");
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
     channel = rdp_server_find_dynamic_channel(peer, dynamic_channel_id);
     if (!channel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -3846,6 +3854,8 @@ librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_server_peer* p
                                  rdp_server_component_for_status(status),
                                  "server.dvc.send",
                                  "dynamic channel send failed");
+    if (status == LIBRDP_STATUS_LIMIT_EXCEEDED)
+        rdp_server_metric_add(&peer->metrics.limits_rejected, 1u);
     rdp_buffer_free(&packet);
     return status;
 }
@@ -4784,9 +4794,13 @@ static librdp_status rdp_server_dynamic_handle_data_first(librdp_server_peer* pe
     if (status != LIBRDP_STATUS_OK)
         return status;
     channel = rdp_server_find_dynamic_channel(peer, pdu.channel_id);
-    if (!channel || channel->fragment.length != 0 || pdu.total_length < pdu.data_len ||
-        pdu.total_length > RDP_SERVER_DYNAMIC_MESSAGE_MAX)
+    if (!channel || channel->fragment.length != 0 || pdu.total_length < pdu.data_len)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (pdu.total_length > RDP_SERVER_DYNAMIC_MESSAGE_MAX)
+    {
+        rdp_server_metric_add(&peer->metrics.limits_rejected, 1u);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
     channel->fragment_expected = pdu.total_length;
     status = rdp_buffer_append(&channel->fragment, pdu.data, pdu.data_len);
     if (status == LIBRDP_STATUS_OK && channel->fragment.length == channel->fragment_expected)
