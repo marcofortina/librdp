@@ -82,7 +82,14 @@ LIBRDP_0.1 {
         librdp_server_peer_send_dynamic_extension_data;
         librdp_server_peer_send_clipboard_monitor_ready;
         librdp_server_peer_send_clipboard_capabilities;
+        librdp_server_peer_send_clipboard_format_list;
         librdp_server_peer_send_clipboard_format_list_response;
+        librdp_server_peer_send_clipboard_format_data_request;
+        librdp_server_peer_send_clipboard_format_data_response;
+        librdp_server_peer_send_clipboard_file_contents_request;
+        librdp_server_peer_send_clipboard_file_contents_response;
+        librdp_server_peer_send_clipboard_lock;
+        librdp_server_peer_send_clipboard_unlock;
         librdp_server_peer_send_echo_response;
         librdp_server_peer_send_display_single_monitor_layout;
         librdp_server_peer_send_graphics_default_caps;

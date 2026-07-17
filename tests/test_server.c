@@ -1583,9 +1583,17 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_dynamic_channel_soft_sync_response soft_sync_response;
     rdp_clipboard_packet clipboard_packet;
     rdp_clipboard_capabilities clipboard_capabilities;
+    rdp_clipboard_format_list clipboard_format_list;
+    rdp_clipboard_format_entry clipboard_format_entry;
+    rdp_clipboard_format_data_request clipboard_format_data_request;
+    rdp_clipboard_format_data_response clipboard_format_data_response;
+    rdp_clipboard_file_contents_request clipboard_file_contents_request;
+    rdp_clipboard_file_contents_response clipboard_file_contents_response;
+    rdp_clipboard_lock clipboard_lock;
     rdp_echo_channel_pdu echo_response;
     rdp_display_control_monitor display_monitors[1];
     uint32_t display_monitor_count = 0;
+    uint32_t clipboard_format_count = 0;
     rdp_graphics_header graphics_header;
     rdp_graphics_create_surface graphics_create;
     rdp_graphics_delete_surface graphics_delete;
@@ -1624,6 +1632,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     librdp_server_status server_status;
     librdp_feature_status feature_status;
     test_server_runtime_context runtime_context;
+    librdp_server_clipboard_format clipboard_formats[1];
     const uint8_t* x224_data = NULL;
     size_t x224_data_len = 0;
     const uint8_t* static_payload = NULL;
@@ -1654,6 +1663,8 @@ static int test_server_loopback_standard_activation_sequence(void)
     uint32_t extension_count_before_static = 0;
     uint32_t error_count_before_udp2 = 0;
     uint8_t client_random[RDP_SECURITY_CLIENT_RANDOM_LEN];
+    static const uint8_t clipboard_name_utf16[] = {'T', 0, 'e', 0, 'x', 0, 't', 0};
+    uint32_t clipboard_clip_data_id = 0x8899aabbu;
     uint8_t presentation_id[16] = {
         0x10, 0x11, 0x12, 0x13,
         0x14, 0x15, 0x16, 0x17,
@@ -1679,6 +1690,10 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&udp2_wire);
     rdp_buffer_init(&udp2_unwrapped);
     memset(&runtime_context, 0, sizeof(runtime_context));
+    memset(clipboard_formats, 0, sizeof(clipboard_formats));
+    clipboard_formats[0].format_id = RDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    clipboard_formats[0].name = clipboard_name_utf16;
+    clipboard_formats[0].name_len = sizeof(clipboard_name_utf16);
     memset(pixels, 0, sizeof(pixels));
     for (size_t pixel_index = 0; pixel_index < sizeof(pixels); pixel_index++)
         pixels[pixel_index] = (uint8_t)pixel_index;
@@ -2813,6 +2828,28 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_clipboard_parse_capabilities(&clipboard_packet, &clipboard_capabilities) == LIBRDP_STATUS_OK);
     SCHECK(clipboard_capabilities.has_general &&
            clipboard_capabilities.general.general_flags == RDP_CLIPBOARD_CAP_USE_LONG_FORMAT_NAMES);
+    SCHECK(librdp_server_peer_send_clipboard_format_list(peer,
+                                                         clipboard_channel_id,
+                                                         clipboard_formats,
+                                                         1,
+                                                         1) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_format_list(&clipboard_packet, &clipboard_format_list) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_format_list_entry_count(&clipboard_format_list, 1, &clipboard_format_count) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(clipboard_format_count == 1);
+    SCHECK(rdp_clipboard_format_list_get_entry(&clipboard_format_list,
+                                               1,
+                                               0,
+                                               &clipboard_format_entry) == LIBRDP_STATUS_OK);
+    SCHECK(clipboard_format_entry.format_id == RDP_CLIPBOARD_FORMAT_UNICODETEXT);
     SCHECK(librdp_server_peer_send_clipboard_format_list_response(peer, clipboard_channel_id, 1) ==
            LIBRDP_STATUS_OK);
     SCHECK(test_server_read_static_channel_data(client_fd,
@@ -2825,6 +2862,108 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
     SCHECK(clipboard_packet.type == RDP_CLIPBOARD_CB_FORMAT_LIST_RESPONSE &&
            (clipboard_packet.flags & RDP_CLIPBOARD_CB_RESPONSE_OK) != 0);
+    SCHECK(librdp_server_peer_send_clipboard_format_data_request(peer,
+                                                                 clipboard_channel_id,
+                                                                 RDP_CLIPBOARD_FORMAT_UNICODETEXT) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_format_data_request(&clipboard_packet, &clipboard_format_data_request) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(clipboard_format_data_request.format_id == RDP_CLIPBOARD_FORMAT_UNICODETEXT);
+    SCHECK(librdp_server_peer_send_clipboard_format_data_response(peer,
+                                                                  clipboard_channel_id,
+                                                                  1,
+                                                                  "abc",
+                                                                  3) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_format_data_response(&clipboard_packet, &clipboard_format_data_response) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(clipboard_format_data_response.response_flags == RDP_CLIPBOARD_CB_RESPONSE_OK &&
+           clipboard_format_data_response.data_len == 3 &&
+           memcmp(clipboard_format_data_response.data, "abc", 3) == 0);
+    SCHECK(librdp_server_peer_send_clipboard_file_contents_request(peer,
+                                                                   clipboard_channel_id,
+                                                                   0x11223344u,
+                                                                   2,
+                                                                   RDP_CLIPBOARD_FILECONTENTS_RANGE,
+                                                                   5,
+                                                                   7,
+                                                                   &clipboard_clip_data_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_file_contents_request(&clipboard_packet, &clipboard_file_contents_request) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(clipboard_file_contents_request.stream_id == 0x11223344u &&
+           clipboard_file_contents_request.lindex == 2 &&
+           clipboard_file_contents_request.flags == RDP_CLIPBOARD_FILECONTENTS_RANGE &&
+           clipboard_file_contents_request.position == 5 &&
+           clipboard_file_contents_request.requested == 7 &&
+           clipboard_file_contents_request.has_clip_data_id &&
+           clipboard_file_contents_request.clip_data_id == clipboard_clip_data_id);
+    SCHECK(librdp_server_peer_send_clipboard_file_contents_response(peer,
+                                                                    clipboard_channel_id,
+                                                                    1,
+                                                                    0x11223344u,
+                                                                    "file",
+                                                                    4) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_file_contents_response(&clipboard_packet, &clipboard_file_contents_response) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(clipboard_file_contents_response.stream_id == 0x11223344u &&
+           clipboard_file_contents_response.data_len == 4 &&
+           memcmp(clipboard_file_contents_response.data, "file", 4) == 0);
+    SCHECK(librdp_server_peer_send_clipboard_lock(peer, clipboard_channel_id, clipboard_clip_data_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_lock(&clipboard_packet, &clipboard_lock) == LIBRDP_STATUS_OK);
+    SCHECK(clipboard_lock.clip_data_id == clipboard_clip_data_id);
+    SCHECK(librdp_server_peer_send_clipboard_unlock(peer, clipboard_channel_id, clipboard_clip_data_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_static_channel_data(client_fd,
+                                                response,
+                                                sizeof(response),
+                                                &response_channel_id,
+                                                &static_payload,
+                                                &static_payload_len));
+    SCHECK(response_channel_id == clipboard_channel_id);
+    SCHECK(rdp_clipboard_parse_packet(static_payload, static_payload_len, &clipboard_packet) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_clipboard_parse_unlock(&clipboard_packet, &clipboard_lock) == LIBRDP_STATUS_OK);
+    SCHECK(clipboard_lock.clip_data_id == clipboard_clip_data_id);
     dvc_packet.length = 0;
     SCHECK(rdp_clipboard_write_monitor_ready(&dvc_packet) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_send_static_extension_data(peer,

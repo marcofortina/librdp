@@ -87,6 +87,7 @@
 #define RDP_SERVER_CREDSSP_MESSAGE_MAX 1048576u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
+#define RDP_SERVER_MAX_CLIPBOARD_FORMATS 4096u
 #define RDP_SERVER_CLIPBOARD_CHANNEL_NAME "cliprdr"
 #define RDP_SERVER_KNOWN_FEATURES                                                                                   \
     ((uint32_t)LIBRDP_FEATURE_AUDIO_OUTPUT | (uint32_t)LIBRDP_FEATURE_AUDIO_INPUT |                                  \
@@ -4063,6 +4064,46 @@ librdp_status librdp_server_peer_send_clipboard_capabilities(librdp_server_peer*
     return status;
 }
 
+librdp_status librdp_server_peer_send_clipboard_format_list(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    const librdp_server_clipboard_format* formats,
+    uint32_t count,
+    int long_names)
+{
+    rdp_clipboard_format_entry* entries = NULL;
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if ((!formats && count > 0) || count > RDP_SERVER_MAX_CLIPBOARD_FORMATS)
+        return count > RDP_SERVER_MAX_CLIPBOARD_FORMATS ? LIBRDP_STATUS_LIMIT_EXCEEDED :
+                                                          LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (count > 0)
+    {
+        entries = (rdp_clipboard_format_entry*)calloc(count, sizeof(*entries));
+        if (!entries)
+            return LIBRDP_STATUS_NO_MEMORY;
+        for (uint32_t i = 0; i < count; i++)
+        {
+            if (!formats[i].name && formats[i].name_len > 0)
+            {
+                free(entries);
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            }
+            entries[i].format_id = formats[i].format_id;
+            entries[i].name = (const uint8_t*)formats[i].name;
+            entries[i].name_len = formats[i].name_len;
+        }
+    }
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_format_list(&payload, entries, count, long_names ? 1 : 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    free(entries);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_clipboard_format_list_response(librdp_server_peer* peer,
                                                                     uint16_t channel_id,
                                                                     int ok)
@@ -4072,6 +4113,114 @@ librdp_status librdp_server_peer_send_clipboard_format_list_response(librdp_serv
 
     rdp_buffer_init(&payload);
     status = rdp_clipboard_write_format_list_response(&payload, ok);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_format_data_request(librdp_server_peer* peer,
+                                                                    uint16_t channel_id,
+                                                                    uint32_t format_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_format_data_request(&payload, format_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_format_data_response(librdp_server_peer* peer,
+                                                                     uint16_t channel_id,
+                                                                     int ok,
+                                                                     const void* data,
+                                                                     size_t data_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_format_data_response(&payload, ok, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_file_contents_request(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    uint32_t stream_id,
+    int32_t lindex,
+    uint32_t flags,
+    uint64_t position,
+    uint32_t requested,
+    const uint32_t* clip_data_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_file_contents_request(&payload,
+                                                       stream_id,
+                                                       lindex,
+                                                       flags,
+                                                       position,
+                                                       requested,
+                                                       clip_data_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_file_contents_response(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    int ok,
+    uint32_t stream_id,
+    const void* data,
+    size_t data_len)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_file_contents_response(&payload, ok, stream_id, data, data_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_lock(librdp_server_peer* peer,
+                                                     uint16_t channel_id,
+                                                     uint32_t clip_data_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_lock(&payload, clip_data_id);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_clipboard_unlock(librdp_server_peer* peer,
+                                                       uint16_t channel_id,
+                                                       uint32_t clip_data_id)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_clipboard_write_unlock(&payload, clip_data_id);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_SERVER_CLIPBOARD_CHANNEL_NAME, &payload);
     rdp_buffer_free(&payload);

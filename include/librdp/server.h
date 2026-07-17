@@ -229,6 +229,23 @@ typedef enum librdp_server_extension_family
 } librdp_server_extension_family;
 
 /**
+ * @brief One clipboard format entry advertised by the server.
+ *
+ * name points to borrowed bytes valid for the duration of the send call. When
+ * long_names is non-zero in librdp_server_peer_send_clipboard_format_list(),
+ * name is UTF-16LE without a required trailing NUL; when long_names is zero,
+ * name is an ASCII format name. name may be NULL only when name_len is zero.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_clipboard_format
+{
+    uint32_t format_id; /**< Clipboard format identifier. */
+    const void* name;   /**< Borrowed format-name bytes, or NULL for unnamed formats. */
+    size_t name_len;    /**< Number of bytes available at name. */
+} librdp_server_clipboard_format;
+
+/**
  * @brief Server-side static virtual-channel data event.
  *
  * name and data are borrowed and valid only until the channel callback
@@ -1494,6 +1511,40 @@ LIBRDP_API librdp_status librdp_server_peer_send_clipboard_capabilities(librdp_s
                                                                         uint32_t general_flags);
 
 /**
+ * @brief Send a clipboard format list on a joined clipboard channel.
+ *
+ * formats is borrowed for the duration of the call. Each entry name is
+ * borrowed and may be NULL only when name_len is zero. long_names selects the
+ * wire encoding expected by the peer: non-zero for UTF-16LE format names, zero
+ * for legacy ASCII names.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] formats Borrowed array of format entries; may be NULL only when
+ * count is zero.
+ * @param[in] count Number of entries in formats.
+ * @param[in] long_names Non-zero to encode long UTF-16LE names; zero for ASCII
+ * names.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-clipboard channel; LIBRDP_STATUS_LIMIT_EXCEEDED
+ * for excessive format counts or encoded payloads; LIBRDP_STATUS_STATE when
+ * the peer is not ACTIVE; transport or allocation errors from the underlying
+ * send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Format names may contain user data; avoid passing sensitive names
+ * when trace unsafe payload mode is enabled.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_format_list(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    const librdp_server_clipboard_format* formats,
+    uint32_t count,
+    int long_names);
+
+/**
  * @brief Send a clipboard format-list response on a joined clipboard channel.
  *
  * @param[in,out] peer Active peer; must not be NULL.
@@ -1510,6 +1561,155 @@ LIBRDP_API librdp_status librdp_server_peer_send_clipboard_capabilities(librdp_s
 LIBRDP_API librdp_status librdp_server_peer_send_clipboard_format_list_response(librdp_server_peer* peer,
                                                                                uint16_t channel_id,
                                                                                int ok);
+
+/**
+ * @brief Send a clipboard format-data request on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] format_id Clipboard format identifier to request.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_format_data_request(librdp_server_peer* peer,
+                                                                              uint16_t channel_id,
+                                                                              uint32_t format_id);
+
+/**
+ * @brief Send a clipboard format-data response on a joined clipboard channel.
+ *
+ * data is borrowed only for the duration of the call and may be NULL only when
+ * data_len is zero. Failed responses must use ok equal to zero and data_len
+ * equal to zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] ok Non-zero sends success; zero sends failure.
+ * @param[in] data Borrowed response bytes; may be NULL only when data_len is
+ * zero.
+ * @param[in] data_len Number of bytes in data.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-clipboard channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the underlying send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Clipboard data can contain sensitive user content and is redacted
+ * by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_format_data_response(librdp_server_peer* peer,
+                                                                               uint16_t channel_id,
+                                                                               int ok,
+                                                                               const void* data,
+                                                                               size_t data_len);
+
+/**
+ * @brief Send a clipboard file-contents request on a joined clipboard channel.
+ *
+ * clip_data_id is optional and borrowed only for the duration of the call.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] stream_id Request correlation identifier.
+ * @param[in] lindex File-list index requested from the peer.
+ * @param[in] flags File contents request flags.
+ * @param[in] position Byte offset for range requests.
+ * @param[in] requested Requested byte count.
+ * @param[in] clip_data_id Optional clipboard lock identifier; may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-clipboard channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the underlying send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_file_contents_request(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    uint32_t stream_id,
+    int32_t lindex,
+    uint32_t flags,
+    uint64_t position,
+    uint32_t requested,
+    const uint32_t* clip_data_id);
+
+/**
+ * @brief Send a clipboard file-contents response on a joined clipboard channel.
+ *
+ * data is borrowed only for the duration of the call and may be NULL only when
+ * data_len is zero. Failed responses must use ok equal to zero and data_len
+ * equal to zero.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] ok Non-zero sends success; zero sends failure.
+ * @param[in] stream_id Request correlation identifier.
+ * @param[in] data Borrowed response bytes; may be NULL only when data_len is
+ * zero.
+ * @param[in] data_len Number of bytes in data.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-clipboard channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport or allocation errors from the underlying send
+ * path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning File clipboard data can contain sensitive user content and is
+ * redacted by default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_file_contents_response(
+    librdp_server_peer* peer,
+    uint16_t channel_id,
+    int ok,
+    uint32_t stream_id,
+    const void* data,
+    size_t data_len);
+
+/**
+ * @brief Send a clipboard lock PDU on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] clip_data_id Clipboard data identifier to lock.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_lock(librdp_server_peer* peer,
+                                                                uint16_t channel_id,
+                                                                uint32_t clip_data_id);
+
+/**
+ * @brief Send a clipboard unlock PDU on a joined clipboard channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static clipboard channel identifier.
+ * @param[in] clip_data_id Clipboard data identifier to unlock.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for a
+ * NULL peer or non-clipboard channel; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; transport or allocation errors from the underlying send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_clipboard_unlock(librdp_server_peer* peer,
+                                                                  uint16_t channel_id,
+                                                                  uint32_t clip_data_id);
 
 /**
  * @brief Send an Echo response on an open ECHO dynamic channel.
