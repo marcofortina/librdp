@@ -92,6 +92,7 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_protocol_core.c
         tests/test_protocol_devices.c
         tests/test_protocol_graphics.c
+        tests/test_protocol_security.c
         tests/test_protocol_transport.c
     )
     target_compile_definitions(test_protocol PRIVATE LIBRDP_TEST_PROTOCOL_MAIN)
@@ -172,6 +173,12 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME common COMMAND test_common)
     add_test(NAME core COMMAND test_core)
     add_test(NAME protocol COMMAND test_protocol)
+    add_test(NAME protocol_core COMMAND test_protocol core)
+    add_test(NAME protocol_channels COMMAND test_protocol channels)
+    add_test(NAME protocol_security COMMAND test_protocol security)
+    add_test(NAME protocol_graphics COMMAND test_protocol graphics)
+    add_test(NAME protocol_devices COMMAND test_protocol devices)
+    add_test(NAME protocol_transport COMMAND test_protocol transport)
     add_test(NAME transport COMMAND test_transport)
     add_test(NAME server COMMAND test_server)
     add_test(NAME server_config COMMAND test_server config)
@@ -200,7 +207,19 @@ if(LIBRDP_BUILD_TESTS)
         PROPERTIES TIMEOUT 30
     )
     set_tests_properties(core PROPERTIES TIMEOUT 60)
-    set_tests_properties(protocol PROPERTIES TIMEOUT 90)
+    set_tests_properties(
+        protocol
+        protocol_channels
+        protocol_security
+        protocol_graphics
+        PROPERTIES TIMEOUT 90
+    )
+    set_tests_properties(
+        protocol_core
+        protocol_devices
+        protocol_transport
+        PROPERTIES TIMEOUT 30
+    )
     set_tests_properties(viewer_backends viewer_cli PROPERTIES TIMEOUT 30)
     set_tests_properties(interop_smoke PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
     add_test(NAME core_optional_backends_off
