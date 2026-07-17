@@ -74,7 +74,11 @@ int rdp_gdi_primary_order_field_bytes(uint8_t order_type, uint8_t* bytes)
     }
 }
 
-static int rdp_gdi_secondary_order_type_valid(uint8_t order_type)
+/*
+ * Keep secondary-order admission in one place so parsers, writers, and
+ * capability tests reject the same unsupported cache families.
+ */
+int rdp_gdi_secondary_order_supported(uint8_t order_type)
 {
     return order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED ||
            order_type == RDP_GDI_SECONDARY_CACHE_COLOR_TABLE ||
@@ -86,7 +90,11 @@ static int rdp_gdi_secondary_order_type_valid(uint8_t order_type)
            order_type == RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3;
 }
 
-static int rdp_gdi_altsec_order_type_valid(uint8_t order_type)
+/*
+ * Alternate secondary support is intentionally bounded to the implemented
+ * runtime dispatch table; higher values remain protocol errors.
+ */
+int rdp_gdi_altsec_order_supported(uint8_t order_type)
 {
     return order_type <= RDP_GDI_ALTSEC_FRAME_MARKER;
 }
@@ -740,7 +748,7 @@ librdp_status rdp_gdi_parse_secondary_order(const void* data,
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((parsed.control_flags & (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY)) !=
             (RDP_GDI_TS_STANDARD | RDP_GDI_TS_SECONDARY) ||
-        !rdp_gdi_secondary_order_type_valid(parsed.order_type))
+        !rdp_gdi_secondary_order_supported(parsed.order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.actual_length = (size_t)parsed.order_length + 13u;
     if (parsed.actual_length > length || parsed.actual_length < 6u)
@@ -761,7 +769,7 @@ librdp_status rdp_gdi_write_secondary_order(rdp_buffer* buffer,
     librdp_status status = LIBRDP_STATUS_OK;
     size_t start = 0;
 
-    if (!buffer || !rdp_gdi_secondary_order_type_valid(order_type) ||
+    if (!buffer || !rdp_gdi_secondary_order_supported(order_type) ||
         (!payload && payload_len > 0) || payload_len < 7u ||
         payload_len - 7u > UINT16_MAX)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -1254,7 +1262,7 @@ librdp_status rdp_gdi_parse_altsec_order(const void* data,
     if ((parsed.control_flags & 0x03u) != RDP_GDI_TS_SECONDARY)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     parsed.order_type = (uint8_t)(parsed.control_flags >> 2);
-    if (!rdp_gdi_altsec_order_type_valid(parsed.order_type))
+    if (!rdp_gdi_altsec_order_supported(parsed.order_type))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     status = rdp_gdi_altsec_payload_length(parsed.order_type,
                                            stream.data + stream.position,
@@ -1278,7 +1286,7 @@ librdp_status rdp_gdi_write_altsec_order(rdp_buffer* buffer,
     uint8_t control_flags = 0;
     size_t start = 0;
 
-    if (!buffer || !rdp_gdi_altsec_order_type_valid(order_type) ||
+    if (!buffer || !rdp_gdi_altsec_order_supported(order_type) ||
         (!payload && payload_len > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     start = buffer->length;

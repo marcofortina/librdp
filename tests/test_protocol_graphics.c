@@ -3243,6 +3243,46 @@ static int test_gdi_orders(void)
     rdp_buffer_init(&payload);
     rdp_buffer_init(&capability);
 
+    {
+        static const uint8_t supported_secondary[] = {
+            RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+            RDP_GDI_SECONDARY_CACHE_COLOR_TABLE,
+            RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED,
+            RDP_GDI_SECONDARY_CACHE_GLYPH,
+            RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED_REV2,
+            RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV2,
+            RDP_GDI_SECONDARY_CACHE_BRUSH,
+            RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3
+        };
+        static const uint8_t unsupported_secondary[] = {0x06u, 0x09u, 0xffu};
+        static const uint8_t supported_altsec[] = {
+            RDP_GDI_ALTSEC_SWITCH_SURFACE,
+            RDP_GDI_ALTSEC_CREATE_OFFSCREEN_BITMAP,
+            RDP_GDI_ALTSEC_STREAM_BITMAP_FIRST,
+            RDP_GDI_ALTSEC_STREAM_BITMAP_NEXT,
+            RDP_GDI_ALTSEC_CREATE_NINEGRID_BITMAP,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_FIRST,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_NEXT,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_END,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_FIRST,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_NEXT,
+            RDP_GDI_ALTSEC_DRAW_GDIPLUS_CACHE_END,
+            RDP_GDI_ALTSEC_WINDOW,
+            RDP_GDI_ALTSEC_COMPDESK_FIRST,
+            RDP_GDI_ALTSEC_FRAME_MARKER
+        };
+        static const uint8_t unsupported_altsec[] = {0x0eu, 0x80u, 0xffu};
+
+        for (i = 0; i < sizeof(supported_secondary); i++)
+            PCHECK(rdp_gdi_secondary_order_supported(supported_secondary[i]));
+        for (i = 0; i < sizeof(unsupported_secondary); i++)
+            PCHECK(!rdp_gdi_secondary_order_supported(unsupported_secondary[i]));
+        for (i = 0; i < sizeof(supported_altsec); i++)
+            PCHECK(rdp_gdi_altsec_order_supported(supported_altsec[i]));
+        for (i = 0; i < sizeof(unsupported_altsec); i++)
+            PCHECK(!rdp_gdi_altsec_order_supported(unsupported_altsec[i]));
+    }
+
     PCHECK(rdp_gdi_write_secondary_order(&secondary,
                                          0x0400u,
                                          RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED,
