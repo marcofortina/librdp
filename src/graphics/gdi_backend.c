@@ -1045,6 +1045,9 @@ static librdp_status rdp_gdi_backend_gdiplus_read_point(const uint8_t* data,
 #define RDP_GDIPLUS_RECORD_SERIALIZABLE_OBJECT 0x4038u
 #define RDP_GDIPLUS_RECORD_SET_TS_GRAPHICS 0x4039u
 #define RDP_GDIPLUS_RECORD_SET_TS_CLIP 0x403au
+#define RDP_GDIPLUS_RECORD_FLAG_DIRECT_COLOR 0x8000u
+#define RDP_GDIPLUS_RECORD_FLAG_COMPRESSED_POINTS 0x4000u
+#define RDP_GDIPLUS_RECORD_FLAG_CLOSE_OR_WINDING 0x2000u
 
 typedef struct rdp_gdi_backend_gdiplus_object
 {
@@ -1167,6 +1170,21 @@ static int rdp_gdi_backend_gdiplus_parse_solid_brush(const uint8_t* data,
     return 1;
 }
 
+static uint32_t rdp_gdi_backend_gdiplus_representative_brush_color(const uint8_t* data,
+                                                                   size_t length)
+{
+    uint32_t brush_type = 0u;
+
+    if (!data || length < 12u)
+        return 0x808080u;
+    brush_type = rdp_gdi_backend_read_u32_le(data + 4u);
+    if (brush_type == 0u)
+        return rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(data + 8u));
+    if (length >= 16u)
+        return rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(data + length - 4u));
+    return (brush_type * 0x00214365u) & 0x00ffffffu;
+}
+
 static int rdp_gdi_backend_gdiplus_parse_solid_pen(const uint8_t* data,
                                                    size_t length,
                                                    uint32_t* color,
@@ -1253,8 +1271,8 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
     {
         if (!rdp_gdi_backend_gdiplus_parse_solid_brush(data, length, &color))
         {
-            object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
-            object->color = 0;
+            object->kind = RDP_GDIPLUS_OBJECT_KIND_BRUSH;
+            object->color = rdp_gdi_backend_gdiplus_representative_brush_color(data, length);
             object->pen_width = 1u;
             object->active = 1u;
             return 1;
@@ -1833,6 +1851,328 @@ static librdp_status rdp_gdi_backend_render_gdiplus_clear(rdp_gdi_backend_kind b
     return status;
 }
 
+static size_t rdp_gdi_backend_gdiplus_point_record_size(uint16_t flags)
+{
+    if ((flags & RDP_GDIPLUS_PATH_POINT_FLAGS_RELATIVE) != 0u)
+        return 2u;
+    return (flags & RDP_GDIPLUS_RECORD_FLAG_COMPRESSED_POINTS) != 0u ? 4u : 8u;
+}
+
+/*
+ * Purpose: decode a bounded EMF+ point array shared by line, curve and Bezier
+ * records. Invariants: relative deltas are accumulated before any transform,
+ * and padding is limited to EMF+ record alignment. Failure policy: malformed
+ * point counts fail before allocating or drawing.
+ */
+static librdp_status rdp_gdi_backend_gdiplus_read_point_array(const uint8_t* data,
+                                                              size_t length,
+                                                              uint16_t flags,
+                                                              uint32_t count,
+                                                              rdp_gdi_backend_point** points)
+{
+    rdp_gdi_backend_point* decoded = NULL;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
+    size_t total_size = 0u;
+    uint32_t i = 0u;
+    int32_t current_x = 0;
+    int32_t current_y = 0;
+
+    if (!points || (!data && length > 0u) || count == 0u ||
+        count > RDP_GDIPLUS_MAX_PATH_POINTS || point_size > (size_t)-1 / count)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    total_size = point_size * count;
+    if (length < total_size || length - total_size > 3u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    decoded = (rdp_gdi_backend_point*)calloc(count, sizeof(*decoded));
+    if (!decoded)
+        return LIBRDP_STATUS_NO_MEMORY;
+    for (i = 0u; i < count; i++)
+    {
+        if ((flags & RDP_GDIPLUS_PATH_POINT_FLAGS_RELATIVE) != 0u)
+        {
+            current_x += (int8_t)data[(size_t)i * point_size];
+            current_y += (int8_t)data[((size_t)i * point_size) + 1u];
+            decoded[i].x = current_x;
+            decoded[i].y = current_y;
+        }
+        else
+        {
+            size_t used = 0u;
+            librdp_status status =
+                rdp_gdi_backend_gdiplus_read_point(data + ((size_t)i * point_size),
+                                                   point_size,
+                                                   (flags & RDP_GDIPLUS_RECORD_FLAG_COMPRESSED_POINTS) != 0u,
+                                                   &decoded[i],
+                                                   &used);
+
+            if (status != LIBRDP_STATUS_OK)
+            {
+                free(decoded);
+                return status;
+            }
+            (void)used;
+        }
+    }
+    *points = decoded;
+    return LIBRDP_STATUS_OK;
+}
+
+static void rdp_gdi_backend_gdiplus_transform_points(const rdp_gdi_backend_gdiplus_context* context,
+                                                     rdp_gdi_backend_point* points,
+                                                     uint32_t count)
+{
+    uint32_t i = 0u;
+
+    if (!points)
+        return;
+    for (i = 0u; i < count; i++)
+        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[i]);
+}
+
+static librdp_status rdp_gdi_backend_gdiplus_draw_polyline(rdp_gdi_backend_kind backend,
+                                                           librdp_surface* surface,
+                                                           const rdp_gdi_backend_gdiplus_context* context,
+                                                           const rdp_gdi_backend_point* points,
+                                                           uint32_t count,
+                                                           uint32_t pen_width,
+                                                           uint32_t color,
+                                                           int close,
+                                                           uint32_t* rasterized)
+{
+    uint32_t i = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!points || count < 2u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (i = 1u; i < count && status == LIBRDP_STATUS_OK; i++)
+    {
+        uint32_t dirty_left = UINT32_MAX;
+        uint32_t dirty_top = UINT32_MAX;
+        uint32_t dirty_right = 0u;
+        uint32_t dirty_bottom = 0u;
+
+        status = rdp_gdi_backend_draw_line(backend,
+                                           surface,
+                                           points[i - 1u].x,
+                                           points[i - 1u].y,
+                                           points[i].x,
+                                           points[i].y,
+                                           pen_width,
+                                           color,
+                                           context ? &context->clip : NULL,
+                                           &dirty_left,
+                                           &dirty_top,
+                                           &dirty_right,
+                                           &dirty_bottom);
+    }
+    if (close && status == LIBRDP_STATUS_OK)
+    {
+        uint32_t dirty_left = UINT32_MAX;
+        uint32_t dirty_top = UINT32_MAX;
+        uint32_t dirty_right = 0u;
+        uint32_t dirty_bottom = 0u;
+
+        status = rdp_gdi_backend_draw_line(backend,
+                                           surface,
+                                           points[count - 1u].x,
+                                           points[count - 1u].y,
+                                           points[0].x,
+                                           points[0].y,
+                                           pen_width,
+                                           color,
+                                           context ? &context->clip : NULL,
+                                           &dirty_left,
+                                           &dirty_top,
+                                           &dirty_right,
+                                           &dirty_bottom);
+    }
+    if (status == LIBRDP_STATUS_OK && rasterized)
+        (*rasterized)++;
+    return status;
+}
+
+static int rdp_gdi_backend_gdiplus_append_curve_point(rdp_gdi_backend_point* points,
+                                                      uint32_t* count,
+                                                      uint32_t capacity,
+                                                      float x,
+                                                      float y)
+{
+    rdp_gdi_backend_point point;
+
+    point.x = rdp_gdi_backend_gdiplus_round_i32(x);
+    point.y = rdp_gdi_backend_gdiplus_round_i32(y);
+    return rdp_gdi_backend_gdiplus_append_flattened_point(points, count, capacity, point);
+}
+
+/*
+ * Purpose: flatten EMF+ cardinal spline records before software/native line
+ * dispatch. Invariants: offset and segment count select only valid adjacent
+ * point ranges; the generated point array is bounded. Failure policy: invalid
+ * curve ranges fail the stream instead of falling back to a misleading polyline.
+ */
+static int rdp_gdi_backend_gdiplus_flatten_cardinal_curve(const rdp_gdi_backend_point* source,
+                                                          uint32_t count,
+                                                          float tension,
+                                                          int closed,
+                                                          uint32_t offset,
+                                                          uint32_t segment_count,
+                                                          rdp_gdi_backend_point** flattened,
+                                                          uint32_t* flattened_count)
+{
+    rdp_gdi_backend_point* out = NULL;
+    uint32_t out_count = 0u;
+    uint32_t segment = 0u;
+    uint32_t max_segments = closed ? count : count - 1u;
+
+    if (!source || !flattened || !flattened_count || count < 2u ||
+        count > RDP_GDIPLUS_MAX_PATH_POINTS || offset >= max_segments ||
+        segment_count == 0u || segment_count > max_segments - offset)
+        return 0;
+    out = (rdp_gdi_backend_point*)calloc(RDP_GDIPLUS_MAX_FLATTENED_POINTS, sizeof(*out));
+    if (!out)
+        return 0;
+    if (tension < 0.0001f)
+    {
+        for (segment = 0u; segment <= segment_count; segment++)
+        {
+            uint32_t index = closed ? ((offset + segment) % count) : offset + segment;
+
+            if (!rdp_gdi_backend_gdiplus_append_flattened_point(out,
+                                                               &out_count,
+                                                               RDP_GDIPLUS_MAX_FLATTENED_POINTS,
+                                                               source[index]))
+                break;
+        }
+    }
+    else
+    {
+        for (segment = offset; segment < offset + segment_count; segment++)
+        {
+            uint32_t step = 0u;
+            uint32_t p1_index = closed ? (segment % count) : segment;
+            uint32_t p2_index = closed ? ((segment + 1u) % count) : segment + 1u;
+            uint32_t p0_index = 0u;
+            uint32_t p3_index = 0u;
+            rdp_gdi_backend_point p0;
+            rdp_gdi_backend_point p1 = source[p1_index];
+            rdp_gdi_backend_point p2 = source[p2_index];
+            rdp_gdi_backend_point p3;
+
+            if (closed)
+            {
+                p0_index = segment == 0u ? count - 1u : segment - 1u;
+                p3_index = (segment + 2u) % count;
+            }
+            else
+            {
+                p0_index = segment == 0u ? p1_index : segment - 1u;
+                p3_index = segment + 2u < count ? segment + 2u : p2_index;
+            }
+            p0 = source[p0_index];
+            p3 = source[p3_index];
+            if (out_count == 0u &&
+                !rdp_gdi_backend_gdiplus_append_flattened_point(out,
+                                                               &out_count,
+                                                               RDP_GDIPLUS_MAX_FLATTENED_POINTS,
+                                                               p1))
+                break;
+            for (step = 1u; step <= 16u; step++)
+            {
+                float t = (float)step / 16.0f;
+                float t2 = t * t;
+                float t3 = t2 * t;
+                float h1 = (2.0f * t3) - (3.0f * t2) + 1.0f;
+                float h2 = (-2.0f * t3) + (3.0f * t2);
+                float h3 = t3 - (2.0f * t2) + t;
+                float h4 = t3 - t2;
+                float m1x = tension * (float)(p2.x - p0.x);
+                float m1y = tension * (float)(p2.y - p0.y);
+                float m2x = tension * (float)(p3.x - p1.x);
+                float m2y = tension * (float)(p3.y - p1.y);
+                float x = (h1 * (float)p1.x) + (h2 * (float)p2.x) + (h3 * m1x) + (h4 * m2x);
+                float y = (h1 * (float)p1.y) + (h2 * (float)p2.y) + (h3 * m1y) + (h4 * m2y);
+
+                if (!rdp_gdi_backend_gdiplus_append_curve_point(out,
+                                                               &out_count,
+                                                               RDP_GDIPLUS_MAX_FLATTENED_POINTS,
+                                                               x,
+                                                               y))
+                    break;
+            }
+        }
+    }
+    if (out_count < 2u)
+    {
+        free(out);
+        return 0;
+    }
+    *flattened = out;
+    *flattened_count = out_count;
+    return 1;
+}
+
+static int rdp_gdi_backend_gdiplus_flatten_beziers(const rdp_gdi_backend_point* source,
+                                                   uint32_t count,
+                                                   rdp_gdi_backend_point** flattened,
+                                                   uint32_t* flattened_count)
+{
+    rdp_gdi_backend_point* out = NULL;
+    uint32_t out_count = 0u;
+    uint32_t i = 0u;
+
+    if (!source || !flattened || !flattened_count || count < 4u ||
+        ((count - 1u) % 3u) != 0u || count > RDP_GDIPLUS_MAX_PATH_POINTS)
+        return 0;
+    out = (rdp_gdi_backend_point*)calloc(RDP_GDIPLUS_MAX_FLATTENED_POINTS, sizeof(*out));
+    if (!out)
+        return 0;
+    if (!rdp_gdi_backend_gdiplus_append_flattened_point(out,
+                                                       &out_count,
+                                                       RDP_GDIPLUS_MAX_FLATTENED_POINTS,
+                                                       source[0]))
+    {
+        free(out);
+        return 0;
+    }
+    for (i = 0u; i + 3u < count; i += 3u)
+    {
+        uint32_t step = 0u;
+        rdp_gdi_backend_point p0 = source[i];
+        rdp_gdi_backend_point p1 = source[i + 1u];
+        rdp_gdi_backend_point p2 = source[i + 2u];
+        rdp_gdi_backend_point p3 = source[i + 3u];
+
+        for (step = 1u; step <= 16u; step++)
+        {
+            float t = (float)step / 16.0f;
+            float mt = 1.0f - t;
+            float x = (mt * mt * mt * (float)p0.x) +
+                      (3.0f * mt * mt * t * (float)p1.x) +
+                      (3.0f * mt * t * t * (float)p2.x) +
+                      (t * t * t * (float)p3.x);
+            float y = (mt * mt * mt * (float)p0.y) +
+                      (3.0f * mt * mt * t * (float)p1.y) +
+                      (3.0f * mt * t * t * (float)p2.y) +
+                      (t * t * t * (float)p3.y);
+
+            if (!rdp_gdi_backend_gdiplus_append_curve_point(out,
+                                                           &out_count,
+                                                           RDP_GDIPLUS_MAX_FLATTENED_POINTS,
+                                                           x,
+                                                           y))
+                break;
+        }
+    }
+    if (out_count < 2u)
+    {
+        free(out);
+        return 0;
+    }
+    *flattened = out;
+    *flattened_count = out_count;
+    return 1;
+}
+
 static librdp_status rdp_gdi_backend_render_gdiplus_draw_rects(rdp_gdi_backend_kind backend,
                                                                librdp_surface* surface,
                                                                const rdp_gdi_backend_gdiplus_context* context,
@@ -2004,11 +2344,9 @@ static librdp_status rdp_gdi_backend_render_gdiplus_points(rdp_gdi_backend_kind 
 {
     uint32_t brush_or_pen = 0;
     uint32_t count = 0;
-    uint32_t i = 0;
     uint32_t color = 0;
     uint32_t pen_width = 1u;
-    int compressed = (flags & 0x4000u) != 0;
-    size_t point_size = compressed ? 4u : 8u;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
     rdp_gdi_backend_point* points = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -2033,26 +2371,14 @@ static librdp_status rdp_gdi_backend_render_gdiplus_points(rdp_gdi_backend_kind 
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     if ((fill_polygon && count < 3u) || (!fill_polygon && count < 2u))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    points = (rdp_gdi_backend_point*)calloc(count, sizeof(*points));
-    if (!points)
-        return LIBRDP_STATUS_NO_MEMORY;
-    for (i = 0; i < count; i++)
-    {
-        size_t used = 0;
-
-        status = rdp_gdi_backend_gdiplus_read_point(payload + 8u + ((size_t)i * point_size),
-                                                    point_size,
-                                                    compressed,
-                                                    &points[i],
-                                                    &used);
-        if (status != LIBRDP_STATUS_OK)
-        {
-            free(points);
-            return status;
-        }
-        (void)used;
-        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[i]);
-    }
+    status = rdp_gdi_backend_gdiplus_read_point_array(payload + 8u,
+                                                      data_size - 8u,
+                                                      flags,
+                                                      count,
+                                                      &points);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_gdi_backend_gdiplus_transform_points(context, points, count);
     if (fill_polygon)
     {
         status = rdp_gdi_backend_fill_polygon(backend,
@@ -2073,30 +2399,347 @@ static librdp_status rdp_gdi_backend_render_gdiplus_points(rdp_gdi_backend_kind 
     }
     else
     {
-        for (i = 1; i < count && status == LIBRDP_STATUS_OK; i++)
-        {
-            uint32_t dirty_left = UINT32_MAX;
-            uint32_t dirty_top = UINT32_MAX;
-            uint32_t dirty_right = 0;
-            uint32_t dirty_bottom = 0;
-
-            status = rdp_gdi_backend_draw_line(backend,
-                                               surface,
-                                               points[i - 1u].x,
-                                               points[i - 1u].y,
-                                               points[i].x,
-                                               points[i].y,
-                                               pen_width,
-                                               color,
-                                               context ? &context->clip : NULL,
-                                               &dirty_left,
-                                               &dirty_top,
-                                               &dirty_right,
-                                               &dirty_bottom);
-        }
-        if (status == LIBRDP_STATUS_OK && rasterized)
-            (*rasterized)++;
+        status = rdp_gdi_backend_gdiplus_draw_polyline(backend,
+                                                       surface,
+                                                       context,
+                                                       points,
+                                                       count,
+                                                       pen_width,
+                                                       color,
+                                                       0,
+                                                       rasterized);
     }
+    free(points);
+    return status;
+}
+
+static librdp_status rdp_gdi_backend_render_gdiplus_draw_lines(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    uint16_t flags,
+    const uint8_t* payload,
+    uint32_t data_size,
+    uint32_t* rasterized,
+    uint32_t* unsupported)
+{
+    uint32_t count = 0u;
+    uint32_t color = 0u;
+    uint32_t pen_width = 1u;
+    rdp_gdi_backend_point* points = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
+    uint32_t token = flags & 0xffu;
+    size_t point_offset = 4u;
+
+    if (!payload || data_size < 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    count = rdp_gdi_backend_read_u32_le(payload);
+    if (count == 0u || count > RDP_GDIPLUS_MAX_PATH_POINTS ||
+        point_size > (size_t)-1 / count ||
+        data_size != 4u + ((uint32_t)point_size * count))
+    {
+        if (data_size < 8u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        token = rdp_gdi_backend_read_u32_le(payload);
+        count = rdp_gdi_backend_read_u32_le(payload + 4u);
+        point_offset = 8u;
+        if (count == 0u || count > RDP_GDIPLUS_MAX_PATH_POINTS ||
+            point_size > (size_t)-1 / count ||
+            data_size != 8u + ((uint32_t)point_size * count))
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
+                                                    flags,
+                                                    token,
+                                                    RDP_GDIPLUS_OBJECT_KIND_PEN,
+                                                    &color,
+                                                    &pen_width))
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_gdi_backend_gdiplus_read_point_array(payload + point_offset,
+                                                      data_size - point_offset,
+                                                      flags,
+                                                      count,
+                                                      &points);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    rdp_gdi_backend_gdiplus_transform_points(context, points, count);
+    status = rdp_gdi_backend_gdiplus_draw_polyline(backend,
+                                                   surface,
+                                                   context,
+                                                   points,
+                                                   count,
+                                                   pen_width,
+                                                   color,
+                                                   (flags & RDP_GDIPLUS_RECORD_FLAG_CLOSE_OR_WINDING) != 0u,
+                                                   rasterized);
+    free(points);
+    return status;
+}
+
+/*
+ * Purpose: render EMF+ FillClosedCurve and DrawClosedCurve records from their
+ * typed cardinal-spline layout. Invariants: brush/pen resolution is performed
+ * before curve allocation, and flattened points are transformed once. Failure
+ * policy: invalid counts, ranges or object references do not produce partial
+ * output.
+ */
+static librdp_status rdp_gdi_backend_render_gdiplus_closed_curve(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    uint16_t flags,
+    const uint8_t* payload,
+    uint32_t data_size,
+    uint32_t* rasterized,
+    uint32_t* unsupported,
+    int fill)
+{
+    uint32_t color = 0u;
+    uint32_t pen_width = 1u;
+    uint32_t token = flags & 0xffu;
+    uint32_t count = 0u;
+    float tension = 0.5f;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
+    size_t point_offset = fill ? 12u : 8u;
+    rdp_gdi_backend_point* points = NULL;
+    rdp_gdi_backend_point* flattened = NULL;
+    uint32_t flattened_count = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!payload || data_size < point_offset)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (fill)
+    {
+        token = rdp_gdi_backend_read_u32_le(payload);
+        tension = rdp_gdi_backend_read_float_le(payload + 4u);
+        count = rdp_gdi_backend_read_u32_le(payload + 8u);
+    }
+    else
+    {
+        tension = rdp_gdi_backend_read_float_le(payload);
+        count = rdp_gdi_backend_read_u32_le(payload + 4u);
+    }
+    if (count < 2u || count > RDP_GDIPLUS_MAX_PATH_POINTS ||
+        point_size > (size_t)-1 / count ||
+        data_size != point_offset + ((uint32_t)point_size * count))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
+                                                    flags,
+                                                    token,
+                                                    fill ? RDP_GDIPLUS_OBJECT_KIND_BRUSH :
+                                                           RDP_GDIPLUS_OBJECT_KIND_PEN,
+                                                    &color,
+                                                    &pen_width))
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_gdi_backend_gdiplus_read_point_array(payload + point_offset,
+                                                      data_size - point_offset,
+                                                      flags,
+                                                      count,
+                                                      &points);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!rdp_gdi_backend_gdiplus_flatten_cardinal_curve(points,
+                                                        count,
+                                                        tension,
+                                                        1,
+                                                        0,
+                                                        count,
+                                                        &flattened,
+                                                        &flattened_count))
+    {
+        free(points);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    rdp_gdi_backend_gdiplus_transform_points(context, flattened, flattened_count);
+    if (fill)
+        status = rdp_gdi_backend_fill_polygon(backend,
+                                              surface,
+                                              flattened,
+                                              flattened_count,
+                                              (flags & RDP_GDIPLUS_RECORD_FLAG_CLOSE_OR_WINDING) != 0u ? 2u : 1u,
+                                              color,
+                                              context ? &context->clip : NULL,
+                                              NULL,
+                                              NULL,
+                                              NULL,
+                                              NULL);
+    else
+        status = rdp_gdi_backend_gdiplus_draw_polyline(backend,
+                                                       surface,
+                                                       context,
+                                                       flattened,
+                                                       flattened_count,
+                                                       pen_width,
+                                                       color,
+                                                       1,
+                                                       NULL);
+    if (status == LIBRDP_STATUS_INVALID_ARGUMENT)
+        status = LIBRDP_STATUS_OK;
+    if (status == LIBRDP_STATUS_OK && rasterized)
+        (*rasterized)++;
+    free(flattened);
+    free(points);
+    return status;
+}
+
+/*
+ * Purpose: render EMF+ DrawCurve with explicit offset and segment count.
+ * Invariants: selected segments remain within the source point array and the
+ * flattened polyline is bounded. Failure policy: malformed spline ranges are
+ * protocol errors rather than silently drawing a different curve.
+ */
+static librdp_status rdp_gdi_backend_render_gdiplus_draw_curve(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    uint16_t flags,
+    const uint8_t* payload,
+    uint32_t data_size,
+    uint32_t* rasterized,
+    uint32_t* unsupported)
+{
+    uint32_t count = 0u;
+    uint32_t offset = 0u;
+    uint32_t segment_count = 0u;
+    uint32_t color = 0u;
+    uint32_t pen_width = 1u;
+    float tension = 0.0f;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
+    rdp_gdi_backend_point* points = NULL;
+    rdp_gdi_backend_point* flattened = NULL;
+    uint32_t flattened_count = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!payload || data_size < 16u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    tension = rdp_gdi_backend_read_float_le(payload);
+    offset = rdp_gdi_backend_read_u32_le(payload + 4u);
+    segment_count = rdp_gdi_backend_read_u32_le(payload + 8u);
+    count = rdp_gdi_backend_read_u32_le(payload + 12u);
+    if (count < 2u || count > RDP_GDIPLUS_MAX_PATH_POINTS ||
+        point_size > (size_t)-1 / count ||
+        data_size != 16u + ((uint32_t)point_size * count))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
+                                                    flags,
+                                                    flags & 0xffu,
+                                                    RDP_GDIPLUS_OBJECT_KIND_PEN,
+                                                    &color,
+                                                    &pen_width))
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_gdi_backend_gdiplus_read_point_array(payload + 16u,
+                                                      data_size - 16u,
+                                                      flags,
+                                                      count,
+                                                      &points);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!rdp_gdi_backend_gdiplus_flatten_cardinal_curve(points,
+                                                        count,
+                                                        tension,
+                                                        0,
+                                                        offset,
+                                                        segment_count,
+                                                        &flattened,
+                                                        &flattened_count))
+    {
+        free(points);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    rdp_gdi_backend_gdiplus_transform_points(context, flattened, flattened_count);
+    status = rdp_gdi_backend_gdiplus_draw_polyline(backend,
+                                                   surface,
+                                                   context,
+                                                   flattened,
+                                                   flattened_count,
+                                                   pen_width,
+                                                   color,
+                                                   0,
+                                                   rasterized);
+    free(flattened);
+    free(points);
+    return status;
+}
+
+/*
+ * Purpose: render EMF+ DrawBeziers as connected cubic Bezier segments.
+ * Invariants: the point count must be 1+3n and each segment is flattened into
+ * a bounded deterministic polyline. Failure policy: malformed segment counts
+ * fail before drawing.
+ */
+static librdp_status rdp_gdi_backend_render_gdiplus_draw_beziers(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    uint16_t flags,
+    const uint8_t* payload,
+    uint32_t data_size,
+    uint32_t* rasterized,
+    uint32_t* unsupported)
+{
+    uint32_t count = 0u;
+    uint32_t color = 0u;
+    uint32_t pen_width = 1u;
+    size_t point_size = rdp_gdi_backend_gdiplus_point_record_size(flags);
+    rdp_gdi_backend_point* points = NULL;
+    rdp_gdi_backend_point* flattened = NULL;
+    uint32_t flattened_count = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!payload || data_size < 4u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    count = rdp_gdi_backend_read_u32_le(payload);
+    if (count < 4u || count > RDP_GDIPLUS_MAX_PATH_POINTS ||
+        ((count - 1u) % 3u) != 0u || point_size > (size_t)-1 / count ||
+        data_size != 4u + ((uint32_t)point_size * count))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
+                                                    flags,
+                                                    flags & 0xffu,
+                                                    RDP_GDIPLUS_OBJECT_KIND_PEN,
+                                                    &color,
+                                                    &pen_width))
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    status = rdp_gdi_backend_gdiplus_read_point_array(payload + 4u,
+                                                      data_size - 4u,
+                                                      flags,
+                                                      count,
+                                                      &points);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!rdp_gdi_backend_gdiplus_flatten_beziers(points, count, &flattened, &flattened_count))
+    {
+        free(points);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    rdp_gdi_backend_gdiplus_transform_points(context, flattened, flattened_count);
+    status = rdp_gdi_backend_gdiplus_draw_polyline(backend,
+                                                   surface,
+                                                   context,
+                                                   flattened,
+                                                   flattened_count,
+                                                   pen_width,
+                                                   color,
+                                                   0,
+                                                   rasterized);
+    free(flattened);
     free(points);
     return status;
 }
@@ -2229,6 +2872,22 @@ static librdp_status rdp_gdi_backend_render_gdiplus_draw_ellipse(rdp_gdi_backend
     return status;
 }
 
+static librdp_status rdp_gdi_backend_render_gdiplus_arc_points(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    int32_t x,
+    int32_t y,
+    uint32_t width,
+    uint32_t height,
+    float start_angle,
+    float sweep_angle,
+    uint32_t color,
+    uint32_t pen_width,
+    int fill_pie,
+    int close_pie,
+    uint32_t* rasterized);
+
 static librdp_status rdp_gdi_backend_render_gdiplus_pie_or_arc(rdp_gdi_backend_kind backend,
                                                                librdp_surface* surface,
                                                                const rdp_gdi_backend_gdiplus_context* context,
@@ -2247,6 +2906,8 @@ static librdp_status rdp_gdi_backend_render_gdiplus_pie_or_arc(rdp_gdi_backend_k
     uint32_t width = 0;
     uint32_t height = 0;
     size_t used = 0;
+    float start_angle = 0.0f;
+    float sweep_angle = 0.0f;
     int compressed = (flags & 0x4000u) != 0;
     uint8_t expected_kind = record_type == RDP_GDIPLUS_RECORD_FILL_PIE ?
                                 RDP_GDIPLUS_OBJECT_KIND_BRUSH :
@@ -2256,6 +2917,8 @@ static librdp_status rdp_gdi_backend_render_gdiplus_pie_or_arc(rdp_gdi_backend_k
     if (data_size != (compressed ? 20u : 28u))
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     brush_or_pen = rdp_gdi_backend_read_u32_le(payload);
+    start_angle = rdp_gdi_backend_read_float_le(payload + 4u);
+    sweep_angle = rdp_gdi_backend_read_float_le(payload + 8u);
     if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
                                                     flags,
                                                     brush_or_pen,
@@ -2278,33 +2941,20 @@ static librdp_status rdp_gdi_backend_render_gdiplus_pie_or_arc(rdp_gdi_backend_k
     if (status != LIBRDP_STATUS_OK)
         return status;
     (void)used;
-    status = rdp_gdi_backend_gdiplus_transform_rect(context, &x, &y, &width, &height);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    if (record_type == RDP_GDIPLUS_RECORD_FILL_PIE)
-        status = rdp_gdi_backend_fill_ellipse(backend,
-                                              surface,
-                                              x,
-                                              y,
-                                              width,
-                                              height,
-                                              color,
-                                              context ? &context->clip : NULL);
-    else
-        status = rdp_gdi_backend_draw_ellipse(backend,
-                                              surface,
-                                              x,
-                                              y,
-                                              width,
-                                              height,
-                                              pen_width,
-                                              color,
-                                              context ? &context->clip : NULL);
-    if (status == LIBRDP_STATUS_INVALID_ARGUMENT)
-        return LIBRDP_STATUS_OK;
-    if (status == LIBRDP_STATUS_OK && rasterized)
-        (*rasterized)++;
-    return status;
+    return rdp_gdi_backend_render_gdiplus_arc_points(backend,
+                                                     surface,
+                                                     context,
+                                                     x,
+                                                     y,
+                                                     width,
+                                                     height,
+                                                     start_angle,
+                                                     sweep_angle,
+                                                     color,
+                                                     pen_width,
+                                                     record_type == RDP_GDIPLUS_RECORD_FILL_PIE,
+                                                     record_type == RDP_GDIPLUS_RECORD_DRAW_PIE,
+                                                     rasterized);
 }
 
 static librdp_status rdp_gdi_backend_render_gdiplus_path_object(
@@ -3364,6 +4014,148 @@ static float rdp_gdi_backend_gdiplus_cos_approx(float radians)
 }
 
 /*
+ * Purpose: rasterize EMF+ arc and pie records using the record start/sweep
+ * angles instead of falling back to a full ellipse. Invariants: generated
+ * points are stack-bounded and transformed before dispatch. Failure policy:
+ * invalid geometry is rejected before drawing and clipped output is treated as
+ * a successful no-op.
+ */
+static librdp_status rdp_gdi_backend_render_gdiplus_arc_points(
+    rdp_gdi_backend_kind backend,
+    librdp_surface* surface,
+    const rdp_gdi_backend_gdiplus_context* context,
+    int32_t x,
+    int32_t y,
+    uint32_t width,
+    uint32_t height,
+    float start_angle,
+    float sweep_angle,
+    uint32_t color,
+    uint32_t pen_width,
+    int fill_pie,
+    int close_pie,
+    uint32_t* rasterized)
+{
+    const uint32_t segments = 32u;
+    rdp_gdi_backend_point points[34];
+    uint32_t count = 0u;
+    uint32_t i = 0u;
+    float center_x = (float)x + ((float)width / 2.0f);
+    float center_y = (float)y + ((float)height / 2.0f);
+    float radius_x = (float)width / 2.0f;
+    float radius_y = (float)height / 2.0f;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!surface || width == 0u || height == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (fill_pie)
+    {
+        points[count].x = rdp_gdi_backend_gdiplus_round_i32(center_x);
+        points[count].y = rdp_gdi_backend_gdiplus_round_i32(center_y);
+        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[count]);
+        count++;
+    }
+    for (i = 0u; i <= segments; i++)
+    {
+        float angle = (start_angle + (sweep_angle * ((float)i / (float)segments))) *
+                      0.01745329251994329577f;
+        float px = center_x + (rdp_gdi_backend_gdiplus_cos_approx(angle) * radius_x);
+        float py = center_y + (rdp_gdi_backend_gdiplus_sin_approx(angle) * radius_y);
+
+        if (count >= sizeof(points) / sizeof(points[0]))
+            break;
+        points[count].x = rdp_gdi_backend_gdiplus_round_i32(px);
+        points[count].y = rdp_gdi_backend_gdiplus_round_i32(py);
+        rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &points[count]);
+        count++;
+    }
+    if (fill_pie)
+    {
+        status = rdp_gdi_backend_fill_polygon(backend,
+                                              surface,
+                                              points,
+                                              count,
+                                              1u,
+                                              color,
+                                              context ? &context->clip : NULL,
+                                              NULL,
+                                              NULL,
+                                              NULL,
+                                              NULL);
+    }
+    else
+    {
+        uint32_t start_index = 0u;
+
+        for (i = 1u; i < count && status == LIBRDP_STATUS_OK; i++)
+        {
+            uint32_t dirty_left = UINT32_MAX;
+            uint32_t dirty_top = UINT32_MAX;
+            uint32_t dirty_right = 0u;
+            uint32_t dirty_bottom = 0u;
+
+            status = rdp_gdi_backend_draw_line(backend,
+                                               surface,
+                                               points[i - 1u].x,
+                                               points[i - 1u].y,
+                                               points[i].x,
+                                               points[i].y,
+                                               pen_width,
+                                               color,
+                                               context ? &context->clip : NULL,
+                                               &dirty_left,
+                                               &dirty_top,
+                                               &dirty_right,
+                                               &dirty_bottom);
+        }
+        if (close_pie && status == LIBRDP_STATUS_OK)
+        {
+            rdp_gdi_backend_point center;
+            uint32_t dirty_left = UINT32_MAX;
+            uint32_t dirty_top = UINT32_MAX;
+            uint32_t dirty_right = 0u;
+            uint32_t dirty_bottom = 0u;
+
+            center.x = rdp_gdi_backend_gdiplus_round_i32(center_x);
+            center.y = rdp_gdi_backend_gdiplus_round_i32(center_y);
+            rdp_gdi_backend_gdiplus_transform_point(context ? context->transform : NULL, &center);
+            status = rdp_gdi_backend_draw_line(backend,
+                                               surface,
+                                               center.x,
+                                               center.y,
+                                               points[start_index].x,
+                                               points[start_index].y,
+                                               pen_width,
+                                               color,
+                                               context ? &context->clip : NULL,
+                                               &dirty_left,
+                                               &dirty_top,
+                                               &dirty_right,
+                                               &dirty_bottom);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_gdi_backend_draw_line(backend,
+                                                   surface,
+                                                   center.x,
+                                                   center.y,
+                                                   points[count - 1u].x,
+                                                   points[count - 1u].y,
+                                                   pen_width,
+                                                   color,
+                                                   context ? &context->clip : NULL,
+                                                   &dirty_left,
+                                                   &dirty_top,
+                                                   &dirty_right,
+                                                   &dirty_bottom);
+        }
+    }
+    if (status == LIBRDP_STATUS_INVALID_ARGUMENT)
+        status = LIBRDP_STATUS_OK;
+    if (status == LIBRDP_STATUS_OK && rasterized)
+        (*rasterized)++;
+    return status;
+}
+
+/*
  * Purpose: apply EMF+ state records that affect subsequent rendering. Invariants:
  * transform, clip and save-stack state remain local to one stream replay.
  * Failure policy: stack underflow/overflow and malformed state payloads fail
@@ -3724,29 +4516,56 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                1);
                 break;
             case RDP_GDIPLUS_RECORD_DRAW_LINES:
+                status = rdp_gdi_backend_render_gdiplus_draw_lines(backend,
+                                                                   surface,
+                                                                   &context,
+                                                                   flags,
+                                                                   payload,
+                                                                   data_size,
+                                                                   rasterized,
+                                                                   unsupported);
+                break;
             case RDP_GDIPLUS_RECORD_DRAW_CLOSED_CURVE:
+                status = rdp_gdi_backend_render_gdiplus_closed_curve(backend,
+                                                                     surface,
+                                                                     &context,
+                                                                     flags,
+                                                                     payload,
+                                                                     data_size,
+                                                                     rasterized,
+                                                                     unsupported,
+                                                                     0);
+                break;
             case RDP_GDIPLUS_RECORD_DRAW_CURVE:
+                status = rdp_gdi_backend_render_gdiplus_draw_curve(backend,
+                                                                   surface,
+                                                                   &context,
+                                                                   flags,
+                                                                   payload,
+                                                                   data_size,
+                                                                   rasterized,
+                                                                   unsupported);
+                break;
             case RDP_GDIPLUS_RECORD_DRAW_BEZIERS:
-                status = rdp_gdi_backend_render_gdiplus_points(backend,
-                                                               surface,
-                                                               &context,
-                                                               flags,
-                                                               payload,
-                                                               data_size,
-                                                               rasterized,
-                                                               unsupported,
-                                                               0);
+                status = rdp_gdi_backend_render_gdiplus_draw_beziers(backend,
+                                                                     surface,
+                                                                     &context,
+                                                                     flags,
+                                                                     payload,
+                                                                     data_size,
+                                                                     rasterized,
+                                                                     unsupported);
                 break;
             case RDP_GDIPLUS_RECORD_FILL_CLOSED_CURVE:
-                status = rdp_gdi_backend_render_gdiplus_points(backend,
-                                                               surface,
-                                                               &context,
-                                                               flags,
-                                                               payload,
-                                                               data_size,
-                                                               rasterized,
-                                                               unsupported,
-                                                               1);
+                status = rdp_gdi_backend_render_gdiplus_closed_curve(backend,
+                                                                     surface,
+                                                                     &context,
+                                                                     flags,
+                                                                     payload,
+                                                                     data_size,
+                                                                     rasterized,
+                                                                     unsupported,
+                                                                     1);
                 break;
             case RDP_GDIPLUS_RECORD_FILL_ELLIPSE:
                 status = rdp_gdi_backend_render_gdiplus_fill_ellipse(backend,

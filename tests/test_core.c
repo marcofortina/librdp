@@ -7889,7 +7889,6 @@ static int test_gdiplus_object_table_solid_brush_and_pen(void)
 static int test_gdiplus_known_record_families_render_visuals(void)
 {
     static const uint16_t pie_arc_records[] = {0x4010u, 0x4011u, 0x4012u};
-    static const uint16_t curve_records[] = {0x4016u, 0x4017u, 0x4018u, 0x4019u};
     rdp_buffer stream;
     rdp_buffer payload;
     librdp_surface* surface = NULL;
@@ -7945,6 +7944,27 @@ static int test_gdiplus_known_record_families_render_visuals(void)
     CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
     CHECK(rdp_buffer_append_u32_le(&payload, 0xffffffffu) == LIBRDP_STATUS_OK);
     CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff405060u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0106u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 1.0f));
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff405060u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0207u, &payload));
     expected_records++;
     rdp_buffer_free(&payload);
     rdp_buffer_init(&payload);
@@ -8059,22 +8079,48 @@ static int test_gdiplus_known_record_families_render_visuals(void)
         rdp_buffer_init(&payload);
     }
 
-    for (size_t i = 0; i < sizeof(curve_records) / sizeof(curve_records[0]); i++)
-    {
-        uint32_t count = curve_records[i] == 0x4019u ? 4u : 3u;
+    CHECK(rdp_buffer_append_u32_le(&payload, 6u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.5f));
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
+    CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
+    CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
+    CHECK(append_gdiplus_record(&stream, 0x4016u, 0x4000u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
 
-        CHECK(rdp_buffer_append_u32_le(&payload, 0xff405060u) == LIBRDP_STATUS_OK);
-        CHECK(rdp_buffer_append_u32_le(&payload, count) == LIBRDP_STATUS_OK);
-        CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
-        CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
-        CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
-        if (count == 4u)
-            CHECK(append_gdiplus_compressed_point(&payload, 14, 12));
-        CHECK(append_gdiplus_record(&stream, curve_records[i], 0xc000u, &payload));
-        expected_records++;
-        rdp_buffer_free(&payload);
-        rdp_buffer_init(&payload);
-    }
+    CHECK(append_gdiplus_float(&payload, 0.5f));
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
+    CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
+    CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
+    CHECK(append_gdiplus_record(&stream, 0x4017u, 0x4007u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(append_gdiplus_float(&payload, 0.5f));
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
+    CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
+    CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
+    CHECK(append_gdiplus_record(&stream, 0x4018u, 0x4007u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 4u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_compressed_point(&payload, 1, 10));
+    CHECK(append_gdiplus_compressed_point(&payload, 5, 12));
+    CHECK(append_gdiplus_compressed_point(&payload, 10, 10));
+    CHECK(append_gdiplus_compressed_point(&payload, 14, 12));
+    CHECK(append_gdiplus_record(&stream, 0x4019u, 0x4007u, &payload));
+    expected_records++;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
 
     CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
                                                 surface,
