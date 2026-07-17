@@ -4425,6 +4425,46 @@ librdp_status librdp_server_peer_send_video_geometry_update(librdp_server_peer* 
     return status;
 }
 
+librdp_status librdp_server_peer_send_telemetry_metrics(librdp_server_peer* peer,
+                                                        uint32_t dynamic_channel_id,
+                                                        uint32_t prompt_for_credentials_ms,
+                                                        uint32_t authentication_ms,
+                                                        uint32_t desktop_ready_ms,
+                                                        uint32_t first_graphics_received_ms)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_telemetry_write_metrics(&payload,
+                                         prompt_for_credentials_ms,
+                                         authentication_ms,
+                                         desktop_ready_ms,
+                                         first_graphics_received_ms);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_dynamic_named_buffer(peer,
+                                                      dynamic_channel_id,
+                                                      RDP_TELEMETRY_DVC_CHANNEL_NAME,
+                                                      &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
+librdp_status librdp_server_peer_send_multiparty_filter_state(librdp_server_peer* peer,
+                                                              uint16_t channel_id,
+                                                              uint8_t filter_state)
+{
+    rdp_buffer payload;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_buffer_init(&payload);
+    status = rdp_multiparty_write_filter_state(&payload, filter_state);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_server_send_static_named_buffer(peer, channel_id, RDP_MULTIPARTY_CHANNEL_NAME, &payload);
+    rdp_buffer_free(&payload);
+    return status;
+}
+
 librdp_status librdp_server_peer_send_desktop_composition_start(librdp_server_peer* peer)
 {
     rdp_buffer order;

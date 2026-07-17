@@ -1928,6 +1928,51 @@ LIBRDP_API librdp_status librdp_server_peer_send_video_geometry_update(librdp_se
                                                                        uint32_t visible_rect_len);
 
 /**
+ * @brief Send telemetry timing metrics on an open telemetry dynamic channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] dynamic_channel_id Open telemetry dynamic channel identifier.
+ * @param[in] prompt_for_credentials_ms Elapsed milliseconds before credential
+ * prompt.
+ * @param[in] authentication_ms Elapsed milliseconds for authentication.
+ * @param[in] desktop_ready_ms Elapsed milliseconds before desktop readiness.
+ * @param[in] first_graphics_received_ms Elapsed milliseconds before first
+ * graphics update.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-telemetry channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_telemetry_metrics(
+    librdp_server_peer* peer,
+    uint32_t dynamic_channel_id,
+    uint32_t prompt_for_credentials_ms,
+    uint32_t authentication_ms,
+    uint32_t desktop_ready_ms,
+    uint32_t first_graphics_received_ms);
+
+/**
+ * @brief Send a multiparty filter-state update on a joined multiparty channel.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] channel_id Joined static multiparty channel identifier.
+ * @param[in] filter_state Multiparty filter state value to encode.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * invalid arguments or a non-multiparty channel; LIBRDP_STATUS_STATE when the
+ * peer is not ACTIVE; transport errors from the send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_multiparty_filter_state(librdp_server_peer* peer,
+                                                                         uint16_t channel_id,
+                                                                         uint8_t filter_state);
+
+/**
  * @brief Send the Desktop Composition alternate-secondary start order.
  *
  * The order is delivered on the negotiated global slow-path update stream, not

@@ -2779,13 +2779,7 @@ static int test_server_loopback_standard_activation_sequence(void)
                                                    0,
                                                    response,
                                                    sizeof(response)));
-    dvc_packet.length = 0;
-    SCHECK(rdp_telemetry_write_metrics(&dvc_packet, 1, 2, 3, 4) == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_send_dynamic_extension_data(peer,
-                                                          LIBRDP_SERVER_EXTENSION_TELEMETRY,
-                                                          14,
-                                                          dvc_packet.data,
-                                                          dvc_packet.length) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_send_telemetry_metrics(peer, 14, 1, 2, 3, 4) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_dynamic_channel_payload(client_fd,
                                                     response,
                                                     sizeof(response),
@@ -2986,14 +2980,9 @@ static int test_server_loopback_standard_activation_sequence(void)
                                                          dvc_packet.data,
                                                          dvc_packet.length) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
-    dvc_packet.length = 0;
-    SCHECK(rdp_multiparty_write_filter_state(&dvc_packet, RDP_MULTIPARTY_FILTER_ENABLED) ==
-           LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_send_static_extension_data(peer,
-                                                         LIBRDP_SERVER_EXTENSION_MULTIPARTY,
-                                                         multiparty_channel_id,
-                                                         dvc_packet.data,
-                                                         dvc_packet.length) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_send_multiparty_filter_state(peer,
+                                                           multiparty_channel_id,
+                                                           RDP_MULTIPARTY_FILTER_ENABLED) == LIBRDP_STATUS_OK);
     SCHECK(test_server_read_static_channel_data(client_fd,
                                                 response,
                                                 sizeof(response),

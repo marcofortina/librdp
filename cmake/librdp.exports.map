@@ -100,6 +100,8 @@ LIBRDP_0.1 {
         librdp_server_peer_send_touch_ready;
         librdp_server_peer_send_mouse_cursor_caps;
         librdp_server_peer_send_video_geometry_update;
+        librdp_server_peer_send_telemetry_metrics;
+        librdp_server_peer_send_multiparty_filter_state;
         librdp_server_peer_send_desktop_composition_start;
         librdp_server_peer_close_dynamic_channel;
         librdp_server_peer_close;
