@@ -75,6 +75,7 @@
     "librdp_server_peer_set_channel_callback",
     "librdp_server_peer_set_event_callback",
     "librdp_server_peer_set_extension_callback",
+    "librdp_server_peer_set_extension_family_callback",
     "librdp_server_peer_set_input_callback",
     "librdp_server_peer_static_channel_at",
     "librdp_server_peer_static_channel_count",

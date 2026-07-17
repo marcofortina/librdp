@@ -126,6 +126,12 @@ static int rdp_server_valid_single_feature(librdp_feature feature)
     return rdp_server_valid_feature_mask(feature) && (value & (value - 1u)) == 0;
 }
 
+static int rdp_server_extension_family_valid(librdp_server_extension_family family)
+{
+    return family > LIBRDP_SERVER_EXTENSION_UNKNOWN &&
+           family <= LIBRDP_SERVER_EXTENSION_PARALLEL_PORT;
+}
+
 static void rdp_server_dynamic_channels_reset(librdp_server_peer* peer)
 {
     if (!peer)
@@ -1175,8 +1181,17 @@ static librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
     event.status = rdp_server_extension_validate(&event);
     if (event.status == LIBRDP_STATUS_OK)
         event.status = rdp_server_update_redirected_devices(peer, &event);
-    if (event.family != LIBRDP_SERVER_EXTENSION_UNKNOWN &&
-        event.status == LIBRDP_STATUS_OK &&
+    if (event.status == LIBRDP_STATUS_OK && rdp_server_extension_family_valid(event.family))
+    {
+        librdp_server_extension_callback callback =
+            peer->extension_family_callbacks[(size_t)event.family];
+        void* user_data = peer->extension_family_user_data[(size_t)event.family];
+
+        if (callback)
+            callback(peer, &event, user_data);
+    }
+    if (event.status == LIBRDP_STATUS_OK &&
+        rdp_server_extension_family_valid(event.family) &&
         peer->extension_callback)
         peer->extension_callback(peer, &event, peer->extension_callback_user_data);
     return event.status;
@@ -3428,6 +3443,19 @@ librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     peer->extension_callback = callback;
     peer->extension_callback_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_peer_set_extension_family_callback(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    librdp_server_extension_callback callback,
+    void* user_data)
+{
+    if (!peer || !rdp_server_extension_family_valid(family))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    peer->extension_family_callbacks[(size_t)family] = callback;
+    peer->extension_family_user_data[(size_t)family] = user_data;
     return LIBRDP_STATUS_OK;
 }
 

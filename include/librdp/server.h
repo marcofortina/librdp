@@ -997,6 +997,38 @@ LIBRDP_API librdp_status librdp_server_peer_set_extension_callback(librdp_server
                                                                    void* user_data);
 
 /**
+ * @brief Register the callback for one normalized extension family.
+ *
+ * Passing NULL disables the family-specific callback. The callback runs
+ * synchronously from librdp_server_peer_run_once() after the outer PDU for the
+ * selected family has been validated. It receives the same borrowed event
+ * object contract as librdp_server_peer_set_extension_callback(); payload and
+ * name pointers are valid only until the callback returns.
+ *
+ * Family-specific callbacks are independent from the generic extension
+ * callback. When both are installed and a matching PDU is valid, the
+ * family-specific callback runs first, followed by the generic callback.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] family Known extension family to receive; UNKNOWN and values
+ * outside librdp_server_extension_family are rejected.
+ * @param[in] callback Callback to install, or NULL to clear the family.
+ * @param[in] user_data Opaque application pointer passed back to callback;
+ * may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL or family is not a known concrete extension family.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_extension_family_callback(
+    librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    librdp_server_extension_callback callback,
+    void* user_data);
+
+/**
  * @brief Register the callback for server runtime events.
  *
  * Passing NULL disables the callback. The callback runs synchronously from the

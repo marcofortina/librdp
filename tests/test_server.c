@@ -1779,6 +1779,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     librdp_server_status server_status;
     librdp_feature_status feature_status;
     test_server_runtime_context runtime_context;
+    test_server_runtime_context device_family_context;
     librdp_server_clipboard_format clipboard_formats[1];
     const uint8_t* x224_data = NULL;
     size_t x224_data_len = 0;
@@ -1837,6 +1838,7 @@ static int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&udp2_wire);
     rdp_buffer_init(&udp2_unwrapped);
     memset(&runtime_context, 0, sizeof(runtime_context));
+    memset(&device_family_context, 0, sizeof(device_family_context));
     memset(clipboard_formats, 0, sizeof(clipboard_formats));
     clipboard_formats[0].format_id = RDP_CLIPBOARD_FORMAT_UNICODETEXT;
     clipboard_formats[0].name = clipboard_name_utf16;
@@ -1932,6 +1934,21 @@ static int test_server_loopback_standard_activation_sequence(void)
                                                      test_server_extension_callback,
                                                      &runtime_context) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_set_extension_callback(peer, test_server_extension_callback, &runtime_context) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_peer_set_extension_family_callback(NULL,
+                                                            LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION,
+                                                            test_server_extension_callback,
+                                                            &device_family_context) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_set_extension_family_callback(peer,
+                                                            LIBRDP_SERVER_EXTENSION_UNKNOWN,
+                                                            test_server_extension_callback,
+                                                            &device_family_context) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_peer_set_extension_family_callback(peer,
+                                                            LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION,
+                                                            test_server_extension_callback,
+                                                            &device_family_context) ==
            LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_set_event_callback(NULL,
                                                  test_server_event_callback,
@@ -2284,6 +2301,10 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(status == LIBRDP_STATUS_OK);
     SCHECK(runtime_context.last_extension_family == LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION);
     SCHECK(runtime_context.last_extension_message_type ==
+           RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE);
+    SCHECK(device_family_context.extension_count == 1);
+    SCHECK(device_family_context.last_extension_family == LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION);
+    SCHECK(device_family_context.last_extension_message_type ==
            RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE);
     dvc_packet.length = 0;
     SCHECK(rdp_device_redirection_write_io_completion(&dvc_packet,

@@ -29,6 +29,7 @@
 #define RDP_SERVER_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u
 #define RDP_SERVER_MAX_REDIRECTED_DEVICES 64u
+#define RDP_SERVER_EXTENSION_FAMILY_COUNT ((size_t)LIBRDP_SERVER_EXTENSION_PARALLEL_PORT + 1u)
 
 typedef struct rdp_server_dynamic_channel
 {
@@ -140,6 +141,8 @@ struct librdp_server_peer
     void* dynamic_channel_accept_user_data;
     librdp_server_extension_callback extension_callback;
     void* extension_callback_user_data;
+    librdp_server_extension_callback extension_family_callbacks[RDP_SERVER_EXTENSION_FAMILY_COUNT];
+    void* extension_family_user_data[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     librdp_server_event_callback event_callback;
     void* event_callback_user_data;
     librdp_server_status last_status;
