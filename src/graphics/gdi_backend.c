@@ -1809,13 +1809,16 @@ static librdp_status rdp_gdi_backend_render_gdiplus_state_only(uint16_t type,
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_gdi_backend_render_gdiplus_deferred_visual(uint16_t type,
-                                                                    const uint8_t* payload,
-                                                                    uint32_t data_size)
+static librdp_status rdp_gdi_backend_render_gdiplus_unsupported_visual(uint16_t type,
+                                                                       const uint8_t* payload,
+                                                                       uint32_t data_size,
+                                                                       uint32_t* unsupported)
 {
     (void)type;
     if (!payload && data_size > 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (unsupported)
+        (*unsupported)++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1832,7 +1835,7 @@ static int rdp_gdi_backend_gdiplus_is_state_only(uint16_t type)
             type <= RDP_GDIPLUS_RECORD_SET_TS_CLIP);
 }
 
-static int rdp_gdi_backend_gdiplus_is_deferred_visual(uint16_t type)
+static int rdp_gdi_backend_gdiplus_is_unsupported_visual(uint16_t type)
 {
     return type == RDP_GDIPLUS_RECORD_FILL_REGION ||
            type == RDP_GDIPLUS_RECORD_FILL_PATH ||
@@ -1847,9 +1850,9 @@ static int rdp_gdi_backend_gdiplus_is_deferred_visual(uint16_t type)
 
 /*
  * Parses a bounded EMF+ stream and rasterizes every record family that maps to
- * backend primitives. State-only and provider-backed records are consumed as
- * validated records so the runtime never advertises a partial GDI+ path through
- * the unsupported counter.
+ * backend primitives. State-only records are consumed after bounds validation.
+ * Visual records without a renderer are counted through the unsupported counter
+ * so negotiation and traces do not overstate GDI+ rendering coverage.
  */
 librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend,
                                                     librdp_surface* surface,
@@ -2031,10 +2034,13 @@ librdp_status rdp_gdi_backend_render_gdiplus_stream(rdp_gdi_backend_kind backend
                                                                    type);
                 break;
             default:
-                if (rdp_gdi_backend_gdiplus_is_state_only(type))
+                if (rdp_gdi_backend_gdiplus_is_unsupported_visual(type))
+                    status = rdp_gdi_backend_render_gdiplus_unsupported_visual(type,
+                                                                               payload,
+                                                                               data_size,
+                                                                               unsupported);
+                else if (rdp_gdi_backend_gdiplus_is_state_only(type))
                     status = rdp_gdi_backend_render_gdiplus_state_only(type, payload, data_size);
-                else if (rdp_gdi_backend_gdiplus_is_deferred_visual(type))
-                    status = rdp_gdi_backend_render_gdiplus_deferred_visual(type, payload, data_size);
                 else
                     status = LIBRDP_STATUS_PROTOCOL_ERROR;
                 break;

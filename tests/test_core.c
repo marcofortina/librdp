@@ -7873,10 +7873,10 @@ static int test_gdiplus_object_table_solid_brush_and_pen(void)
 }
 
 /*
- * Coverage: locks all EMF+ record families known to the renderer to a bounded
- * runtime path. State-only and provider-backed records must be consumed without
- * incrementing the unsupported counter; malformed unknown records remain
- * protocol errors.
+ * Coverage: locks all EMF+ record families known to the parser to a bounded
+ * runtime path. State-only records are consumed, visual records without a
+ * renderer must increment the unsupported counter, and malformed unknown records
+ * remain protocol errors.
  */
 static int test_gdiplus_known_record_families_are_runtime_handled(void)
 {
@@ -7887,7 +7887,7 @@ static int test_gdiplus_known_record_families_are_runtime_handled(void)
         0x402bu, 0x402cu, 0x402du, 0x402eu, 0x402fu, 0x4030u, 0x4031u,
         0x4032u, 0x4033u, 0x4034u, 0x4035u, 0x4039u, 0x403au
     };
-    static const uint16_t deferred_records[] = {
+    static const uint16_t unsupported_visual_records[] = {
         0x4013u, 0x4014u, 0x4015u, 0x401au, 0x401bu,
         0x401cu, 0x4036u, 0x4037u, 0x4038u
     };
@@ -7911,9 +7911,11 @@ static int test_gdiplus_known_record_families_are_runtime_handled(void)
         CHECK(append_gdiplus_record(&stream, state_records[i], 0, &payload));
         expected_records++;
     }
-    for (size_t i = 0; i < sizeof(deferred_records) / sizeof(deferred_records[0]); i++)
+    for (size_t i = 0;
+         i < sizeof(unsupported_visual_records) / sizeof(unsupported_visual_records[0]);
+         i++)
     {
-        CHECK(append_gdiplus_record(&stream, deferred_records[i], 0, &payload));
+        CHECK(append_gdiplus_record(&stream, unsupported_visual_records[i], 0, &payload));
         expected_records++;
     }
 
@@ -7969,7 +7971,8 @@ static int test_gdiplus_known_record_families_are_runtime_handled(void)
                                                 &unsupported) == LIBRDP_STATUS_OK);
     CHECK(records == expected_records);
     CHECK(rasterized >= 8u);
-    CHECK(unsupported == 0u);
+    CHECK(unsupported == sizeof(unsupported_visual_records) /
+                             sizeof(unsupported_visual_records[0]));
 
     stream.data[1] = 0x7fu;
     CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,

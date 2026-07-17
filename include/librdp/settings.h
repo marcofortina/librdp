@@ -399,7 +399,7 @@ typedef enum librdp_feature_unavailable_reason
     LIBRDP_FEATURE_REASON_BACKEND_UNAVAILABLE = 3, /**< Required application or OS backend is missing. */
     LIBRDP_FEATURE_REASON_NOT_NEGOTIATED = 4,      /**< The active session has not negotiated the feature. */
     LIBRDP_FEATURE_REASON_NOT_ACTIVE = 5,          /**< The feature is negotiated but has no active runtime stream. */
-    LIBRDP_FEATURE_REASON_PARSER_ONLY = 6          /**< The implementation can parse the protocol but has no runtime path. */
+    LIBRDP_FEATURE_REASON_PARSER_ONLY = 6          /**< Reserved for known protocol parsers that are intentionally not negotiable. */
 } librdp_feature_unavailable_reason;
 
 /**
@@ -1068,10 +1068,10 @@ LIBRDP_API int librdp_settings_feature_enabled(const librdp_settings* settings, 
  *
  * The function validates one known feature bit and reports whether settings
  * request it, whether librdp was built with the relevant protocol path, and
- * whether the application supplied the required backend configuration. Features
- * that currently expose only parser or protocol-helper code report
- * LIBRDP_FEATURE_REASON_PARSER_ONLY rather than backend-ready. The function
- * does not inspect a live server negotiation; use
+ * whether the application supplied the required backend configuration. The
+ * parser-only reason is reserved for known protocol parsers that must not be
+ * negotiated as active features. The function does not inspect a live server
+ * negotiation; use
  * librdp_session_get_feature_status() after creating a session for negotiated
  * and active state.
  *

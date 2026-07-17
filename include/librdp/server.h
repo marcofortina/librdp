@@ -638,11 +638,11 @@ LIBRDP_API uint16_t librdp_server_local_port(const librdp_server* server);
  * @brief Enable or disable a known optional server feature request.
  *
  * This function records application intent before peers are accepted. The
- * server runtime never advertises a feature unless a real server-side runtime
- * path is present; unsupported feature requests are visible through
- * librdp_server_get_feature_status() with backend availability kept false, and
- * inherited by peers accepted after the change. Existing peers keep the request
- * set copied when they were accepted.
+ * server runtime never advertises a feature unless it can negotiate and route
+ * the corresponding server-side path. Feature requests are visible through
+ * librdp_server_get_feature_status(), including backend availability for that
+ * server-side path, and inherited by peers accepted after the change. Existing
+ * peers keep the request set copied when they were accepted.
  *
  * @param[in,out] server Server listener to update; must not be NULL.
  * @param[in] feature Feature bitmask containing only known librdp_feature bits
