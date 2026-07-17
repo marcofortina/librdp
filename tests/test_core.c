@@ -6481,6 +6481,14 @@ static int run_optional_feature_runtime_scenario(librdp_feature feature,
     CHECK(feature_status.negotiated && feature_status.active);
     CHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NONE);
 
+    for (i = 0; i < 4u && status == LIBRDP_STATUS_OK; i++)
+    {
+        status = librdp_session_run_once(session, 100);
+        CHECK(status == LIBRDP_STATUS_OK ||
+              status == LIBRDP_STATUS_TIMEOUT ||
+              status == LIBRDP_STATUS_CLOSED);
+    }
+
     librdp_session_free(session);
     librdp_settings_free(settings);
     CHECK(waitpid(server_pid, &child_status, 0) == server_pid);

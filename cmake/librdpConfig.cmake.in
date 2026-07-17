@@ -13,10 +13,26 @@ find_dependency(Iconv)
 find_dependency(Threads)
 
 set(_librdp_needs_pkgconfig FALSE)
-if(@LIBRDP_FFMPEG_AVC_FOUND@ OR @LIBRDP_OPENH264_AVC_FOUND@ OR @LIBRDP_PCSC_FOUND@ OR @LIBRDP_LIBUSB_FOUND@ OR @LIBRDP_FIDO2_FOUND@ OR @LIBRDP_CBOR_FOUND@ OR @LIBRDP_ACL_FOUND@ OR @LIBRDP_ATTR_FOUND@ OR @LIBRDP_ARCHIVE_FOUND@ OR @LIBRDP_CURL_FOUND@ OR @LIBRDP_LIBXML2_FOUND@ OR @LIBRDP_CAIRO_FOUND@)
-    set(_librdp_needs_pkgconfig TRUE)
-endif()
-if(@LIBRDP_CUPS_USES_PKG_CONFIG@)
+set(_librdp_pkgconfig_features
+    "@LIBRDP_FFMPEG_AVC_FOUND@"
+    "@LIBRDP_OPENH264_AVC_FOUND@"
+    "@LIBRDP_PCSC_FOUND@"
+    "@LIBRDP_LIBUSB_FOUND@"
+    "@LIBRDP_FIDO2_FOUND@"
+    "@LIBRDP_CBOR_FOUND@"
+    "@LIBRDP_ACL_FOUND@"
+    "@LIBRDP_ATTR_FOUND@"
+    "@LIBRDP_ARCHIVE_FOUND@"
+    "@LIBRDP_CURL_FOUND@"
+    "@LIBRDP_LIBXML2_FOUND@"
+    "@LIBRDP_CAIRO_FOUND@"
+)
+foreach(_librdp_pkgconfig_feature IN LISTS _librdp_pkgconfig_features)
+    if(_librdp_pkgconfig_feature)
+        set(_librdp_needs_pkgconfig TRUE)
+    endif()
+endforeach()
+if("@LIBRDP_CUPS_USES_PKG_CONFIG@")
     set(_librdp_needs_pkgconfig TRUE)
 endif()
 
@@ -24,43 +40,43 @@ if(_librdp_needs_pkgconfig)
     find_dependency(PkgConfig)
 endif()
 
-if(@LIBRDP_FFMPEG_AVC_FOUND@)
+if("@LIBRDP_FFMPEG_AVC_FOUND@")
     pkg_check_modules(LIBRDP_FFMPEG_AVC REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
 endif()
-if(@LIBRDP_OPENH264_AVC_FOUND@)
+if("@LIBRDP_OPENH264_AVC_FOUND@")
     pkg_check_modules(LIBRDP_OPENH264_AVC REQUIRED IMPORTED_TARGET openh264)
 endif()
-if(@LIBRDP_PCSC_FOUND@)
+if("@LIBRDP_PCSC_FOUND@")
     pkg_check_modules(LIBRDP_PCSC REQUIRED IMPORTED_TARGET libpcsclite)
 endif()
-if(@LIBRDP_LIBUSB_FOUND@)
+if("@LIBRDP_LIBUSB_FOUND@")
     pkg_check_modules(LIBRDP_LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
 endif()
-if(@LIBRDP_FIDO2_FOUND@)
+if("@LIBRDP_FIDO2_FOUND@")
     pkg_check_modules(LIBRDP_FIDO2 REQUIRED IMPORTED_TARGET libfido2)
 endif()
-if(@LIBRDP_CBOR_FOUND@)
+if("@LIBRDP_CBOR_FOUND@")
     pkg_check_modules(LIBRDP_CBOR REQUIRED IMPORTED_TARGET libcbor)
 endif()
-if(@LIBRDP_CUPS_USES_PKG_CONFIG@)
+if("@LIBRDP_CUPS_USES_PKG_CONFIG@")
     pkg_check_modules(LIBRDP_CUPS REQUIRED IMPORTED_TARGET cups)
 endif()
-if(@LIBRDP_ACL_FOUND@)
+if("@LIBRDP_ACL_FOUND@")
     pkg_check_modules(LIBRDP_ACL REQUIRED IMPORTED_TARGET libacl)
 endif()
-if(@LIBRDP_ATTR_FOUND@)
+if("@LIBRDP_ATTR_FOUND@")
     pkg_check_modules(LIBRDP_ATTR REQUIRED IMPORTED_TARGET libattr)
 endif()
-if(@LIBRDP_ARCHIVE_FOUND@)
+if("@LIBRDP_ARCHIVE_FOUND@")
     pkg_check_modules(LIBRDP_ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 endif()
-if(@LIBRDP_CURL_FOUND@)
+if("@LIBRDP_CURL_FOUND@")
     pkg_check_modules(LIBRDP_CURL REQUIRED IMPORTED_TARGET libcurl)
 endif()
-if(@LIBRDP_LIBXML2_FOUND@)
+if("@LIBRDP_LIBXML2_FOUND@")
     pkg_check_modules(LIBRDP_LIBXML2 REQUIRED IMPORTED_TARGET libxml-2.0)
 endif()
-if(@LIBRDP_CAIRO_FOUND@)
+if("@LIBRDP_CAIRO_FOUND@")
     pkg_check_modules(LIBRDP_CAIRO REQUIRED IMPORTED_TARGET cairo)
 endif()
 

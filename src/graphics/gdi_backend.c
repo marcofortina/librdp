@@ -51,7 +51,8 @@ static uint32_t rdp_gdi_backend_caps_all(void)
 
 static uint16_t rdp_gdi_backend_read_u16_le(const uint8_t* data)
 {
-    return (uint16_t)data[0] | ((uint16_t)data[1] << 8u);
+    uint32_t value = (uint32_t)data[0] | ((uint32_t)data[1] << 8u);
+    return (uint16_t)value;
 }
 
 static int16_t rdp_gdi_backend_read_i16_le(const uint8_t* data)

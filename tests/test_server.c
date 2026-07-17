@@ -700,8 +700,51 @@ static int test_server_tls_write_all(SSL* tls, const uint8_t* data, size_t lengt
         int written = SSL_write(tls, data + offset, chunk);
 
         if (written <= 0)
-            return 0;
+        {
+            int error = SSL_get_error(tls, written);
+            struct pollfd poll_fd;
+
+            if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
+                return 0;
+            memset(&poll_fd, 0, sizeof(poll_fd));
+            poll_fd.fd = SSL_get_fd(tls);
+            poll_fd.events = error == SSL_ERROR_WANT_WRITE ? POLLOUT : POLLIN;
+            if (poll_fd.fd < 0 || poll(&poll_fd, 1, 1000) <= 0)
+                return 0;
+            continue;
+        }
         offset += (size_t)written;
+    }
+    return 1;
+}
+
+static int test_server_tls_read_exact(SSL* tls, uint8_t* data, size_t length)
+{
+    size_t offset = 0;
+
+    if (!tls || (!data && length > 0))
+        return 0;
+    while (offset < length)
+    {
+        size_t remaining = length - offset;
+        int chunk = remaining > (size_t)INT32_MAX ? INT32_MAX : (int)remaining;
+        int read_len = SSL_read(tls, data + offset, chunk);
+
+        if (read_len <= 0)
+        {
+            int error = SSL_get_error(tls, read_len);
+            struct pollfd poll_fd;
+
+            if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
+                return 0;
+            memset(&poll_fd, 0, sizeof(poll_fd));
+            poll_fd.fd = SSL_get_fd(tls);
+            poll_fd.events = error == SSL_ERROR_WANT_WRITE ? POLLOUT : POLLIN;
+            if (poll_fd.fd < 0 || poll(&poll_fd, 1, 1000) <= 0)
+                return 0;
+            continue;
+        }
+        offset += (size_t)read_len;
     }
     return 1;
 }
@@ -712,12 +755,12 @@ static int test_server_tls_read_credssp(SSL* tls, rdp_buffer* packet)
     size_t header_len = 2u;
     size_t payload_len = 0;
     size_t total = 0;
-    int read_len = 0;
 
     if (!tls || !packet)
         return 0;
-    read_len = SSL_read(tls, header, 2);
-    if (read_len != 2 || header[0] != 0x30u)
+    if (!test_server_tls_read_exact(tls, header, 2))
+        return 0;
+    if (header[0] != 0x30u)
         return 0;
     if ((header[1] & 0x80u) == 0)
         payload_len = header[1];
@@ -727,8 +770,7 @@ static int test_server_tls_read_credssp(SSL* tls, rdp_buffer* packet)
 
         if (length_len == 0 || length_len > 4u)
             return 0;
-        read_len = SSL_read(tls, header + 2u, (int)length_len);
-        if (read_len != (int)length_len)
+        if (!test_server_tls_read_exact(tls, header + 2u, length_len))
             return 0;
         header_len += length_len;
         for (size_t i = 0; i < length_len; i++)
@@ -739,16 +781,11 @@ static int test_server_tls_read_credssp(SSL* tls, rdp_buffer* packet)
         return 0;
     if (rdp_buffer_reserve(packet, total) != LIBRDP_STATUS_OK)
         return 0;
-    while (packet->length < total)
-    {
-        size_t remaining = total - packet->length;
-        int chunk = remaining > (size_t)INT32_MAX ? INT32_MAX : (int)remaining;
-
-        read_len = SSL_read(tls, packet->data + packet->length, chunk);
-        if (read_len <= 0)
-            return 0;
-        packet->length += (size_t)read_len;
-    }
+    if (!test_server_tls_read_exact(tls,
+                                    packet->data + packet->length,
+                                    total - packet->length))
+        return 0;
+    packet->length = total;
     return 1;
 }
 
@@ -4083,8 +4120,8 @@ static int test_server_loopback_standard_activation_sequence(void)
                                      &graphics_header) == LIBRDP_STATUS_OK);
     SCHECK(graphics_header.cmd_id == RDP_GRAPHICS_CMDID_CAPS_ADVERTISE);
     SCHECK(graphics_header.pdu_length == 34);
-    graphics_cap_count = (uint16_t)dvc_data_response.data[8] |
-                         ((uint16_t)dvc_data_response.data[9] << 8);
+    graphics_cap_count = (uint16_t)((uint32_t)dvc_data_response.data[8] |
+                                    ((uint32_t)dvc_data_response.data[9] << 8u));
     graphics_cap_version = (uint32_t)dvc_data_response.data[22] |
                            ((uint32_t)dvc_data_response.data[23] << 8) |
                            ((uint32_t)dvc_data_response.data[24] << 16) |

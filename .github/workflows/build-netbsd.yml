@@ -36,6 +36,7 @@ jobs:
           run: |
             cmake -S . -B build-netbsd-core-no-viewer -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
+              -DOPENSSL_ROOT_DIR=/usr/pkg \
               -DCMAKE_PREFIX_PATH=/usr/pkg \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
@@ -69,6 +70,7 @@ jobs:
           run: |
             cmake -S . -B build-netbsd-core-no-backends -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
+              -DOPENSSL_ROOT_DIR=/usr/pkg \
               -DCMAKE_PREFIX_PATH=/usr/pkg \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \

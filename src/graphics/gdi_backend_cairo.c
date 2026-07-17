@@ -18,7 +18,7 @@
 #include <limits.h>
 
 #if defined(RDP_HAVE_CAIRO)
-#include <cairo/cairo.h>
+#include <cairo.h>
 #endif
 
 #if defined(RDP_HAVE_CAIRO)

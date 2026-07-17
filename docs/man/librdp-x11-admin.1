@@ -78,8 +78,8 @@ Do not open an X11 window; print the inventory and exit.
 Print usage.
 .SH EXAMPLES
 .nf
-librdp-x11-admin --endpoint http://server:5985/wsman --user Marco --password-env RDS_PASSWORD --no-window
-librdp-x11-admin --endpoint https://server:5986/wsman --user Marco --domain LAB
+librdp-x11-admin --endpoint http://server:5985/wsman --user admin-user --password-env RDS_PASSWORD --no-window
+librdp-x11-admin --endpoint https://server:5986/wsman --user admin-user --domain EXAMPLE
 librdp-x11-admin --endpoint http://server:5985/wsman --action disconnect --session-id 4 --confirm --no-window
 librdp-x11-admin --endpoint http://server:5985/wsman --action message --session-id 4 --message-text "Maintenance window" --no-window
 .fi
