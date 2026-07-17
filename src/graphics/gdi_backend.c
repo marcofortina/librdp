@@ -1001,6 +1001,11 @@ static librdp_status rdp_gdi_backend_gdiplus_read_point(const uint8_t* data,
 #define RDP_GDIPLUS_OBJECT_TYPE_FONT 6u
 #define RDP_GDIPLUS_OBJECT_TYPE_STRING_FORMAT 7u
 #define RDP_GDIPLUS_OBJECT_TYPE_IMAGE_ATTRIBUTES 8u
+#define RDP_GDIPLUS_BRUSH_SOLID_COLOR 0u
+#define RDP_GDIPLUS_BRUSH_HATCH_FILL 1u
+#define RDP_GDIPLUS_BRUSH_TEXTURE_FILL 2u
+#define RDP_GDIPLUS_BRUSH_PATH_GRADIENT 3u
+#define RDP_GDIPLUS_BRUSH_LINEAR_GRADIENT 4u
 
 #define RDP_GDIPLUS_PATH_POINT_FLAGS_RELATIVE 0x00000800u
 #define RDP_GDIPLUS_PATH_POINT_FLAGS_COMPRESSED 0x00004000u
@@ -1091,7 +1096,34 @@ typedef struct rdp_gdi_backend_gdiplus_object
     uint8_t kind;
     uint8_t object_type;
     uint32_t color;
+    uint32_t secondary_color;
     uint32_t pen_width;
+    uint32_t brush_type;
+    uint32_t hatch_style;
+    float brush_rect_x;
+    float brush_rect_y;
+    float brush_rect_width;
+    float brush_rect_height;
+    float brush_center_x;
+    float brush_center_y;
+    uint32_t pen_flags;
+    uint32_t pen_start_cap;
+    uint32_t pen_end_cap;
+    uint32_t pen_line_join;
+    uint32_t pen_dash_style;
+    uint32_t pen_dash_cap;
+    uint32_t pen_alignment;
+    uint32_t pen_miter_limit;
+    uint32_t font_style;
+    float font_size;
+    uint32_t string_format_flags;
+    uint32_t image_width;
+    uint32_t image_height;
+    int32_t image_stride;
+    uint32_t image_pixel_format;
+    uint32_t image_bitmap_type;
+    size_t image_pixels_offset;
+    uint32_t image_attr_flags;
     uint8_t* data;
     size_t data_len;
 } rdp_gdi_backend_gdiplus_object;
@@ -1150,6 +1182,10 @@ typedef struct rdp_gdi_backend_gdiplus_path
     rdp_gdi_backend_point* points;
     uint8_t* types;
 } rdp_gdi_backend_gdiplus_path;
+
+static void rdp_gdi_backend_gdiplus_apply_compositing(
+    const rdp_gdi_backend_gdiplus_context* context,
+    uint32_t* color);
 
 static void rdp_gdi_backend_gdiplus_transform_identity(float transform[6])
 {
@@ -1269,63 +1305,265 @@ static int rdp_gdi_backend_gdiplus_parse_solid_brush(const uint8_t* data,
     return 1;
 }
 
-static uint32_t rdp_gdi_backend_gdiplus_representative_brush_color(const uint8_t* data,
-                                                                   size_t length)
+static void rdp_gdi_backend_gdiplus_parse_brush_object(rdp_gdi_backend_gdiplus_object* object)
 {
     uint32_t brush_type = 0u;
 
-    if (!data || length < 12u)
-        return 0x808080u;
-    brush_type = rdp_gdi_backend_read_u32_le(data + 4u);
-    if (brush_type == 0u)
-        return rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(data + 8u));
-    if (length >= 16u)
-        return rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(data + length - 4u));
-    return (brush_type * 0x00214365u) & 0x00ffffffu;
+    if (!object || !object->data || object->data_len < 12u)
+        return;
+    brush_type = rdp_gdi_backend_read_u32_le(object->data + 4u);
+    object->kind = RDP_GDIPLUS_OBJECT_KIND_BRUSH;
+    object->brush_type = brush_type;
+    object->pen_width = 1u;
+    object->secondary_color = object->color;
+    if (brush_type == RDP_GDIPLUS_BRUSH_SOLID_COLOR)
+    {
+        object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 8u));
+        object->secondary_color = object->color;
+        return;
+    }
+    if (brush_type == RDP_GDIPLUS_BRUSH_HATCH_FILL && object->data_len >= 20u)
+    {
+        object->hatch_style = rdp_gdi_backend_read_u32_le(object->data + 8u);
+        object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 12u));
+        object->secondary_color =
+            rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 16u));
+        return;
+    }
+    if (brush_type == RDP_GDIPLUS_BRUSH_TEXTURE_FILL)
+    {
+        if (object->data_len >= 20u)
+        {
+            object->hatch_style = rdp_gdi_backend_read_u32_le(object->data + 8u);
+            object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 12u));
+            object->secondary_color =
+                rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 16u));
+        }
+        else
+        {
+            object->color = 0xff808080u;
+            object->secondary_color = 0xffffffffu;
+        }
+        return;
+    }
+    if (brush_type == RDP_GDIPLUS_BRUSH_PATH_GRADIENT && object->data_len >= 32u)
+    {
+        object->hatch_style = rdp_gdi_backend_read_u32_le(object->data + 8u);
+        object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 12u));
+        object->brush_center_x = rdp_gdi_backend_read_float_le(object->data + 16u);
+        object->brush_center_y = rdp_gdi_backend_read_float_le(object->data + 20u);
+        object->secondary_color =
+            rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 28u));
+        return;
+    }
+    if (brush_type == RDP_GDIPLUS_BRUSH_LINEAR_GRADIENT && object->data_len >= 36u)
+    {
+        object->hatch_style = rdp_gdi_backend_read_u32_le(object->data + 8u);
+        object->brush_rect_x = rdp_gdi_backend_read_float_le(object->data + 12u);
+        object->brush_rect_y = rdp_gdi_backend_read_float_le(object->data + 16u);
+        object->brush_rect_width = rdp_gdi_backend_read_float_le(object->data + 20u);
+        object->brush_rect_height = rdp_gdi_backend_read_float_le(object->data + 24u);
+        object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 28u));
+        object->secondary_color =
+            rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + 32u));
+        return;
+    }
+    object->color = rdp_gdi_backend_argb_to_color(rdp_gdi_backend_read_u32_le(object->data + object->data_len - 4u));
+    object->secondary_color = object->color ^ 0x00ffffffu;
 }
 
+/*
+ * Purpose: normalize an EMF+ pen object into the internal pen metadata used by
+ * line and outline renderers. Invariants: every optional pen block advances the
+ * brush offset only after its declared length is validated. Failure policy:
+ * malformed flags, dash arrays, compound arrays or embedded brushes leave the
+ * object untyped so callers can count an unsupported object without reading
+ * past the untrusted payload.
+ */
 static int rdp_gdi_backend_gdiplus_parse_solid_pen(const uint8_t* data,
                                                    size_t length,
-                                                   uint32_t* color,
-                                                   uint32_t* pen_width)
+                                                   rdp_gdi_backend_gdiplus_object* object)
 {
     uint32_t object_type = 0;
     uint32_t pen_flags = 0;
     float width = 0.0f;
     size_t brush_offset = 20u;
+    uint32_t color = 0u;
 
-    if (!data || !color || !pen_width || length < brush_offset + 12u)
+    if (!data || !object || length < brush_offset + 12u)
         return 0;
     object_type = rdp_gdi_backend_read_u32_le(data + 4u);
     pen_flags = rdp_gdi_backend_read_u32_le(data + 8u);
     if (object_type != 0)
         return 0;
-    if ((pen_flags & (0x00000100u | 0x00000400u | 0x00000800u | 0x00001000u)) != 0)
-        return 0;
+    object->pen_flags = pen_flags;
     if ((pen_flags & 0x00000001u) != 0)
+    {
+        if (length < brush_offset + 24u)
+            return 0;
+        object->pen_start_cap = rdp_gdi_backend_read_u32_le(data + brush_offset);
+        object->pen_end_cap = rdp_gdi_backend_read_u32_le(data + brush_offset + 4u);
+        object->pen_line_join = rdp_gdi_backend_read_u32_le(data + brush_offset + 8u);
         brush_offset += 24u;
+    }
     if ((pen_flags & 0x00000002u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_miter_limit = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000004u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_line_join = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000008u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_start_cap = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000010u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_end_cap = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000020u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_dash_cap = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000040u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_dash_style = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
     if ((pen_flags & 0x00000080u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_alignment = rdp_gdi_backend_read_u32_le(data + brush_offset);
         brush_offset += 4u;
+    }
+    if ((pen_flags & 0x00000100u) != 0)
+    {
+        uint32_t dash_count = 0u;
+
+        if (length < brush_offset + 4u)
+            return 0;
+        dash_count = rdp_gdi_backend_read_u32_le(data + brush_offset);
+        if (dash_count > 64u || length - brush_offset < 4u + ((size_t)dash_count * 4u))
+            return 0;
+        brush_offset += 4u + ((size_t)dash_count * 4u);
+    }
     if ((pen_flags & 0x00000200u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
         brush_offset += 4u;
+    }
+    if ((pen_flags & 0x00000400u) != 0)
+    {
+        uint32_t compound_count = 0u;
+
+        if (length < brush_offset + 4u)
+            return 0;
+        compound_count = rdp_gdi_backend_read_u32_le(data + brush_offset);
+        if (compound_count > 64u || length - brush_offset < 4u + ((size_t)compound_count * 4u))
+            return 0;
+        brush_offset += 4u + ((size_t)compound_count * 4u);
+    }
+    if ((pen_flags & 0x00000800u) != 0)
+    {
+        if (length < brush_offset + 4u)
+            return 0;
+        object->pen_dash_style = rdp_gdi_backend_read_u32_le(data + brush_offset);
+        brush_offset += 4u;
+    }
+    if ((pen_flags & 0x00001000u) != 0)
+    {
+        uint32_t custom_count = 0u;
+
+        if (length < brush_offset + 4u)
+            return 0;
+        custom_count = rdp_gdi_backend_read_u32_le(data + brush_offset);
+        if (custom_count > 64u || length - brush_offset < 4u + ((size_t)custom_count * 4u))
+            return 0;
+        brush_offset += 4u + ((size_t)custom_count * 4u);
+    }
     if (brush_offset > length || length - brush_offset < 12u)
         return 0;
     width = rdp_gdi_backend_read_float_le(data + 16u);
-    if (!rdp_gdi_backend_gdiplus_parse_solid_brush(data + brush_offset, length - brush_offset, color))
+    if (!rdp_gdi_backend_gdiplus_parse_solid_brush(data + brush_offset, length - brush_offset, &color))
+    {
+        rdp_gdi_backend_gdiplus_object brush;
+
+        memset(&brush, 0, sizeof(brush));
+        brush.data = (uint8_t*)(data + brush_offset);
+        brush.data_len = length - brush_offset;
+        rdp_gdi_backend_gdiplus_parse_brush_object(&brush);
+        color = brush.color;
+    }
+    object->kind = RDP_GDIPLUS_OBJECT_KIND_PEN;
+    object->color = color;
+    object->secondary_color = color;
+    object->pen_width = rdp_gdi_backend_float_to_pen_width(width);
+    return 1;
+}
+
+static void rdp_gdi_backend_gdiplus_parse_image_object(rdp_gdi_backend_gdiplus_object* object)
+{
+    uint32_t image_type = 0u;
+
+    if (!object || !object->data || object->data_len < 28u)
+        return;
+    image_type = rdp_gdi_backend_read_u32_le(object->data + 4u);
+    if (image_type != RDP_GDIPLUS_IMAGE_TYPE_BITMAP)
+        return;
+    object->image_width = rdp_gdi_backend_read_u32_le(object->data + 8u);
+    object->image_height = rdp_gdi_backend_read_u32_le(object->data + 12u);
+    object->image_stride = (int32_t)rdp_gdi_backend_read_u32_le(object->data + 16u);
+    object->image_pixel_format = rdp_gdi_backend_read_u32_le(object->data + 20u);
+    object->image_bitmap_type = rdp_gdi_backend_read_u32_le(object->data + 24u);
+    object->image_pixels_offset = 28u;
+}
+
+static int rdp_gdi_backend_gdiplus_validate_simple_object(rdp_gdi_backend_gdiplus_object* object)
+{
+    if (!object || !object->data)
         return 0;
-    *pen_width = rdp_gdi_backend_float_to_pen_width(width);
+    if (object->object_type == RDP_GDIPLUS_OBJECT_TYPE_FONT)
+    {
+        if (object->data_len < 20u)
+            return 0;
+        object->font_size = rdp_gdi_backend_read_float_le(object->data + 12u);
+        object->font_style = rdp_gdi_backend_read_u32_le(object->data + 16u);
+        return object->font_size > 0.0f && object->font_size <= 1024.0f;
+    }
+    if (object->object_type == RDP_GDIPLUS_OBJECT_TYPE_STRING_FORMAT)
+    {
+        if (object->data_len < 12u)
+            return 0;
+        object->string_format_flags = rdp_gdi_backend_read_u32_le(object->data + 8u);
+        return 1;
+    }
+    if (object->object_type == RDP_GDIPLUS_OBJECT_TYPE_IMAGE_ATTRIBUTES)
+    {
+        if (object->data_len < 8u)
+            return 0;
+        object->image_attr_flags = rdp_gdi_backend_read_u32_le(object->data + 4u);
+        return 1;
+    }
     return 1;
 }
 
@@ -1356,7 +1594,6 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
 {
     rdp_gdi_backend_gdiplus_object* object = NULL;
     uint32_t color = 0;
-    uint32_t pen_width = 1u;
 
     if (!context || object_id >= RDP_GDIPLUS_OBJECT_TABLE_SIZE || !data ||
         length > RDP_GDIPLUS_OBJECT_MAX_BYTES)
@@ -1366,25 +1603,17 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
     if (!rdp_gdi_backend_gdiplus_store_object_bytes(object, data, length))
         return 0;
     object->object_type = object_type;
+    object->pen_width = 1u;
     if (object_type == RDP_GDIPLUS_OBJECT_TYPE_BRUSH)
     {
-        if (!rdp_gdi_backend_gdiplus_parse_solid_brush(data, length, &color))
-        {
-            object->kind = RDP_GDIPLUS_OBJECT_KIND_BRUSH;
-            object->color = rdp_gdi_backend_gdiplus_representative_brush_color(data, length);
-            object->pen_width = 1u;
-            object->active = 1u;
-            return 1;
-        }
-        object->kind = RDP_GDIPLUS_OBJECT_KIND_BRUSH;
-        object->color = color;
-        object->pen_width = 1u;
+        (void)rdp_gdi_backend_gdiplus_parse_solid_brush(data, length, &color);
+        rdp_gdi_backend_gdiplus_parse_brush_object(object);
         object->active = 1u;
         return 1;
     }
     if (object_type == RDP_GDIPLUS_OBJECT_TYPE_PEN)
     {
-        if (!rdp_gdi_backend_gdiplus_parse_solid_pen(data, length, &color, &pen_width))
+        if (!rdp_gdi_backend_gdiplus_parse_solid_pen(data, length, object))
         {
             object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
             object->color = 0;
@@ -1392,9 +1621,23 @@ static int rdp_gdi_backend_gdiplus_store_complete_object(rdp_gdi_backend_gdiplus
             object->active = 1u;
             return 1;
         }
-        object->kind = RDP_GDIPLUS_OBJECT_KIND_PEN;
-        object->color = color;
-        object->pen_width = pen_width;
+        object->active = 1u;
+        return 1;
+    }
+    if (object_type == RDP_GDIPLUS_OBJECT_TYPE_IMAGE)
+    {
+        object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
+        rdp_gdi_backend_gdiplus_parse_image_object(object);
+        object->active = 1u;
+        return 1;
+    }
+    if (object_type == RDP_GDIPLUS_OBJECT_TYPE_FONT ||
+        object_type == RDP_GDIPLUS_OBJECT_TYPE_STRING_FORMAT ||
+        object_type == RDP_GDIPLUS_OBJECT_TYPE_IMAGE_ATTRIBUTES)
+    {
+        if (!rdp_gdi_backend_gdiplus_validate_simple_object(object))
+            return 0;
+        object->kind = RDP_GDIPLUS_OBJECT_KIND_GENERIC;
         object->active = 1u;
         return 1;
     }
@@ -1581,6 +1824,13 @@ static void rdp_gdi_backend_gdiplus_transform_context_point(
         point->x = rdp_gdi_backend_gdiplus_round_i32((float)point->x * scale);
         point->y = rdp_gdi_backend_gdiplus_round_i32((float)point->y * scale);
     }
+    if (context->pixel_offset_mode == 3u || context->pixel_offset_mode == 4u)
+    {
+        if (point->x < INT32_MAX)
+            point->x++;
+        if (point->y < INT32_MAX)
+            point->y++;
+    }
 }
 
 static librdp_status rdp_gdi_backend_gdiplus_transform_rect(const rdp_gdi_backend_gdiplus_context* context,
@@ -1685,6 +1935,197 @@ static librdp_status rdp_gdi_backend_fill_rect_clipped(rdp_gdi_backend_kind back
                                      (uint32_t)(right - left),
                                      (uint32_t)(bottom - top),
                                      color);
+}
+
+static uint8_t rdp_gdi_backend_gdiplus_mix_u8(uint8_t a, uint8_t b, uint32_t weight)
+{
+    if (weight > 255u)
+        weight = 255u;
+    return (uint8_t)((((uint32_t)a * (255u - weight)) + ((uint32_t)b * weight) + 127u) / 255u);
+}
+
+static uint32_t rdp_gdi_backend_gdiplus_mix_color(uint32_t start, uint32_t end, uint32_t weight)
+{
+    uint8_t a = rdp_gdi_backend_gdiplus_mix_u8((uint8_t)((start >> 24u) & 0xffu),
+                                               (uint8_t)((end >> 24u) & 0xffu),
+                                               weight);
+    uint8_t r = rdp_gdi_backend_gdiplus_mix_u8((uint8_t)((start >> 16u) & 0xffu),
+                                               (uint8_t)((end >> 16u) & 0xffu),
+                                               weight);
+    uint8_t g = rdp_gdi_backend_gdiplus_mix_u8((uint8_t)((start >> 8u) & 0xffu),
+                                               (uint8_t)((end >> 8u) & 0xffu),
+                                               weight);
+    uint8_t b = rdp_gdi_backend_gdiplus_mix_u8((uint8_t)(start & 0xffu),
+                                               (uint8_t)(end & 0xffu),
+                                               weight);
+
+    return ((uint32_t)a << 24u) | ((uint32_t)r << 16u) | ((uint32_t)g << 8u) | (uint32_t)b;
+}
+
+/*
+ * Purpose: evaluate non-solid EMF+ brushes at a destination pixel. Invariants:
+ * hatch and texture phases include the active rendering origin, and gradients
+ * clamp interpolation to the stored brush geometry. Failure policy: unknown
+ * brush types produce the validated representative color instead of failing
+ * mid-fill.
+ */
+static uint32_t rdp_gdi_backend_gdiplus_sample_brush(
+    const rdp_gdi_backend_gdiplus_context* context,
+    const rdp_gdi_backend_gdiplus_object* brush,
+    int32_t x,
+    int32_t y)
+{
+    int32_t origin_x = context ? context->rendering_origin_x : 0;
+    int32_t origin_y = context ? context->rendering_origin_y : 0;
+    int32_t sx = x + origin_x;
+    int32_t sy = y + origin_y;
+    uint32_t weight = 0u;
+
+    if (!brush)
+        return 0xff000000u;
+    if (brush->brush_type == RDP_GDIPLUS_BRUSH_SOLID_COLOR)
+        return brush->color;
+    if (brush->brush_type == RDP_GDIPLUS_BRUSH_HATCH_FILL)
+    {
+        uint32_t style = brush->hatch_style % 8u;
+        int foreground = 0;
+
+        if (style == 0u)
+            foreground = (sy & 3) == 0;
+        else if (style == 1u)
+            foreground = (sx & 3) == 0;
+        else if (style == 2u)
+            foreground = ((sx + sy) & 7) == 0;
+        else if (style == 3u)
+            foreground = ((sx - sy) & 7) == 0;
+        else if (style == 4u)
+            foreground = ((sx & 3) == 0) || ((sy & 3) == 0);
+        else
+            foreground = (((sx >> 2) ^ (sy >> 2) ^ (int32_t)style) & 1) == 0;
+        return foreground ? brush->color : brush->secondary_color;
+    }
+    if (brush->brush_type == RDP_GDIPLUS_BRUSH_TEXTURE_FILL)
+    {
+        uint32_t cell_x = (uint32_t)((sx >= 0 ? sx : -sx) & 7);
+        uint32_t cell_y = (uint32_t)((sy >= 0 ? sy : -sy) & 7);
+
+        return ((cell_x ^ cell_y ^ brush->hatch_style) & 1u) != 0u ? brush->color :
+                                                                     brush->secondary_color;
+    }
+    if (brush->brush_type == RDP_GDIPLUS_BRUSH_LINEAR_GRADIENT)
+    {
+        float span = brush->brush_rect_width;
+        float position = (float)x - brush->brush_rect_x;
+
+        if (!(span > 0.0f))
+            span = brush->brush_rect_height;
+        if (!(span > 0.0f))
+            span = 1.0f;
+        if (brush->brush_rect_width <= 0.0f)
+            position = (float)y - brush->brush_rect_y;
+        if (position <= 0.0f)
+            weight = 0u;
+        else if (position >= span)
+            weight = 255u;
+        else
+            weight = (uint32_t)((position * 255.0f) / span);
+        return rdp_gdi_backend_gdiplus_mix_color(brush->color, brush->secondary_color, weight);
+    }
+    if (brush->brush_type == RDP_GDIPLUS_BRUSH_PATH_GRADIENT)
+    {
+        float dx = (float)x - brush->brush_center_x;
+        float dy = (float)y - brush->brush_center_y;
+        float distance = (dx < 0.0f ? -dx : dx) + (dy < 0.0f ? -dy : dy);
+
+        if (distance >= 64.0f)
+            weight = 255u;
+        else
+            weight = (uint32_t)((distance * 255.0f) / 64.0f);
+        return rdp_gdi_backend_gdiplus_mix_color(brush->color, brush->secondary_color, weight);
+    }
+    return brush->color;
+}
+
+/*
+ * Purpose: fill a clipped rectangle with a sampled EMF+ brush through the
+ * software pixel path. Invariants: destination bounds are clipped before the
+ * surface is mapped, and compositing mode is applied to every sampled color.
+ * Failure policy: invalid rectangles fail before mapping, while fully clipped
+ * rectangles are successful no-ops.
+ */
+static librdp_status rdp_gdi_backend_fill_rect_brush_clipped(
+    librdp_surface* surface,
+    int32_t x,
+    int32_t y,
+    uint32_t width,
+    uint32_t height,
+    const rdp_gdi_backend_gdiplus_context* context,
+    const rdp_gdi_backend_gdiplus_object* brush)
+{
+    librdp_surface_mapping mapping;
+    uint32_t surface_width = 0u;
+    uint32_t surface_height = 0u;
+    int32_t left = x;
+    int32_t top = y;
+    int32_t right = 0;
+    int32_t bottom = 0;
+    int32_t py = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+    librdp_status unmap_status = LIBRDP_STATUS_OK;
+
+    if (!surface || !brush || width == 0u || height == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    surface_width = librdp_surface_width(surface);
+    surface_height = librdp_surface_height(surface);
+    if (width > (uint32_t)INT32_MAX || height > (uint32_t)INT32_MAX ||
+        x > INT32_MAX - (int32_t)width || y > INT32_MAX - (int32_t)height)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    right = x + (int32_t)width;
+    bottom = y + (int32_t)height;
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > (int32_t)surface_width)
+        right = (int32_t)surface_width;
+    if (bottom > (int32_t)surface_height)
+        bottom = (int32_t)surface_height;
+    if (context && context->clip.present)
+    {
+        if (left < context->clip.left)
+            left = context->clip.left;
+        if (top < context->clip.top)
+            top = context->clip.top;
+        if (right > context->clip.right + 1)
+            right = context->clip.right + 1;
+        if (bottom > context->clip.bottom + 1)
+            bottom = context->clip.bottom + 1;
+    }
+    if (left >= right || top >= bottom)
+        return LIBRDP_STATUS_OK;
+    if (librdp_surface_mapping_init(&mapping) != LIBRDP_STATUS_OK)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = librdp_surface_map(surface, LIBRDP_SURFACE_ACCESS_WRITE, &mapping);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (py = top; py < bottom; py++)
+    {
+        int32_t px = 0;
+
+        for (px = left; px < right; px++)
+        {
+            uint32_t color = rdp_gdi_backend_gdiplus_sample_brush(context, brush, px, py);
+
+            rdp_gdi_backend_gdiplus_apply_compositing(context, &color);
+            rdp_gdi_backend_put_pixel(mapping.writable_pixels,
+                                      mapping.stride,
+                                      (uint32_t)px,
+                                      (uint32_t)py,
+                                      color);
+        }
+    }
+    unmap_status = librdp_surface_unmap(surface, &mapping);
+    return status == LIBRDP_STATUS_OK ? unmap_status : status;
 }
 
 static librdp_status rdp_gdi_backend_gdiplus_parse_path_object(
@@ -2379,6 +2820,13 @@ static librdp_status rdp_gdi_backend_render_gdiplus_draw_rects(rdp_gdi_backend_k
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Purpose: render EMF+ FillRects records using either the fast solid-color
+ * path or sampled brush fills. Invariants: object-table brush lookup is kept
+ * separate from direct-color tokens, and each rectangle is transformed before
+ * clipping. Failure policy: malformed counts are protocol errors; missing
+ * brushes are reported through the unsupported counter without partial output.
+ */
 static librdp_status rdp_gdi_backend_render_gdiplus_fill_rects(rdp_gdi_backend_kind backend,
                                                                librdp_surface* surface,
                                                                const rdp_gdi_backend_gdiplus_context* context,
@@ -2395,11 +2843,17 @@ static librdp_status rdp_gdi_backend_render_gdiplus_fill_rects(rdp_gdi_backend_k
     uint32_t pen_width = 1u;
     int compressed = (flags & 0x4000u) != 0;
     const uint8_t* rects = NULL;
+    const rdp_gdi_backend_gdiplus_object* brush_object = NULL;
+    int direct_color = (flags & RDP_GDIPLUS_RECORD_FLAG_DIRECT_COLOR) != 0;
     size_t rect_size = compressed ? 8u : 16u;
 
     if (data_size < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     brush = rdp_gdi_backend_read_u32_le(payload);
+    if (!direct_color)
+        brush_object = rdp_gdi_backend_gdiplus_get_object(context,
+                                                          brush & 0xffu,
+                                                          RDP_GDIPLUS_OBJECT_TYPE_BRUSH);
     if (!rdp_gdi_backend_gdiplus_resolve_draw_color(context,
                                                     flags,
                                                     brush,
@@ -2439,14 +2893,23 @@ static librdp_status rdp_gdi_backend_render_gdiplus_fill_rects(rdp_gdi_backend_k
         status = rdp_gdi_backend_gdiplus_transform_rect(context, &x, &y, &width, &height);
         if (status != LIBRDP_STATUS_OK)
             return status;
-        status = rdp_gdi_backend_fill_rect_clipped(backend,
-                                                   surface,
-                                                   x,
-                                                   y,
-                                                   width,
-                                                   height,
-                                                   color,
-                                                   context ? &context->clip : NULL);
+        if (brush_object && brush_object->brush_type != RDP_GDIPLUS_BRUSH_SOLID_COLOR)
+            status = rdp_gdi_backend_fill_rect_brush_clipped(surface,
+                                                             x,
+                                                             y,
+                                                             width,
+                                                             height,
+                                                             context,
+                                                             brush_object);
+        else
+            status = rdp_gdi_backend_fill_rect_clipped(backend,
+                                                       surface,
+                                                       x,
+                                                       y,
+                                                       width,
+                                                       height,
+                                                       color,
+                                                       context ? &context->clip : NULL);
         if (status == LIBRDP_STATUS_INVALID_ARGUMENT)
             continue;
         if (status != LIBRDP_STATUS_OK)
@@ -3410,7 +3873,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_fill_region(
 
 /*
  * Purpose: draw an uncompressed EMF+ bitmap into an arbitrary destination
- * rectangle with nearest-neighbor scaling. Invariants: source crop and target
+ * rectangle with mode-aware scaling. Invariants: source crop and target
  * bounds are clipped before mapping the surface. Failure policy: inconsistent
  * strides, dimensions or crop rectangles are rejected as malformed input.
  */
@@ -3428,6 +3891,7 @@ static librdp_status rdp_gdi_backend_gdiplus_scale_bgra32(librdp_surface* surfac
                                                           uint32_t image_height,
                                                           size_t source_stride,
                                                           int source_bottom_up,
+                                                          uint32_t interpolation_mode,
                                                           const rdp_gdi_backend_clip* clip)
 {
     librdp_surface_mapping mapping;
@@ -3489,17 +3953,55 @@ static librdp_status rdp_gdi_backend_gdiplus_scale_bgra32(librdp_surface* surfac
             uint32_t rel_y = (uint32_t)(y - dst_y);
             uint32_t sx = src_x + (uint32_t)(((uint64_t)rel_x * src_width) / dst_width);
             uint32_t sy = src_y + (uint32_t)(((uint64_t)rel_y * src_height) / dst_height);
-            uint32_t row = source_bottom_up ? (image_height - 1u - sy) : sy;
-            const uint8_t* src = source + ((size_t)row * source_stride) + ((size_t)sx * 4u);
+            uint32_t color = 0u;
 
+            if (interpolation_mode >= 3u && interpolation_mode != 5u &&
+                dst_width > 1u && dst_height > 1u && src_width > 1u && src_height > 1u)
+            {
+                uint64_t fx = ((uint64_t)rel_x * (uint64_t)(src_width - 1u) * 256u) /
+                              (uint64_t)(dst_width - 1u);
+                uint64_t fy = ((uint64_t)rel_y * (uint64_t)(src_height - 1u) * 256u) /
+                              (uint64_t)(dst_height - 1u);
+                uint32_t sx0 = src_x + (uint32_t)(fx / 256u);
+                uint32_t sy0 = src_y + (uint32_t)(fy / 256u);
+                uint32_t sx1 = sx0 + 1u < src_x + src_width ? sx0 + 1u : sx0;
+                uint32_t sy1 = sy0 + 1u < src_y + src_height ? sy0 + 1u : sy0;
+                uint32_t wx = (uint32_t)(fx & 0xffu);
+                uint32_t wy = (uint32_t)(fy & 0xffu);
+                uint32_t row0 = source_bottom_up ? (image_height - 1u - sy0) : sy0;
+                uint32_t row1 = source_bottom_up ? (image_height - 1u - sy1) : sy1;
+                const uint8_t* p00 = source + ((size_t)row0 * source_stride) + ((size_t)sx0 * 4u);
+                const uint8_t* p10 = source + ((size_t)row0 * source_stride) + ((size_t)sx1 * 4u);
+                const uint8_t* p01 = source + ((size_t)row1 * source_stride) + ((size_t)sx0 * 4u);
+                const uint8_t* p11 = source + ((size_t)row1 * source_stride) + ((size_t)sx1 * 4u);
+                uint32_t c00 = ((uint32_t)p00[3] << 24u) | ((uint32_t)p00[2] << 16u) |
+                               ((uint32_t)p00[1] << 8u) | (uint32_t)p00[0];
+                uint32_t c10 = ((uint32_t)p10[3] << 24u) | ((uint32_t)p10[2] << 16u) |
+                               ((uint32_t)p10[1] << 8u) | (uint32_t)p10[0];
+                uint32_t c01 = ((uint32_t)p01[3] << 24u) | ((uint32_t)p01[2] << 16u) |
+                               ((uint32_t)p01[1] << 8u) | (uint32_t)p01[0];
+                uint32_t c11 = ((uint32_t)p11[3] << 24u) | ((uint32_t)p11[2] << 16u) |
+                               ((uint32_t)p11[1] << 8u) | (uint32_t)p11[0];
+                uint32_t top_color = rdp_gdi_backend_gdiplus_mix_color(c00, c10, wx);
+                uint32_t bottom_color = rdp_gdi_backend_gdiplus_mix_color(c01, c11, wx);
+
+                color = rdp_gdi_backend_gdiplus_mix_color(top_color, bottom_color, wy);
+            }
+            else
+            {
+                uint32_t row = source_bottom_up ? (image_height - 1u - sy) : sy;
+                const uint8_t* src = source + ((size_t)row * source_stride) + ((size_t)sx * 4u);
+
+                color = ((uint32_t)src[3] << 24u) |
+                        ((uint32_t)src[2] << 16u) |
+                        ((uint32_t)src[1] << 8u) |
+                        (uint32_t)src[0];
+            }
             rdp_gdi_backend_put_pixel(mapping.writable_pixels,
                                       mapping.stride,
                                       (uint32_t)x,
                                       (uint32_t)y,
-                                      ((uint32_t)src[3] << 24u) |
-                                          ((uint32_t)src[2] << 16u) |
-                                          ((uint32_t)src[1] << 8u) |
-                                          (uint32_t)src[0]);
+                                      color);
         }
     }
     unmap_status = librdp_surface_unmap(surface, &mapping);
@@ -3610,6 +4112,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
                                                   height,
                                                   abs_stride,
                                                   source_bottom_up,
+                                                  context ? context->interpolation_mode : 0u,
                                                   context ? &context->clip : NULL);
     if (status == LIBRDP_STATUS_OK && rasterized)
         (*rasterized)++;
