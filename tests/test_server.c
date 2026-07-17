@@ -65,6 +65,11 @@
         }                                                                                                             \
     } while (0)
 
+static int test_server_make_tls_files(char* cert_path,
+                                      size_t cert_path_len,
+                                      char* key_path,
+                                      size_t key_path_len);
+
 static int test_server_config_defaults(void)
 {
     librdp_server_config config;
@@ -127,6 +132,15 @@ static int test_server_new_validates_metadata(void)
     librdp_server_config config;
     librdp_server* server = NULL;
     librdp_feature_status feature_status;
+    char cert_path[128];
+    char key_path[128];
+    char cert_path_b[128];
+    char key_path_b[128];
+
+    memset(cert_path, 0, sizeof(cert_path));
+    memset(key_path, 0, sizeof(key_path));
+    memset(cert_path_b, 0, sizeof(cert_path_b));
+    memset(key_path_b, 0, sizeof(key_path_b));
 
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     config.version = 0;
@@ -156,9 +170,26 @@ static int test_server_new_validates_metadata(void)
     config.tls_certificate_path = "server.pem";
     SCHECK(librdp_server_new(&config) == NULL);
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
-    config.security_mode = LIBRDP_SECURITY_NLA;
+    config.security_mode = LIBRDP_SECURITY_TLS;
     config.tls_certificate_path = "server.pem";
     config.tls_private_key_path = "server.key";
+    SCHECK(librdp_server_new(&config) == NULL);
+    SCHECK(test_server_make_tls_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)));
+    SCHECK(test_server_make_tls_files(cert_path_b, sizeof(cert_path_b), key_path_b, sizeof(key_path_b)));
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.security_mode = LIBRDP_SECURITY_TLS;
+    config.tls_certificate_path = cert_path;
+    config.tls_private_key_path = key_path_b;
+    SCHECK(librdp_server_new(&config) == NULL);
+    config.tls_private_key_path = key_path;
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+    librdp_server_free(server);
+    server = NULL;
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    config.security_mode = LIBRDP_SECURITY_NLA;
+    config.tls_certificate_path = cert_path;
+    config.tls_private_key_path = key_path;
     SCHECK(librdp_server_new(&config) == NULL);
     config.nla_username = "user";
     SCHECK(librdp_server_new(&config) == NULL);
@@ -167,6 +198,10 @@ static int test_server_new_validates_metadata(void)
     SCHECK(server != NULL);
     librdp_server_free(server);
     server = NULL;
+    unlink(cert_path);
+    unlink(key_path);
+    unlink(cert_path_b);
+    unlink(key_path_b);
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     server = librdp_server_new(&config);
     SCHECK(server != NULL);
@@ -369,6 +404,37 @@ static int test_server_write_temp_path(char* output, size_t output_len, const ch
         return -1;
     fd = mkstemp(output);
     return fd;
+}
+
+static int test_server_copy_file(const char* source_path, const char* target_path)
+{
+    uint8_t buffer[4096];
+    FILE* source = NULL;
+    FILE* target = NULL;
+    size_t count = 0;
+    int ok = 0;
+
+    source = fopen(source_path, "rb");
+    if (!source)
+        return 0;
+    target = fopen(target_path, "wb");
+    if (!target)
+    {
+        fclose(source);
+        return 0;
+    }
+    do
+    {
+        count = fread(buffer, 1u, sizeof(buffer), source);
+        if (count > 0u && fwrite(buffer, 1u, count, target) != count)
+            break;
+        if (ferror(source))
+            break;
+    } while (count > 0u);
+    ok = count == 0u && !ferror(source) && fflush(target) == 0;
+    fclose(target);
+    fclose(source);
+    return ok;
 }
 
 static int test_server_make_tls_files(char* cert_path,
@@ -1320,9 +1386,10 @@ static int test_server_loopback_tls_mismatched_key(void)
     config.bind_address = "127.0.0.1";
     config.security_mode = LIBRDP_SECURITY_TLS;
     config.tls_certificate_path = cert_path_a;
-    config.tls_private_key_path = key_path_b;
+    config.tls_private_key_path = key_path_a;
     server = librdp_server_new(&config);
     SCHECK(server != NULL);
+    SCHECK(test_server_copy_file(key_path_b, key_path_a));
     SCHECK(librdp_server_listen(server) == LIBRDP_STATUS_OK);
     port = librdp_server_local_port(server);
     SCHECK(port != 0);

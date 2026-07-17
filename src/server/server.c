@@ -273,8 +273,79 @@ static void rdp_server_secure_free(char* text)
     free(text);
 }
 
+static int rdp_server_tls_error_stack_has_key_mismatch(void)
+{
+    unsigned long error = 0;
+    int mismatch = 0;
+
+    while ((error = ERR_get_error()) != 0u)
+    {
+        const int reason = ERR_GET_REASON(error);
+
+        if (reason == X509_R_KEY_VALUES_MISMATCH || reason == X509_R_KEY_TYPE_MISMATCH)
+            mismatch = 1;
+    }
+    return mismatch;
+}
+
+static librdp_status rdp_server_create_tls_context(const char* certificate_path,
+                                                   const char* private_key_path,
+                                                   SSL_CTX** context,
+                                                   const char** failure_message)
+{
+    SSL_CTX* tls_context = NULL;
+
+    if (failure_message)
+        *failure_message = "server TLS handshake failed";
+    if (!context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *context = NULL;
+    if (!certificate_path || certificate_path[0] == '\0' ||
+        !private_key_path || private_key_path[0] == '\0')
+    {
+        if (failure_message)
+            *failure_message = "server TLS certificate or private key is not configured";
+        return LIBRDP_STATUS_UNSUPPORTED;
+    }
+    tls_context = SSL_CTX_new(TLS_server_method());
+    if (!tls_context)
+        return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    if (SSL_CTX_use_certificate_file(tls_context, certificate_path, SSL_FILETYPE_PEM) != 1)
+    {
+        SSL_CTX_free(tls_context);
+        ERR_clear_error();
+        if (failure_message)
+            *failure_message = "server TLS certificate load failed";
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    if (SSL_CTX_use_PrivateKey_file(tls_context, private_key_path, SSL_FILETYPE_PEM) != 1)
+    {
+        const int key_mismatch = rdp_server_tls_error_stack_has_key_mismatch();
+
+        SSL_CTX_free(tls_context);
+        if (failure_message)
+        {
+            *failure_message = key_mismatch ? "server TLS certificate and private key do not match"
+                                            : "server TLS private key load failed";
+        }
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    if (SSL_CTX_check_private_key(tls_context) != 1)
+    {
+        SSL_CTX_free(tls_context);
+        ERR_clear_error();
+        if (failure_message)
+            *failure_message = "server TLS certificate and private key do not match";
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    *context = tls_context;
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_server_config_valid(const librdp_server_config* config)
 {
+    SSL_CTX* tls_context = NULL;
+
     if (!config || config->version != LIBRDP_SERVER_CONFIG_VERSION ||
         config->size < sizeof(librdp_server_config))
         return 0;
@@ -292,6 +363,13 @@ static int rdp_server_config_valid(const librdp_server_config* config)
     if ((config->security_mode == LIBRDP_SECURITY_TLS || config->security_mode == LIBRDP_SECURITY_NLA) &&
         (!config->tls_certificate_path || !config->tls_private_key_path))
         return 0;
+    if ((config->security_mode == LIBRDP_SECURITY_TLS || config->security_mode == LIBRDP_SECURITY_NLA) &&
+        rdp_server_create_tls_context(config->tls_certificate_path,
+                                      config->tls_private_key_path,
+                                      &tls_context,
+                                      NULL) != LIBRDP_STATUS_OK)
+        return 0;
+    SSL_CTX_free(tls_context);
     if (config->security_mode == LIBRDP_SECURITY_NLA &&
         (!config->nla_username || config->nla_username[0] == '\0' ||
          !config->nla_password || config->nla_password[0] == '\0'))
@@ -1904,21 +1982,6 @@ static librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     return LIBRDP_STATUS_OK;
 }
 
-static int rdp_server_tls_error_stack_has_key_mismatch(void)
-{
-    unsigned long error = 0;
-    int mismatch = 0;
-
-    while ((error = ERR_get_error()) != 0u)
-    {
-        const int reason = ERR_GET_REASON(error);
-
-        if (reason == X509_R_KEY_VALUES_MISMATCH || reason == X509_R_KEY_TYPE_MISMATCH)
-            mismatch = 1;
-    }
-    return mismatch;
-}
-
 static librdp_status rdp_server_start_tls(librdp_server_peer* peer,
                                           int timeout_ms,
                                           const char** failure_message)
@@ -1940,40 +2003,12 @@ static librdp_status rdp_server_start_tls(librdp_server_peer* peer,
     }
     if (!peer->tls_context)
     {
-        peer->tls_context = SSL_CTX_new(TLS_server_method());
-        if (!peer->tls_context)
-            return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
-        if (SSL_CTX_use_certificate_file(peer->tls_context, peer->tls_certificate_path, SSL_FILETYPE_PEM) != 1)
-        {
-            SSL_CTX_free(peer->tls_context);
-            peer->tls_context = NULL;
-            ERR_clear_error();
-            if (failure_message)
-                *failure_message = "server TLS certificate load failed";
-            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
-        }
-        if (SSL_CTX_use_PrivateKey_file(peer->tls_context, peer->tls_private_key_path, SSL_FILETYPE_PEM) != 1)
-        {
-            const int key_mismatch = rdp_server_tls_error_stack_has_key_mismatch();
-
-            SSL_CTX_free(peer->tls_context);
-            peer->tls_context = NULL;
-            if (failure_message)
-            {
-                *failure_message = key_mismatch ? "server TLS certificate and private key do not match"
-                                                : "server TLS private key load failed";
-            }
-            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
-        }
-        if (SSL_CTX_check_private_key(peer->tls_context) != 1)
-        {
-            SSL_CTX_free(peer->tls_context);
-            peer->tls_context = NULL;
-            ERR_clear_error();
-            if (failure_message)
-                *failure_message = "server TLS certificate and private key do not match";
-            return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
-        }
+        status = rdp_server_create_tls_context(peer->tls_certificate_path,
+                                               peer->tls_private_key_path,
+                                               &peer->tls_context,
+                                               failure_message);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
     }
     if (!peer->tls)
     {
