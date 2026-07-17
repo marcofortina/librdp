@@ -31,7 +31,7 @@ static uint32_t rdp_gdi_backend_quartz_caps(void)
            RDP_GDI_BACKEND_CAP_FILL_ELLIPSE |
            RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE |
            RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM |
-           RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS;
+           RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS;
 }
 
 static void rdp_gdi_backend_quartz_set_color(CGContextRef context, uint32_t color)

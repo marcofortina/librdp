@@ -84,6 +84,7 @@ jobs:
               -DLIBRDP_WITH_ATTR=OFF \
               -DLIBRDP_WITH_ARCHIVE=OFF \
               -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_PNG=OFF \
               -DLIBRDP_WITH_JPEG=OFF \
               -DLIBRDP_WITH_XSHM=OFF \
               -DLIBRDP_WITH_XRANDR=OFF

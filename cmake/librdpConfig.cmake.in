@@ -26,6 +26,8 @@ set(_librdp_pkgconfig_features
     "@LIBRDP_CURL_FOUND@"
     "@LIBRDP_LIBXML2_FOUND@"
     "@LIBRDP_CAIRO_FOUND@"
+    "@LIBRDP_PNG_FOUND@"
+    "@LIBRDP_JPEG_FOUND@"
 )
 foreach(_librdp_pkgconfig_feature IN LISTS _librdp_pkgconfig_features)
     if(_librdp_pkgconfig_feature)
@@ -78,6 +80,12 @@ if("@LIBRDP_LIBXML2_FOUND@")
 endif()
 if("@LIBRDP_CAIRO_FOUND@")
     pkg_check_modules(LIBRDP_CAIRO REQUIRED IMPORTED_TARGET cairo)
+endif()
+if("@LIBRDP_PNG_FOUND@")
+    pkg_check_modules(LIBRDP_PNG REQUIRED IMPORTED_TARGET libpng)
+endif()
+if("@LIBRDP_JPEG_FOUND@")
+    pkg_check_modules(LIBRDP_JPEG REQUIRED IMPORTED_TARGET libjpeg)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/librdpTargets.cmake")

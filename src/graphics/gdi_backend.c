@@ -13,6 +13,7 @@
  */
 
 #include "graphics/gdi_backend.h"
+#include "graphics/gdi_image.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -46,7 +47,7 @@ static uint32_t rdp_gdi_backend_caps_all(void)
            RDP_GDI_BACKEND_CAP_FILL_ELLIPSE |
            RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE |
            RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM |
-           RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS;
+           RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS;
 }
 
 static uint16_t rdp_gdi_backend_read_u16_le(const uint8_t* data)
@@ -4050,10 +4051,10 @@ static librdp_status rdp_gdi_backend_gdiplus_scale_bgra32(librdp_surface* surfac
 
 /*
  * Purpose: resolve an EMF+ Image object and route bitmap data to the scaler.
- * Invariants: only bounded bitmap metadata reaches the pixel loop; compressed
- * or metafile image payloads produce a deterministic placeholder rather than
- * disappearing silently. Failure policy: invalid dimensions and strides fail
- * the stream before touching destination pixels.
+ * Invariants: only bounded bitmap metadata reaches the pixel loop and compressed
+ * images are decoded into the same BGRA32 contract. Failure policy: malformed
+ * data fails the stream; unavailable codecs and metafiles are reported through
+ * the unsupported counter without modifying the destination.
  */
 static librdp_status rdp_gdi_backend_render_gdiplus_image(
     librdp_surface* surface,
@@ -4067,7 +4068,8 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
     int32_t src_y,
     uint32_t src_width,
     uint32_t src_height,
-    uint32_t* rasterized)
+    uint32_t* rasterized,
+    uint32_t* unsupported)
 {
     const uint8_t* data = NULL;
     uint32_t image_type = 0u;
@@ -4081,21 +4083,22 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
     int source_bottom_up = 0;
     uint32_t interpolation_mode = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
+    rdp_gdi_image decoded;
 
+    rdp_gdi_image_init(&decoded);
     if (!surface || !image || image->object_type != RDP_GDIPLUS_OBJECT_TYPE_IMAGE ||
-        !image->data || image->data_len < 28u)
+        !image->data || image->data_len < 8u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
     data = image->data;
     image_type = rdp_gdi_backend_read_u32_le(data + 4u);
     if (image_type != RDP_GDIPLUS_IMAGE_TYPE_BITMAP)
-        return rdp_gdi_backend_fill_rect_clipped(RDP_GDI_BACKEND_SOFTWARE,
-                                                surface,
-                                                dst_x,
-                                                dst_y,
-                                                dst_width,
-                                                dst_height,
-                                                0,
-                                                context ? &context->clip : NULL);
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
+    }
+    if (image->data_len < 28u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
     width = rdp_gdi_backend_read_u32_le(data + 8u);
     height = rdp_gdi_backend_read_u32_le(data + 12u);
     stride = (int32_t)rdp_gdi_backend_read_u32_le(data + 16u);
@@ -4103,30 +4106,42 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
     bitmap_type = rdp_gdi_backend_read_u32_le(data + 24u);
     if (width == 0u || height == 0u || width > 16384u || height > 16384u)
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (bitmap_type != RDP_GDIPLUS_BITMAP_DATA_PIXEL ||
-        (pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_ARGB &&
-         pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_PARGB &&
-         pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_RGB))
+    if (bitmap_type != RDP_GDIPLUS_BITMAP_DATA_PIXEL)
     {
-        status = rdp_gdi_backend_fill_rect_clipped(RDP_GDI_BACKEND_SOFTWARE,
-                                                   surface,
-                                                   dst_x,
-                                                   dst_y,
-                                                   dst_width,
-                                                   dst_height,
-                                                   0x404040u,
-                                                   context ? &context->clip : NULL);
-        if (status == LIBRDP_STATUS_OK && rasterized)
-            (*rasterized)++;
-        return status;
+        status = rdp_gdi_image_decode(data + 28u, image->data_len - 28u, &decoded);
+        if (status == LIBRDP_STATUS_UNSUPPORTED)
+        {
+            if (unsupported)
+                (*unsupported)++;
+            return LIBRDP_STATUS_OK;
+        }
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        width = decoded.width;
+        height = decoded.height;
+        stride = (int32_t)decoded.stride;
+        pixel_format = RDP_GDIPLUS_PIXEL_FORMAT_32BPP_ARGB;
+        pixels = decoded.pixels;
+    }
+    else if (pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_ARGB &&
+             pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_PARGB &&
+             pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_RGB)
+    {
+        if (unsupported)
+            (*unsupported)++;
+        return LIBRDP_STATUS_OK;
     }
     abs_stride = stride < 0 ? (size_t)(-stride) : (size_t)stride;
-    source_bottom_up = stride > 0;
+    source_bottom_up = decoded.pixels ? 0 : stride > 0;
     if (abs_stride < (size_t)width * 4u ||
         (size_t)height > ((size_t)-1) / abs_stride ||
-        image->data_len - 28u < (size_t)height * abs_stride)
+        (!decoded.pixels && image->data_len - 28u < (size_t)height * abs_stride))
+    {
+        rdp_gdi_image_clear(&decoded);
         return LIBRDP_STATUS_PROTOCOL_ERROR;
-    pixels = data + 28u;
+    }
+    if (!pixels)
+        pixels = data + 28u;
     if (src_x < 0)
         src_x = 0;
     if (src_y < 0)
@@ -4161,6 +4176,7 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
                                                   source_bottom_up,
                                                   interpolation_mode,
                                                   context ? &context->clip : NULL);
+    rdp_gdi_image_clear(&decoded);
     if (status == LIBRDP_STATUS_OK && rasterized)
         (*rasterized)++;
     return status;
@@ -4314,7 +4330,8 @@ static librdp_status rdp_gdi_backend_render_gdiplus_draw_image(
                                                 src_y,
                                                 src_width,
                                                 src_height,
-                                                rasterized);
+                                                rasterized,
+                                                unsupported);
 }
 
 static librdp_status rdp_gdi_backend_gdiplus_draw_text_cell(rdp_gdi_backend_kind backend,

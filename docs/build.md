@@ -57,8 +57,9 @@ Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the 
 - `LIBRDP_WITH_LIBXML2=AUTO|ON|OFF`: workspace feed XML parsing.
 - `LIBRDP_WITH_CAIRO=AUTO|ON|OFF`: Cairo GDI raster backend.
 - `LIBRDP_WITH_QUARTZ=AUTO|ON|OFF`: Core Graphics GDI raster backend on macOS.
+- `LIBRDP_WITH_PNG=AUTO|ON|OFF`: PNG decoding for compressed GDI+ images.
 - `LIBRDP_WITH_PIPEWIRE=AUTO|ON|OFF`: PipeWire audio backend in the X11 viewer.
-- `LIBRDP_WITH_JPEG=AUTO|ON|OFF`: JPEG camera conversion backend in the X11 viewer.
+- `LIBRDP_WITH_JPEG=AUTO|ON|OFF`: JPEG decoding for GDI+ images and X11 camera conversion.
 - `LIBRDP_WITH_XSHM=AUTO|ON|OFF`: MIT-SHM presentation path in the X11 viewer.
 - `LIBRDP_WITH_XRANDR=AUTO|ON|OFF`: XRandR monitor layout bridge in the X11 viewer.
 

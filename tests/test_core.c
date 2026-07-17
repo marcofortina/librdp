@@ -8308,6 +8308,213 @@ static int test_gdiplus_known_record_families_render_visuals(void)
 }
 
 /*
+ * Coverage: proves that compressed EMF+ Image objects reach a real image
+ * decoder for both DrawImage forms. The golden pixels catch placeholder
+ * rendering, channel-order mistakes and incorrect destination scaling.
+ */
+static int test_gdiplus_compressed_images_render_pixels(void)
+{
+    static const uint8_t png_2x2[] = {
+        0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au,
+        0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x48u, 0x44u, 0x52u,
+        0x00u, 0x00u, 0x00u, 0x02u, 0x00u, 0x00u, 0x00u, 0x02u,
+        0x08u, 0x06u, 0x00u, 0x00u, 0x00u, 0x72u, 0xb6u, 0x0du,
+        0x24u, 0x00u, 0x00u, 0x00u, 0x12u, 0x49u, 0x44u, 0x41u,
+        0x54u, 0x78u, 0x9cu, 0x63u, 0xf8u, 0xcfu, 0xc0u, 0xf0u,
+        0x1fu, 0x0cu, 0x81u, 0x34u, 0x18u, 0x00u, 0x00u, 0x49u,
+        0xc8u, 0x09u, 0xf7u, 0xf9u, 0xabu, 0xb6u, 0x0du, 0x00u,
+        0x00u, 0x00u, 0x00u, 0x49u, 0x45u, 0x4eu, 0x44u, 0xaeu,
+        0x42u, 0x60u, 0x82u
+    };
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+#if defined(RDP_HAVE_PNG) || defined(RDP_HAVE_QUARTZ)
+    const uint8_t* pixels = NULL;
+    size_t stride = 0u;
+#endif
+    uint32_t records = 0u;
+    uint32_t rasterized = 0u;
+    uint32_t unsupported = 0u;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(8u, 4u, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append(&payload, png_2x2, sizeof(png_2x2)) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 4u, 4u));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(rdp_buffer_append_u32_le(&payload, 3u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 4.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 8.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 4.0f));
+    CHECK(append_gdiplus_float(&payload, 4.0f));
+    CHECK(append_gdiplus_record(&stream, 0x401bu, 0x0005u, &payload));
+
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 3u);
+#if defined(RDP_HAVE_PNG) || defined(RDP_HAVE_QUARTZ)
+    CHECK(rasterized == 2u);
+    CHECK(unsupported == 0u);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    CHECK(pixels != NULL && stride >= 8u * 4u);
+    CHECK(pixels[0u] == 0x00u && pixels[1u] == 0x00u && pixels[2u] == 0xffu);
+    CHECK(pixels[(3u * 4u) + 0u] == 0x00u &&
+          pixels[(3u * 4u) + 1u] == 0xffu &&
+          pixels[(3u * 4u) + 2u] == 0x00u);
+    CHECK(pixels[(3u * stride) + 0u] == 0xffu &&
+          pixels[(3u * stride) + 1u] == 0x00u &&
+          pixels[(3u * stride) + 2u] == 0x00u);
+    CHECK(pixels[(3u * stride) + (7u * 4u) + 0u] == 0xffu &&
+          pixels[(3u * stride) + (7u * 4u) + 1u] == 0xffu &&
+          pixels[(3u * stride) + (7u * 4u) + 2u] == 0xffu);
+#else
+    CHECK(rasterized == 0u);
+    CHECK(unsupported == 2u);
+#endif
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
+ * Coverage: separates malformed compressed input from well-formed image types
+ * for which no rasterizer exists. It prevents either path from incrementing
+ * the successful-rasterization counter.
+ */
+static int test_gdiplus_image_failure_accounting(void)
+{
+    static const uint8_t truncated_png[] = {
+        0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au,
+        0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x48u
+    };
+    rdp_buffer stream;
+    rdp_buffer payload;
+    librdp_surface* surface = NULL;
+    uint32_t records = 0u;
+    uint32_t rasterized = 0u;
+    uint32_t unsupported = 0u;
+
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    surface = librdp_surface_new(4u, 4u, LIBRDP_PIXEL_FORMAT_BGRA32);
+    CHECK(surface != NULL);
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 1.0f));
+    CHECK(append_gdiplus_float(&payload, 1.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(records == 2u && rasterized == 0u && unsupported == 1u);
+
+    rdp_buffer_free(&stream);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    records = 0u;
+    rasterized = 0u;
+    unsupported = 0u;
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append(&payload, truncated_png, sizeof(truncated_png)) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+#if defined(RDP_HAVE_PNG) || defined(RDP_HAVE_QUARTZ)
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_PROTOCOL_ERROR);
+#else
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) == LIBRDP_STATUS_OK);
+    CHECK(rasterized == 0u && unsupported == 1u);
+#endif
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    librdp_surface_free(surface);
+    return 0;
+}
+
+/*
  * Coverage: verifies EMF+ state records whose effect is visible through later
  * drawing. Page transform must affect geometry, compositing mode must affect
  * alpha handling, and save/restore must preserve the expanded state snapshot.
@@ -9642,6 +9849,10 @@ int test_client_core(void)
     if (test_gdiplus_object_table_solid_brush_and_pen() != 0)
         return 1;
     if (test_gdiplus_known_record_families_render_visuals() != 0)
+        return 1;
+    if (test_gdiplus_compressed_images_render_pixels() != 0)
+        return 1;
+    if (test_gdiplus_image_failure_accounting() != 0)
         return 1;
     if (test_gdiplus_graphics_state_affects_rendering() != 0)
         return 1;

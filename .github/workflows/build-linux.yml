@@ -34,7 +34,7 @@ jobs:
           libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
           libx11-dev libxcursor-dev
           libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
-          libpipewire-0.3-dev libjpeg-dev
+          libpipewire-0.3-dev libpng-dev libjpeg-dev
 
       - name: Cache build directory
         uses: actions/cache@v6
@@ -66,6 +66,7 @@ jobs:
           -DLIBRDP_WITH_CURL=ON
           -DLIBRDP_WITH_LIBXML2=ON
           -DLIBRDP_WITH_PIPEWIRE=ON
+          -DLIBRDP_WITH_PNG=ON
           -DLIBRDP_WITH_JPEG=ON
           -DLIBRDP_WITH_XSHM=ON
           -DLIBRDP_WITH_XRANDR=ON
@@ -93,7 +94,7 @@ jobs:
           libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
           libx11-dev libxcursor-dev
           libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
-          libpipewire-0.3-dev libjpeg-dev
+          libpipewire-0.3-dev libpng-dev libjpeg-dev
 
       - name: Cache build directory
         uses: actions/cache@v6
@@ -125,6 +126,7 @@ jobs:
           -DLIBRDP_WITH_CURL=ON
           -DLIBRDP_WITH_LIBXML2=ON
           -DLIBRDP_WITH_PIPEWIRE=ON
+          -DLIBRDP_WITH_PNG=ON
           -DLIBRDP_WITH_JPEG=ON
           -DLIBRDP_WITH_XSHM=ON
           -DLIBRDP_WITH_XRANDR=ON
@@ -168,6 +170,7 @@ jobs:
           -DLIBRDP_BUILD_X11_WORKSPACE=OFF
           -DLIBRDP_ENABLE_WERROR=ON
           -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_PNG=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
           -DLIBRDP_WITH_XRANDR=OFF
@@ -221,6 +224,7 @@ jobs:
           -DLIBRDP_WITH_CURL=OFF
           -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_PNG=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
           -DLIBRDP_WITH_XRANDR=OFF
@@ -275,6 +279,7 @@ jobs:
           -DLIBRDP_WITH_CURL=OFF
           -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_PNG=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
           -DLIBRDP_WITH_XRANDR=OFF
@@ -330,6 +335,7 @@ jobs:
           -DLIBRDP_WITH_CURL=OFF
           -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_PNG=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
           -DLIBRDP_WITH_XRANDR=OFF
@@ -387,6 +393,7 @@ jobs:
           -DLIBRDP_WITH_CURL=OFF
           -DLIBRDP_WITH_LIBXML2=OFF
           -DLIBRDP_WITH_PIPEWIRE=OFF
+          -DLIBRDP_WITH_PNG=OFF
           -DLIBRDP_WITH_JPEG=OFF
           -DLIBRDP_WITH_XSHM=OFF
           -DLIBRDP_WITH_XRANDR=OFF

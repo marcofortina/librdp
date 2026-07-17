@@ -82,6 +82,8 @@ set(LIBRDP_GRAPHICS_SOURCES
     src/graphics/gdi_backend.c
     src/graphics/gdi_backend_cairo.c
     src/graphics/gdi_backend_quartz.c
+    src/graphics/gdi_image.c
+    src/graphics/gdi_image_quartz.c
     src/graphics/gdi_orders.c
     src/graphics/gdi_render.c
     src/graphics/nscodec.c
@@ -353,10 +355,26 @@ if(LIBRDP_CAIRO_FOUND)
     target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_CAIRO)
     librdp_link_library_targets(PkgConfig::LIBRDP_CAIRO)
 endif()
+if(LIBRDP_PNG_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_PNG=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_PNG)
+    librdp_link_library_targets(PkgConfig::LIBRDP_PNG)
+endif()
+if(LIBRDP_JPEG_FOUND)
+    target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_JPEG=1)
+    target_link_libraries(librdp_objects PRIVATE PkgConfig::LIBRDP_JPEG)
+    librdp_link_library_targets(PkgConfig::LIBRDP_JPEG)
+endif()
 if(LIBRDP_QUARTZ_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_QUARTZ=1)
-    target_link_libraries(librdp_objects PRIVATE ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
-    librdp_link_library_targets(${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
+    target_link_libraries(librdp_objects PRIVATE
+        ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
+        ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
+    )
+    librdp_link_library_targets(
+        ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
+        ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
+    )
 endif()
 
 function(librdp_link_internal_runtime target)
@@ -406,7 +424,16 @@ function(librdp_link_internal_runtime target)
     if(LIBRDP_CAIRO_FOUND)
         target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_CAIRO)
     endif()
+    if(LIBRDP_PNG_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_PNG)
+    endif()
+    if(LIBRDP_JPEG_FOUND)
+        target_link_libraries(${target} PRIVATE PkgConfig::LIBRDP_JPEG)
+    endif()
     if(LIBRDP_QUARTZ_FOUND)
-        target_link_libraries(${target} PRIVATE ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY})
+        target_link_libraries(${target} PRIVATE
+            ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
+            ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
+        )
     endif()
 endfunction()
