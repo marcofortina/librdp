@@ -443,8 +443,8 @@ typedef struct librdp_server_config
     uint16_t port;         /**< TCP listen port, or zero for an ephemeral port. */
     uint32_t backlog;      /**< Listen backlog; zero uses a safe default. */
     uint32_t max_peers;    /**< Maximum peers accepted during one listen lifetime; zero uses a safe default. */
-    uint32_t width;        /**< Default desktop width reserved for future activation; zero uses default. */
-    uint32_t height;       /**< Default desktop height reserved for future activation; zero uses default. */
+    uint32_t width;        /**< Default desktop width used during activation; zero uses default. */
+    uint32_t height;       /**< Default desktop height used during activation; zero uses default. */
     const char* server_name; /**< Optional diagnostic server name copied on creation. */
     librdp_security_mode security_mode; /**< Server security policy; STANDARD is the default. */
     const char* tls_certificate_path; /**< PEM certificate path for TLS/NLA modes; copied on creation. */
@@ -641,8 +641,8 @@ LIBRDP_API uint16_t librdp_server_local_port(const librdp_server* server);
  * server runtime never advertises a feature unless a real server-side runtime
  * path is present; unsupported feature requests are visible through
  * librdp_server_get_feature_status() with backend availability kept false, and
- * inherited by future peers. Existing peers keep the request set copied when
- * they were accepted.
+ * inherited by peers accepted after the change. Existing peers keep the request
+ * set copied when they were accepted.
  *
  * @param[in,out] server Server listener to update; must not be NULL.
  * @param[in] feature Feature bitmask containing only known librdp_feature bits
@@ -831,8 +831,9 @@ LIBRDP_API librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer*
 /**
  * @brief Register the callback for client input and activation control events.
  *
- * Passing NULL disables the callback and leaves user_data stored for no future
- * use. The callback runs synchronously from librdp_server_peer_run_once().
+ * Passing NULL disables the callback. user_data is retained but not used until
+ * another callback is installed. The callback runs synchronously from
+ * librdp_server_peer_run_once().
  *
  * @param[in,out] peer Peer to configure; must not be NULL.
  * @param[in] callback Callback to install, or NULL to clear it.
@@ -852,8 +853,9 @@ LIBRDP_API librdp_status librdp_server_peer_set_input_callback(librdp_server_pee
 /**
  * @brief Register the callback for client static virtual-channel payloads.
  *
- * Passing NULL disables the callback and leaves user_data stored for no future
- * use. The callback runs synchronously from librdp_server_peer_run_once().
+ * Passing NULL disables the callback. user_data is retained but not used until
+ * another callback is installed. The callback runs synchronously from
+ * librdp_server_peer_run_once().
  *
  * @param[in,out] peer Peer to configure; must not be NULL.
  * @param[in] callback Callback to install, or NULL to clear it.

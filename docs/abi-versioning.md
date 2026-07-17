@@ -32,7 +32,7 @@ Opaque structs are the default for stateful objects:
 - `librdp_settings`;
 - `librdp_session`;
 - `librdp_surface`;
-- future objects that own protocol, transport, or backend state.
+- objects that own protocol, transport, or backend state.
 
 Opaque handles allow internal layout changes without breaking ABI. New state should usually be added behind an existing opaque handle rather than exposed through a public struct.
 
@@ -56,7 +56,7 @@ Rules:
 - never renumber existing public enum values;
 - add new values at the end or in unused ranges;
 - keep feature and flag macros stable;
-- document whether unknown future values must be ignored or rejected.
+- document whether unknown values must be ignored or rejected.
 
 ## Function compatibility
 

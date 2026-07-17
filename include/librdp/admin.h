@@ -41,8 +41,8 @@ typedef struct librdp_admin librdp_admin;
  * @brief Administration transport backend.
  *
  * The current public backend is WinRM over HTTP(S). The value is explicit so
- * future management transports can be added without changing the configuration
- * structure layout.
+ * additional management transports can be represented without changing the
+ * configuration structure layout.
  *
  * @since 0.1.0
  */

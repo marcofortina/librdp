@@ -11,7 +11,7 @@
  * Threading: no internal synchronization; callers serialize access to each
  * server object.
  * Trust boundary: server configuration is local application input and is
- * bounded before any future listener runtime consumes it.
+ * bounded before listener runtime consumes it.
  */
 
 #include "server/server_internal.h"

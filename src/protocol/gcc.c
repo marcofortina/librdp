@@ -864,9 +864,8 @@ librdp_status rdp_gcc_parse_server_data_blocks(const void* data, size_t length, 
 }
 
 /*
- * Parse GCC client data blocks for tests and future server-side reuse. Block
- * lengths and type identifiers are validated before exposing parsed capability
- * data.
+ * Parse GCC client data blocks for tests and server-side reuse. Block lengths
+ * and type identifiers are validated before exposing parsed capability data.
  */
 librdp_status rdp_gcc_parse_client_data_blocks(const void* data, size_t length, rdp_gcc_client_data_summary* summary)
 {

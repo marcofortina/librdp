@@ -66,8 +66,8 @@ typedef enum librdp_session_state
  * This enum refines librdp_session_state for applications that need to report
  * or supervise connection progress. Existing state-change events continue to
  * use librdp_session_state; callers can query this lifecycle independently.
- * Values that need future asynchronous DNS or reconnect machinery are reserved
- * and returned only when that machinery is active.
+ * Values reserved for asynchronous DNS or reconnect machinery are returned
+ * only when that machinery is active.
  *
  * @since 0.1.0
  */
@@ -692,8 +692,8 @@ LIBRDP_API void librdp_session_set_audio_callback(librdp_session* session,
  *
  * Passing NULL disables video-domain delivery. The callback receives
  * versioned envelopes for camera open, sample request, and close events. Media
- * descriptors are value payloads; any future buffer payloads remain borrowed
- * for the callback duration unless documented otherwise.
+ * descriptors are value payloads. Buffer payloads remain borrowed for the
+ * callback duration unless a function documents different ownership.
  *
  * @param[in,out] session Session to configure; NULL is ignored.
  * @param[in] callback Callback to install, or NULL to clear it.
@@ -1246,7 +1246,7 @@ LIBRDP_API librdp_status librdp_session_get_metrics(const librdp_session* sessio
 /**
  * @brief Reset all counters in the session metrics snapshot.
  *
- * The version and size of future snapshots remain LIBRDP_METRICS_VERSION and
+ * The metrics version and size remain LIBRDP_METRICS_VERSION and
  * sizeof(librdp_metrics). Active protocol/channel state is not changed.
  *
  * @param[in,out] session Session whose metrics are reset; must not be NULL.

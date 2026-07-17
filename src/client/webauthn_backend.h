@@ -9,7 +9,7 @@
  * Ownership: caller owns request and response buffers; device metadata points
  * into the backend device object until that object leaves scope.
  * Threading: functions are synchronous to the session thread and bounded by
- * protocol timeouts; future async providers must preserve response ownership.
+ * protocol timeouts; asynchronous providers preserve response ownership.
  * Trust boundary: host authenticator paths are local policy inputs, while CTAP
  * payload bytes are sensitive and must not be traced.
  */

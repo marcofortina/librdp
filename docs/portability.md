@@ -32,7 +32,7 @@ Platform-specific behavior belongs in one of these areas:
 
 - `apps/x11/viewer` for the current X11 frontend and its host backends;
 - `src/platform` for small reusable OS abstractions needed by the core;
-- future platform backend directories that do not leak native handles into public core headers.
+- platform backend directories that do not leak native handles into public core headers.
 
 When adding platform code, keep the public API stable and expose capability through settings, events, and opaque handles rather than native platform types.
 
