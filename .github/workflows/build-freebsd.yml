@@ -31,12 +31,31 @@ jobs:
               pkg install -y "${package}" || true
             done
           run: |
-            export OPENSSL_MODULES=/usr/local/lib/ossl-modules
-            test -f "${OPENSSL_MODULES}/legacy.so"
-            openssl list -providers -provider-path "${OPENSSL_MODULES}" -provider legacy | grep -q "legacy"
+            openssl_root=
+            openssl_bin=
+            for candidate_root in /usr/local /usr; do
+              candidate_bin="${candidate_root}/bin/openssl"
+              candidate_modules="${candidate_root}/lib/ossl-modules"
+              if [ -x "${candidate_bin}" ] && [ -f "${candidate_modules}/legacy.so" ] &&
+                 "${candidate_bin}" list -digest-algorithms -provider-path "${candidate_modules}" -provider default -provider legacy | grep -Eq '(^|[[:space:]])MD4([[:space:]]|$)' &&
+                 "${candidate_bin}" list -cipher-algorithms -provider-path "${candidate_modules}" -provider default -provider legacy | grep -Eq '(^|[[:space:]])RC4([[:space:]]|$)'; then
+                openssl_root="${candidate_root}"
+                openssl_bin="${candidate_bin}"
+                export OPENSSL_MODULES="${candidate_modules}"
+                break
+              fi
+            done
+            if [ -z "${openssl_bin}" ]; then
+              echo "No OpenSSL legacy provider exposing MD4 and RC4 was found." >&2
+              find /usr/local /usr -name legacy.so -print >&2 || true
+              exit 1
+            fi
+            echo "Using OpenSSL binary: ${openssl_bin}"
+            echo "Using OpenSSL provider path: ${OPENSSL_MODULES}"
+            "${openssl_bin}" list -providers -provider-path "${OPENSSL_MODULES}" -provider default -provider legacy
             cmake -S . -B build-freebsd-core-no-viewer -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
-              -DOPENSSL_ROOT_DIR=/usr/local \
+              -DOPENSSL_ROOT_DIR="${openssl_root}" \
               -DCMAKE_PREFIX_PATH=/usr/local \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
@@ -65,12 +84,31 @@ jobs:
           prepare: |
             pkg install -y cmake ninja pkgconf openssl libiconv python3 doxygen graphviz
           run: |
-            export OPENSSL_MODULES=/usr/local/lib/ossl-modules
-            test -f "${OPENSSL_MODULES}/legacy.so"
-            openssl list -providers -provider-path "${OPENSSL_MODULES}" -provider legacy | grep -q "legacy"
+            openssl_root=
+            openssl_bin=
+            for candidate_root in /usr/local /usr; do
+              candidate_bin="${candidate_root}/bin/openssl"
+              candidate_modules="${candidate_root}/lib/ossl-modules"
+              if [ -x "${candidate_bin}" ] && [ -f "${candidate_modules}/legacy.so" ] &&
+                 "${candidate_bin}" list -digest-algorithms -provider-path "${candidate_modules}" -provider default -provider legacy | grep -Eq '(^|[[:space:]])MD4([[:space:]]|$)' &&
+                 "${candidate_bin}" list -cipher-algorithms -provider-path "${candidate_modules}" -provider default -provider legacy | grep -Eq '(^|[[:space:]])RC4([[:space:]]|$)'; then
+                openssl_root="${candidate_root}"
+                openssl_bin="${candidate_bin}"
+                export OPENSSL_MODULES="${candidate_modules}"
+                break
+              fi
+            done
+            if [ -z "${openssl_bin}" ]; then
+              echo "No OpenSSL legacy provider exposing MD4 and RC4 was found." >&2
+              find /usr/local /usr -name legacy.so -print >&2 || true
+              exit 1
+            fi
+            echo "Using OpenSSL binary: ${openssl_bin}"
+            echo "Using OpenSSL provider path: ${OPENSSL_MODULES}"
+            "${openssl_bin}" list -providers -provider-path "${OPENSSL_MODULES}" -provider default -provider legacy
             cmake -S . -B build-freebsd-core-no-backends -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
-              -DOPENSSL_ROOT_DIR=/usr/local \
+              -DOPENSSL_ROOT_DIR="${openssl_root}" \
               -DCMAKE_PREFIX_PATH=/usr/local \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
