@@ -495,6 +495,26 @@ typedef struct librdp_server_metrics
     uint64_t feature_rejections; /**< Feature requests rejected because no server runtime exists. */
     uint64_t limits_rejected; /**< Inputs rejected by explicit size, count, or geometry limits. */
     uint64_t errors; /**< Runtime errors observed at the public server boundary. */
+    uint64_t udp_datagrams_in; /**< RDPEUDP datagrams accepted by librdp_server_peer_process_udp_datagram(). */
+    uint64_t udp_datagrams_out; /**< RDPEUDP SACK/ACK-vector responses emitted by the server. */
+    uint64_t udp_bytes_in; /**< RDPEUDP datagram bytes accepted from the application-owned side transport. */
+    uint64_t udp_bytes_out; /**< RDPEUDP response bytes written to the caller-owned response buffer. */
+    uint64_t udp_ack_vector_in; /**< RDPEUDP ACK-vector packets accepted from the peer. */
+    uint64_t udp_ack_vector_out; /**< RDPEUDP ACK-vector packets emitted for reliable receive state. */
+    uint64_t udp_pending_packets; /**< RDPEUDP missing packets reported as pending in the receive window. */
+    uint64_t udp_tcp_fallbacks; /**< RDPEUDP datagrams rejected because the receive gap exceeded the window. */
+    uint64_t udp2_datagrams_in; /**< UDP2 datagrams accepted by librdp_server_peer_process_udp2_datagram(). */
+    uint64_t udp2_datagrams_out; /**< UDP2 response datagrams emitted by librdp_server_peer_process_udp2_datagram(). */
+    uint64_t udp2_bytes_in; /**< UDP2 datagram bytes accepted from the application-owned side transport. */
+    uint64_t udp2_bytes_out; /**< UDP2 response bytes written to the caller-owned response buffer. */
+    uint64_t udp2_ack_in; /**< UDP2 ACK packets accepted from the peer. */
+    uint64_t udp2_ack_out; /**< UDP2 ACK packets emitted for in-order data. */
+    uint64_t udp2_ack_vector_in; /**< UDP2 ACK-vector packets accepted from the peer. */
+    uint64_t udp2_ack_vector_out; /**< UDP2 ACK-vector packets emitted for detected receive gaps. */
+    uint64_t udp2_lost_packets; /**< UDP2 sequence gaps detected in the receive window. */
+    uint64_t udp2_reordered_packets; /**< UDP2 duplicate or reordered data packets accepted without delivery. */
+    uint64_t udp2_tcp_fallbacks; /**< UDP2 datagrams rejected because the receive gap exceeded the negotiated window. */
+    uint64_t udp2_last_rtt_us; /**< Last measured UDP2 RTT in microseconds, or zero until an RTT sample exists. */
 } librdp_server_metrics;
 
 /**
@@ -1599,14 +1619,58 @@ LIBRDP_API librdp_status librdp_server_peer_send_dynamic_channel_data(librdp_ser
                                                                       size_t data_len);
 
 /**
+ * @brief Process one RDPEUDP reliable side-transport datagram for an active peer.
+ *
+ * The application owns the UDP socket or gateway tunnel and passes each
+ * received RDPEUDP datagram to this function after multitransport soft-sync
+ * selected a UDP tunnel. The server validates the FEC/source-payload envelope,
+ * tracks reliable receive sequence gaps, writes a SACK/ACK-vector response,
+ * and marks TCP fallback when a datagram is outside the advertised receive
+ * window. The response buffer remains caller-owned and response_len receives
+ * either bytes written or the required size when the buffer is too small.
+ *
+ * @param[in,out] peer Active peer that negotiated multitransport and UDP; must
+ * not be NULL.
+ * @param[in] datagram Borrowed RDPEUDP wire datagram; must not be NULL.
+ * @param[in] datagram_len Number of bytes in datagram; must be non-zero.
+ * @param[out] response Caller-owned response buffer. May be NULL only when
+ * response_capacity is zero.
+ * @param[in] response_capacity Number of bytes available in response.
+ * @param[out] response_len Number of response bytes written, or required bytes
+ * when the response buffer is too small; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when the datagram is accepted;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for NULL pointers, empty datagrams, or an
+ * inconsistent response buffer; LIBRDP_STATUS_STATE when the peer is not
+ * ACTIVE; LIBRDP_STATUS_UNSUPPORTED when RDPEUDP was not requested or
+ * multitransport was not negotiated; LIBRDP_STATUS_LIMIT_EXCEEDED when the
+ * response buffer is too small; LIBRDP_STATUS_PROTOCOL_ERROR for malformed or
+ * out-of-window datagrams; allocation errors if temporary buffers cannot grow.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. This API
+ * does not create sockets or threads.
+ * @warning RDPEUDP payloads can contain redirected channel traffic. Keep
+ * traces redacted and avoid logging datagram bodies outside librdp.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_process_udp_datagram(librdp_server_peer* peer,
+                                                                 const void* datagram,
+                                                                 size_t datagram_len,
+                                                                 void* response,
+                                                                 size_t response_capacity,
+                                                                 size_t* response_len);
+
+/**
  * @brief Process one UDP2 side-transport datagram for an active peer.
  *
  * The application owns the UDP socket or gateway tunnel and passes each
  * received UDP2 datagram to this function after multitransport negotiation.
  * The datagram is validated, decoded, and, when it carries data, acknowledged
- * into the caller-provided response buffer. The response buffer remains
- * caller-owned and response_len receives either the number of bytes written or
- * the required size when the buffer is too small.
+ * into the caller-provided response buffer. The server tracks the UDP2 receive
+ * window, duplicate/reordered packets, loss estimates, explicit TCP fallback,
+ * and ACK/ACK-vector counters in librdp_server_metrics. The response buffer
+ * remains caller-owned and response_len receives either the number of bytes
+ * written or the required size when the buffer is too small.
  *
  * @param[in,out] peer Active peer that negotiated multitransport; must not be
  * NULL.
