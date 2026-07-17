@@ -4767,6 +4767,18 @@ static int test_gdi_backends(void)
            (caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS) != 0);
     PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
                                      surface,
+                                     0,
+                                     0,
+                                     1,
+                                     1,
+                                     0x80ff0000u) == LIBRDP_STATUS_OK);
+    pixels = librdp_surface_pixels(surface);
+    stride = librdp_surface_stride(surface);
+    PCHECK(pixels != NULL && stride >= 24u);
+    PCHECK(pixels[0] == 0x00u && pixels[1] == 0x00u &&
+           (pixels[2] == 0x80u || pixels[2] == 0x81u) && pixels[3] == 0xffu);
+    PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
+                                     surface,
                                      1,
                                      2,
                                      3,
@@ -4779,7 +4791,6 @@ static int test_gdi_backends(void)
            pixels[(2u * stride) + 5u] == 0x22u &&
            pixels[(2u * stride) + 6u] == 0x11u &&
            pixels[(2u * stride) + 7u] == 0xffu);
-    PCHECK(pixels[0] == 0 && pixels[1] == 0 && pixels[2] == 0 && pixels[3] == 0);
     PCHECK(rdp_gdi_backend_blit_bgra32(RDP_GDI_BACKEND_SOFTWARE,
                                        surface,
                                        0,

@@ -51,8 +51,18 @@ static void rdp_gdi_backend_cairo_set_color(cairo_t* cr, uint32_t color)
     double b = (double)(color & 0xffu) / 255.0;
     double g = (double)((color >> 8u) & 0xffu) / 255.0;
     double r = (double)((color >> 16u) & 0xffu) / 255.0;
+    uint8_t alpha_byte = (uint8_t)((color >> 24u) & 0xffu);
+    double alpha = (double)(alpha_byte == 0u ? 0xffu : alpha_byte) / 255.0;
 
-    cairo_set_source_rgba(cr, r, g, b, 1.0);
+    cairo_set_source_rgba(cr, r, g, b, alpha);
+}
+
+static void rdp_gdi_backend_cairo_set_operator_for_color(cairo_t* cr, uint32_t color)
+{
+    uint8_t alpha_byte = (uint8_t)((color >> 24u) & 0xffu);
+
+    cairo_set_operator(cr, alpha_byte == 0u || alpha_byte == 0xffu ? CAIRO_OPERATOR_SOURCE :
+                                                               CAIRO_OPERATOR_OVER);
 }
 
 static librdp_status rdp_gdi_backend_cairo_create_context(librdp_surface* surface,
@@ -273,7 +283,7 @@ librdp_status rdp_gdi_backend_cairo_draw_line(librdp_surface* surface,
     status = rdp_gdi_backend_cairo_create_context(surface, &mapping, &cairo_surface, &cr);
     if (status == LIBRDP_STATUS_OK)
     {
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        rdp_gdi_backend_cairo_set_operator_for_color(cr, color);
         cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
         rdp_gdi_backend_cairo_clip(cr, clip);
         rdp_gdi_backend_cairo_set_color(cr, color);
@@ -356,7 +366,7 @@ librdp_status rdp_gdi_backend_cairo_fill_polygon(librdp_surface* surface,
     status = rdp_gdi_backend_cairo_create_context(surface, &mapping, &cairo_surface, &cr);
     if (status == LIBRDP_STATUS_OK)
     {
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        rdp_gdi_backend_cairo_set_operator_for_color(cr, color);
         cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
         cairo_set_fill_rule(cr, fill_mode == 2u ? CAIRO_FILL_RULE_WINDING : CAIRO_FILL_RULE_EVEN_ODD);
         rdp_gdi_backend_cairo_clip(cr, clip);
@@ -428,7 +438,7 @@ librdp_status rdp_gdi_backend_cairo_fill_ellipse(librdp_surface* surface,
     status = rdp_gdi_backend_cairo_create_context(surface, &mapping, &cairo_surface, &cr);
     if (status == LIBRDP_STATUS_OK)
     {
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        rdp_gdi_backend_cairo_set_operator_for_color(cr, color);
         cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
         rdp_gdi_backend_cairo_clip(cr, clip);
         rdp_gdi_backend_cairo_set_color(cr, color);

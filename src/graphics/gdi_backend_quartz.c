@@ -39,9 +39,20 @@ static void rdp_gdi_backend_quartz_set_color(CGContextRef context, uint32_t colo
     CGFloat b = (CGFloat)(color & 0xffu) / (CGFloat)255.0;
     CGFloat g = (CGFloat)((color >> 8u) & 0xffu) / (CGFloat)255.0;
     CGFloat r = (CGFloat)((color >> 16u) & 0xffu) / (CGFloat)255.0;
+    uint8_t alpha_byte = (uint8_t)((color >> 24u) & 0xffu);
+    CGFloat alpha = (CGFloat)(alpha_byte == 0u ? 0xffu : alpha_byte) / (CGFloat)255.0;
 
-    CGContextSetRGBFillColor(context, r, g, b, (CGFloat)1.0);
-    CGContextSetRGBStrokeColor(context, r, g, b, (CGFloat)1.0);
+    CGContextSetRGBFillColor(context, r, g, b, alpha);
+    CGContextSetRGBStrokeColor(context, r, g, b, alpha);
+}
+
+static void rdp_gdi_backend_quartz_set_blend_for_color(CGContextRef context, uint32_t color)
+{
+    uint8_t alpha_byte = (uint8_t)((color >> 24u) & 0xffu);
+
+    CGContextSetBlendMode(context,
+                          alpha_byte == 0u || alpha_byte == 0xffu ? kCGBlendModeCopy :
+                                                                     kCGBlendModeNormal);
 }
 
 static void rdp_gdi_backend_quartz_prepare_top_left(CGContextRef context, uint32_t height)
@@ -117,7 +128,7 @@ librdp_status rdp_gdi_backend_quartz_fill_rect(librdp_surface* surface,
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_gdi_backend_quartz_prepare_top_left(context, mapping.height);
-        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        rdp_gdi_backend_quartz_set_blend_for_color(context, color);
         rdp_gdi_backend_quartz_set_color(context, color);
         CGContextFillRect(context,
                           CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)width, (CGFloat)height));
@@ -232,7 +243,7 @@ librdp_status rdp_gdi_backend_quartz_draw_line(librdp_surface* surface,
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_gdi_backend_quartz_prepare_top_left(context, mapping.height);
-        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        rdp_gdi_backend_quartz_set_blend_for_color(context, color);
         CGContextSetShouldAntialias(context, 0);
         rdp_gdi_backend_quartz_clip(context, clip);
         rdp_gdi_backend_quartz_set_color(context, color);
@@ -342,7 +353,7 @@ librdp_status rdp_gdi_backend_quartz_fill_polygon(librdp_surface* surface,
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_gdi_backend_quartz_prepare_top_left(context, mapping.height);
-        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        rdp_gdi_backend_quartz_set_blend_for_color(context, color);
         CGContextSetShouldAntialias(context, 0);
         rdp_gdi_backend_quartz_clip(context, clip);
         rdp_gdi_backend_quartz_set_color(context, color);
@@ -449,7 +460,7 @@ librdp_status rdp_gdi_backend_quartz_fill_ellipse(librdp_surface* surface,
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_gdi_backend_quartz_prepare_top_left(context, mapping.height);
-        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        rdp_gdi_backend_quartz_set_blend_for_color(context, color);
         CGContextSetShouldAntialias(context, 0);
         rdp_gdi_backend_quartz_clip(context, clip);
         rdp_gdi_backend_quartz_set_color(context, color);
@@ -519,7 +530,7 @@ librdp_status rdp_gdi_backend_quartz_draw_ellipse(librdp_surface* surface,
     if (status == LIBRDP_STATUS_OK)
     {
         rdp_gdi_backend_quartz_prepare_top_left(context, mapping.height);
-        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        rdp_gdi_backend_quartz_set_blend_for_color(context, color);
         CGContextSetShouldAntialias(context, 0);
         rdp_gdi_backend_quartz_clip(context, clip);
         rdp_gdi_backend_quartz_set_color(context, color);

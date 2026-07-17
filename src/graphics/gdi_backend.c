@@ -78,7 +78,23 @@ static float rdp_gdi_backend_read_float_le(const uint8_t* data)
 
 static uint32_t rdp_gdi_backend_argb_to_color(uint32_t argb)
 {
-    return argb & 0x00ffffffu;
+    return argb;
+}
+
+static uint8_t rdp_gdi_backend_color_alpha(uint32_t color)
+{
+    uint8_t alpha = (uint8_t)((color >> 24u) & 0xffu);
+
+    return alpha == 0u ? 0xffu : alpha;
+}
+
+static uint8_t rdp_gdi_backend_blend_channel(uint8_t source, uint8_t destination, uint8_t alpha)
+{
+    uint32_t blended = ((uint32_t)source * (uint32_t)alpha) +
+                       ((uint32_t)destination * (uint32_t)(255u - alpha)) +
+                       127u;
+
+    return (uint8_t)(blended / 255u);
 }
 
 static uint32_t rdp_gdi_backend_float_to_pen_width(float width)
@@ -130,7 +146,16 @@ static void rdp_gdi_backend_put_pixel(uint8_t* pixels,
                                       uint32_t color)
 {
     uint8_t* pixel = pixels + ((size_t)y * stride) + ((size_t)x * 4u);
+    uint8_t alpha = rdp_gdi_backend_color_alpha(color);
 
+    if (alpha != 0xffu)
+    {
+        pixel[0] = rdp_gdi_backend_blend_channel((uint8_t)(color & 0xffu), pixel[0], alpha);
+        pixel[1] = rdp_gdi_backend_blend_channel((uint8_t)((color >> 8u) & 0xffu), pixel[1], alpha);
+        pixel[2] = rdp_gdi_backend_blend_channel((uint8_t)((color >> 16u) & 0xffu), pixel[2], alpha);
+        pixel[3] = 0xffu;
+        return;
+    }
     pixel[0] = (uint8_t)(color & 0xffu);
     pixel[1] = (uint8_t)((color >> 8u) & 0xffu);
     pixel[2] = (uint8_t)((color >> 16u) & 0xffu);
@@ -175,6 +200,7 @@ static librdp_status rdp_gdi_backend_software_fill_rect(librdp_surface* surface,
     uint8_t b = (uint8_t)(color & 0xffu);
     uint8_t g = (uint8_t)((color >> 8u) & 0xffu);
     uint8_t r = (uint8_t)((color >> 16u) & 0xffu);
+    uint8_t alpha = rdp_gdi_backend_color_alpha(color);
     uint32_t row = 0;
 
     if (!rdp_gdi_backend_rect_valid(surface, x, y, width, height))
@@ -193,10 +219,20 @@ static librdp_status rdp_gdi_backend_software_fill_rect(librdp_surface* surface,
 
         for (column = 0; column < width; column++)
         {
-            pixel[0] = b;
-            pixel[1] = g;
-            pixel[2] = r;
-            pixel[3] = 0xffu;
+            if (alpha == 0xffu)
+            {
+                pixel[0] = b;
+                pixel[1] = g;
+                pixel[2] = r;
+                pixel[3] = 0xffu;
+            }
+            else
+            {
+                pixel[0] = rdp_gdi_backend_blend_channel(b, pixel[0], alpha);
+                pixel[1] = rdp_gdi_backend_blend_channel(g, pixel[1], alpha);
+                pixel[2] = rdp_gdi_backend_blend_channel(r, pixel[2], alpha);
+                pixel[3] = 0xffu;
+            }
             pixel += 4u;
         }
     }
@@ -3364,13 +3400,15 @@ static librdp_status rdp_gdi_backend_gdiplus_scale_bgra32(librdp_surface* surfac
             uint32_t sy = src_y + (uint32_t)(((uint64_t)rel_y * src_height) / dst_height);
             uint32_t row = source_bottom_up ? (image_height - 1u - sy) : sy;
             const uint8_t* src = source + ((size_t)row * source_stride) + ((size_t)sx * 4u);
-            uint8_t* dst = mapping.writable_pixels + ((size_t)(uint32_t)y * mapping.stride) +
-                           ((size_t)(uint32_t)x * 4u);
 
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst[3] = 0xffu;
+            rdp_gdi_backend_put_pixel(mapping.writable_pixels,
+                                      mapping.stride,
+                                      (uint32_t)x,
+                                      (uint32_t)y,
+                                      ((uint32_t)src[3] << 24u) |
+                                          ((uint32_t)src[2] << 16u) |
+                                          ((uint32_t)src[1] << 8u) |
+                                          (uint32_t)src[0]);
         }
     }
     unmap_status = librdp_surface_unmap(surface, &mapping);
