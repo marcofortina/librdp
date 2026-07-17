@@ -117,6 +117,35 @@ static const uint8_t core_test_server_random[32] = {
     0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
 };
 
+static const librdp_feature core_test_all_features[] = {
+    LIBRDP_FEATURE_AUDIO_OUTPUT,
+    LIBRDP_FEATURE_AUDIO_INPUT,
+    LIBRDP_FEATURE_VIDEO,
+    LIBRDP_FEATURE_CAMERA,
+    LIBRDP_FEATURE_SMARTCARD,
+    LIBRDP_FEATURE_USB,
+    LIBRDP_FEATURE_PNP,
+    LIBRDP_FEATURE_WEBAUTHN,
+    LIBRDP_FEATURE_RAIL,
+    LIBRDP_FEATURE_CR2,
+    LIBRDP_FEATURE_ECHO,
+    LIBRDP_FEATURE_TELEMETRY,
+    LIBRDP_FEATURE_MULTITRANSPORT,
+    LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+    LIBRDP_FEATURE_DISPLAY_CONTROL,
+    LIBRDP_FEATURE_UDP_TRANSPORT,
+    LIBRDP_FEATURE_UDP2_TRANSPORT,
+    LIBRDP_FEATURE_GEOMETRY_TRACKING,
+    LIBRDP_FEATURE_MULTIPARTY
+};
+
+static int core_test_feature_reason_is_current(const librdp_feature_status* status)
+{
+    return status &&
+           status->reason >= LIBRDP_FEATURE_REASON_NONE &&
+           status->reason <= LIBRDP_FEATURE_REASON_NOT_ACTIVE;
+}
+
 static const uint8_t core_test_server_certificate[] = {
     0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
     0x06, 0x00, 0x9c, 0x00, 0x52, 0x53, 0x41, 0x31, 0x88, 0x00, 0x00, 0x00,
@@ -6533,6 +6562,47 @@ static int test_feature_runtime_gates(void)
 }
 
 /*
+ * Coverage: locks public feature-status reason values to the active contract.
+ * Bug class: catches stale readiness categories leaking from settings or a
+ * fresh client session after all known feature bits are queried.
+ */
+static int test_client_feature_status_reason_contract(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_feature_status status;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+
+    for (size_t i = 0; i < sizeof(core_test_all_features) / sizeof(core_test_all_features[0]); i++)
+    {
+        CHECK(librdp_settings_get_feature_status(settings, core_test_all_features[i], &status) ==
+              LIBRDP_STATUS_OK);
+        CHECK(status.reason == LIBRDP_FEATURE_REASON_NOT_REQUESTED);
+        CHECK(core_test_feature_reason_is_current(&status));
+        CHECK(librdp_settings_enable_feature(settings, core_test_all_features[i], 1) ==
+              LIBRDP_STATUS_OK);
+        CHECK(librdp_settings_get_feature_status(settings, core_test_all_features[i], &status) ==
+              LIBRDP_STATUS_OK);
+        CHECK(core_test_feature_reason_is_current(&status));
+    }
+
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    for (size_t i = 0; i < sizeof(core_test_all_features) / sizeof(core_test_all_features[0]); i++)
+    {
+        CHECK(librdp_session_get_feature_status(session, core_test_all_features[i], &status) ==
+              LIBRDP_STATUS_OK);
+        CHECK(core_test_feature_reason_is_current(&status));
+    }
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
  * Coverage: validates the MS-RDPEECO client behavior on an internal ECHO DVC.
  * The mock server sends an echo request and verifies that the client core,
  * not the viewer callback, returns the identical payload without exposing the
@@ -7945,8 +8015,8 @@ static int test_gdiplus_object_table_solid_brush_and_pen(void)
 }
 
 /*
- * Coverage: locks the EMF+ visual records that previously had parser-only
- * handling to concrete raster paths. The test builds valid object-table path,
+ * Coverage: locks EMF+ visual records to concrete raster paths. The test builds
+ * valid object-table path,
  * region, image and text records, then checks that no visual family increments
  * the unsupported counter.
  */
@@ -9528,6 +9598,8 @@ int test_client_core(void)
     if (test_optional_feature_runtime_paths() != 0)
         return 1;
     if (test_feature_runtime_gates() != 0)
+        return 1;
+    if (test_client_feature_status_reason_contract() != 0)
         return 1;
     if (test_echo_channel_auto_response() != 0)
         return 1;

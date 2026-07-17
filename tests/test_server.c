@@ -82,6 +82,35 @@ static int test_server_make_tls_files(char* cert_path,
                                       size_t key_path_len);
 static void test_server_fill_secret(char* output, size_t output_len, uint32_t seed);
 
+static const librdp_feature server_test_all_features[] = {
+    LIBRDP_FEATURE_AUDIO_OUTPUT,
+    LIBRDP_FEATURE_AUDIO_INPUT,
+    LIBRDP_FEATURE_VIDEO,
+    LIBRDP_FEATURE_CAMERA,
+    LIBRDP_FEATURE_SMARTCARD,
+    LIBRDP_FEATURE_USB,
+    LIBRDP_FEATURE_PNP,
+    LIBRDP_FEATURE_WEBAUTHN,
+    LIBRDP_FEATURE_RAIL,
+    LIBRDP_FEATURE_CR2,
+    LIBRDP_FEATURE_ECHO,
+    LIBRDP_FEATURE_TELEMETRY,
+    LIBRDP_FEATURE_MULTITRANSPORT,
+    LIBRDP_FEATURE_DESKTOP_COMPOSITION,
+    LIBRDP_FEATURE_DISPLAY_CONTROL,
+    LIBRDP_FEATURE_UDP_TRANSPORT,
+    LIBRDP_FEATURE_UDP2_TRANSPORT,
+    LIBRDP_FEATURE_GEOMETRY_TRACKING,
+    LIBRDP_FEATURE_MULTIPARTY
+};
+
+static int server_test_feature_reason_is_current(const librdp_feature_status* status)
+{
+    return status &&
+           status->reason >= LIBRDP_FEATURE_REASON_NONE &&
+           status->reason <= LIBRDP_FEATURE_REASON_NOT_ACTIVE;
+}
+
 static int test_server_config_defaults(void)
 {
     librdp_server_config config;
@@ -418,6 +447,39 @@ static int test_server_public_feature_backend_readiness(void)
         SCHECK(!feature_status.negotiated && !feature_status.active);
         SCHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_NEGOTIATED);
     }
+    librdp_server_free(server);
+    return 0;
+}
+
+/*
+ * Coverage: validates that listener-scope feature readiness reports only the
+ * public reason values that are part of the active API contract.
+ * Bug class: catches stale readiness categories when new server features are
+ * wired into the listener before peer negotiation.
+ */
+static int test_server_feature_status_reason_contract(void)
+{
+    librdp_server_config config;
+    librdp_feature_status feature_status;
+    librdp_server* server = NULL;
+
+    SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
+    server = librdp_server_new(&config);
+    SCHECK(server != NULL);
+
+    for (size_t i = 0; i < sizeof(server_test_all_features) / sizeof(server_test_all_features[0]); i++)
+    {
+        SCHECK(librdp_server_get_feature_status(server, server_test_all_features[i], &feature_status) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(feature_status.reason == LIBRDP_FEATURE_REASON_NOT_REQUESTED);
+        SCHECK(server_test_feature_reason_is_current(&feature_status));
+        SCHECK(librdp_server_enable_feature(server, server_test_all_features[i], 1) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(librdp_server_get_feature_status(server, server_test_all_features[i], &feature_status) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(server_test_feature_reason_is_current(&feature_status));
+    }
+
     librdp_server_free(server);
     return 0;
 }
@@ -2582,6 +2644,13 @@ static int test_server_loopback_standard_activation_sequence(void)
     SCHECK(client_fd >= 0);
     SCHECK(librdp_server_accept(server, 1000, &peer) == LIBRDP_STATUS_OK);
     SCHECK(peer != NULL);
+    for (size_t i = 0; i < sizeof(server_test_all_features) / sizeof(server_test_all_features[0]); i++)
+    {
+        SCHECK(librdp_server_peer_get_feature_status(peer,
+                                                     server_test_all_features[i],
+                                                     &feature_status) == LIBRDP_STATUS_OK);
+        SCHECK(server_test_feature_reason_is_current(&feature_status));
+    }
     SCHECK(librdp_server_peer_get_extension_provider_status(NULL,
                                                             LIBRDP_SERVER_EXTENSION_CLIPBOARD,
                                                             &extension_enabled) ==
@@ -5719,6 +5788,8 @@ int main(void)
     if (test_server_transport_feature_gates() != 0)
         return 1;
     if (test_server_public_feature_backend_readiness() != 0)
+        return 1;
+    if (test_server_feature_status_reason_contract() != 0)
         return 1;
     if (test_server_new_copies_strings() != 0)
         return 1;

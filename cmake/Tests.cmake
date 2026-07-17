@@ -264,6 +264,8 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-internal-header-comments.py)
         add_test(NAME test_fuzz_comments
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-test-fuzz-comments.py)
+        add_test(NAME feature_status_reasons
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-feature-status-reasons.py)
         add_test(NAME viewer_public_includes
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-viewer-public-includes.py)
         add_test(NAME examples_docs
