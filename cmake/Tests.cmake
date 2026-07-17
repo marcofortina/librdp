@@ -101,7 +101,15 @@ if(LIBRDP_BUILD_TESTS)
     target_compile_definitions(test_transport PRIVATE LIBRDP_TEST_TRANSPORT_MAIN)
     librdp_configure_test_executable(test_transport)
 
-    add_executable(test_server tests/test_server.c)
+    add_executable(test_server
+        tests/test_server.c
+        tests/test_server_config.c
+        tests/test_server_features.c
+        tests/test_server_focused.c
+        tests/test_server_runtime.c
+        tests/test_server_security.c
+        tests/test_server_support.c
+    )
     librdp_configure_test_executable(test_server)
 
     add_executable(test_interop_smoke tests/interop_smoke.c)
@@ -166,10 +174,31 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME transport COMMAND test_transport)
     add_test(NAME server COMMAND test_server)
+    add_test(NAME server_config COMMAND test_server config)
+    add_test(NAME server_feature_status COMMAND test_server features)
+    add_test(NAME server_security COMMAND test_server security)
+    add_test(NAME server_lifecycle COMMAND test_server lifecycle)
+    add_test(NAME server_channels COMMAND test_server channels)
+    add_test(NAME server_graphics COMMAND test_server graphics)
+    add_test(NAME server_runtime COMMAND test_server runtime)
     add_test(NAME interop_smoke COMMAND test_interop_smoke)
     add_test(NAME viewer_backends COMMAND test_viewer_backends)
     add_test(NAME viewer_cli COMMAND test_viewer_cli)
-    set_tests_properties(common transport server PROPERTIES TIMEOUT 30)
+    set_tests_properties(common transport PROPERTIES TIMEOUT 30)
+    set_tests_properties(
+        server
+        server_security
+        server_runtime
+        PROPERTIES TIMEOUT 60
+    )
+    set_tests_properties(
+        server_config
+        server_feature_status
+        server_lifecycle
+        server_channels
+        server_graphics
+        PROPERTIES TIMEOUT 30
+    )
     set_tests_properties(core PROPERTIES TIMEOUT 60)
     set_tests_properties(protocol PROPERTIES TIMEOUT 90)
     set_tests_properties(viewer_backends viewer_cli PROPERTIES TIMEOUT 30)
