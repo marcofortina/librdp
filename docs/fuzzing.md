@@ -47,7 +47,7 @@ Every target must:
 - free or reset all per-input allocations;
 - document the target and bug classes in the file header and entrypoint comment.
 
-Add new targets through the `add_librdp_fuzzer()` list in `CMakeLists.txt`.
+Add new targets through the `add_librdp_fuzzer()` list in the CMake fuzz module.
 
 ## Target classes
 
@@ -55,6 +55,7 @@ Fuzz coverage includes:
 
 - shared stream, charset, and bulk-compression helpers;
 - transport framing;
+- server-side connection, CredSSP, channel, and activation dispatch through `fuzz_server_parser`;
 - X.224, MCS, GCC, TPKT, fast-path, slow-path, capabilities, licensing, and security parsers;
 - `credssp` ASN.1, credential transport, and authentication message handling;
 - dynamic virtual channels and device channels;
