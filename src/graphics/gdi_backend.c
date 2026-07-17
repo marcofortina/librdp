@@ -44,7 +44,8 @@ static uint32_t rdp_gdi_backend_caps_all(void)
            RDP_GDI_BACKEND_CAP_FILL_POLYGON |
            RDP_GDI_BACKEND_CAP_FILL_ELLIPSE |
            RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE |
-           RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM;
+           RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM |
+           RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS;
 }
 
 static uint16_t rdp_gdi_backend_read_u16_le(const uint8_t* data)

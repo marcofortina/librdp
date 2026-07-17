@@ -4762,7 +4762,9 @@ static int test_gdi_backends(void)
            (caps.caps & RDP_GDI_BACKEND_CAP_FILL_POLYGON) != 0 &&
            (caps.caps & RDP_GDI_BACKEND_CAP_FILL_ELLIPSE) != 0 &&
            (caps.caps & RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE) != 0 &&
-           (caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM) != 0);
+           (caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS) != 0 &&
+           (caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS) == 0);
     PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_SOFTWARE,
                                      surface,
                                      1,
@@ -4903,6 +4905,8 @@ static int test_gdi_backends(void)
         PCHECK(surface != NULL);
         PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_FILL_ELLIPSE) != 0);
         PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM) != 0);
+        PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS) != 0);
+        PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS) == 0);
         PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_CAIRO,
                                          surface,
                                          0,
@@ -4940,6 +4944,8 @@ static int test_gdi_backends(void)
         surface = librdp_surface_new(4, 4, LIBRDP_PIXEL_FORMAT_BGRA32);
         PCHECK(surface != NULL);
         PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM) != 0);
+        PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS) != 0);
+        PCHECK((caps.caps & RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS) == 0);
         PCHECK(rdp_gdi_backend_fill_rect(RDP_GDI_BACKEND_QUARTZ,
                                          surface,
                                          0,

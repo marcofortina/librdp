@@ -1063,6 +1063,11 @@ static librdp_status rdp_session_gdi_gdiplus_draw_append(librdp_session* session
                                           order->data_len);
 }
 
+/*
+ * Finish a fragmented GDI+ draw stream, render the supported primitive records
+ * through the selected backend, and trace incomplete visual coverage without
+ * claiming that unsupported EMF+ records produced pixels.
+ */
 static librdp_status rdp_session_gdi_gdiplus_draw_finish(librdp_session* session,
                                                          const rdp_gdi_gdiplus_order* order)
 {
@@ -1127,7 +1132,8 @@ static librdp_status rdp_session_gdi_gdiplus_draw_finish(librdp_session* session
     session->gdi_gdiplus_draw_count++;
     rdp_trace_event_level(RDP_TRACE_CLIENT,
                           RDP_TRACE_LEVEL_INFO,
-                          "client.gdi.gdiplus.draw.complete",
+                          unsupported > 0u ? "client.gdi.gdiplus.draw.partial" :
+                                             "client.gdi.gdiplus.draw.complete",
                           "surface_id=%u bytes=%u expected=%u emf_bytes=%u records=%u rasterized=%u unsupported=%u backend=%u count=%u",
                           session->gdi_current_surface_id,
                           (unsigned)received,

@@ -151,10 +151,7 @@ uint8_t rdp_session_feature_ready_for_negotiation(const librdp_session* session,
     memset(&status, 0, sizeof(status));
     if (librdp_settings_get_feature_status(session->settings, feature, &status) != LIBRDP_STATUS_OK)
         return 0;
-    return (status.requested && status.backend_ready &&
-            status.reason != LIBRDP_FEATURE_REASON_PARSER_ONLY) ?
-               1u :
-               0u;
+    return (status.requested && status.backend_ready) ? 1u : 0u;
 }
 
 static uint8_t rdp_session_device_redirection_ready_for_negotiation(const librdp_session* session)

@@ -7878,7 +7878,7 @@ static int test_gdiplus_object_table_solid_brush_and_pen(void)
  * renderer must increment the unsupported counter, and malformed unknown records
  * remain protocol errors.
  */
-static int test_gdiplus_known_record_families_are_runtime_handled(void)
+static int test_gdiplus_known_record_families_report_visual_gaps(void)
 {
     static const uint16_t state_records[] = {
         0x4001u, 0x4002u, 0x4003u, 0x4004u, 0x4005u, 0x4006u, 0x4007u,
@@ -8853,7 +8853,7 @@ int test_client_core(void)
         return 1;
     if (test_gdiplus_object_table_solid_brush_and_pen() != 0)
         return 1;
-    if (test_gdiplus_known_record_families_are_runtime_handled() != 0)
+    if (test_gdiplus_known_record_families_report_visual_gaps() != 0)
         return 1;
     if (test_gdi_altsec_runtime_orders() != 0)
         return 1;

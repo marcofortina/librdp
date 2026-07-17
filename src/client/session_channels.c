@@ -376,8 +376,7 @@ uint32_t rdp_session_dynamic_channel_create_status(librdp_session* session,
                                            feature,
                                            &feature_status) != LIBRDP_STATUS_OK)
         return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
-    if (!feature_status.requested || !feature_status.backend_ready ||
-        feature_status.reason == LIBRDP_FEATURE_REASON_PARSER_ONLY)
+    if (!feature_status.requested || !feature_status.backend_ready)
         return RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
     if (rdp_session_dynamic_request_is_tsmf(request))
         return RDP_DYNAMIC_CHANNEL_STATUS_OK;

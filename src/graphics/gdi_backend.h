@@ -29,7 +29,10 @@
 #define RDP_GDI_BACKEND_CAP_FILL_POLYGON 0x00000010u
 #define RDP_GDI_BACKEND_CAP_FILL_ELLIPSE 0x00000020u
 #define RDP_GDI_BACKEND_CAP_DRAW_ELLIPSE 0x00000040u
+/* GDI+ stream support is split between parsed/rasterized primitive records and complete visual record coverage. */
 #define RDP_GDI_BACKEND_CAP_GDIPLUS_STREAM 0x00000080u
+#define RDP_GDI_BACKEND_CAP_GDIPLUS_PARTIAL_VISUALS 0x00000100u
+#define RDP_GDI_BACKEND_CAP_GDIPLUS_COMPLETE_VISUALS 0x00000200u
 
 typedef enum rdp_gdi_backend_kind
 {
