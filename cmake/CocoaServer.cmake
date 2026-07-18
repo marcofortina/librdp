@@ -123,6 +123,46 @@ if(LIBRDP_BUILD_COCOA_SERVER)
             COMMAND test_cocoa_server_input)
         set_tests_properties(cocoa_server_input PROPERTIES TIMEOUT 30)
         add_dependencies(librdp_tests test_cocoa_server_input)
+        add_executable(test_cocoa_server_capture
+            tests/test_cocoa_server_capture.m
+            apps/cocoa/server/cocoa_capture.m
+        )
+        target_compile_definitions(test_cocoa_server_capture PRIVATE
+            LIBRDP_COCOA_SERVER_TESTING=1
+        )
+        target_include_directories(test_cocoa_server_capture PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_cocoa_server_capture PRIVATE
+            librdp_app_common
+            ${LIBRDP_COCOA_SERVER_COCOA_FRAMEWORK}
+            ${LIBRDP_COCOA_SERVER_COREGRAPHICS_FRAMEWORK}
+            ${LIBRDP_COCOA_SERVER_COREMEDIA_FRAMEWORK}
+            ${LIBRDP_COCOA_SERVER_COREVIDEO_FRAMEWORK}
+            ${LIBRDP_COCOA_SERVER_SCREENCAPTUREKIT_FRAMEWORK}
+            Threads::Threads
+        )
+        target_compile_options(test_cocoa_server_capture PRIVATE
+            $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
+            $<$<COMPILE_LANGUAGE:OBJC>:-mmacosx-version-min=12.3>
+        )
+        target_link_options(test_cocoa_server_capture PRIVATE
+            -mmacosx-version-min=12.3
+        )
+        librdp_apply_system_definitions(test_cocoa_server_capture)
+        librdp_apply_warning_options(test_cocoa_server_capture)
+        librdp_apply_sanitizer_compile_options(
+            test_cocoa_server_capture)
+        librdp_apply_sanitizer_link_options(
+            test_cocoa_server_capture)
+        add_test(NAME cocoa_server_capture
+            COMMAND test_cocoa_server_capture)
+        set_tests_properties(cocoa_server_capture
+            PROPERTIES TIMEOUT 30)
+        add_dependencies(librdp_tests
+            test_cocoa_server_capture)
         add_executable(test_cocoa_server_permission
             tests/test_cocoa_server_permission.m
             apps/cocoa/server/cocoa_permission.m
