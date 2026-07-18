@@ -31,7 +31,6 @@ typedef struct server_host_peer_slot
     uint32_t surface_width;
     uint32_t surface_height;
     uint32_t clipboard_generation;
-    uint32_t drive_generation;
     server_host_peer_state state;
     int occupied;
     int input_owner;
@@ -44,6 +43,7 @@ struct server_host
     server_dirty_config dirty_config;
     server_host_peer_slot* peers;
     server_clipboard_runtime* clipboard;
+    server_drive_runtime* drive;
     size_t peer_capacity;
     size_t peer_count;
     uint32_t next_peer_id;
@@ -59,6 +59,7 @@ struct server_host
     server_host_metrics metrics;
     uint16_t next_pointer_cache_index;
     uint8_t pointer_visible;
+    uint8_t drive_configured;
     int listener_running;
     struct pollfd* pollfds;
     size_t poll_capacity;

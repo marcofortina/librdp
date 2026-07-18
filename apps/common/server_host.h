@@ -18,6 +18,7 @@
 
 #include "server_dirty.h"
 #include "server_clipboard.h"
+#include "server_drive.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
@@ -155,6 +156,7 @@ typedef struct server_host_config
     server_platform platform;
     server_dirty_config dirty;
     server_clipboard_config clipboard;
+    server_drive_config drive;
     uint32_t max_peers;
     unsigned int max_work_per_iteration;
     server_host_input_policy input_policy;

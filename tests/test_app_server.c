@@ -44,11 +44,13 @@ typedef struct mock_platform_context
     unsigned int clipboard_cancels;
     unsigned int clipboard_releases;
     unsigned int drive_peer_removals;
+    unsigned int drive_completions;
     uint32_t last_cleanup_peer_id;
     uint32_t last_clipboard_generation;
     uint32_t last_drive_generation;
     uint64_t last_clipboard_request_id;
     uint64_t last_clipboard_ownership_generation;
+    uint64_t last_drive_request_id;
     uint32_t last_clipboard_format_id;
     uint32_t last_clipboard_stream_id;
     uint32_t published_format_ids[8];
@@ -370,7 +372,7 @@ static librdp_status mock_drive_start(void* context,
 {
     mock_platform_context* mock = (mock_platform_context*)context;
 
-    if (!mock || !sink || !sink->request)
+    if (!mock || !sink || !sink->request || !sink->cancel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     mock->drive_sink = *sink;
     mock->starts++;
@@ -409,6 +411,19 @@ static void mock_drive_remove_peer(void* context,
     mock->drive_peer_removals++;
     mock->last_cleanup_peer_id = peer_id;
     mock->last_drive_generation = generation;
+}
+
+static librdp_status mock_drive_complete(
+    void* context,
+    const server_platform_drive_completion* completion)
+{
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !completion)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->drive_completions++;
+    mock->last_drive_request_id = completion->request_id;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_permission_start(
@@ -679,6 +694,7 @@ static const server_platform_drive_vtable mock_drive = {
     mock_drive_present,
     mock_drive_remove,
     mock_drive_remove_peer,
+    mock_drive_complete,
     &mock_events,
 };
 
@@ -1201,6 +1217,7 @@ static void configure_mock_platform(server_host_config* config,
     config->platform.clipboard.context = mock;
     config->platform.drive.vtable = &mock_drive;
     config->platform.drive.context = mock;
+    config->drive.enabled = 1;
     config->platform.permission.vtable = &mock_permission;
     config->platform.permission.context = mock;
 }
@@ -1254,7 +1271,15 @@ static int test_host_lifecycle(void)
               host->listener,
               LIBRDP_SERVER_EXTENSION_FILESYSTEM,
               &provider_ready) == LIBRDP_STATUS_OK);
-    CHECK(!provider_ready);
+    CHECK(provider_ready);
+    mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_DRIVE,
+                                 SERVER_PLATFORM_PERMISSION_DENIED,
+                                 mock.permission_sink.user_data);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(provider_ready);
     CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
     port = server_host_local_port(host);
     CHECK(port != 0u);
@@ -1282,6 +1307,19 @@ static int test_host_lifecycle(void)
         CHECK(librdp_server_peer_get_extension_provider_status(
                   first_slot->protocol,
                   LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                  &provider_ready) == LIBRDP_STATUS_OK);
+        CHECK(provider_ready);
+        CHECK(librdp_server_peer_get_extension_provider_status(
+                  first_slot->protocol,
+                  LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+                  &provider_ready) == LIBRDP_STATUS_OK);
+        CHECK(!provider_ready);
+        mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_DRIVE,
+                                     SERVER_PLATFORM_PERMISSION_GRANTED,
+                                     mock.permission_sink.user_data);
+        CHECK(librdp_server_peer_get_extension_provider_status(
+                  first_slot->protocol,
+                  LIBRDP_SERVER_EXTENSION_FILESYSTEM,
                   &provider_ready) == LIBRDP_STATUS_OK);
         CHECK(provider_ready);
         CHECK(mock.permission_sink.changed != NULL);
@@ -1533,6 +1571,7 @@ static int test_host_trace_metrics(void)
     server_host_peer_slot* slot = NULL;
     server_platform_clipboard_format format;
     server_platform_clipboard_data data;
+    server_platform_drive_request drive_request;
     server_platform_frame frame;
     server_platform_rect rects[3];
     librdp_server_input_event input;
@@ -1596,10 +1635,13 @@ static int test_host_trace_metrics(void)
     data.data = canary_data;
     data.data_len = sizeof(canary_data);
     mock.clipboard_sink.data(&data, mock.clipboard_sink.user_data);
-    mock.drive_sink.request(peer.id,
-                            slot->drive_generation,
-                            29u,
-                            mock.drive_sink.user_data);
+    memset(&drive_request, 0, sizeof(drive_request));
+    drive_request.peer_id = peer.id;
+    drive_request.generation = slot->generation;
+    drive_request.request_id = 29u;
+    mock.drive_sink.request(&drive_request, mock.drive_sink.user_data);
+    CHECK(mock.drive_completions == 1u);
+    CHECK(mock.last_drive_request_id == 29u);
 
     rects[0] = (server_platform_rect){0u, 0u, 1u, 1u};
     rects[1] = (server_platform_rect){3u, 3u, 1u, 1u};

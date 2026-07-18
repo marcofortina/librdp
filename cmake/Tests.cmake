@@ -176,6 +176,17 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_compile_options(test_app_server)
     librdp_apply_sanitizer_link_options(test_app_server)
 
+    add_executable(test_app_server_drive tests/test_app_server_drive.c)
+    target_include_directories(test_app_server_drive PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(test_app_server_drive PRIVATE librdp_app_common)
+    librdp_apply_system_definitions(test_app_server_drive)
+    librdp_apply_warning_options(test_app_server_drive)
+    librdp_apply_sanitizer_compile_options(test_app_server_drive)
+    librdp_apply_sanitizer_link_options(test_app_server_drive)
+
     add_executable(test_viewer_backends
         tests/test_viewer_backends.c
         apps/x11/viewer/camera_v4l2.c
@@ -219,7 +230,7 @@ if(LIBRDP_BUILD_TESTS)
     librdp_apply_sanitizer_link_options(test_abi_probe)
 
     add_custom_target(librdp_tests
-        DEPENDS test_common test_core test_protocol test_transport test_server test_interop_smoke test_optional_backend_probe test_app_client test_app_policy test_app_server test_viewer_backends test_viewer_cli test_abi_probe
+        DEPENDS test_common test_core test_protocol test_transport test_server test_interop_smoke test_optional_backend_probe test_app_client test_app_policy test_app_server test_app_server_drive test_viewer_backends test_viewer_cli test_abi_probe
     )
 
     add_test(NAME common COMMAND test_common)
@@ -264,9 +275,10 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME app_client COMMAND test_app_client)
     add_test(NAME app_policy COMMAND test_app_policy)
     add_test(NAME app_server COMMAND test_app_server)
+    add_test(NAME app_server_drive COMMAND test_app_server_drive)
     add_test(NAME viewer_backends COMMAND test_viewer_backends)
     add_test(NAME viewer_cli COMMAND test_viewer_cli)
-    set_tests_properties(common transport app_client app_policy app_server PROPERTIES TIMEOUT 30)
+    set_tests_properties(common transport app_client app_policy app_server app_server_drive PROPERTIES TIMEOUT 30)
     set_tests_properties(
         server
         server_security

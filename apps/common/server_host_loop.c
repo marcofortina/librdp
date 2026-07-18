@@ -322,6 +322,12 @@ static librdp_status server_host_prepare_poll(
                 return status;
         }
     }
+    if (host->drive)
+    {
+        *effective_timeout_ms = server_host_min_timeout(
+            *effective_timeout_ms,
+            server_drive_runtime_next_timeout(host->drive, now_ns));
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -629,6 +635,12 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
         server_host_metric_add(&host->metrics.cancellations, 1u);
         (void)server_host_stop(host);
         return LIBRDP_STATUS_CANCELLED;
+    }
+    if (host->drive)
+    {
+        status = server_drive_runtime_dispatch_timeouts(host->drive, now_ns);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
     }
     server_host_dispatch_frames(host, now_ns, &work);
     server_host_reap_terminal_peers(host);

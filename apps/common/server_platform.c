@@ -134,7 +134,8 @@ static int server_platform_drive_valid(const server_platform_binding* binding)
                                         SERVER_PLATFORM_DRIVE_VERSION,
                                         sizeof(*table)) &&
            table->start && table->stop && table->present && table->remove &&
-           table->remove_peer && server_platform_events_valid(table->events);
+           table->remove_peer && table->complete &&
+           server_platform_events_valid(table->events);
 }
 
 static int server_platform_permission_valid(

@@ -30,7 +30,7 @@
 #define SERVER_PLATFORM_POINTER_VERSION 1u
 #define SERVER_PLATFORM_INPUT_VERSION 1u
 #define SERVER_PLATFORM_CLIPBOARD_VERSION 2u
-#define SERVER_PLATFORM_DRIVE_VERSION 1u
+#define SERVER_PLATFORM_DRIVE_VERSION 2u
 #define SERVER_PLATFORM_PERMISSION_VERSION 1u
 
 typedef struct server_platform_rect
@@ -116,12 +116,40 @@ typedef struct server_platform_clipboard_file_request
 
 typedef struct server_platform_drive_volume
 {
+    uint64_t volume_id;
     uint32_t peer_id;
     uint32_t generation;
-    uint32_t device_id;
+    librdp_server_drive_device_handle device;
     const char* name;
     int read_only;
 } server_platform_drive_volume;
+
+typedef struct server_platform_drive_request
+{
+    uint64_t request_id;
+    uint64_t volume_id;
+    uint32_t peer_id;
+    uint32_t generation;
+    librdp_server_drive_request operation;
+} server_platform_drive_request;
+
+typedef struct server_platform_drive_completion
+{
+    uint64_t request_id;
+    uint64_t volume_id;
+    uint32_t peer_id;
+    uint32_t generation;
+    librdp_server_drive_event_type type;
+    librdp_status status;
+    uint32_t io_status;
+    librdp_server_drive_operation operation;
+    librdp_server_drive_device_handle device;
+    librdp_server_drive_file_handle file;
+    uint32_t information;
+    uint64_t transferred;
+    const uint8_t* data;
+    size_t data_len;
+} server_platform_drive_completion;
 
 typedef enum server_platform_permission_kind
 {
@@ -158,10 +186,13 @@ typedef void (*server_platform_clipboard_request_callback)(
 typedef void (*server_platform_clipboard_file_request_callback)(
     const server_platform_clipboard_file_request* request,
     void* user_data);
-typedef void (*server_platform_drive_request_callback)(uint32_t peer_id,
-                                                       uint32_t generation,
-                                                       uint64_t request_id,
-                                                       void* user_data);
+typedef void (*server_platform_drive_request_callback)(
+    const server_platform_drive_request* request,
+    void* user_data);
+typedef void (*server_platform_drive_cancel_callback)(uint32_t peer_id,
+                                                      uint32_t generation,
+                                                      uint64_t request_id,
+                                                      void* user_data);
 typedef void (*server_platform_permission_callback)(server_platform_permission_kind kind,
                                                     server_platform_permission_state state,
                                                     void* user_data);
@@ -191,6 +222,7 @@ typedef struct server_platform_clipboard_sink
 typedef struct server_platform_drive_sink
 {
     server_platform_drive_request_callback request;
+    server_platform_drive_cancel_callback cancel;
     void* user_data;
 } server_platform_drive_sink;
 
@@ -291,6 +323,9 @@ typedef struct server_platform_drive_vtable
     void (*remove_peer)(void* context,
                         uint32_t peer_id,
                         uint32_t generation);
+    librdp_status (*complete)(
+        void* context,
+        const server_platform_drive_completion* completion);
     const server_platform_event_source_vtable* events;
 } server_platform_drive_vtable;
 
