@@ -4,7 +4,8 @@
  */
 /*
  * Module: shared application client policy tests.
- * Coverage: platform-neutral option normalization, settings population and
+ * Coverage: platform-neutral option normalization, settings population,
+ * callback binding, provider rollback, runtime state checks and
  * connection-scoped TLS certificate decisions without native GUI backends.
  * Bug classes: numeric overflow, malformed device syntax, implicit trust,
  * missing gateway context, credential leakage and platform-policy bypass.
@@ -12,7 +13,11 @@
  * network, device discovery or graphical session is required.
  */
 
+#include "client_callbacks.h"
+#include "client_credentials.h"
 #include "client_options.h"
+#include "client_providers.h"
+#include "client_runtime.h"
 #include "client_tls.h"
 
 #include <librdp/librdp.h>
@@ -230,6 +235,163 @@ static int test_tls_decisions(void)
     return 0;
 }
 
+static librdp_status test_credentials_provider(librdp_credentials* credentials,
+                                               void* user_data)
+{
+    const char* username = (const char*)user_data;
+
+    if (!credentials || !username)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return librdp_credentials_set(credentials, username, NULL, NULL);
+}
+
+/*
+ * Move static values through a zeroized temporary object while retaining a
+ * just-in-time provider for frontends that acquire credentials from native UI.
+ */
+static int test_credentials_handoff(void)
+{
+    client_credentials_input input;
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    client_credentials_input_init(&input);
+    input.username = "local-user";
+    input.password = "local-secret";
+    input.domain = "LOCAL";
+    input.provider = test_credentials_provider;
+    input.provider_user_data = (void*)"prompt-user";
+    CHECK(client_credentials_apply(settings, &input) == LIBRDP_STATUS_OK);
+    CHECK(strcmp(librdp_settings_username(settings), "local-user") == 0);
+    CHECK(strcmp(librdp_settings_domain(settings), "LOCAL") == 0);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+typedef struct test_provider_state
+{
+    unsigned int configured;
+    unsigned int activated;
+    unsigned int stopped;
+    int fail_activation;
+} test_provider_state;
+
+static librdp_status test_provider_configure(librdp_settings* settings, void* user_data)
+{
+    test_provider_state* state = (test_provider_state*)user_data;
+
+    if (!settings || !state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    state->configured++;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status test_provider_activate(librdp_session* session, void* user_data)
+{
+    test_provider_state* state = (test_provider_state*)user_data;
+
+    if (!session || !state)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    state->activated++;
+    return state->fail_activation ? LIBRDP_STATUS_UNSUPPORTED
+                                  : LIBRDP_STATUS_OK;
+}
+
+static void test_provider_stop(librdp_session* session, void* user_data)
+{
+    test_provider_state* state = (test_provider_state*)user_data;
+
+    if (session && state)
+        state->stopped++;
+}
+
+/*
+ * Verify that backend descriptors are unique and bounded, settings hooks run
+ * in order, and a failed session hook unwinds every earlier active provider.
+ */
+static int test_provider_registry(void)
+{
+    test_provider_state first = { 0 };
+    test_provider_state second = { 0 };
+    client_provider_registry registry;
+    client_provider provider;
+    librdp_settings* settings = librdp_settings_new();
+    librdp_session* session = NULL;
+
+    CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    client_provider_registry_init(&registry);
+
+    memset(&provider, 0, sizeof(provider));
+    provider.name = "media";
+    provider.configure_settings = test_provider_configure;
+    provider.activate_session = test_provider_activate;
+    provider.shutdown_session = test_provider_stop;
+    provider.user_data = &first;
+    CHECK(client_provider_registry_add(&registry, &provider) == LIBRDP_STATUS_OK);
+    CHECK(client_provider_registry_add(&registry, &provider) == LIBRDP_STATUS_STATE);
+
+    provider.name = "devices";
+    provider.user_data = &second;
+    second.fail_activation = 1;
+    CHECK(client_provider_registry_add(&registry, &provider) == LIBRDP_STATUS_OK);
+    CHECK(client_provider_registry_configure(&registry, settings) == LIBRDP_STATUS_OK);
+    CHECK(first.configured == 1u);
+    CHECK(second.configured == 1u);
+    CHECK(client_provider_registry_activate(&registry, session) ==
+          LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(first.activated == 1u);
+    CHECK(first.stopped == 1u);
+    CHECK(second.activated == 1u);
+    CHECK(second.stopped == 0u);
+    CHECK(registry.active_session == NULL);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
+/*
+ * Exercise callback and runtime argument/state contracts without networking.
+ * This catches accidental acceptance of incomplete session ownership before a
+ * native event loop has established a connection.
+ */
+static int test_callbacks_and_runtime_state(void)
+{
+    client_callbacks callbacks;
+    client_runtime runtime;
+    struct pollfd* pollfds = NULL;
+    size_t poll_count = 0;
+    int timeout_ms = 0;
+    librdp_settings* settings = librdp_settings_new();
+    librdp_session* session = NULL;
+
+    CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    client_callbacks_init(&callbacks);
+    CHECK(client_callbacks_apply(NULL, &callbacks) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(client_callbacks_apply(session, NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(client_callbacks_apply(session, &callbacks) == LIBRDP_STATUS_OK);
+
+    client_runtime_init(&runtime, session);
+    CHECK(client_runtime_prepare_poll(&runtime,
+                                      NULL,
+                                      0,
+                                      -1,
+                                      &pollfds,
+                                      &poll_count,
+                                      &timeout_ms) == LIBRDP_STATUS_STATE);
+    CHECK(client_runtime_dispatch_poll(&runtime, 1u) == LIBRDP_STATUS_STATE);
+    CHECK(client_runtime_disconnect(&runtime) == LIBRDP_STATUS_OK);
+    client_runtime_clear(&runtime);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 int main(void)
 {
     if (test_common_options() != 0)
@@ -237,6 +399,12 @@ int main(void)
     if (test_common_options_reject_invalid() != 0)
         return 1;
     if (test_tls_decisions() != 0)
+        return 1;
+    if (test_credentials_handoff() != 0)
+        return 1;
+    if (test_provider_registry() != 0)
+        return 1;
+    if (test_callbacks_and_runtime_state() != 0)
         return 1;
     return 0;
 }

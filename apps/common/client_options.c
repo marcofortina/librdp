@@ -14,6 +14,7 @@
  */
 
 #include "client_options.h"
+#include "client_credentials.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -292,11 +293,13 @@ int client_options_configure(librdp_settings* settings,
                              char** argv)
 {
     client_gateway_options gateway;
+    client_credentials_input credentials;
     int i = 1;
 
     if (!settings || !options || !policy || argc < 1 || !argv)
         return 0;
     client_options_init(options);
+    client_credentials_input_init(&credentials);
     options->width = librdp_settings_width(settings);
     options->height = librdp_settings_height(settings);
     memset(&gateway, 0, sizeof(gateway));
@@ -317,21 +320,21 @@ int client_options_configure(librdp_settings* settings,
         }
         else if (strcmp(argv[i], "--user") == 0)
         {
-            if (!client_require_value(argc, &i, argv, policy->error_stream) ||
-                librdp_settings_set_username(settings, argv[i]) != LIBRDP_STATUS_OK)
+            if (!client_require_value(argc, &i, argv, policy->error_stream))
                 return 0;
+            credentials.username = argv[i];
         }
         else if (strcmp(argv[i], "--password") == 0)
         {
-            if (!client_require_value(argc, &i, argv, policy->error_stream) ||
-                librdp_settings_set_password(settings, argv[i]) != LIBRDP_STATUS_OK)
+            if (!client_require_value(argc, &i, argv, policy->error_stream))
                 return 0;
+            credentials.password = argv[i];
         }
         else if (strcmp(argv[i], "--domain") == 0)
         {
-            if (!client_require_value(argc, &i, argv, policy->error_stream) ||
-                librdp_settings_set_domain(settings, argv[i]) != LIBRDP_STATUS_OK)
+            if (!client_require_value(argc, &i, argv, policy->error_stream))
                 return 0;
+            credentials.domain = argv[i];
         }
         else if (strcmp(argv[i], "--port") == 0)
         {
@@ -615,6 +618,8 @@ int client_options_configure(librdp_settings* settings,
     }
     if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN) &&
         librdp_settings_webauthn_rp_id_count(settings) == 0)
+        return 0;
+    if (client_credentials_apply(settings, &credentials) != LIBRDP_STATUS_OK)
         return 0;
     if (!client_apply_gateway(settings, &gateway))
         return 0;
