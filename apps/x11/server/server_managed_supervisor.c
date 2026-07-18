@@ -363,6 +363,8 @@ static librdp_status x11_managed_supervisor_process_config(
     process->identity = identity;
     process->login_environment = environment;
     process->login_environment_count = count;
+    process->environment_allowlist =
+        request->environment_allowlist;
     process->display_name = request->display_name;
     process->authority_path = supervisor->authority_path;
     process->runtime_directory = request->runtime_directory;

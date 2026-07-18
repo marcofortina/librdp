@@ -389,6 +389,9 @@ librdp_status x11_managed_ipc_message_validate(
             message->control_socket,
             sizeof(message->control_socket)) ||
         !x11_managed_ipc_string_terminated(
+            message->environment_allowlist,
+            sizeof(message->environment_allowlist)) ||
+        !x11_managed_ipc_string_terminated(
             message->desktop_command,
             sizeof(message->desktop_command)) ||
         !x11_managed_ipc_string_terminated(
@@ -504,6 +507,10 @@ static librdp_status x11_managed_ipc_encode(
             sizeof(message->control_socket)) ||
         !x11_managed_ipc_put_string(
             &cursor,
+            message->environment_allowlist,
+            sizeof(message->environment_allowlist)) ||
+        !x11_managed_ipc_put_string(
+            &cursor,
             message->desktop_command,
             sizeof(message->desktop_command)) ||
         !x11_managed_ipc_put_string(
@@ -585,6 +592,10 @@ static librdp_status x11_managed_ipc_decode(
             &cursor,
             message->control_socket,
             sizeof(message->control_socket)) ||
+        !x11_managed_ipc_get_string(
+            &cursor,
+            message->environment_allowlist,
+            sizeof(message->environment_allowlist)) ||
         !x11_managed_ipc_get_string(
             &cursor,
             message->desktop_command,

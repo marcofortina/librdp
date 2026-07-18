@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define X11_MANAGED_IPC_VERSION 4u
+#define X11_MANAGED_IPC_VERSION 5u
 #define X11_MANAGED_IPC_MAX_FRAME_BYTES 32768u
 #define X11_MANAGED_IPC_USERNAME_BYTES 256u
 #define X11_MANAGED_IPC_DOMAIN_BYTES 256u
@@ -32,6 +32,7 @@
 #define X11_MANAGED_IPC_ADDRESS_BYTES 256u
 #define X11_MANAGED_IPC_PATH_BYTES 4096u
 #define X11_MANAGED_IPC_COMMAND_BYTES 4096u
+#define X11_MANAGED_IPC_ENVIRONMENT_BYTES 2048u
 
 typedef enum x11_managed_ipc_type
 {
@@ -111,6 +112,7 @@ typedef struct x11_managed_ipc_message
     char bind_address[X11_MANAGED_IPC_ADDRESS_BYTES];
     char runtime_directory[X11_MANAGED_IPC_PATH_BYTES];
     char control_socket[X11_MANAGED_IPC_PATH_BYTES];
+    char environment_allowlist[X11_MANAGED_IPC_ENVIRONMENT_BYTES];
     char desktop_command[X11_MANAGED_IPC_COMMAND_BYTES];
     char xserver_command[X11_MANAGED_IPC_COMMAND_BYTES];
     char tls_certificate[X11_MANAGED_IPC_PATH_BYTES];

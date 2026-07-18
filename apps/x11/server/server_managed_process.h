@@ -27,6 +27,7 @@
 #define X11_MANAGED_PROCESS_VERSION 1u
 #define X11_MANAGED_PROCESS_MAX_ARGUMENTS 64u
 #define X11_MANAGED_PROCESS_MAX_JOINED 8u
+#define X11_MANAGED_PROCESS_ENVIRONMENT_ALLOWLIST_BYTES 2048u
 
 typedef struct x11_managed_process_config
 {
@@ -35,6 +36,7 @@ typedef struct x11_managed_process_config
     const x11_managed_auth_identity* identity;
     const char* const* login_environment;
     size_t login_environment_count;
+    const char* environment_allowlist;
     const char* display_name;
     const char* authority_path;
     const char* runtime_directory;

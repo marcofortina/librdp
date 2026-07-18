@@ -142,6 +142,31 @@ if(LIBRDP_BUILD_X11_SERVER)
         set_tests_properties(x11_managed_registry PROPERTIES TIMEOUT 15)
         add_dependencies(librdp_tests test_x11_managed_registry)
 
+        add_executable(test_x11_managed_policy
+            tests/test_x11_managed_policy.c
+            apps/x11/server/server_managed_ipc.c
+            apps/x11/server/server_managed_policy.c
+        )
+        target_include_directories(test_x11_managed_policy PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_x11_managed_policy PRIVATE
+            librdp
+            OpenSSL::Crypto
+        )
+        librdp_apply_system_definitions(test_x11_managed_policy)
+        librdp_apply_warning_options(test_x11_managed_policy)
+        librdp_apply_sanitizer_compile_options(
+            test_x11_managed_policy)
+        librdp_apply_sanitizer_link_options(
+            test_x11_managed_policy)
+        add_test(NAME x11_managed_policy
+            COMMAND test_x11_managed_policy)
+        set_tests_properties(x11_managed_policy
+            PROPERTIES TIMEOUT 15)
+        add_dependencies(librdp_tests test_x11_managed_policy)
+
         add_executable(test_x11_managed_auth
             tests/test_x11_managed_auth.c
             apps/x11/server/server_managed_auth.c
@@ -174,6 +199,7 @@ if(LIBRDP_BUILD_X11_SERVER)
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
             target_compile_definitions(test_x11_managed_process PRIVATE
+                LIBRDP_TEST_MANAGED_PROCESS_PATH=\"$<TARGET_FILE:test_x11_managed_process>\"
                 LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
             )
             target_link_libraries(test_x11_managed_process PRIVATE

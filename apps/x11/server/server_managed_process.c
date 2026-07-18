@@ -166,7 +166,11 @@ static int x11_managed_process_config_valid(
         config->login_environment_count >
             X11_MANAGED_AUTH_MAX_ENVIRONMENT ||
         (config->login_environment_count > 0u &&
-         !config->login_environment))
+         !config->login_environment) ||
+        (config->environment_allowlist &&
+         strnlen(config->environment_allowlist,
+                 X11_MANAGED_PROCESS_ENVIRONMENT_ALLOWLIST_BYTES) >=
+             X11_MANAGED_PROCESS_ENVIRONMENT_ALLOWLIST_BYTES))
         return 0;
     for (index = 0u;
          index < config->login_environment_count;
@@ -287,6 +291,34 @@ static int x11_managed_process_environment_add_entry(
     }
 }
 
+static int x11_managed_process_environment_allowed(
+    const char* allowlist,
+    const char* entry)
+{
+    const char* separator = entry ? strchr(entry, '=') : NULL;
+    const char* cursor = allowlist;
+    size_t name_length =
+        separator ? (size_t)(separator - entry) : 0u;
+
+    if (!allowlist || allowlist[0] == '\0' ||
+        !separator || name_length == 0u)
+        return 0;
+    while (*cursor != '\0')
+    {
+        const char* end = strchr(cursor, ',');
+        size_t length =
+            end ? (size_t)(end - cursor) : strlen(cursor);
+
+        if (length == name_length &&
+            memcmp(cursor, entry, name_length) == 0)
+            return 1;
+        if (!end)
+            break;
+        cursor = end + 1u;
+    }
+    return 0;
+}
+
 static void x11_managed_process_environment_free(
     x11_managed_environment* environment)
 {
@@ -343,6 +375,10 @@ static librdp_status x11_managed_process_build_environment(
          index < config->login_environment_count;
          index++)
     {
+        if (!x11_managed_process_environment_allowed(
+                config->environment_allowlist,
+                config->login_environment[index]))
+            continue;
         if (!x11_managed_process_environment_add_entry(
                 environment, config->login_environment[index]))
             return LIBRDP_STATUS_INVALID_ARGUMENT;
