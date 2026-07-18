@@ -3278,6 +3278,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         const char* gateway_username = rdp_settings_gateway_username_internal(session->settings);
         const char* gateway_password = rdp_settings_gateway_password_internal(session->settings);
         const char* gateway_domain = rdp_settings_gateway_domain_internal(session->settings);
+        const librdp_limits* limits = rdp_settings_limits_internal(session->settings);
 
         memset(&gateway_config, 0, sizeof(gateway_config));
         if (!gateway_username && rdp_settings_gateway_use_session_credentials_internal(session->settings))
@@ -3293,6 +3294,8 @@ librdp_status librdp_session_connect(librdp_session* session)
         gateway_config.password = gateway_password;
         gateway_config.domain = gateway_domain;
         gateway_config.timeout_ms = rdp_settings_gateway_timeout_ms_internal(session->settings);
+        gateway_config.queue_bytes = limits->pdu_buffer_bytes;
+        gateway_config.queue_nodes = limits->pending_requests;
         gateway_config.mode = rdp_settings_gateway_mode_internal(session->settings);
         status = rdp_gateway_connect_transport(&session->transport, &gateway_config);
     }

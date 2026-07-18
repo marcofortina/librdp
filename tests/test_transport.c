@@ -104,6 +104,95 @@ static int test_rdg_packet_parser(void)
     return 0;
 }
 
+/*
+ * Model both stalled HTTP legs with deliberately small queue limits. The
+ * outbound case represents a gateway that stops reading, while the inbound
+ * case represents a peer producing data faster than the transport consumer.
+ * Partial drains must restore capacity without corrupting byte/node accounting,
+ * and clear must release every queued allocation during teardown.
+ */
+static int test_rdg_bounded_queues(void)
+{
+    const uint8_t first[] = {0x10u, 0x11u, 0x12u, 0x13u};
+    const uint8_t second[] = {0x20u, 0x21u, 0x22u, 0x23u};
+    const uint8_t inbound_data[] = {0x30u, 0x31u, 0x32u};
+    uint8_t bytes[8];
+    uint16_t type = 0;
+    rdp_buffer payload;
+    rdp_rdg_bounded_queue outbound;
+    rdp_rdg_bounded_queue inbound;
+    rdp_rdg_bounded_queue control;
+    rdp_rdg_bounded_queue invalid;
+
+    rdp_buffer_init(&payload);
+    rdp_rdg_bounded_queue_init(&outbound, 8u, 2u);
+    TCHECK(rdp_rdg_bounded_queue_push(&outbound, 1u, first, sizeof(first)) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_rdg_bounded_queue_push(&outbound, 2u, second, sizeof(second)) == LIBRDP_STATUS_OK);
+    TCHECK(outbound.bytes == 8u && outbound.nodes == 2u);
+    TCHECK(!rdp_rdg_bounded_queue_can_push(&outbound, 1u));
+    TCHECK(rdp_rdg_bounded_queue_push(&outbound, 3u, first, 1u) == LIBRDP_STATUS_AGAIN);
+    TCHECK(rdp_rdg_bounded_queue_push(&outbound, 3u, first, 9u) ==
+           LIBRDP_STATUS_LIMIT_EXCEEDED);
+    TCHECK(rdp_rdg_bounded_queue_peek(&outbound, bytes, sizeof(bytes)) == sizeof(bytes));
+    TCHECK(memcmp(bytes, "\x10\x11\x12\x13\x20\x21\x22\x23", sizeof(bytes)) == 0);
+    TCHECK(rdp_rdg_bounded_queue_read(&outbound, bytes, 3u) == 3u);
+    TCHECK(outbound.bytes == 5u && outbound.nodes == 2u);
+    TCHECK(!rdp_rdg_bounded_queue_can_push(&outbound, 1u));
+    TCHECK(rdp_rdg_bounded_queue_read(&outbound, bytes, 1u) == 1u);
+    TCHECK(outbound.bytes == 4u && outbound.nodes == 1u);
+    TCHECK(rdp_rdg_bounded_queue_can_push(&outbound, sizeof(first)));
+    TCHECK(rdp_rdg_bounded_queue_push(&outbound, 3u, first, sizeof(first)) == LIBRDP_STATUS_OK);
+    TCHECK(outbound.bytes == 8u && outbound.nodes == 2u);
+
+    rdp_rdg_bounded_queue_init(&inbound, 6u, 2u);
+    TCHECK(rdp_rdg_bounded_queue_push(&inbound, 10u, inbound_data, sizeof(inbound_data)) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(rdp_rdg_bounded_queue_push(&inbound, 10u, inbound_data, sizeof(inbound_data)) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(rdp_rdg_bounded_queue_push(&inbound, 10u, inbound_data, sizeof(inbound_data)) ==
+           LIBRDP_STATUS_AGAIN);
+    TCHECK(rdp_rdg_bounded_queue_read(&inbound, bytes, sizeof(inbound_data)) ==
+           sizeof(inbound_data));
+    TCHECK(inbound.bytes == 3u && inbound.nodes == 1u);
+    TCHECK(rdp_rdg_bounded_queue_push(&inbound, 10u, inbound_data, sizeof(inbound_data)) ==
+           LIBRDP_STATUS_OK);
+
+    rdp_rdg_bounded_queue_init(&control, 4u, 2u);
+    TCHECK(rdp_rdg_bounded_queue_push(&control, 0x100u, NULL, 0u) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_rdg_bounded_queue_push(&control, 0x101u, first, sizeof(first)) ==
+           LIBRDP_STATUS_OK);
+    TCHECK(control.bytes == 4u && control.nodes == 2u);
+    TCHECK(rdp_rdg_bounded_queue_push(&control, 0x102u, NULL, 0u) == LIBRDP_STATUS_AGAIN);
+    TCHECK(rdp_rdg_bounded_queue_pop(&control, &type, &payload) == LIBRDP_STATUS_OK);
+    TCHECK(type == 0x100u && payload.length == 0u && payload.data == NULL);
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    TCHECK(rdp_rdg_bounded_queue_push(&control, 0x102u, NULL, 0u) == LIBRDP_STATUS_OK);
+    TCHECK(control.bytes == 4u && control.nodes == 2u);
+    TCHECK(rdp_rdg_bounded_queue_pop(&control, &type, &payload) == LIBRDP_STATUS_OK);
+    TCHECK(type == 0x101u && payload.length == sizeof(first));
+    TCHECK(memcmp(payload.data, first, sizeof(first)) == 0);
+    rdp_buffer_free(&payload);
+
+    rdp_rdg_bounded_queue_init(&invalid, 0u, 0u);
+    TCHECK(rdp_rdg_bounded_queue_push(&invalid, 0u, NULL, 0u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_rdg_bounded_queue_push(NULL, 0u, NULL, 0u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    rdp_rdg_bounded_queue_clear(&outbound);
+    rdp_rdg_bounded_queue_clear(&inbound);
+    rdp_rdg_bounded_queue_clear(&control);
+    rdp_rdg_bounded_queue_clear(&invalid);
+    TCHECK(outbound.head == NULL && outbound.tail == NULL && outbound.bytes == 0u &&
+           outbound.nodes == 0u);
+    TCHECK(inbound.head == NULL && inbound.tail == NULL && inbound.bytes == 0u &&
+           inbound.nodes == 0u);
+    TCHECK(control.head == NULL && control.tail == NULL && control.bytes == 0u &&
+           control.nodes == 0u);
+    return 0;
+}
+
 #ifdef RDP_HAVE_CURL
 static int test_gateway_proxy_listen(uint16_t* port)
 {
@@ -293,20 +382,36 @@ static int test_rdg_send_channel_response(int out_fd)
     return ok;
 }
 
-static int test_rdg_send_data(int out_fd, const void* data, size_t length)
+static int test_rdg_append_data_packet(rdp_buffer* stream,
+                                       const void* data,
+                                       size_t length)
 {
     rdp_buffer body;
     rdp_buffer packet;
     int ok = 0;
 
-    if (length > UINT16_MAX)
+    if (!stream || length > UINT16_MAX)
         return 0;
     rdp_buffer_init(&body);
     (void)rdp_buffer_append_u16_le(&body, (uint16_t)length);
     (void)rdp_buffer_append(&body, data, length);
-    ok = test_rdg_make_packet(0x000au, &body, &packet) && test_rdg_write_chunk(out_fd, &packet);
+    ok = test_rdg_make_packet(0x000au, &body, &packet) &&
+         rdp_buffer_append(stream, packet.data, packet.length) == LIBRDP_STATUS_OK;
     rdp_buffer_free(&packet);
     rdp_buffer_free(&body);
+    return ok;
+}
+
+static int test_rdg_send_data_pair(int out_fd)
+{
+    rdp_buffer stream;
+    int ok = 0;
+
+    rdp_buffer_init(&stream);
+    ok = test_rdg_append_data_packet(&stream, "pong", 4u) &&
+         test_rdg_append_data_packet(&stream, "next", 4u) &&
+         test_rdg_write_chunk(out_fd, &stream);
+    rdp_buffer_free(&stream);
     return ok;
 }
 
@@ -385,7 +490,7 @@ static int test_rdg_process_packet(int out_fd, const uint8_t* packet, size_t pac
         if ((size_t)data_len > payload_len - 2u || data_len != 4u || memcmp(payload + 2u, "ping", 4u) != 0)
             return 0;
         *echoed = 1;
-        return test_rdg_send_data(out_fd, "pong", 4u);
+        return test_rdg_send_data_pair(out_fd);
     }
     return type == 0x0010u;
 }
@@ -637,6 +742,8 @@ static int test_gateway_connect_transport(void)
     config.gateway_url = gateway_url;
     config.mode = LIBRDP_GATEWAY_RDG_HTTP;
     config.timeout_ms = 5000u;
+    config.queue_bytes = 64u;
+    config.queue_nodes = 1u;
     TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_write_all(&transport, "ping", 4u) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);
@@ -645,6 +752,9 @@ static int test_gateway_connect_transport(void)
     TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
     TCHECK(rdp_transport_read_exact(&transport, data, sizeof(data)) == LIBRDP_STATUS_OK);
     TCHECK(memcmp(data, "pong", sizeof(data)) == 0);
+    TCHECK(rdp_transport_wait(&transport, 1000, POLLIN, NULL) == LIBRDP_STATUS_OK);
+    TCHECK(rdp_transport_read_exact(&transport, data, sizeof(data)) == LIBRDP_STATUS_OK);
+    TCHECK(memcmp(data, "next", sizeof(data)) == 0);
     rdp_transport_close(&transport);
     TCHECK(waitpid(child, &child_status, 0) == child);
     TCHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
@@ -1621,6 +1731,7 @@ int test_transport(void)
     TCHECK(test_udp_transport_protocols() == 0);
     TCHECK(test_multitransport_protocol() == 0);
     TCHECK(test_rdg_packet_parser() == 0);
+    TCHECK(test_rdg_bounded_queues() == 0);
     TCHECK(test_gateway_connect_transport() == 0);
 
     TCHECK(rdp_socket_close(-1) == 0);

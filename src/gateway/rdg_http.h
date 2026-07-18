@@ -17,6 +17,7 @@
 #ifndef RDP_GATEWAY_RDG_HTTP_H
 #define RDP_GATEWAY_RDG_HTTP_H
 
+#include "common/buffer.h"
 #include "gateway/gateway.h"
 
 #include <stddef.h>
@@ -32,9 +33,41 @@ typedef struct rdp_rdg_packet_view
     size_t packet_len;
 } rdp_rdg_packet_view;
 
+typedef struct rdp_rdg_queue_node rdp_rdg_queue_node;
+
+typedef struct rdp_rdg_bounded_queue
+{
+    rdp_rdg_queue_node* head;
+    rdp_rdg_queue_node* tail;
+    size_t bytes;
+    size_t nodes;
+    size_t max_bytes;
+    size_t max_nodes;
+} rdp_rdg_bounded_queue;
+
 librdp_status rdp_rdg_parse_packet(const uint8_t* data,
                                    size_t length,
                                    rdp_rdg_packet_view* packet);
+
+void rdp_rdg_bounded_queue_init(rdp_rdg_bounded_queue* queue,
+                                size_t max_bytes,
+                                size_t max_nodes);
+void rdp_rdg_bounded_queue_clear(rdp_rdg_bounded_queue* queue);
+librdp_status rdp_rdg_bounded_queue_push(rdp_rdg_bounded_queue* queue,
+                                         uint16_t type,
+                                         const void* data,
+                                         size_t length);
+int rdp_rdg_bounded_queue_has_bytes(const rdp_rdg_bounded_queue* queue);
+int rdp_rdg_bounded_queue_can_push(const rdp_rdg_bounded_queue* queue, size_t length);
+size_t rdp_rdg_bounded_queue_peek(const rdp_rdg_bounded_queue* queue,
+                                  void* data,
+                                  size_t length);
+size_t rdp_rdg_bounded_queue_read(rdp_rdg_bounded_queue* queue,
+                                  void* data,
+                                  size_t length);
+librdp_status rdp_rdg_bounded_queue_pop(rdp_rdg_bounded_queue* queue,
+                                        uint16_t* type,
+                                        rdp_buffer* payload);
 
 librdp_status rdp_gateway_connect_rdg_http(rdp_transport* transport,
                                            const rdp_gateway_connect_config* config);

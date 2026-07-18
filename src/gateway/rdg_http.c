@@ -49,6 +49,12 @@
 #define RDP_RDG_MAX_PACKET 1048576u
 #define RDP_RDG_MAX_DATA 65535u
 #define RDP_RDG_DEFAULT_TIMEOUT_MS 15000u
+#define RDP_RDG_DEFAULT_QUEUE_BYTES (4u * RDP_RDG_MAX_PACKET)
+#define RDP_RDG_DEFAULT_QUEUE_NODES 64u
+#define RDP_RDG_HARD_QUEUE_BYTES (64u * RDP_RDG_MAX_PACKET)
+#define RDP_RDG_HARD_QUEUE_NODES 4096u
+#define RDP_RDG_INCOMING_MAX_BYTES (2u * RDP_RDG_MAX_PACKET)
+#define RDP_RDG_DATA_PACKET_MIN_LEN (RDP_RDG_PACKET_HEADER_LEN + 2u + 1u)
 
 #define RDP_RDG_PKT_HANDSHAKE_REQUEST 0x0001u
 #define RDP_RDG_PKT_HANDSHAKE_RESPONSE 0x0002u
@@ -77,20 +83,14 @@
 #define RDP_RDG_CHANNEL_RESPONSE_FIELD_AUTHNCOOKIE 0x0002u
 #define RDP_RDG_CHANNEL_RESPONSE_FIELD_UDPPORT 0x0004u
 
-typedef struct rdp_rdg_queue_node
+struct rdp_rdg_queue_node
 {
     uint8_t* data;
     size_t length;
     size_t offset;
-    struct rdp_rdg_queue_node* next;
-} rdp_rdg_queue_node;
-
-typedef struct rdp_rdg_control_packet
-{
     uint16_t type;
-    rdp_buffer payload;
-    struct rdp_rdg_control_packet* next;
-} rdp_rdg_control_packet;
+    struct rdp_rdg_queue_node* next;
+};
 
 typedef struct rdp_rdg_http_context
 {
@@ -100,17 +100,16 @@ typedef struct rdp_rdg_http_context
     int worker_started;
     int closing;
     int active;
-    int in_paused;
+    int send_paused;
+    int receive_paused;
+    int outbound_backpressured;
     int control_pipe[2];
     int event_pipe[2];
     librdp_status error;
     rdp_buffer incoming;
-    rdp_rdg_queue_node* out_head;
-    rdp_rdg_queue_node* out_tail;
-    rdp_rdg_queue_node* data_head;
-    rdp_rdg_queue_node* data_tail;
-    rdp_rdg_control_packet* packet_head;
-    rdp_rdg_control_packet* packet_tail;
+    rdp_rdg_bounded_queue outbound;
+    rdp_rdg_bounded_queue inbound;
+    rdp_rdg_bounded_queue control;
     char* url;
     char* username;
     char* password;
@@ -292,8 +291,24 @@ static void rdp_rdg_drain_pipe(int fd)
     }
 }
 
-static void rdp_rdg_queue_free(rdp_rdg_queue_node* node)
+void rdp_rdg_bounded_queue_init(rdp_rdg_bounded_queue* queue,
+                                size_t max_bytes,
+                                size_t max_nodes)
 {
+    if (!queue)
+        return;
+    memset(queue, 0, sizeof(*queue));
+    queue->max_bytes = max_bytes;
+    queue->max_nodes = max_nodes;
+}
+
+void rdp_rdg_bounded_queue_clear(rdp_rdg_bounded_queue* queue)
+{
+    rdp_rdg_queue_node* node = NULL;
+
+    if (!queue)
+        return;
+    node = queue->head;
     while (node)
     {
         rdp_rdg_queue_node* next = node->next;
@@ -302,29 +317,48 @@ static void rdp_rdg_queue_free(rdp_rdg_queue_node* node)
         free(node);
         node = next;
     }
+    queue->head = NULL;
+    queue->tail = NULL;
+    queue->bytes = 0;
+    queue->nodes = 0;
 }
 
-static void rdp_rdg_control_free(rdp_rdg_control_packet* packet)
+/*
+ * Distinguish a payload that can never fit from transient queue saturation.
+ * Callers use AGAIN to apply transport backpressure and LIMIT_EXCEEDED to
+ * reject an invalid local or remote message without attempting allocation.
+ */
+static librdp_status rdp_rdg_bounded_queue_capacity(const rdp_rdg_bounded_queue* queue,
+                                                    size_t length)
 {
-    while (packet)
-    {
-        rdp_rdg_control_packet* next = packet->next;
-
-        rdp_buffer_free(&packet->payload);
-        free(packet);
-        packet = next;
-    }
+    if (!queue || queue->max_bytes == 0 || queue->max_nodes == 0 ||
+        queue->bytes > queue->max_bytes || queue->nodes > queue->max_nodes)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (length > queue->max_bytes)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (queue->nodes == queue->max_nodes || queue->bytes > queue->max_bytes - length)
+        return LIBRDP_STATUS_AGAIN;
+    return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_rdg_queue_copy(rdp_rdg_queue_node** head,
-                                        rdp_rdg_queue_node** tail,
-                                        const void* data,
-                                        size_t length)
+int rdp_rdg_bounded_queue_can_push(const rdp_rdg_bounded_queue* queue, size_t length)
+{
+    return rdp_rdg_bounded_queue_capacity(queue, length) == LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_rdg_bounded_queue_push(rdp_rdg_bounded_queue* queue,
+                                         uint16_t type,
+                                         const void* data,
+                                         size_t length)
 {
     rdp_rdg_queue_node* node = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!head || !tail || (!data && length > 0))
+    if (!queue || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_rdg_bounded_queue_capacity(queue, length);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     node = (rdp_rdg_queue_node*)calloc(1u, sizeof(*node));
     if (!node)
         return LIBRDP_STATUS_NO_MEMORY;
@@ -338,25 +372,33 @@ static librdp_status rdp_rdg_queue_copy(rdp_rdg_queue_node** head,
         }
         memcpy(node->data, data, length);
     }
+    node->type = type;
     node->length = length;
-    if (*tail)
-        (*tail)->next = node;
+    if (queue->tail)
+        queue->tail->next = node;
     else
-        *head = node;
-    *tail = node;
+        queue->head = node;
+    queue->tail = node;
+    queue->bytes += length;
+    queue->nodes++;
     return LIBRDP_STATUS_OK;
 }
 
-static int rdp_rdg_queue_has_bytes(const rdp_rdg_queue_node* node)
+int rdp_rdg_bounded_queue_has_bytes(const rdp_rdg_bounded_queue* queue)
 {
-    return node && node->offset < node->length;
+    return queue && queue->head && queue->bytes > 0;
 }
 
-static size_t rdp_rdg_queue_peek_copy(const rdp_rdg_queue_node* node, void* data, size_t length)
+size_t rdp_rdg_bounded_queue_peek(const rdp_rdg_bounded_queue* queue,
+                                  void* data,
+                                  size_t length)
 {
     uint8_t* out = (uint8_t*)data;
+    const rdp_rdg_queue_node* node = queue ? queue->head : NULL;
     size_t copied = 0;
 
+    if (!data && length > 0)
+        return 0;
     while (node && copied < length)
     {
         size_t available = node->length - node->offset;
@@ -376,17 +418,18 @@ static size_t rdp_rdg_queue_peek_copy(const rdp_rdg_queue_node* node, void* data
  * Copy queued RDP bytes to the caller and retire fully consumed nodes while
  * preserving the remaining head node offset for short reads.
  */
-static size_t rdp_rdg_queue_read_copy(rdp_rdg_queue_node** head,
-                                      rdp_rdg_queue_node** tail,
-                                      void* data,
-                                      size_t length)
+size_t rdp_rdg_bounded_queue_read(rdp_rdg_bounded_queue* queue,
+                                  void* data,
+                                  size_t length)
 {
     uint8_t* out = (uint8_t*)data;
     size_t copied = 0;
 
-    while (*head && copied < length)
+    if (!queue || (!data && length > 0))
+        return 0;
+    while (queue->head && copied < length)
     {
-        rdp_rdg_queue_node* node = *head;
+        rdp_rdg_queue_node* node = queue->head;
         size_t available = node->length - node->offset;
         size_t chunk = length - copied;
 
@@ -396,15 +439,45 @@ static size_t rdp_rdg_queue_read_copy(rdp_rdg_queue_node** head,
             memcpy(out + copied, node->data + node->offset, chunk);
         copied += chunk;
         node->offset += chunk;
+        queue->bytes -= chunk;
         if (node->offset < node->length)
             break;
-        *head = node->next;
-        if (*tail == node)
-            *tail = NULL;
+        queue->head = node->next;
+        if (queue->tail == node)
+            queue->tail = NULL;
+        queue->nodes--;
         free(node->data);
         free(node);
     }
     return copied;
+}
+
+librdp_status rdp_rdg_bounded_queue_pop(rdp_rdg_bounded_queue* queue,
+                                        uint16_t* type,
+                                        rdp_buffer* payload)
+{
+    rdp_rdg_queue_node* node = NULL;
+
+    if (!queue || !type || !payload || payload->data || payload->length != 0 ||
+        payload->capacity != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!queue->head)
+        return LIBRDP_STATUS_AGAIN;
+    node = queue->head;
+    if (node->offset != 0 || node->length > queue->bytes || queue->nodes == 0)
+        return LIBRDP_STATUS_STATE;
+    queue->head = node->next;
+    if (queue->tail == node)
+        queue->tail = NULL;
+    queue->bytes -= node->length;
+    queue->nodes--;
+    *type = node->type;
+    payload->data = node->data;
+    payload->length = node->length;
+    payload->capacity = node->length;
+    node->data = NULL;
+    free(node);
+    return LIBRDP_STATUS_OK;
 }
 
 /*
@@ -426,6 +499,16 @@ static int rdp_rdg_timed_wait_locked(rdp_rdg_http_context* context)
         deadline.tv_nsec -= 1000000000L;
     }
     return pthread_cond_timedwait(&context->cond, &context->mutex, &deadline);
+}
+
+static int rdp_rdg_monotonic_ms(uint64_t* value)
+{
+    struct timespec now;
+
+    if (!value || clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+    *value = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+    return 1;
 }
 
 /*
@@ -466,9 +549,21 @@ static librdp_status rdp_rdg_queue_packet(rdp_rdg_http_context* context, uint16_
         status = context->error != LIBRDP_STATUS_OK ? context->error : LIBRDP_STATUS_CLOSED;
     else
     {
-        status = rdp_rdg_queue_copy(&context->out_head, &context->out_tail, packet.data, packet.length);
-        pthread_cond_broadcast(&context->cond);
-        rdp_rdg_signal_pipe(context->control_pipe[1]);
+        status = rdp_rdg_bounded_queue_push(&context->outbound, type, packet.data, packet.length);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            pthread_cond_broadcast(&context->cond);
+            rdp_rdg_signal_pipe(context->control_pipe[1]);
+        }
+        else if (status == LIBRDP_STATUS_AGAIN)
+        {
+            context->outbound_backpressured = 1;
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.gateway.rdg.queue.full",
+                            "queue=outbound bytes=%llu nodes=%llu",
+                            (unsigned long long)context->outbound.bytes,
+                            (unsigned long long)context->outbound.nodes);
+        }
     }
     pthread_mutex_unlock(&context->mutex);
     rdp_buffer_free(&packet);
@@ -605,28 +700,18 @@ static librdp_status rdp_rdg_control_enqueue_locked(rdp_rdg_http_context* contex
                                                     const uint8_t* payload,
                                                     size_t payload_len)
 {
-    rdp_rdg_control_packet* packet = NULL;
-    librdp_status status = LIBRDP_STATUS_OK;
+    librdp_status status =
+        rdp_rdg_bounded_queue_push(&context->control, type, payload, payload_len);
 
-    packet = (rdp_rdg_control_packet*)calloc(1u, sizeof(*packet));
-    if (!packet)
-        return LIBRDP_STATUS_NO_MEMORY;
-    packet->type = type;
-    rdp_buffer_init(&packet->payload);
-    status = rdp_buffer_append(&packet->payload, payload, payload_len);
-    if (status != LIBRDP_STATUS_OK)
-    {
-        rdp_buffer_free(&packet->payload);
-        free(packet);
-        return status;
-    }
-    if (context->packet_tail)
-        context->packet_tail->next = packet;
-    else
-        context->packet_head = packet;
-    context->packet_tail = packet;
-    pthread_cond_broadcast(&context->cond);
-    return LIBRDP_STATUS_OK;
+    if (status == LIBRDP_STATUS_OK)
+        pthread_cond_broadcast(&context->cond);
+    else if (status == LIBRDP_STATUS_AGAIN)
+        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                        "transport.gateway.rdg.queue.full",
+                        "queue=control bytes=%llu nodes=%llu",
+                        (unsigned long long)context->control.bytes,
+                        (unsigned long long)context->control.nodes);
+    return status;
 }
 
 /*
@@ -649,13 +734,22 @@ static librdp_status rdp_rdg_parse_incoming_locked(rdp_rdg_http_context* context
             return status;
         if (packet.type == RDP_RDG_PKT_DATA)
         {
-            status = rdp_rdg_queue_copy(&context->data_head,
-                                        &context->data_tail,
-                                        packet.data,
-                                        packet.data_len);
-            if (status != LIBRDP_STATUS_OK)
-                return status;
-            rdp_rdg_signal_pipe(context->event_pipe[1]);
+            if (packet.data_len > 0)
+            {
+                status =
+                    rdp_rdg_bounded_queue_push(&context->inbound, packet.type, packet.data, packet.data_len);
+                if (status != LIBRDP_STATUS_OK)
+                {
+                    if (status == LIBRDP_STATUS_AGAIN)
+                        rdp_trace_event(RDP_TRACE_TRANSPORT,
+                                        "transport.gateway.rdg.queue.full",
+                                        "queue=inbound bytes=%llu nodes=%llu",
+                                        (unsigned long long)context->inbound.bytes,
+                                        (unsigned long long)context->inbound.nodes);
+                    return status;
+                }
+                rdp_rdg_signal_pipe(context->event_pipe[1]);
+            }
         }
         else if (packet.type == RDP_RDG_PKT_KEEPALIVE)
         {
@@ -719,26 +813,21 @@ static librdp_status rdp_rdg_receive_control(rdp_rdg_http_context* context,
     pthread_mutex_lock(&context->mutex);
     for (;;)
     {
-        rdp_rdg_control_packet* packet = context->packet_head;
-
-        if (packet)
+        if (context->control.head)
         {
-            if (packet->type != expected_type)
+            uint16_t actual_type = 0;
+
+            status = rdp_rdg_bounded_queue_pop(&context->control, &actual_type, payload);
+            rdp_rdg_signal_pipe(context->control_pipe[1]);
+            if (status == LIBRDP_STATUS_OK && actual_type != expected_type)
             {
                 rdp_trace_event(RDP_TRACE_TRANSPORT,
                                 "transport.gateway.rdg.unexpected_packet",
                                 "expected=%u actual=%u",
                                 (unsigned)expected_type,
-                                (unsigned)packet->type);
+                                (unsigned)actual_type);
                 status = LIBRDP_STATUS_PROTOCOL_ERROR;
-                break;
             }
-            context->packet_head = packet->next;
-            if (context->packet_tail == packet)
-                context->packet_tail = NULL;
-            status = rdp_buffer_append(payload, packet->payload.data, packet->payload.length);
-            rdp_buffer_free(&packet->payload);
-            free(packet);
             break;
         }
         if (context->error != LIBRDP_STATUS_OK)
@@ -956,15 +1045,48 @@ static void rdp_rdg_curl_init_once(void)
 static size_t rdp_rdg_out_write(char* ptr, size_t size, size_t nmemb, void* user_data)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
-    size_t length = size * nmemb;
+    size_t length = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
+    if (size != 0 && nmemb > SIZE_MAX / size)
+        return 0;
+    length = size * nmemb;
     if (!context || (!ptr && length > 0))
         return 0;
     pthread_mutex_lock(&context->mutex);
-    status = rdp_buffer_append(&context->incoming, ptr, length);
+    if (context->closing || context->error != LIBRDP_STATUS_OK)
+        status = context->error != LIBRDP_STATUS_OK ? context->error : LIBRDP_STATUS_CLOSED;
     if (status == LIBRDP_STATUS_OK)
         status = rdp_rdg_parse_incoming_locked(context);
+    if (status == LIBRDP_STATUS_AGAIN)
+    {
+        if (!context->receive_paused)
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.gateway.rdg.receive.paused",
+                            "incoming=%llu",
+                            (unsigned long long)context->incoming.length);
+        context->receive_paused = 1;
+        pthread_mutex_unlock(&context->mutex);
+        return CURL_WRITEFUNC_PAUSE;
+    }
+    if (status == LIBRDP_STATUS_OK &&
+        (context->incoming.length > RDP_RDG_INCOMING_MAX_BYTES ||
+         length > RDP_RDG_INCOMING_MAX_BYTES - context->incoming.length))
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&context->incoming, ptr, length);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_rdg_parse_incoming_locked(context);
+    if (status == LIBRDP_STATUS_AGAIN)
+    {
+        if (!context->receive_paused)
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.gateway.rdg.receive.paused",
+                            "incoming=%llu",
+                            (unsigned long long)context->incoming.length);
+        context->receive_paused = 1;
+        status = LIBRDP_STATUS_OK;
+    }
     if (status != LIBRDP_STATUS_OK)
         rdp_rdg_set_error_locked(context, status);
     pthread_cond_broadcast(&context->cond);
@@ -976,15 +1098,20 @@ static size_t rdp_rdg_in_write(char* ptr, size_t size, size_t nmemb, void* user_
 {
     (void)ptr;
     (void)user_data;
+    if (size != 0 && nmemb > SIZE_MAX / size)
+        return 0;
     return size * nmemb;
 }
 
 static size_t rdp_rdg_in_read(char* ptr, size_t size, size_t nmemb, void* user_data)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
-    size_t length = size * nmemb;
+    size_t length = 0;
     size_t copied = 0;
 
+    if (size != 0 && nmemb > SIZE_MAX / size)
+        return CURL_READFUNC_ABORT;
+    length = size * nmemb;
     if (!context || !ptr)
         return CURL_READFUNC_ABORT;
     if (length == 0)
@@ -995,13 +1122,30 @@ static size_t rdp_rdg_in_read(char* ptr, size_t size, size_t nmemb, void* user_d
         pthread_mutex_unlock(&context->mutex);
         return CURL_READFUNC_ABORT;
     }
-    if (!context->out_head)
+    if (!rdp_rdg_bounded_queue_has_bytes(&context->outbound))
     {
-        context->in_paused = 1;
+        context->send_paused = 1;
         pthread_mutex_unlock(&context->mutex);
         return CURL_READFUNC_PAUSE;
     }
-    copied = rdp_rdg_queue_read_copy(&context->out_head, &context->out_tail, ptr, length);
+    {
+        const int was_backpressured = context->outbound_backpressured;
+
+        copied = rdp_rdg_bounded_queue_read(&context->outbound, ptr, length);
+        if (was_backpressured &&
+            rdp_rdg_bounded_queue_can_push(&context->outbound,
+                                           RDP_RDG_DATA_PACKET_MIN_LEN))
+        {
+            context->outbound_backpressured = 0;
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.gateway.rdg.queue.resumed",
+                            "queue=outbound bytes=%llu nodes=%llu",
+                            (unsigned long long)context->outbound.bytes,
+                            (unsigned long long)context->outbound.nodes);
+        }
+    }
+    pthread_cond_broadcast(&context->cond);
+    rdp_rdg_signal_pipe(context->event_pipe[1]);
     pthread_mutex_unlock(&context->mutex);
     return copied;
 }
@@ -1013,17 +1157,38 @@ static void rdp_rdg_worker_set_error(rdp_rdg_http_context* context, librdp_statu
     pthread_mutex_unlock(&context->mutex);
 }
 
-static void rdp_rdg_worker_unpause_if_needed(rdp_rdg_http_context* context)
+static void rdp_rdg_worker_update_pauses(rdp_rdg_http_context* context)
 {
-    int unpause = 0;
+    int resume_send = 0;
+    int resume_receive = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     pthread_mutex_lock(&context->mutex);
-    unpause = context->in_paused && context->out_head && !context->closing;
-    if (unpause)
-        context->in_paused = 0;
+    resume_send = context->send_paused &&
+                  rdp_rdg_bounded_queue_has_bytes(&context->outbound) &&
+                  !context->closing;
+    if (resume_send)
+        context->send_paused = 0;
+    if (context->receive_paused && !context->closing)
+    {
+        status = rdp_rdg_parse_incoming_locked(context);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            context->receive_paused = 0;
+            resume_receive = 1;
+            rdp_trace_event(RDP_TRACE_TRANSPORT,
+                            "transport.gateway.rdg.receive.resumed",
+                            "incoming=%llu",
+                            (unsigned long long)context->incoming.length);
+        }
+        else if (status != LIBRDP_STATUS_AGAIN)
+            rdp_rdg_set_error_locked(context, status);
+    }
     pthread_mutex_unlock(&context->mutex);
-    if (unpause)
-        (void)curl_easy_pause(context->in_easy, CURLPAUSE_CONT);
+    if (resume_send)
+        (void)curl_easy_pause(context->in_easy, CURLPAUSE_SEND_CONT);
+    if (resume_receive)
+        (void)curl_easy_pause(context->out_easy, CURLPAUSE_RECV_CONT);
 }
 
 static void* rdp_rdg_worker_main(void* user_data)
@@ -1070,7 +1235,7 @@ static void* rdp_rdg_worker_main(void* user_data)
         (void)curl_multi_wait(context->multi, &waitfd, 1u, 1000, &events);
         if ((waitfd.revents & CURL_WAIT_POLLIN) != 0)
             rdp_rdg_drain_pipe(context->control_pipe[0]);
-        rdp_rdg_worker_unpause_if_needed(context);
+        rdp_rdg_worker_update_pauses(context);
         if (running == 0 && !context->closing)
         {
             rdp_rdg_worker_set_error(context, LIBRDP_STATUS_CLOSED);
@@ -1248,6 +1413,15 @@ static rdp_rdg_http_context* rdp_rdg_context_new(void)
     context->event_pipe[1] = -1;
     context->error = LIBRDP_STATUS_OK;
     rdp_buffer_init(&context->incoming);
+    rdp_rdg_bounded_queue_init(&context->outbound,
+                               RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               RDP_RDG_DEFAULT_QUEUE_NODES);
+    rdp_rdg_bounded_queue_init(&context->inbound,
+                               RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               RDP_RDG_DEFAULT_QUEUE_NODES);
+    rdp_rdg_bounded_queue_init(&context->control,
+                               RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               RDP_RDG_DEFAULT_QUEUE_NODES);
     if (pthread_mutex_init(&context->mutex, NULL) != 0 || pthread_cond_init(&context->cond, NULL) != 0 ||
         !rdp_rdg_make_pipe(context->control_pipe) || !rdp_rdg_make_pipe(context->event_pipe))
     {
@@ -1299,9 +1473,9 @@ static void rdp_rdg_context_free(rdp_rdg_http_context* context)
     curl_slist_free_all(context->out_headers);
 #endif
     rdp_buffer_free(&context->incoming);
-    rdp_rdg_queue_free(context->out_head);
-    rdp_rdg_queue_free(context->data_head);
-    rdp_rdg_control_free(context->packet_head);
+    rdp_rdg_bounded_queue_clear(&context->outbound);
+    rdp_rdg_bounded_queue_clear(&context->inbound);
+    rdp_rdg_bounded_queue_clear(&context->control);
     free(context->url);
     free(context->username);
     rdp_rdg_secure_free(context->password);
@@ -1326,12 +1500,29 @@ static librdp_status rdp_rdg_copy_config(rdp_rdg_http_context* context,
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!context || !config || !rdp_rdg_valid_url(config->gateway_url) ||
-        !rdp_rdg_valid_text(config->target_host, RDP_RDG_TARGET_MAX) || config->target_port == 0)
+        !rdp_rdg_valid_text(config->target_host, RDP_RDG_TARGET_MAX) || config->target_port == 0 ||
+        config->queue_bytes > RDP_RDG_HARD_QUEUE_BYTES ||
+        config->queue_nodes > RDP_RDG_HARD_QUEUE_NODES)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     context->url = rdp_rdg_strdup(config->gateway_url);
     context->target_host = rdp_rdg_strdup(config->target_host);
     context->target_port = config->target_port;
     context->timeout_ms = config->timeout_ms ? config->timeout_ms : RDP_RDG_DEFAULT_TIMEOUT_MS;
+    rdp_rdg_bounded_queue_init(&context->outbound,
+                               config->queue_bytes ? config->queue_bytes
+                                                   : RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               config->queue_nodes ? config->queue_nodes
+                                                   : RDP_RDG_DEFAULT_QUEUE_NODES);
+    rdp_rdg_bounded_queue_init(&context->inbound,
+                               config->queue_bytes ? config->queue_bytes
+                                                   : RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               config->queue_nodes ? config->queue_nodes
+                                                   : RDP_RDG_DEFAULT_QUEUE_NODES);
+    rdp_rdg_bounded_queue_init(&context->control,
+                               config->queue_bytes ? config->queue_bytes
+                                                   : RDP_RDG_DEFAULT_QUEUE_BYTES,
+                               config->queue_nodes ? config->queue_nodes
+                                                   : RDP_RDG_DEFAULT_QUEUE_NODES);
     if (!context->url || !context->target_host)
         return LIBRDP_STATUS_NO_MEMORY;
     status = rdp_gateway_user_name(config->domain, config->username, &context->username);
@@ -1407,44 +1598,74 @@ static librdp_status rdp_rdg_backend_wait(void* user_data, int timeout_ms, short
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
     struct pollfd pfd;
+    uint64_t start_ms = 0;
+    int have_clock = 0;
+    int remaining_ms = timeout_ms;
     int rc = 0;
-    short ready = 0;
 
     if (!context || timeout_ms < 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    pthread_mutex_lock(&context->mutex);
-    if ((events & POLLOUT) != 0 && context->error == LIBRDP_STATUS_OK && !context->closing)
-        ready |= POLLOUT;
-    if ((events & POLLIN) != 0 && rdp_rdg_queue_has_bytes(context->data_head))
-        ready |= POLLIN;
-    if (ready || context->error != LIBRDP_STATUS_OK || context->closing)
+    if (revents)
+        *revents = 0;
+    have_clock = rdp_rdg_monotonic_ms(&start_ms);
+    for (;;)
     {
+        short ready = 0;
+        int closing = 0;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        pthread_mutex_lock(&context->mutex);
+        if ((events & POLLOUT) != 0 && context->error == LIBRDP_STATUS_OK &&
+            !context->closing &&
+            rdp_rdg_bounded_queue_can_push(&context->outbound,
+                                           RDP_RDG_DATA_PACKET_MIN_LEN))
+            ready |= POLLOUT;
+        if ((events & POLLIN) != 0 &&
+            rdp_rdg_bounded_queue_has_bytes(&context->inbound))
+            ready |= POLLIN;
+        status = context->error;
+        closing = context->closing;
         if (revents)
             *revents = ready;
         pthread_mutex_unlock(&context->mutex);
-        return context->error != LIBRDP_STATUS_OK ? context->error : LIBRDP_STATUS_OK;
-    }
-    pthread_mutex_unlock(&context->mutex);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (ready || closing)
+            return LIBRDP_STATUS_OK;
+        if (remaining_ms == 0)
+            return LIBRDP_STATUS_TIMEOUT;
 
-    memset(&pfd, 0, sizeof(pfd));
-    pfd.fd = context->event_pipe[0];
-    pfd.events = POLLIN;
-    rc = poll(&pfd, 1u, timeout_ms);
-    if (rc == 0)
-        return LIBRDP_STATUS_TIMEOUT;
-    if (rc < 0)
-        return errno == EINTR ? LIBRDP_STATUS_AGAIN : LIBRDP_STATUS_IO_ERROR;
-    rdp_rdg_drain_pipe(context->event_pipe[0]);
-    pthread_mutex_lock(&context->mutex);
-    if ((events & POLLIN) != 0 && rdp_rdg_queue_has_bytes(context->data_head))
-        ready |= POLLIN;
-    if ((events & POLLOUT) != 0 && context->error == LIBRDP_STATUS_OK && !context->closing)
-        ready |= POLLOUT;
-    if (revents)
-        *revents = ready;
-    rc = context->error;
-    pthread_mutex_unlock(&context->mutex);
-    return rc != LIBRDP_STATUS_OK ? (librdp_status)rc : LIBRDP_STATUS_OK;
+        memset(&pfd, 0, sizeof(pfd));
+        pfd.fd = context->event_pipe[0];
+        pfd.events = POLLIN;
+        rc = poll(&pfd, 1u, remaining_ms);
+        if (rc == 0)
+            return LIBRDP_STATUS_TIMEOUT;
+        if (rc < 0)
+            return errno == EINTR ? LIBRDP_STATUS_AGAIN : LIBRDP_STATUS_IO_ERROR;
+        rdp_rdg_drain_pipe(context->event_pipe[0]);
+        if (have_clock)
+        {
+            uint64_t now_ms = 0;
+            uint64_t elapsed_ms = 0;
+
+            if (rdp_rdg_monotonic_ms(&now_ms))
+            {
+                elapsed_ms = now_ms >= start_ms ? now_ms - start_ms : 0;
+                if (elapsed_ms >= (uint64_t)timeout_ms)
+                    remaining_ms = 0;
+                else
+                    remaining_ms = timeout_ms - (int)elapsed_ms;
+            }
+            else
+            {
+                have_clock = 0;
+                remaining_ms = 0;
+            }
+        }
+        else
+            remaining_ms = 0;
+    }
 }
 
 static librdp_status rdp_rdg_backend_peek(void* user_data, void* data, size_t length, size_t* read_len)
@@ -1462,7 +1683,7 @@ static librdp_status rdp_rdg_backend_peek(void* user_data, void* data, size_t le
         pthread_mutex_unlock(&context->mutex);
         return status;
     }
-    copied = rdp_rdg_queue_peek_copy(context->data_head, data, length);
+    copied = rdp_rdg_bounded_queue_peek(&context->inbound, data, length);
     pthread_mutex_unlock(&context->mutex);
     if (read_len)
         *read_len = copied;
@@ -1477,7 +1698,8 @@ static librdp_status rdp_rdg_backend_read(void* user_data, void* data, size_t le
     if (!context || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     pthread_mutex_lock(&context->mutex);
-    while (!rdp_rdg_queue_has_bytes(context->data_head) && context->error == LIBRDP_STATUS_OK && !context->closing)
+    while (!rdp_rdg_bounded_queue_has_bytes(&context->inbound) &&
+           context->error == LIBRDP_STATUS_OK && !context->closing)
         (void)pthread_cond_wait(&context->cond, &context->mutex);
     if (context->error != LIBRDP_STATUS_OK)
     {
@@ -1486,14 +1708,16 @@ static librdp_status rdp_rdg_backend_read(void* user_data, void* data, size_t le
         pthread_mutex_unlock(&context->mutex);
         return status;
     }
-    if (context->closing && !rdp_rdg_queue_has_bytes(context->data_head))
+    if (context->closing && !rdp_rdg_bounded_queue_has_bytes(&context->inbound))
     {
         pthread_mutex_unlock(&context->mutex);
         return LIBRDP_STATUS_CLOSED;
     }
-    copied = rdp_rdg_queue_read_copy(&context->data_head, &context->data_tail, data, length);
-    if (!rdp_rdg_queue_has_bytes(context->data_head))
+    copied = rdp_rdg_bounded_queue_read(&context->inbound, data, length);
+    if (!rdp_rdg_bounded_queue_has_bytes(&context->inbound))
         rdp_rdg_drain_pipe(context->event_pipe[0]);
+    pthread_cond_broadcast(&context->cond);
+    rdp_rdg_signal_pipe(context->control_pipe[1]);
     pthread_mutex_unlock(&context->mutex);
     if (read_len)
         *read_len = copied;
@@ -1512,6 +1736,8 @@ static librdp_status rdp_rdg_backend_write(void* user_data,
 
     if (!context || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (written_len)
+        *written_len = 0;
     while (remaining > 0 && status == LIBRDP_STATUS_OK)
     {
         size_t chunk = remaining > RDP_RDG_MAX_DATA ? RDP_RDG_MAX_DATA : remaining;
@@ -1527,9 +1753,22 @@ static librdp_status rdp_rdg_backend_write(void* user_data,
                 status = LIBRDP_STATUS_CLOSED;
             else
             {
-                status = rdp_rdg_queue_copy(&context->out_head, &context->out_tail, packet.data, packet.length);
-                pthread_cond_broadcast(&context->cond);
-                rdp_rdg_signal_pipe(context->control_pipe[1]);
+                status =
+                    rdp_rdg_bounded_queue_push(&context->outbound, RDP_RDG_PKT_DATA, packet.data, packet.length);
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    pthread_cond_broadcast(&context->cond);
+                    rdp_rdg_signal_pipe(context->control_pipe[1]);
+                }
+                else if (status == LIBRDP_STATUS_AGAIN)
+                {
+                    context->outbound_backpressured = 1;
+                    rdp_trace_event(RDP_TRACE_TRANSPORT,
+                                    "transport.gateway.rdg.queue.full",
+                                    "queue=outbound bytes=%llu nodes=%llu",
+                                    (unsigned long long)context->outbound.bytes,
+                                    (unsigned long long)context->outbound.nodes);
+                }
             }
             pthread_mutex_unlock(&context->mutex);
         }

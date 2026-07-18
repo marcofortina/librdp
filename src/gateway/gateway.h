@@ -32,6 +32,8 @@ typedef struct rdp_gateway_connect_config
     const char* password;
     const char* domain;
     uint32_t timeout_ms;
+    uint32_t queue_bytes;
+    uint32_t queue_nodes;
     librdp_gateway_mode mode;
 } rdp_gateway_connect_config;
 
