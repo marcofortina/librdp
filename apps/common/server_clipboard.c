@@ -731,6 +731,7 @@ static librdp_status server_clipboard_publish_remote_formats(
 {
     server_clipboard_format_entry* copied = NULL;
     server_platform_clipboard_format* published = NULL;
+    server_platform_clipboard_offer offer;
     size_t copied_count = 0;
     size_t index = 0;
     uint32_t peer_index = 0;
@@ -783,11 +784,14 @@ static librdp_status server_clipboard_publish_remote_formats(
     runtime->next_ownership_generation++;
     if (runtime->next_ownership_generation == 0u)
         runtime->next_ownership_generation = 1u;
-    status = runtime->platform->publish_formats(
-        runtime->platform_context,
-        published,
-        copied_count,
-        runtime->next_ownership_generation);
+    memset(&offer, 0, sizeof(offer));
+    offer.peer_id = peer->peer_id;
+    offer.generation = peer->generation;
+    offer.ownership_generation = runtime->next_ownership_generation;
+    offer.formats = published;
+    offer.format_count = copied_count;
+    status = runtime->platform->publish_formats(runtime->platform_context,
+                                                &offer);
     free(published);
     if (status != LIBRDP_STATUS_OK)
     {

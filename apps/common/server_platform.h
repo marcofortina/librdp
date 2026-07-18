@@ -29,7 +29,7 @@
 #define SERVER_PLATFORM_CAPTURE_VERSION 1u
 #define SERVER_PLATFORM_POINTER_VERSION 1u
 #define SERVER_PLATFORM_INPUT_VERSION 1u
-#define SERVER_PLATFORM_CLIPBOARD_VERSION 2u
+#define SERVER_PLATFORM_CLIPBOARD_VERSION 3u
 #define SERVER_PLATFORM_DRIVE_VERSION 2u
 #define SERVER_PLATFORM_PERMISSION_VERSION 1u
 
@@ -75,6 +75,15 @@ typedef struct server_platform_clipboard_format
     uint32_t id;
     const char* mime_type;
 } server_platform_clipboard_format;
+
+typedef struct server_platform_clipboard_offer
+{
+    uint32_t peer_id;
+    uint32_t generation;
+    uint64_t ownership_generation;
+    const server_platform_clipboard_format* formats;
+    size_t format_count;
+} server_platform_clipboard_offer;
 
 typedef struct server_platform_clipboard_data
 {
@@ -290,10 +299,9 @@ typedef struct server_platform_clipboard_vtable
     librdp_status (*start)(void* context,
                            const server_platform_clipboard_sink* sink);
     void (*stop)(void* context);
-    librdp_status (*publish_formats)(void* context,
-                                     const server_platform_clipboard_format* formats,
-                                     size_t format_count,
-                                     uint64_t generation);
+    librdp_status (*publish_formats)(
+        void* context,
+        const server_platform_clipboard_offer* offer);
     librdp_status (*request_data)(void* context,
                                   uint64_t request_id,
                                   uint32_t format_id);

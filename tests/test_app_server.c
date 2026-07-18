@@ -47,6 +47,8 @@ typedef struct mock_platform_context
     unsigned int drive_completions;
     uint32_t last_cleanup_peer_id;
     uint32_t last_clipboard_generation;
+    uint32_t last_clipboard_peer_id;
+    uint32_t last_clipboard_peer_generation;
     uint32_t last_drive_generation;
     uint64_t last_clipboard_request_id;
     uint64_t last_clipboard_ownership_generation;
@@ -280,21 +282,23 @@ static librdp_status mock_clipboard_start(
 
 static librdp_status mock_publish_formats(
     void* context,
-    const server_platform_clipboard_format* formats,
-    size_t format_count,
-    uint64_t generation)
+    const server_platform_clipboard_offer* offer)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
     size_t index = 0;
 
-    if (!mock || (format_count > 0u && !formats) ||
-        format_count > sizeof(mock->published_format_ids) /
-                           sizeof(mock->published_format_ids[0]))
+    if (!mock || !offer ||
+        (offer->format_count > 0u && !offer->formats) ||
+        offer->format_count > sizeof(mock->published_format_ids) /
+                                  sizeof(mock->published_format_ids[0]))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    mock->published_format_count = format_count;
-    mock->last_clipboard_ownership_generation = generation;
-    for (index = 0; index < format_count; index++)
-        mock->published_format_ids[index] = formats[index].id;
+    mock->published_format_count = offer->format_count;
+    mock->last_clipboard_peer_id = offer->peer_id;
+    mock->last_clipboard_peer_generation = offer->generation;
+    mock->last_clipboard_ownership_generation =
+        offer->ownership_generation;
+    for (index = 0; index < offer->format_count; index++)
+        mock->published_format_ids[index] = offer->formats[index].id;
     return LIBRDP_STATUS_OK;
 }
 
@@ -891,6 +895,8 @@ static int test_clipboard_runtime(void)
           LIBRDP_STATUS_OK);
     CHECK(protocol.format_list_responses == 1u && protocol.response_ok);
     CHECK(platform.published_format_count == 4u);
+    CHECK(platform.last_clipboard_peer_id == 7u);
+    CHECK(platform.last_clipboard_peer_generation == 1u);
     ownership_generation = platform.last_clipboard_ownership_generation;
     CHECK(ownership_generation != 0u);
     format_lists = protocol.format_lists;

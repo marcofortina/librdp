@@ -847,6 +847,9 @@ static void x11_server_clipboard_handle_selection_request(
         server_platform_clipboard_request platform_request;
 
         memset(&platform_request, 0, sizeof(platform_request));
+        platform_request.peer_id = context->clipboard_remote_peer_id;
+        platform_request.generation =
+            context->clipboard_remote_peer_generation;
         platform_request.ownership_generation =
             context->clipboard_remote_generation;
         platform_request.request_id =
@@ -873,7 +876,13 @@ void x11_server_clipboard_handle_event(x11_server_context* context,
     else if (event->type == SelectionClear)
     {
         if (event->xselectionclear.selection == context->atom_clipboard)
+        {
+            context->clipboard_remote_peer_id = 0u;
+            context->clipboard_remote_peer_generation = 0u;
             context->clipboard_remote_generation = 0u;
+            context->remote_format_count = 0u;
+            x11_server_clipboard_write_clear(context);
+        }
     }
     else if (event->type == PropertyNotify)
     {
@@ -937,35 +946,41 @@ static void x11_server_clipboard_stop(void* opaque)
     x11_server_clipboard_files_reset(context->clipboard_files);
     memset(&context->clipboard_sink, 0, sizeof(context->clipboard_sink));
     context->clipboard_started = 0;
+    context->clipboard_remote_peer_id = 0u;
+    context->clipboard_remote_peer_generation = 0u;
+    context->clipboard_remote_generation = 0u;
     context->remote_format_count = 0u;
 }
 
 static librdp_status x11_server_clipboard_publish_formats(
     void* opaque,
-    const server_platform_clipboard_format* formats,
-    size_t format_count,
-    uint64_t generation)
+    const server_platform_clipboard_offer* offer)
 {
     x11_server_context* context = (x11_server_context*)opaque;
     size_t index = 0u;
 
-    if (!context || (format_count > 0u && !formats) ||
-        format_count > X11_SERVER_CLIPBOARD_MAX_FORMATS ||
-        generation == 0u)
+    if (!context || !offer || offer->peer_id == 0u ||
+        offer->generation == 0u ||
+        (offer->format_count > 0u && !offer->formats) ||
+        offer->format_count > X11_SERVER_CLIPBOARD_MAX_FORMATS ||
+        offer->ownership_generation == 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     context->remote_format_count = 0u;
-    for (index = 0u; index < format_count; index++)
+    for (index = 0u; index < offer->format_count; index++)
     {
-        Atom atom = x11_server_atom_for_format_id(context, formats[index].id);
+        Atom atom =
+            x11_server_atom_for_format_id(context, offer->formats[index].id);
 
         if (atom == None)
             continue;
         context->remote_targets[context->remote_format_count] = atom;
         context->remote_format_ids[context->remote_format_count] =
-            formats[index].id;
+            offer->formats[index].id;
         context->remote_format_count++;
     }
-    context->clipboard_remote_generation = generation;
+    context->clipboard_remote_peer_id = offer->peer_id;
+    context->clipboard_remote_peer_generation = offer->generation;
+    context->clipboard_remote_generation = offer->ownership_generation;
     x11_server_clipboard_read_clear(context);
     x11_server_clipboard_write_clear(context);
     XSetSelectionOwner(context->display,
@@ -1054,7 +1069,10 @@ static librdp_status x11_server_clipboard_write_data(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     write = &context->clipboard_write;
     if (!write->active || write->request_id != data->request_id ||
-        write->format_id != data->format_id || !data->final_chunk)
+        write->format_id != data->format_id || !data->final_chunk ||
+        data->peer_id != context->clipboard_remote_peer_id ||
+        data->generation != context->clipboard_remote_peer_generation ||
+        data->ownership_generation != context->clipboard_remote_generation)
         return LIBRDP_STATUS_STATE;
     if (data->status != LIBRDP_STATUS_OK)
     {
@@ -1131,11 +1149,17 @@ static void x11_server_clipboard_cancel_peer(void* opaque,
 {
     x11_server_context* context = (x11_server_context*)opaque;
 
-    (void)peer_id;
-    (void)generation;
     if (!context)
         return;
+    if (peer_id != context->clipboard_remote_peer_id ||
+        generation != context->clipboard_remote_peer_generation)
+        return;
+    x11_server_clipboard_read_clear(context);
     x11_server_clipboard_write_clear(context);
+    context->clipboard_remote_peer_id = 0u;
+    context->clipboard_remote_peer_generation = 0u;
+    context->clipboard_remote_generation = 0u;
+    context->remote_format_count = 0u;
 }
 
 static void x11_server_clipboard_release_ownership(void* opaque,
@@ -1154,6 +1178,8 @@ static void x11_server_clipboard_release_ownership(void* opaque,
                            None,
                            CurrentTime);
     }
+    context->clipboard_remote_peer_id = 0u;
+    context->clipboard_remote_peer_generation = 0u;
     context->clipboard_remote_generation = 0u;
     context->remote_format_count = 0u;
     x11_server_clipboard_write_clear(context);

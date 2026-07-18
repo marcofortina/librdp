@@ -148,6 +148,8 @@ struct x11_server_context
     size_t remote_format_count;
     uint64_t clipboard_local_generation;
     uint64_t clipboard_remote_generation;
+    uint32_t clipboard_remote_peer_id;
+    uint32_t clipboard_remote_peer_generation;
     uint64_t clipboard_next_request_id;
     x11_server_clipboard_read clipboard_read;
     x11_server_clipboard_write clipboard_write;

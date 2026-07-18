@@ -73,6 +73,8 @@ typedef struct x11_server_test_state
     int pointer_visible;
     uint8_t clipboard_data[64];
     size_t clipboard_data_len;
+    uint32_t clipboard_peer_id;
+    uint32_t clipboard_peer_generation;
     int send_large_clipboard;
 } x11_server_test_state;
 
@@ -266,7 +268,11 @@ static void test_clipboard_request(
     if (!state || !request || !state->clipboard)
         return;
     state->request_count++;
+    state->clipboard_peer_id = request->peer_id;
+    state->clipboard_peer_generation = request->generation;
     memset(&response, 0, sizeof(response));
+    response.peer_id = request->peer_id;
+    response.generation = request->generation;
     response.ownership_generation = request->ownership_generation;
     response.request_id = request->request_id;
     response.format_id = request->format_id;
@@ -861,13 +867,17 @@ static int test_x11_providers(const char* display_name)
 
     {
         server_platform_clipboard_format format;
+        server_platform_clipboard_offer offer;
 
         format.id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
         format.mime_type = "text/plain;charset=utf-8";
-        CHECK(clipboard->publish_formats(context,
-                                         &format,
-                                         1u,
-                                         7u) ==
+        memset(&offer, 0, sizeof(offer));
+        offer.peer_id = 23u;
+        offer.generation = 5u;
+        offer.ownership_generation = 7u;
+        offer.formats = &format;
+        offer.format_count = 1u;
+        CHECK(clipboard->publish_formats(context, &offer) ==
               LIBRDP_STATUS_OK);
     }
     property = XInternAtom(client, "_LIBRDP_TEST_SELECTION", False);
@@ -889,6 +899,8 @@ static int test_x11_providers(const char* display_name)
                               &selection_len));
     CHECK(selection_len == 6u &&
           memcmp(selection, "remote", 6u) == 0);
+    CHECK(state.clipboard_peer_id == 23u);
+    CHECK(state.clipboard_peer_generation == 5u);
     free(selection);
     selection = NULL;
 
