@@ -23,6 +23,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_clipboard.c
         apps/x11/server/server_clipboard_files.c
         apps/x11/server/server_input.c
+        apps/x11/server/server_managed_ipc.c
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
         apps/x11/server/server_fuse.c
@@ -70,6 +71,26 @@ if(LIBRDP_BUILD_X11_SERVER)
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
+        add_executable(test_x11_managed
+            tests/test_x11_managed.c
+            apps/x11/server/server_managed_ipc.c
+        )
+        target_include_directories(test_x11_managed PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_x11_managed PRIVATE
+            librdp
+            OpenSSL::Crypto
+        )
+        librdp_apply_system_definitions(test_x11_managed)
+        librdp_apply_warning_options(test_x11_managed)
+        librdp_apply_sanitizer_compile_options(test_x11_managed)
+        librdp_apply_sanitizer_link_options(test_x11_managed)
+        add_test(NAME x11_managed COMMAND test_x11_managed)
+        set_tests_properties(x11_managed PROPERTIES TIMEOUT 15)
+        add_dependencies(librdp_tests test_x11_managed)
+
         find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
         if(LIBRDP_XVFB_EXECUTABLE)
             add_executable(test_x11_server
