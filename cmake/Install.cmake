@@ -108,6 +108,10 @@ install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-x11-session-broker.conf.example
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/librdp
+)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
     FILES_MATCHING
@@ -121,8 +125,13 @@ install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-viewer.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-admin.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-server.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-workspace.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+)
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-session-broker.8
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man8
 )
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp.7

@@ -14,6 +14,8 @@ Recommended package split:
 - runtime library package: shared library and runtime dependency metadata;
 - development package: public headers, CMake package files when available, and development dependency metadata;
 - viewer package: `librdp-x11-viewer` and viewer runtime dependencies;
+- X11 server package: desktop server, managed-session broker, supervisor,
+  session agent, broker example configuration, and their manual pages;
 - documentation package: Markdown documentation, Doxygen output when generated, and man pages.
 
 Distributions may combine these packages, but optional viewer dependencies should not force installation of the viewer when only the core library is needed.
@@ -83,6 +85,12 @@ Optional runtime dependencies depend on enabled features:
 - libacl, libattr, and libarchive for filesystem metadata paths;
 - libcurl and libxml2 for gateway and workspace feed paths;
 - X11, Xcursor, Xfixes, xkbcommon, pthreads, PipeWire, and optional image libraries for the X11 viewer.
+- X11, XDamage, XComposite, XTest, XFixes, XRandR, Xau, xkbcommon and
+  pthreads for the X11 desktop server;
+- PAM on systems that use PAM, or BSD Authentication on OpenBSD, for managed
+  desktop authentication;
+- Xorg with a suitable virtual display driver for managed production sessions;
+- FUSE 3 when client-announced drives are mounted into an X11 session.
 
 Package metadata should reflect the build result, not the full optional list.
 
@@ -95,6 +103,8 @@ Package metadata should reflect the build result, not the full optional list.
 | Generated API docs | Doxygen, Python 3 | static HTML only | Ship in a documentation package when generated. |
 | Fuzz targets | Clang/libFuzzer when available | sanitizer runtime for local developer builds | Do not ship in runtime packages. |
 | X11 viewer | X11, Xcursor, Xfixes, xkbcommon, pthreads | same libraries | Ship separately from the core library. |
+| X11 desktop server | X11, XDamage, XComposite, XTest, XFixes, XRandR, Xau, xkbcommon | same libraries and a local graphical session for shadow mode | Ship separately from the core library. |
+| Managed X11 sessions | PAM or BSD Authentication, Xorg | host authentication stack, virtual X server, selected desktop | Install the broker and session helpers together. |
 | PipeWire audio | PipeWire development package | PipeWire user session and runtime libs | Make an optional viewer dependency. |
 | Camera | V4L2 headers available through the platform | local video device permissions | Make an optional viewer capability. |
 | Smartcard | PC/SC development package | PC/SC service and reader access | Make an optional backend dependency. |
@@ -113,6 +123,11 @@ include/librdp/*.h
 share/doc/librdp/*.md
 share/man/man1/librdp-x11-viewer.1
 bin/librdp-x11-viewer
+bin/librdp-x11-server
+bin/librdp-x11-session-broker
+bin/librdp-x11-session-supervisor
+bin/librdp-x11-session-agent
+share/librdp/librdp-x11-session-broker.conf.example
 ```
 
 Development packages should include headers and any build-system metadata needed by downstream applications. Runtime packages should not include internal headers under `src/`.

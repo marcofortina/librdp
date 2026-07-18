@@ -1,0 +1,30 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+socket=/run/librdp/x11-broker.sock
+runtime-root=/run/librdp/x11-sessions
+supervisor=/usr/bin/librdp-x11-session-supervisor
+agent=/usr/bin/librdp-x11-session-agent
+xserver=/usr/bin/Xorg
+desktop=/usr/bin/startxfce4
+auth-service=librdp
+bind=127.0.0.1
+security=nla
+tls-cert=/etc/librdp/server.crt
+tls-key=/etc/librdp/server.key
+max-sessions=32
+max-sessions-per-user=2
+first-display=40
+last-display=199
+idle-seconds=1800
+max-duration-seconds=86400
+socket-mode=0600
+allow-standard-security=false
+allow-user-switch=false
+allow-input=false
+allow-clipboard=false
+allow-drive=false
+drive-read-only=true
+allow-reconnect=true
+persistent=true
+xvfb=false

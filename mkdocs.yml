@@ -90,6 +90,7 @@ nav:
       - Programmer's reference: programmers-reference.md
       - Examples: examples.md
       - Server API: server.md
+      - X11 server: server-x11.md
       - ABI and versioning: abi-versioning.md
   - Architecture and protocols:
       - Architecture: architecture.md

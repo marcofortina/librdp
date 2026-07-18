@@ -1,0 +1,247 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-X11-SESSION-BROKER 8 "2026-07-18" "librdp 0.1.0" "System Administration Commands"
+.SH NAME
+librdp-x11-session-broker \- allocate and supervise managed X11 RDP sessions
+.SH SYNOPSIS
+.B librdp-x11-session-broker
+[
+.B --config
+.I path
+]
+.B --desktop
+.I command
+[
+.I options
+]
+.SH DESCRIPTION
+.B librdp-x11-session-broker
+is the privileged policy and allocation process for managed X11 sessions. It
+authenticates through a separate per-session supervisor, allocates displays
+and runtime directories, then runs each desktop and RDP agent with the
+authenticated account.
+.PP
+The process remains in the foreground and writes bounded key/value diagnostics
+to standard error. Credentials are accepted only over local IPC and are not
+valid configuration keys.
+.SH CONFIGURATION
+.TP
+.BI --config " path"
+Load the administrative configuration from an absolute path. This option must
+be first. Later command-line options override file values.
+.TP
+.B --check-config
+Validate the effective policy and exit without creating a socket, display or
+session.
+.PP
+Configuration uses
+.I key=value
+lines. Blank lines and lines beginning with
+.B #
+are ignored. Files must be regular, owned by root or the broker account and not
+writable by group or other users.
+.PP
+The accepted keys are:
+.BR socket ,
+.BR runtime-root ,
+.BR supervisor ,
+.BR agent ,
+.BR xserver ,
+.BR auth-service ,
+.BR desktop ,
+.BR bind ,
+.BR security ,
+.BR tls-cert ,
+.BR tls-key ,
+.BR allow-user ,
+.BR allow-group ,
+.BR allow-env ,
+.BR max-sessions ,
+.BR max-sessions-per-user ,
+.BR first-display ,
+.BR last-display ,
+.BR idle-seconds ,
+.BR max-duration-seconds ,
+.BR socket-mode ,
+.BR socket-group ,
+.BR allow-standard-security ,
+.BR allow-user-switch ,
+.BR allow-input ,
+.BR allow-clipboard ,
+.BR allow-drive ,
+.BR drive-read-only ,
+.BR allow-reconnect ,
+.BR persistent
+and
+.BR xvfb .
+.PP
+.BR allow-user ,
+.B allow-group
+and
+.B allow-env
+may repeat. Other keys may occur once. Boolean values accept
+.BR 1 / 0 ,
+.BR true / false ,
+.BR yes / no
+and
+.BR on / off
+without regard to letter case.
+.SH PATH AND AUTHENTICATION OPTIONS
+.TP
+.BI --socket " path"
+Set the local broker socket.
+.TP
+.BI --runtime-root " path"
+Set the per-session runtime root.
+.TP
+.BI --supervisor " path"
+Set the trusted supervisor executable.
+.TP
+.BI --agent " path"
+Set the unprivileged session agent executable.
+.TP
+.BI --xserver " path"
+Set the production X server executable.
+.TP
+.BI --desktop " command"
+Set the absolute desktop or window-manager command.
+.TP
+.BI --auth-service " name"
+Set the native host-authentication service.
+.TP
+.BI --allow-user " name"
+Add an authenticated account to the allowlist.
+.TP
+.BI --allow-group " name"
+Add a local group to the allowlist.
+.TP
+.BI --allow-env " name"
+Permit one environment variable in user sessions.
+.SH LISTENER AND SECURITY OPTIONS
+.TP
+.BI --bind " address"
+Set the address used by per-session listeners.
+.TP
+.BI --security " nla|tls|standard"
+Set session listener security. NLA is the default.
+.TP
+.BI --tls-cert " path"
+Set the absolute certificate path.
+.TP
+.BI --tls-key " path"
+Set the absolute private-key path.
+.TP
+.B --allow-standard-security
+Permit Standard Security.
+.TP
+.B --deny-standard-security
+Deny Standard Security.
+.SH RESOURCE OPTIONS
+.TP
+.BI --max-sessions " count"
+Set the global session limit.
+.TP
+.BI --max-sessions-per-user " count"
+Set the per-account session limit.
+.TP
+.BI --first-display " number"
+Set the first allocatable X display.
+.TP
+.BI --last-display " number"
+Set the last allocatable X display.
+.TP
+.BI --idle-seconds " value"
+Set the detached idle limit.
+.TP
+.BI --max-duration-seconds " value"
+Set the absolute session lifetime.
+.TP
+.BI --socket-mode " octal"
+Set an owner-readable and owner-writable local socket mode with no access for
+other users.
+.TP
+.BI --socket-group " name"
+Set the optional local socket group.
+.SH POLICY OPTIONS
+.TP
+.B --allow-user-switch
+Permit a privileged caller to authenticate a different local account.
+.TP
+.B --deny-user-switch
+Deny local account switching.
+.TP
+.B --allow-input
+Permit requested remote input.
+.TP
+.B --deny-input
+Deny remote input.
+.TP
+.B --allow-clipboard
+Permit requested clipboard integration.
+.TP
+.B --deny-clipboard
+Deny clipboard integration.
+.TP
+.B --allow-drive
+Permit requested client-drive integration.
+.TP
+.B --deny-drive
+Deny client-drive integration.
+.TP
+.B --drive-read-only
+Restrict permitted drives to read-only access.
+.TP
+.B --drive-read-write
+Permit write requests when the session also requests drive access.
+.TP
+.B --allow-reconnect
+Permit reconnect tokens and detach.
+.TP
+.B --no-reconnect
+Deny reconnect.
+.TP
+.B --persistent
+Permit sessions to survive detach and broker replacement.
+.TP
+.B --non-persistent
+Terminate sessions according to the nonpersistent policy.
+.TP
+.B --xorg
+Use the configured production X server.
+.TP
+.B --xvfb
+Use Xvfb for deterministic test environments.
+.TP
+.B --help
+Print command usage.
+.SH SERVICE OPERATION
+A service manager should validate configuration before startup, run the broker
+in the foreground, treat creation of the configured Unix socket as readiness
+and forward
+.B SIGTERM
+for orderly shutdown. The broker also handles
+.B SIGINT
+and
+.BR SIGHUP ;
+these signals stop the process rather than reloading policy.
+.SH FILES
+.TP
+.I /run/librdp/x11-broker.sock
+Default broker control socket.
+.TP
+.I /run/librdp/x11-sessions
+Default managed-session runtime root.
+.TP
+.I share/librdp/librdp-x11-session-broker.conf.example
+Installed configuration example.
+.SH DIAGNOSTICS
+Records use the prefix
+.B librdp x11-session-broker
+and an
+.B event=
+field. Configuration rejection reports only line, key and reason. It never
+reports the rejected value.
+.SH SEE ALSO
+.BR librdp-x11-server (1),
+.BR librdp-server (7),
+.BR librdp (7)

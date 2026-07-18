@@ -32,6 +32,7 @@ REQUIRED_MARKDOWN = (
     "docs/admin.md",
     "docs/workspace.md",
     "docs/server.md",
+    "docs/server-x11.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
     "docs/lifecycle.md",
@@ -63,7 +64,9 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp-cocoa-viewer.1",
     "docs/man/librdp-x11-viewer.1",
     "docs/man/librdp-x11-admin.1",
+    "docs/man/librdp-x11-server.1",
     "docs/man/librdp-x11-workspace.1",
+    "docs/man/librdp-x11-session-broker.8",
 )
 FORBIDDEN_DOCS = (
     "docs/roadmap.md",
@@ -224,6 +227,22 @@ def workspace_source_options() -> set[str]:
     return set(VIEWER_OPTION_RE.findall(read("apps/common/workspace_options.c"))) - forwarded_viewer_options
 
 
+def x11_server_source_options() -> set[str]:
+    return set(
+        VIEWER_OPTION_RE.findall(
+            read("apps/x11/server/server_cli.c")
+        )
+    )
+
+
+def x11_broker_source_options() -> set[str]:
+    return set(
+        VIEWER_OPTION_RE.findall(
+            read("apps/x11/server/session_broker.c")
+        )
+    )
+
+
 def documented_options(path: str) -> set[str]:
     return set(DOC_OPTION_RE.findall(read(path))) - NON_VIEWER_OPTIONS
 
@@ -301,6 +320,40 @@ def validate_workspace_options(errors: list[str]) -> None:
         errors.append(f"workspace option missing from docs/man/librdp-x11-workspace.1: {option}")
     for option in sorted(manpage - source):
         errors.append(f"documented workspace option not present in source: {option}")
+
+
+def validate_x11_server_options(errors: list[str]) -> None:
+    source = x11_server_source_options()
+    manpage = documented_options(
+        "docs/man/librdp-x11-server.1")
+
+    for option in sorted(source - manpage):
+        errors.append(
+            "X11 server option missing from "
+            f"docs/man/librdp-x11-server.1: {option}"
+        )
+    for option in sorted(manpage - source):
+        errors.append(
+            "documented X11 server option not present in "
+            f"source: {option}"
+        )
+
+
+def validate_x11_broker_options(errors: list[str]) -> None:
+    source = x11_broker_source_options()
+    manpage = documented_options(
+        "docs/man/librdp-x11-session-broker.8")
+
+    for option in sorted(source - manpage):
+        errors.append(
+            "X11 broker option missing from "
+            f"docs/man/librdp-x11-session-broker.8: {option}"
+        )
+    for option in sorted(manpage - source):
+        errors.append(
+            "documented X11 broker option not present in "
+            f"source: {option}"
+        )
 
 
 def validate_cmake_options(errors: list[str]) -> None:
@@ -584,6 +637,8 @@ def main() -> int:
     validate_viewer_options(errors)
     validate_admin_options(errors)
     validate_workspace_options(errors)
+    validate_x11_server_options(errors)
+    validate_x11_broker_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)
     validate_manpages(errors)

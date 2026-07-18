@@ -1,0 +1,141 @@
+.\" Copyright (C) 2026 Marco Fortina
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH LIBRDP-X11-SERVER 1 "2026-07-18" "librdp 0.1.0" "User Commands"
+.SH NAME
+librdp-x11-server \- expose an X11 desktop through the librdp server runtime
+.SH SYNOPSIS
+.B librdp-x11-server
+.B --mode shadow
+.B --allow-capture
+.B --tls-cert
+.I path
+.B --tls-key
+.I path
+[
+.I options
+]
+.PP
+.B librdp-x11-server
+.B --mode managed
+.B --managed-action
+.I action
+[
+.I options
+]
+.SH DESCRIPTION
+.B librdp-x11-server
+runs either a shadow server for an existing X11 session or a command client
+for the managed-session broker. Capture, input, clipboard and client-drive
+providers require separate policy grants.
+.SH SHADOW OPTIONS
+.TP
+.BI --display " name"
+Select the X display. The current
+.B DISPLAY
+value is used when omitted.
+.TP
+.BI --source " root|monitor:index|window:id"
+Select the capture source.
+.TP
+.BI --bind " address"
+Set the listener address. The default is loopback.
+.TP
+.BI --port " port"
+Set the RDP listener port.
+.TP
+.BI --max-peers " count"
+Limit concurrent peers.
+.TP
+.BI --security " tls|nla|standard"
+Select server security. TLS is the default.
+.TP
+.BI --tls-cert " path"
+Load the TLS certificate from an absolute path.
+.TP
+.BI --tls-key " path"
+Load the TLS private key from an absolute path.
+.TP
+.B --allow-standard-security
+Permit explicitly selected Standard RDP Security.
+.TP
+.BI --user " name"
+Set the account accepted by the configured authentication policy.
+.TP
+.BI --domain " name"
+Set the accepted authentication domain.
+.TP
+.BI --password-env " name"
+Read the authentication secret from the named environment variable.
+.TP
+.B --allow-capture
+Grant access to the selected desktop source.
+.TP
+.B --allow-input
+Grant remote keyboard and pointer injection.
+.TP
+.B --allow-clipboard
+Grant bidirectional clipboard access.
+.TP
+.B --allow-drive
+Grant access to client-announced drives.
+.TP
+.BI --drive-mount " path"
+Select the isolated client-drive mount point.
+.TP
+.B --drive-read-only
+Restrict client drives to read-only access.
+.SH MANAGED OPTIONS
+.TP
+.BI --managed-action " start|attach|query|resize|detach|terminate"
+Select the broker operation.
+.TP
+.BI --broker " path"
+Set the absolute broker Unix-socket path.
+.TP
+.BI --session-id " id"
+Select an existing managed session.
+.TP
+.BI --token-env " name"
+Read the reconnect token from the named environment variable.
+.TP
+.BI --width " pixels"
+Set the requested managed desktop width.
+.TP
+.BI --height " pixels"
+Set the requested managed desktop height.
+.TP
+.B --persistent
+Request a desktop that may remain alive after detach.
+.TP
+.B --reconnect
+Request a reconnect token.
+.PP
+The
+.BR --user ,
+.BR --domain ,
+.BR --password-env ,
+.BR --allow-capture ,
+.BR --allow-input ,
+.BR --allow-clipboard
+and
+.B --allow-drive
+options also describe a managed start request. Broker policy can only remove
+requested privileges.
+.SH COMMON OPTIONS
+.TP
+.BI --mode " shadow|managed"
+Select the operating mode.
+.TP
+.B --help
+Print command usage.
+.SH SECURITY
+Do not place passwords or reconnect tokens in command arguments. Use
+.B --password-env
+and
+.B --token-env
+with an environment visible only to the invoking account. Standard Security
+is rejected unless explicitly enabled.
+.SH SEE ALSO
+.BR librdp-x11-session-broker (8),
+.BR librdp-server (7),
+.BR librdp (7)

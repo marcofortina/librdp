@@ -97,4 +97,5 @@ an explicit security policy. Trace output is redacted by default and must not be
 used for credentials or raw user payloads.
 
 See also: [API reference](api-reference.md), [Programmer's reference](programmers-reference.md),
-and [librdp-server(7)](man/librdp-server.7).
+[X11 desktop server](server-x11.md), and
+[librdp-server(7)](man/librdp-server.7).

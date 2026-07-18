@@ -41,6 +41,35 @@ Use `LIBRDP_TRACE_LEVEL=debug` for control-flow detail and `LIBRDP_TRACE_LEVEL=t
 | Device feature is unavailable | `LIBRDP_TRACE_CLIENT=1` | `client.rdpdr.*`, backend-specific `x11.*` events | settings, backend probe, permission | Check local selector, optional library availability, open/probe result, and device announce. |
 | Audio or camera starts then stops | `LIBRDP_TRACE_CLIENT=1` | `client.rdpsnd.*`, `client.audin.*`, `client.video.*`, `client.camera.*` | backend stream, format selection, channel close | Inspect format negotiation, backend open result, sample pacing, and close event. |
 | Parser or decoder rejects input | `LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=debug` | module-specific parser events | malformed PDU, unsupported capability, bounds rejection | Identify the first parser failure and add the minimized input to a unit or fuzz corpus when it is stable. |
+| Managed X11 session does not start | broker stderr and `LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1` | `config.*`, `broker.*`, server listener and activation events | policy, host authentication, X server, desktop or session agent | Validate the broker configuration, then inspect the first failed process or protocol stage without recording credentials. |
+
+## Managed X11 sessions
+
+Validate the administrative policy before starting the service:
+
+```sh
+librdp-x11-session-broker \
+  --config /etc/librdp/x11-session-broker.conf \
+  --check-config
+```
+
+The broker emits stable `event=config.*` and `event=broker.*` records on
+standard error. `config.failed` includes only a line, key and rejection reason;
+it never includes the rejected value. A running service should own its Unix
+socket and runtime root, and each active session should have a supervisor
+control socket below the configured runtime root.
+
+For startup failures, verify in order:
+
+1. ownership and mode of the configuration, certificate and private key;
+2. the configured authentication service;
+3. availability of Xorg and its virtual display driver;
+4. the selected desktop executable;
+5. the session agent executable and Xauthority file;
+6. the per-session listener and RDP activation trace.
+
+`SIGTERM`, `SIGINT` and `SIGHUP` request an orderly broker shutdown. They do not
+reload policy in place.
 
 ## Trace-to-component map
 

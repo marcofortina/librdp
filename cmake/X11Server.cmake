@@ -116,6 +116,7 @@ if(LIBRDP_BUILD_X11_SERVER)
     add_executable(librdp-x11-session-broker
         apps/x11/server/session_broker.c
         apps/x11/server/server_managed_broker.c
+        apps/x11/server/server_managed_config.c
         apps/x11/server/server_managed_ipc.c
         apps/x11/server/server_managed_policy.c
         apps/x11/server/server_managed_registry.c
@@ -214,6 +215,53 @@ if(LIBRDP_BUILD_X11_SERVER)
         set_tests_properties(x11_managed_policy
             PROPERTIES TIMEOUT 15)
         add_dependencies(librdp_tests test_x11_managed_policy)
+
+        add_executable(test_x11_managed_config
+            tests/test_x11_managed_config.c
+            apps/x11/server/server_managed_config.c
+            apps/x11/server/server_managed_ipc.c
+            apps/x11/server/server_managed_policy.c
+        )
+        target_include_directories(test_x11_managed_config PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_x11_managed_config PRIVATE
+            librdp
+            OpenSSL::Crypto
+        )
+        librdp_apply_system_definitions(test_x11_managed_config)
+        librdp_apply_warning_options(test_x11_managed_config)
+        librdp_apply_sanitizer_compile_options(
+            test_x11_managed_config)
+        librdp_apply_sanitizer_link_options(
+            test_x11_managed_config)
+        add_test(NAME x11_managed_config
+            COMMAND test_x11_managed_config)
+        set_tests_properties(x11_managed_config
+            PROPERTIES TIMEOUT 15)
+        add_dependencies(librdp_tests test_x11_managed_config)
+
+        set(LIBRDP_X11_MANAGED_TEST_CONFIG_DIR
+            ${CMAKE_CURRENT_BINARY_DIR}/x11-managed-config)
+        file(MAKE_DIRECTORY
+            ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR})
+        file(COPY
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-x11-session-broker.conf.example
+            DESTINATION ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}
+            FILE_PERMISSIONS OWNER_READ OWNER_WRITE
+        )
+        add_test(NAME x11_managed_config_cli
+            COMMAND librdp-x11-session-broker
+                --config
+                ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}/librdp-x11-session-broker.conf.example
+                --check-config
+        )
+        set_tests_properties(x11_managed_config_cli
+            PROPERTIES
+                PASS_REGULAR_EXPRESSION "event=config.valid"
+                TIMEOUT 15
+        )
 
         add_executable(test_x11_managed_broker
             tests/test_x11_managed_broker.c
