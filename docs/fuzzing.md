@@ -55,7 +55,9 @@ Fuzz coverage includes:
 
 - shared stream, charset, and bulk-compression helpers;
 - transport framing;
+- RD Gateway framing through `fuzz_gateway`;
 - server-side connection, CredSSP, channel, and activation dispatch through `fuzz_server_parser`;
+- workspace feed XML and administrative session XML through `fuzz_workspace` and `fuzz_admin`;
 - X.224, MCS, GCC, TPKT, fast-path, slow-path, capabilities, licensing, and security parsers;
 - `credssp` ASN.1, credential transport, and authentication message handling;
 - dynamic virtual channels and device channels;

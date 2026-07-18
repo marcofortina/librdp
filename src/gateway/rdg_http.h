@@ -19,6 +19,23 @@
 
 #include "gateway/gateway.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct rdp_rdg_packet_view
+{
+    uint16_t type;
+    const uint8_t* payload;
+    size_t payload_len;
+    const uint8_t* data;
+    size_t data_len;
+    size_t packet_len;
+} rdp_rdg_packet_view;
+
+librdp_status rdp_rdg_parse_packet(const uint8_t* data,
+                                   size_t length,
+                                   rdp_rdg_packet_view* packet);
+
 librdp_status rdp_gateway_connect_rdg_http(rdp_transport* transport,
                                            const rdp_gateway_connect_config* config);
 

@@ -16,6 +16,7 @@
 #include "common/buffer.h"
 #include "common/trace.h"
 #include "gateway/gateway.h"
+#include "gateway/rdg_http.h"
 #include "platform/socket.h"
 #include "protocol/tpkt.h"
 #include "transport/tcp.h"
@@ -155,6 +156,57 @@ static int test_rdg_make_packet(uint16_t type, const rdp_buffer* body, rdp_buffe
     if (body && body->length > 0 && rdp_buffer_append(packet, body->data, body->length) != LIBRDP_STATUS_OK)
         return 0;
     return 1;
+}
+
+/*
+ * Validate the standalone RDG framing boundary used by both the HTTP worker
+ * and the fuzz harness. The trailing-byte case protects stream reassembly,
+ * while malformed nested lengths exercise the data packet trust boundary.
+ */
+static int test_rdg_packet_parser(void)
+{
+    const uint8_t incomplete[7] = {0};
+    const uint8_t short_header[8] = {0x02, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00};
+    const uint8_t oversized[8] = {0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x10, 0x00};
+    const uint8_t control[] = {
+        0x02, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd
+    };
+    const uint8_t data_packet[] = {
+        0x0a, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x03, 0x00, 0x11, 0x22, 0x33
+    };
+    const uint8_t invalid_data[] = {
+        0x0a, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x03, 0x00, 0x11, 0x22
+    };
+    rdp_rdg_packet_view packet;
+
+    TCHECK(rdp_rdg_parse_packet(NULL, 1u, &packet) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_rdg_parse_packet(incomplete, sizeof(incomplete), NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    TCHECK(rdp_rdg_parse_packet(NULL, 0u, &packet) == LIBRDP_STATUS_AGAIN);
+    TCHECK(rdp_rdg_parse_packet(incomplete, sizeof(incomplete), &packet) == LIBRDP_STATUS_AGAIN);
+    TCHECK(rdp_rdg_parse_packet(short_header, sizeof(short_header), &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    TCHECK(rdp_rdg_parse_packet(oversized, sizeof(oversized), &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+
+    TCHECK(rdp_rdg_parse_packet(control, sizeof(control), &packet) == LIBRDP_STATUS_OK);
+    TCHECK(packet.type == 0x0002u);
+    TCHECK(packet.packet_len == 11u);
+    TCHECK(packet.payload == control + 8u);
+    TCHECK(packet.payload_len == 3u);
+    TCHECK(packet.data == NULL);
+    TCHECK(packet.data_len == 0u);
+
+    TCHECK(rdp_rdg_parse_packet(data_packet, sizeof(data_packet), &packet) == LIBRDP_STATUS_OK);
+    TCHECK(packet.type == 0x000au);
+    TCHECK(packet.packet_len == sizeof(data_packet));
+    TCHECK(packet.payload_len == 5u);
+    TCHECK(packet.data == data_packet + 10u);
+    TCHECK(packet.data_len == 3u);
+    TCHECK(memcmp(packet.data, "\x11\x22\x33", packet.data_len) == 0);
+
+    TCHECK(rdp_rdg_parse_packet(invalid_data, sizeof(invalid_data), &packet) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    return 0;
 }
 
 static int test_rdg_write_chunk(int fd, const rdp_buffer* packet)
@@ -1568,6 +1620,7 @@ int test_transport(void)
 
     TCHECK(test_udp_transport_protocols() == 0);
     TCHECK(test_multitransport_protocol() == 0);
+    TCHECK(test_rdg_packet_parser() == 0);
     TCHECK(test_gateway_connect_transport() == 0);
 
     TCHECK(rdp_socket_close(-1) == 0);

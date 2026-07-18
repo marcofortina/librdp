@@ -140,6 +140,42 @@ static uint32_t rdp_rdg_read_u32_le(const uint8_t* data)
            ((uint32_t)data[3] << 24);
 }
 
+librdp_status rdp_rdg_parse_packet(const uint8_t* data,
+                                   size_t length,
+                                   rdp_rdg_packet_view* packet)
+{
+    uint32_t packet_len = 0;
+
+    if ((!data && length > 0) || !packet)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(packet, 0, sizeof(*packet));
+    if (length < RDP_RDG_PACKET_HEADER_LEN)
+        return LIBRDP_STATUS_AGAIN;
+    packet_len = rdp_rdg_read_u32_le(data + 4u);
+    if (packet_len < RDP_RDG_PACKET_HEADER_LEN || packet_len > RDP_RDG_MAX_PACKET)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (length < packet_len)
+        return LIBRDP_STATUS_AGAIN;
+
+    packet->type = rdp_rdg_read_u16_le(data);
+    packet->payload = data + RDP_RDG_PACKET_HEADER_LEN;
+    packet->payload_len = (size_t)packet_len - RDP_RDG_PACKET_HEADER_LEN;
+    packet->packet_len = packet_len;
+    if (packet->type == RDP_RDG_PKT_DATA)
+    {
+        uint16_t data_len = 0;
+
+        if (packet->payload_len < 2u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        data_len = rdp_rdg_read_u16_le(packet->payload);
+        if ((size_t)data_len > packet->payload_len - 2u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        packet->data = packet->payload + 2u;
+        packet->data_len = data_len;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 static int rdp_rdg_valid_text(const char* text, size_t max_len)
 {
     size_t len = 0;
@@ -603,72 +639,67 @@ static librdp_status rdp_rdg_parse_incoming_locked(rdp_rdg_http_context* context
     while (context->incoming.length >= RDP_RDG_PACKET_HEADER_LEN)
     {
         const uint8_t* data = context->incoming.data;
-        uint16_t type = rdp_rdg_read_u16_le(data);
-        uint32_t packet_len = rdp_rdg_read_u32_le(data + 4u);
-        const uint8_t* payload = NULL;
-        size_t payload_len = 0;
+        rdp_rdg_packet_view packet;
         librdp_status status = LIBRDP_STATUS_OK;
 
-        if (packet_len < RDP_RDG_PACKET_HEADER_LEN || packet_len > RDP_RDG_MAX_PACKET)
-            return LIBRDP_STATUS_PROTOCOL_ERROR;
-        if (context->incoming.length < packet_len)
+        status = rdp_rdg_parse_packet(data, context->incoming.length, &packet);
+        if (status == LIBRDP_STATUS_AGAIN)
             break;
-        payload = data + RDP_RDG_PACKET_HEADER_LEN;
-        payload_len = (size_t)packet_len - RDP_RDG_PACKET_HEADER_LEN;
-        if (type == RDP_RDG_PKT_DATA)
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (packet.type == RDP_RDG_PKT_DATA)
         {
-            uint16_t data_len = 0;
-
-            if (payload_len < 2u)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
-            data_len = rdp_rdg_read_u16_le(payload);
-            if ((size_t)data_len > payload_len - 2u)
-                return LIBRDP_STATUS_PROTOCOL_ERROR;
             status = rdp_rdg_queue_copy(&context->data_head,
                                         &context->data_tail,
-                                        payload + 2u,
-                                        (size_t)data_len);
+                                        packet.data,
+                                        packet.data_len);
             if (status != LIBRDP_STATUS_OK)
                 return status;
             rdp_rdg_signal_pipe(context->event_pipe[1]);
         }
-        else if (type == RDP_RDG_PKT_KEEPALIVE)
+        else if (packet.type == RDP_RDG_PKT_KEEPALIVE)
         {
             rdp_trace_event_level(RDP_TRACE_TRANSPORT,
                                   RDP_TRACE_LEVEL_DEBUG,
                                   "transport.gateway.rdg.keepalive",
                                   "length=%u",
-                                  packet_len);
+                                  (unsigned)packet.packet_len);
         }
-        else if (type == RDP_RDG_PKT_SERVICE_MESSAGE)
+        else if (packet.type == RDP_RDG_PKT_SERVICE_MESSAGE)
         {
             rdp_trace_event(RDP_TRACE_TRANSPORT,
                             "transport.gateway.rdg.service_message",
                             "payload_len=%llu",
-                            (unsigned long long)payload_len);
+                            (unsigned long long)packet.payload_len);
         }
-        else if (type == RDP_RDG_PKT_REAUTH_MESSAGE)
+        else if (packet.type == RDP_RDG_PKT_REAUTH_MESSAGE)
         {
             rdp_trace_event(RDP_TRACE_TRANSPORT,
                             "transport.gateway.rdg.reauth",
                             "payload_len=%llu",
-                            (unsigned long long)payload_len);
+                            (unsigned long long)packet.payload_len);
             rdp_rdg_set_error_locked(context, LIBRDP_STATUS_UNSUPPORTED);
         }
-        else if (type == RDP_RDG_PKT_CLOSE_CHANNEL)
+        else if (packet.type == RDP_RDG_PKT_CLOSE_CHANNEL)
         {
-            status = rdp_rdg_control_enqueue_locked(context, type, payload, payload_len);
+            status = rdp_rdg_control_enqueue_locked(context,
+                                                    packet.type,
+                                                    packet.payload,
+                                                    packet.payload_len);
             if (status != LIBRDP_STATUS_OK)
                 return status;
             rdp_rdg_set_error_locked(context, LIBRDP_STATUS_CLOSED);
         }
         else
         {
-            status = rdp_rdg_control_enqueue_locked(context, type, payload, payload_len);
+            status = rdp_rdg_control_enqueue_locked(context,
+                                                    packet.type,
+                                                    packet.payload,
+                                                    packet.payload_len);
             if (status != LIBRDP_STATUS_OK)
                 return status;
         }
-        status = rdp_buffer_consume(&context->incoming, packet_len);
+        status = rdp_buffer_consume(&context->incoming, packet.packet_len);
         if (status != LIBRDP_STATUS_OK)
             return status;
     }
