@@ -52,6 +52,11 @@ struct server_host
     server_host_state state;
     server_host_provider_state provider_states[SERVER_PLATFORM_PROVIDER_COUNT];
     uint8_t provider_started[SERVER_PLATFORM_PROVIDER_COUNT];
+    server_host_trace_callback trace_callback;
+    void* trace_user_data;
+    uint64_t trace_sequence;
+    server_host_metrics metrics;
+    int listener_running;
     struct pollfd* pollfds;
     size_t poll_capacity;
     int wakeup_read_fd;
@@ -65,5 +70,13 @@ void server_host_release_peer_slot(server_host_peer_slot* slot);
 librdp_status server_host_dispatch_peer_input(
     server_host_peer_slot* slot,
     const librdp_server_input_event* event);
+uint64_t server_host_now_ns(void);
+void server_host_metric_add(uint64_t* counter, uint64_t amount);
+void server_host_trace_emit(server_host* host,
+                            server_host_trace_type type,
+                            const server_host_peer_slot* peer,
+                            librdp_status status,
+                            uint64_t value,
+                            uint64_t count);
 
 #endif

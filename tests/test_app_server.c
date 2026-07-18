@@ -52,6 +52,15 @@ typedef struct mock_platform_context
     int timeout_ms;
 } mock_platform_context;
 
+#define MOCK_TRACE_CAPACITY 128u
+
+typedef struct mock_trace_context
+{
+    server_host_trace_event events[MOCK_TRACE_CAPACITY];
+    size_t count;
+    size_t dropped;
+} mock_trace_context;
+
 static int connect_loopback(uint16_t port);
 static void configure_mock_platform(server_host_config* config,
                                     mock_platform_context* mock);
@@ -70,6 +79,21 @@ static int check_int(int condition, const char* expression, int line)
         if (check_int((expression), #expression, __LINE__) != 0)                                    \
             return 1;                                                                                \
     } while (0)
+
+static void mock_trace_event(const server_host_trace_event* event,
+                             void* user_data)
+{
+    mock_trace_context* trace = (mock_trace_context*)user_data;
+
+    if (!trace || !event)
+        return;
+    if (trace->count >= MOCK_TRACE_CAPACITY)
+    {
+        trace->dropped++;
+        return;
+    }
+    trace->events[trace->count++] = *event;
+}
 
 static librdp_status mock_get_pollfds(void* context,
                                       struct pollfd* fds,
@@ -858,6 +882,174 @@ static int test_host_poll_loop(void)
 }
 
 /*
+ * Verify that host diagnostics expose only fixed-schema metadata while
+ * accounting for queue pressure, backend activity and cancellation. Clipboard
+ * canaries deliberately cross the platform boundary and must not enter trace.
+ */
+static int test_host_trace_metrics(void)
+{
+    static const char canary_name[] = "private-clipboard-format";
+    static const uint8_t canary_data[] = "private-clipboard-payload";
+    server_host_config config;
+    server_host_metrics metrics;
+    server_host_peer_info peer;
+    server_host_peer_slot* slot = NULL;
+    server_platform_clipboard_format format;
+    server_platform_clipboard_data data;
+    server_platform_frame frame;
+    server_platform_rect rects[3];
+    librdp_server_input_event input;
+    mock_platform_context mock;
+    mock_trace_context trace;
+    server_host* host = NULL;
+    uint8_t pixels[8u * 8u * 4u];
+    int client = -1;
+    size_t index = 0;
+
+    memset(&trace, 0, sizeof(trace));
+    server_host_config_init(&config);
+    config.max_peers = 1u;
+    config.input_policy = SERVER_HOST_INPUT_EXPLICIT;
+    config.server.width = 8u;
+    config.server.height = 8u;
+    config.dirty.max_regions = 2u;
+    config.dirty.max_regions_per_frame = 1u;
+    config.trace_callback = mock_trace_event;
+    config.trace_user_data = &trace;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.listener_starts == 0u);
+    CHECK(server_host_get_metrics(host, NULL) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    memset(&metrics, 0, sizeof(metrics));
+    CHECK(server_host_get_metrics(host, &metrics) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&peer);
+    CHECK(server_host_peer_at(host, 0u, &peer) == LIBRDP_STATUS_OK);
+    slot = server_host_find_peer_slot(host, peer.id);
+    CHECK(slot != NULL);
+    slot->state = SERVER_HOST_PEER_ACTIVE;
+    CHECK(server_host_set_input_owner(host, peer.id) == LIBRDP_STATUS_OK);
+    CHECK(librdp_server_input_event_init(&input) == LIBRDP_STATUS_OK);
+    input.type = LIBRDP_SERVER_INPUT_MOUSE;
+    CHECK(server_host_dispatch_peer_input(slot, &input) == LIBRDP_STATUS_OK);
+    slot->input_owner = 0;
+    CHECK(server_host_dispatch_peer_input(slot, &input) ==
+          LIBRDP_STATUS_STATE);
+    slot->input_owner = 1;
+
+    memset(&format, 0, sizeof(format));
+    format.id = 13u;
+    format.mime_type = canary_name;
+    mock.clipboard_sink.formats(&format,
+                                1u,
+                                17u,
+                                mock.clipboard_sink.user_data);
+    memset(&data, 0, sizeof(data));
+    data.request_id = 23u;
+    data.format_id = format.id;
+    data.data = canary_data;
+    data.data_len = sizeof(canary_data);
+    mock.clipboard_sink.data(&data, mock.clipboard_sink.user_data);
+    mock.drive_sink.request(peer.id,
+                            slot->drive_generation,
+                            29u,
+                            mock.drive_sink.user_data);
+
+    rects[0] = (server_platform_rect){0u, 0u, 1u, 1u};
+    rects[1] = (server_platform_rect){3u, 3u, 1u, 1u};
+    rects[2] = (server_platform_rect){7u, 7u, 1u, 1u};
+    memset(pixels, 0x6cu, sizeof(pixels));
+    memset(&frame, 0, sizeof(frame));
+    frame.width = 8u;
+    frame.height = 8u;
+    frame.stride = 8u * 4u;
+    frame.pixels = pixels;
+    frame.pixels_len = sizeof(pixels);
+    frame.dirty_rects = rects;
+    frame.dirty_count = 3u;
+    frame.sequence = 1u;
+    frame.timestamp_ns = server_host_now_ns();
+    mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    CHECK(server_host_wakeup(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.listener_starts == 1u);
+    CHECK(metrics.peers_accepted == 1u);
+    CHECK(metrics.capture_frames == 1u);
+    CHECK(metrics.dirty_regions == 3u);
+    CHECK(metrics.queue_pressure == 1u);
+    CHECK(metrics.frames_deferred == 1u);
+    CHECK(metrics.input_events == 1u);
+    CHECK(metrics.input_rejections == 1u);
+    CHECK(metrics.clipboard_events == 2u);
+    CHECK(metrics.clipboard_cleanups == 1u);
+    CHECK(metrics.drive_requests == 1u);
+    CHECK(metrics.drive_cleanups == 1u);
+    CHECK(metrics.peers_failed == 1u);
+    CHECK(metrics.wakeups == 1u);
+    CHECK(metrics.loop_iterations == 1u);
+
+    CHECK(trace.count > 0u);
+    CHECK(trace.dropped == 0u);
+    for (index = 0; index < trace.count; index++)
+    {
+        const server_host_trace_event* event = &trace.events[index];
+
+        CHECK(event->version == SERVER_HOST_TRACE_EVENT_VERSION);
+        CHECK(event->size == sizeof(*event));
+        CHECK(event->name != NULL);
+        CHECK(strncmp(event->name, "server.host.", 12u) == 0);
+        if (index > 0u)
+        {
+            CHECK(event->sequence == trace.events[index - 1u].sequence + 1u);
+            CHECK(event->timestamp_ns >=
+                  trace.events[index - 1u].timestamp_ns);
+        }
+        CHECK(strstr(event->name, canary_name) == NULL);
+        CHECK(strstr(event->name, (const char*)canary_data) == NULL);
+    }
+    for (index = SERVER_HOST_TRACE_LISTENER_START;
+         index <= SERVER_HOST_TRACE_SHUTDOWN_DONE;
+         index++)
+    {
+        CHECK(strcmp(server_host_trace_name((server_host_trace_type)index),
+                     "server.host.unknown") != 0);
+    }
+    CHECK(strcmp(server_host_trace_name((server_host_trace_type)0),
+                 "server.host.unknown") == 0);
+
+    CHECK(server_host_reset_metrics(host) == LIBRDP_STATUS_OK);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.listener_starts == 0u);
+    CHECK(metrics.capture_frames == 0u);
+    CHECK(server_host_cancel(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_CANCELLED);
+    server_host_metrics_init(&metrics);
+    CHECK(server_host_get_metrics(host, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.cancellations == 1u);
+    CHECK(metrics.listener_stops == 1u);
+    CHECK(metrics.peers_closed == 0u);
+    CHECK(metrics.peers_failed == 0u);
+    CHECK(server_host_reset_metrics(NULL) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    server_host_free(host);
+    close(client);
+    return 0;
+}
+
+/*
  * Exercise coalescing, hard queue bounds, pacing, backpressure and resize
  * invalidation so a stalled peer cannot retain capture-owned frame storage or
  * grow dirty-region memory.
@@ -956,6 +1148,8 @@ int main(void)
     if (test_host_lifecycle() != 0)
         return 1;
     if (test_host_poll_loop() != 0)
+        return 1;
+    if (test_host_trace_metrics() != 0)
         return 1;
     if (test_host_input_ownership() != 0)
         return 1;

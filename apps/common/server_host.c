@@ -128,9 +128,12 @@ server_host* server_host_new(const server_host_config* config)
     host->peer_capacity = config->max_peers;
     host->max_work_per_iteration = config->max_work_per_iteration;
     host->input_policy = config->input_policy;
+    host->trace_callback = config->trace_callback;
+    host->trace_user_data = config->trace_user_data;
     host->state = SERVER_HOST_NEW;
     host->next_peer_id = 1u;
     atomic_init(&host->cancellation_requested, 0);
+    server_host_metrics_init(&host->metrics);
     for (index = 0; index < SERVER_PLATFORM_PROVIDER_COUNT; index++)
     {
         host->provider_states[index] =
@@ -200,6 +203,8 @@ static void server_host_cancel_peer_protocol(librdp_server_peer* peer)
 void server_host_release_peer_slot(server_host_peer_slot* slot)
 {
     server_host* host = slot ? slot->host : NULL;
+    server_host_peer_state terminal_state =
+        slot ? slot->state : SERVER_HOST_PEER_CLOSED;
 
     if (!slot || !slot->occupied)
         return;
@@ -222,6 +227,13 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
             clipboard->release_ownership(
                 host->platform.clipboard.context,
                 slot->clipboard_generation);
+            server_host_metric_add(&host->metrics.clipboard_cleanups, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_CLIPBOARD_CLEANUP,
+                                   slot,
+                                   LIBRDP_STATUS_OK,
+                                   slot->clipboard_generation,
+                                   1u);
         }
         if (host && host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE])
         {
@@ -232,6 +244,13 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
             drive->remove_peer(host->platform.drive.context,
                                slot->id,
                                slot->drive_generation);
+            server_host_metric_add(&host->metrics.drive_cleanups, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_DRIVE_CLEANUP,
+                                   slot,
+                                   LIBRDP_STATUS_OK,
+                                   slot->drive_generation,
+                                   1u);
         }
         (void)librdp_server_peer_close(slot->protocol);
         librdp_server_peer_free(slot->protocol);
@@ -250,8 +269,24 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
     slot->state = SERVER_HOST_PEER_CLOSED;
     slot->occupied = 0;
     slot->input_owner = 0;
-    if (slot->host && slot->host->peer_count > 0u)
-        slot->host->peer_count--;
+    if (host)
+    {
+        if (terminal_state == SERVER_HOST_PEER_FAILED)
+            server_host_metric_add(&host->metrics.peers_failed, 1u);
+        else
+            server_host_metric_add(&host->metrics.peers_closed, 1u);
+        server_host_trace_emit(
+            host,
+            SERVER_HOST_TRACE_PEER_CLEANUP,
+            slot,
+            terminal_state == SERVER_HOST_PEER_FAILED
+                ? LIBRDP_STATUS_IO_ERROR
+                : LIBRDP_STATUS_OK,
+            (uint64_t)terminal_state,
+            1u);
+        if (host->peer_count > 0u)
+            host->peer_count--;
+    }
 }
 
 static server_host_provider_state server_host_permission_state(
@@ -303,10 +338,43 @@ static void server_host_capture_frame(const server_platform_frame* frame,
         !server_host_multiply_size((size_t)frame->height,
                                    frame->stride,
                                    &frame_bytes))
+    {
+        if (host)
+        {
+            server_host_metric_add(&host->metrics.capture_frames_dropped, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_CAPTURE_DROPPED,
+                                   NULL,
+                                   LIBRDP_STATUS_INVALID_ARGUMENT,
+                                   0u,
+                                   1u);
+        }
         return;
+    }
     if (frame->pixels_len < frame_bytes ||
         (frame->dirty_count > 0u && !frame->dirty_rects))
+    {
+        server_host_metric_add(&host->metrics.capture_frames_dropped, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_CAPTURE_DROPPED,
+                               NULL,
+                               LIBRDP_STATUS_INVALID_ARGUMENT,
+                               frame->pixels_len,
+                               1u);
         return;
+    }
+    server_host_metric_add(&host->metrics.capture_frames, 1u);
+    server_host_metric_add(&host->metrics.dirty_regions,
+                           frame->dirty_count ? (uint64_t)frame->dirty_count
+                                              : 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CAPTURE_FRAME,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           ((uint64_t)frame->width << 32u) |
+                               (uint64_t)frame->height,
+                           frame->dirty_count ? (uint64_t)frame->dirty_count
+                                              : 1u);
     for (index = 0; index < host->peer_capacity; index++)
     {
         server_host_peer_slot* slot = &host->peers[index];
@@ -364,10 +432,33 @@ static void server_host_capture_frame(const server_platform_frame* frame,
                     frame->stride,
                     frame->pixels + offset) == LIBRDP_STATUS_OK)
             {
+                server_dirty_metrics before;
+                server_dirty_metrics after;
+
+                server_dirty_metrics_init(&before);
+                server_dirty_metrics_init(&after);
+                (void)server_dirty_scheduler_get_metrics(slot->dirty,
+                                                         &before);
                 (void)server_dirty_scheduler_invalidate(
                     slot->dirty,
                     rect,
                     frame->timestamp_ns);
+                (void)server_dirty_scheduler_get_metrics(slot->dirty,
+                                                         &after);
+                if (after.queue_collapses > before.queue_collapses)
+                {
+                    uint64_t pressure =
+                        after.queue_collapses - before.queue_collapses;
+
+                    server_host_metric_add(&host->metrics.queue_pressure,
+                                           pressure);
+                    server_host_trace_emit(host,
+                                           SERVER_HOST_TRACE_QUEUE_PRESSURE,
+                                           slot,
+                                           LIBRDP_STATUS_LIMIT_EXCEEDED,
+                                           after.pending_regions,
+                                           pressure);
+                }
             }
         }
     }
@@ -382,6 +473,13 @@ static void server_host_capture_lost(librdp_status status, void* user_data)
         return;
     host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] =
         SERVER_HOST_PROVIDER_FAILED;
+    server_host_metric_add(&host->metrics.capture_frames_dropped, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CAPTURE_LOST,
+                           NULL,
+                           status,
+                           0u,
+                           1u);
     host->state = SERVER_HOST_FAILED;
 }
 
@@ -399,18 +497,35 @@ static void server_host_clipboard_formats(
     uint64_t generation,
     void* user_data)
 {
+    server_host* host = (server_host*)user_data;
+
     (void)formats;
-    (void)format_count;
-    (void)generation;
-    (void)user_data;
+    if (!host)
+        return;
+    server_host_metric_add(&host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           generation,
+                           (uint64_t)format_count);
 }
 
 static void server_host_clipboard_data(
     const server_platform_clipboard_data* data,
     void* user_data)
 {
-    (void)data;
-    (void)user_data;
+    server_host* host = (server_host*)user_data;
+
+    if (!host || !data)
+        return;
+    server_host_metric_add(&host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           data->request_id,
+                           data->data_len);
 }
 
 static void server_host_drive_request(uint32_t peer_id,
@@ -418,10 +533,19 @@ static void server_host_drive_request(uint32_t peer_id,
                                       uint64_t request_id,
                                       void* user_data)
 {
-    (void)peer_id;
-    (void)generation;
-    (void)request_id;
-    (void)user_data;
+    server_host* host = (server_host*)user_data;
+    server_host_peer_slot* slot =
+        host ? server_host_find_peer_slot(host, peer_id) : NULL;
+
+    if (!host || !slot || slot->drive_generation != generation)
+        return;
+    server_host_metric_add(&host->metrics.drive_requests, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_DRIVE_REQUEST,
+                           slot,
+                           LIBRDP_STATUS_OK,
+                           request_id,
+                           1u);
 }
 
 static void server_host_permission_changed(
@@ -457,6 +581,16 @@ static void server_host_permission_changed(
             state == SERVER_PLATFORM_PERMISSION_GRANTED
                 ? SERVER_HOST_PROVIDER_READY
                 : SERVER_HOST_PROVIDER_DENIED;
+        if (state != SERVER_PLATFORM_PERMISSION_GRANTED)
+            server_host_metric_add(&host->metrics.permission_denials, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_PERMISSION_CHANGED,
+                               NULL,
+                               state == SERVER_PLATFORM_PERMISSION_GRANTED
+                                   ? LIBRDP_STATUS_OK
+                                   : LIBRDP_STATUS_STATE,
+                               (uint64_t)kind,
+                               (uint64_t)state);
     }
 }
 
@@ -703,6 +837,13 @@ librdp_status server_host_start(server_host* host)
                      sizeof(wakeup_bytes));
     } while (count > 0 || (count < 0 && errno == EINTR));
     host->state = SERVER_HOST_STARTING;
+    server_host_metric_add(&host->metrics.listener_starts, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_LISTENER_START,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           0u,
+                           1u);
     status = server_host_start_providers(host);
     if (status == LIBRDP_STATUS_OK)
         status = librdp_server_listen(host->listener);
@@ -711,26 +852,70 @@ librdp_status server_host_start(server_host* host)
         librdp_server_close(host->listener);
         server_host_stop_providers(host);
         host->state = SERVER_HOST_FAILED;
+        server_host_metric_add(&host->metrics.listener_failures, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_LISTENER_FAILED,
+                               NULL,
+                               status,
+                               0u,
+                               1u);
         return status;
     }
+    host->listener_running = 1;
     host->state = SERVER_HOST_LISTENING;
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_LISTENER_READY,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           librdp_server_local_port(host->listener),
+                           1u);
     return LIBRDP_STATUS_OK;
 }
 
 librdp_status server_host_stop(server_host* host)
 {
     size_t index = 0;
+    int listener_was_running = 0;
 
     if (!host)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (host->state == SERVER_HOST_STOPPED)
         return LIBRDP_STATUS_OK;
+    if (host->state == SERVER_HOST_NEW)
+    {
+        host->state = SERVER_HOST_STOPPED;
+        return LIBRDP_STATUS_OK;
+    }
+    listener_was_running = host->listener_running;
     host->state = SERVER_HOST_STOPPING;
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_SHUTDOWN_START,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           host->peer_count,
+                           1u);
     librdp_server_close(host->listener);
+    host->listener_running = 0;
     for (index = 0; index < host->peer_capacity; index++)
         server_host_release_peer_slot(&host->peers[index]);
     server_host_stop_providers(host);
     host->state = SERVER_HOST_STOPPED;
+    if (listener_was_running)
+    {
+        server_host_metric_add(&host->metrics.listener_stops, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_LISTENER_STOP,
+                               NULL,
+                               LIBRDP_STATUS_OK,
+                               0u,
+                               1u);
+    }
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_SHUTDOWN_DONE,
+                           NULL,
+                           LIBRDP_STATUS_OK,
+                           0u,
+                           1u);
     return LIBRDP_STATUS_OK;
 }
 
@@ -809,7 +994,16 @@ librdp_status server_host_dispatch_peer_input(
         host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] !=
             SERVER_HOST_PROVIDER_READY ||
         !host->platform.input.vtable)
+    {
+        server_host_metric_add(&host->metrics.input_rejections, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_INPUT_REJECTED,
+                               slot,
+                               LIBRDP_STATUS_STATE,
+                               (uint64_t)event->type,
+                               1u);
         return LIBRDP_STATUS_STATE;
+    }
     input =
         (const server_platform_input_vtable*)host->platform.input.vtable;
     status = input->inject(host->platform.input.context, event);
@@ -818,6 +1012,16 @@ librdp_status server_host_dispatch_peer_input(
         server_host_release_input_owner(host);
         host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] =
             SERVER_HOST_PROVIDER_FAILED;
+    }
+    else
+    {
+        server_host_metric_add(&host->metrics.input_events, 1u);
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_INPUT_ACCEPTED,
+                               slot,
+                               LIBRDP_STATUS_OK,
+                               (uint64_t)event->type,
+                               1u);
     }
     return status;
 }
@@ -883,6 +1087,12 @@ static void server_host_peer_event(librdp_server_peer* peer,
         }
         else
             slot->state = SERVER_HOST_PEER_NEGOTIATING;
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_PEER_STATE,
+                               slot,
+                               LIBRDP_STATUS_OK,
+                               (uint64_t)event->new_state,
+                               1u);
     }
     else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
     {
@@ -955,6 +1165,13 @@ static librdp_status server_host_prepare_peer_slot(
     slot->state = SERVER_HOST_PEER_ACCEPTED;
     slot->occupied = 1;
     host->peer_count++;
+    server_host_metric_add(&host->metrics.peers_accepted, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_PEER_ACCEPTED,
+                           slot,
+                           LIBRDP_STATUS_OK,
+                           slot->surface_width,
+                           slot->surface_height);
     return LIBRDP_STATUS_OK;
 }
 

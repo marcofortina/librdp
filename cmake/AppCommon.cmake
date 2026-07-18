@@ -24,6 +24,7 @@ if(LIBRDP_APP_COMMON_REQUIRED)
         apps/common/server_dirty.c
         apps/common/server_host.c
         apps/common/server_host_loop.c
+        apps/common/server_host_trace.c
         apps/common/server_platform.c
         apps/common/workspace_options.c
     )

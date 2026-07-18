@@ -21,7 +21,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #define SERVER_HOST_MAX_POLL_FDS 512u
@@ -52,16 +51,6 @@ typedef struct server_host_platform_source
     void* context;
     int timeout_ms;
 } server_host_platform_source;
-
-static uint64_t server_host_monotonic_ns(void)
-{
-    struct timespec value;
-
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0)
-        return 0u;
-    return (uint64_t)value.tv_sec * 1000000000u +
-           (uint64_t)value.tv_nsec;
-}
 
 static int server_host_min_timeout(int current, int candidate)
 {
@@ -187,7 +176,7 @@ static librdp_status server_host_prepare_poll(
     size_t descriptor_count = 0;
     size_t peer_index = 0;
     size_t source_index = 0;
-    uint64_t now_ns = server_host_monotonic_ns();
+    uint64_t now_ns = server_host_now_ns();
     librdp_status status = LIBRDP_STATUS_OK;
 
     *group_count = 0u;
@@ -485,11 +474,30 @@ static void server_host_dispatch_frames(server_host* host,
             (*work)++;
         }
         if (presented > 0u)
+        {
             (void)server_dirty_scheduler_commit(slot->dirty,
                                                 presented,
                                                 now_ns);
+            server_host_metric_add(&host->metrics.frames_presented,
+                                   (uint64_t)presented);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_FRAME_PRESENTED,
+                                   slot,
+                                   LIBRDP_STATUS_OK,
+                                   (uint64_t)presented,
+                                   1u);
+        }
         if (status == LIBRDP_STATUS_STATE || status == LIBRDP_STATUS_AGAIN)
+        {
             (void)server_dirty_scheduler_defer(slot->dirty, now_ns);
+            server_host_metric_add(&host->metrics.frames_deferred, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_FRAME_DEFERRED,
+                                   slot,
+                                   status,
+                                   (uint64_t)(rect_count - presented),
+                                   1u);
+        }
         else if (status != LIBRDP_STATUS_OK)
             server_host_mark_peer_failed(slot);
     }
@@ -535,6 +543,7 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (host->state != SERVER_HOST_LISTENING)
         return LIBRDP_STATUS_STATE;
+    server_host_metric_add(&host->metrics.loop_iterations, 1u);
     status = server_host_prepare_poll(host,
                                       timeout_ms,
                                       groups,
@@ -552,7 +561,7 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
     if (ready < 0)
         return LIBRDP_STATUS_IO_ERROR;
 
-    now_ns = server_host_monotonic_ns();
+    now_ns = server_host_now_ns();
     for (group_index = 0;
          group_index < group_count &&
          work < host->max_work_per_iteration;
@@ -564,6 +573,17 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
             server_host_group_ready(host, group))
         {
             server_host_drain_wakeup(host);
+            server_host_metric_add(&host->metrics.wakeups, 1u);
+            server_host_trace_emit(
+                host,
+                SERVER_HOST_TRACE_WAKEUP,
+                NULL,
+                atomic_load_explicit(&host->cancellation_requested,
+                                     memory_order_acquire)
+                    ? LIBRDP_STATUS_CANCELLED
+                    : LIBRDP_STATUS_OK,
+                0u,
+                1u);
             work++;
         }
         else if (group->kind == SERVER_HOST_POLL_LISTENER &&
@@ -606,6 +626,7 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
     if (atomic_load_explicit(&host->cancellation_requested,
                              memory_order_acquire))
     {
+        server_host_metric_add(&host->metrics.cancellations, 1u);
         (void)server_host_stop(host);
         return LIBRDP_STATUS_CANCELLED;
     }
