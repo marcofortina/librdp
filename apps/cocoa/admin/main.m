@@ -15,24 +15,11 @@
  */
 
 #import <Cocoa/Cocoa.h>
+#include "admin_options.h"
+
 #include <librdp/librdp.h>
 
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#define ADMIN_ACTION_QUERY ((librdp_admin_action_type)0)
-
-typedef struct cocoa_admin_options
-{
-    librdp_admin_config config;
-    librdp_admin_action action;
-    int no_window;
-    int show_help;
-    int execute_action;
-    int confirm_action;
-} cocoa_admin_options;
 
 @interface CocoaAdminWindowDelegate : NSObject <NSWindowDelegate>
 @end
@@ -44,201 +31,6 @@ typedef struct cocoa_admin_options
     [NSApp terminate:nil];
 }
 @end
-
-static void cocoa_admin_usage(FILE* stream, const char* program)
-{
-    fprintf(stream,
-            "usage: %s --endpoint url [--user name] [--password value] [--password-env name] "
-            "[--domain name] [--resource-uri uri] [--timeout ms] [--insecure-lab] "
-            "[--action query|logoff|disconnect|message] [--session-id id] "
-            "[--message-title text] [--message-text text] [--confirm] [--no-window]\n",
-            program);
-}
-
-static int cocoa_admin_parse_u32(const char* text, uint32_t* value)
-{
-    char* end = NULL;
-    unsigned long parsed = 0;
-
-    if (!text || !value)
-        return 0;
-    parsed = strtoul(text, &end, 10);
-    if (!end || *end != '\0' || parsed > UINT32_MAX)
-        return 0;
-    *value = (uint32_t)parsed;
-    return 1;
-}
-
-static int cocoa_admin_need_value(int argc, int* index, const char* option)
-{
-    if (*index + 1 < argc)
-    {
-        *index += 1;
-        return 1;
-    }
-    fprintf(stderr, "%s requires a value\n", option);
-    return 0;
-}
-
-static int cocoa_admin_parse_action_type(const char* text, librdp_admin_action_type* type)
-{
-    if (!text || !type)
-        return 0;
-    if (strcmp(text, "query") == 0)
-        *type = ADMIN_ACTION_QUERY;
-    else if (strcmp(text, "logoff") == 0)
-        *type = LIBRDP_ADMIN_ACTION_LOGOFF;
-    else if (strcmp(text, "disconnect") == 0)
-        *type = LIBRDP_ADMIN_ACTION_DISCONNECT;
-    else if (strcmp(text, "message") == 0)
-        *type = LIBRDP_ADMIN_ACTION_MESSAGE;
-    else
-        return 0;
-    return 1;
-}
-
-static int cocoa_admin_init(cocoa_admin_options* options)
-{
-    if (!options)
-        return 0;
-    memset(options, 0, sizeof(*options));
-    return librdp_admin_config_init(&options->config) == LIBRDP_STATUS_OK &&
-           librdp_admin_action_init(&options->action) == LIBRDP_STATUS_OK;
-}
-
-/*
- * Parse and validate only local administration CLI policy at the application
- * boundary. Destructive actions require an explicit confirmation flag here
- * before any network request can be built.
- */
-static int cocoa_admin_parse_args(int argc, char** argv, cocoa_admin_options* options)
-{
-    int i = 0;
-
-    if (!cocoa_admin_init(options))
-        return 0;
-    for (i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
-            options->show_help = 1;
-        else if (strcmp(argv[i], "--endpoint") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->config.endpoint_url = argv[i];
-        }
-        else if (strcmp(argv[i], "--user") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->config.username = argv[i];
-        }
-        else if (strcmp(argv[i], "--password") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->config.password = argv[i];
-        }
-        else if (strcmp(argv[i], "--password-env") == 0)
-        {
-            const char* value = NULL;
-
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            value = getenv(argv[i]);
-            if (!value)
-            {
-                fprintf(stderr, "password environment variable is not set\n");
-                return 0;
-            }
-            options->config.password = value;
-        }
-        else if (strcmp(argv[i], "--domain") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->config.domain = argv[i];
-        }
-        else if (strcmp(argv[i], "--resource-uri") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->config.resource_uri = argv[i];
-        }
-        else if (strcmp(argv[i], "--timeout") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]) ||
-                !cocoa_admin_parse_u32(argv[i], &options->config.timeout_ms))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--insecure-lab") == 0)
-            options->config.allow_insecure_tls = 1;
-        else if (strcmp(argv[i], "--no-window") == 0)
-            options->no_window = 1;
-        else if (strcmp(argv[i], "--action") == 0)
-        {
-            librdp_admin_action_type type = ADMIN_ACTION_QUERY;
-
-            if (!cocoa_admin_need_value(argc, &i, argv[i]) ||
-                !cocoa_admin_parse_action_type(argv[i], &type))
-                return 0;
-            options->execute_action = type != ADMIN_ACTION_QUERY;
-            if (type != ADMIN_ACTION_QUERY)
-                options->action.type = type;
-        }
-        else if (strcmp(argv[i], "--session-id") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]) ||
-                !cocoa_admin_parse_u32(argv[i], &options->action.session_id))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--message-title") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->action.message_title = argv[i];
-        }
-        else if (strcmp(argv[i], "--message-text") == 0)
-        {
-            if (!cocoa_admin_need_value(argc, &i, argv[i]))
-                return 0;
-            options->action.message_text = argv[i];
-        }
-        else if (strcmp(argv[i], "--confirm") == 0)
-            options->confirm_action = 1;
-        else
-        {
-            fprintf(stderr, "unknown option: %s\n", argv[i]);
-            return 0;
-        }
-    }
-    if (!options->show_help && (!options->config.endpoint_url || options->config.endpoint_url[0] == '\0'))
-    {
-        fprintf(stderr, "--endpoint is required\n");
-        return 0;
-    }
-    if (options->execute_action)
-    {
-        if (options->action.session_id == 0)
-        {
-            fprintf(stderr, "--session-id is required for admin actions\n");
-            return 0;
-        }
-        if ((options->action.type == LIBRDP_ADMIN_ACTION_LOGOFF ||
-             options->action.type == LIBRDP_ADMIN_ACTION_DISCONNECT) &&
-            !options->confirm_action)
-        {
-            fprintf(stderr, "--confirm is required for logoff and disconnect actions\n");
-            return 0;
-        }
-        if (options->action.type == LIBRDP_ADMIN_ACTION_MESSAGE && !options->action.message_text)
-        {
-            fprintf(stderr, "--message-text is required with --action message\n");
-            return 0;
-        }
-    }
-    return 1;
-}
 
 static void cocoa_admin_append_session(NSMutableString* text, size_t index, const librdp_admin_session* session)
 {
@@ -306,7 +98,7 @@ static void cocoa_admin_show_window(NSString* summary)
 
 int main(int argc, char** argv)
 {
-    cocoa_admin_options options;
+    admin_options options;
     librdp_admin* admin = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
     NSString* summary = nil;
@@ -314,14 +106,14 @@ int main(int argc, char** argv)
 
     @autoreleasepool
     {
-        if (!cocoa_admin_parse_args(argc, argv, &options))
+        if (!admin_options_parse(argc, argv, &options, stderr))
         {
-            cocoa_admin_usage(stderr, argv[0]);
+            admin_options_usage(stderr, argv[0]);
             return 2;
         }
         if (options.show_help)
         {
-            cocoa_admin_usage(stdout, argv[0]);
+            admin_options_usage(stdout, argv[0]);
             return 0;
         }
         admin = librdp_admin_new(&options.config);

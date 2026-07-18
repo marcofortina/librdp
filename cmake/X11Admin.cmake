@@ -11,7 +11,7 @@ if(LIBRDP_BUILD_X11_ADMIN)
         ${X11_INCLUDE_DIR}
     )
     target_link_libraries(librdp-x11-admin PRIVATE
-        librdp
+        librdp_app_common
         ${X11_LIBRARIES}
     )
     librdp_apply_system_definitions(librdp-x11-admin)

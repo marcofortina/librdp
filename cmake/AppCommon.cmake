@@ -14,12 +14,14 @@ endif()
 
 if(LIBRDP_APP_COMMON_REQUIRED)
     add_library(librdp_app_common STATIC
+        apps/common/admin_options.c
         apps/common/client_callbacks.c
         apps/common/client_credentials.c
         apps/common/client_options.c
         apps/common/client_providers.c
         apps/common/client_runtime.c
         apps/common/client_tls.c
+        apps/common/workspace_options.c
     )
     target_include_directories(librdp_app_common
         PUBLIC

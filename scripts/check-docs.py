@@ -216,12 +216,12 @@ def viewer_source_options() -> set[str]:
 
 
 def admin_source_options() -> set[str]:
-    return set(VIEWER_OPTION_RE.findall(read("apps/x11/admin/main.c")))
+    return set(VIEWER_OPTION_RE.findall(read("apps/common/admin_options.c")))
 
 
 def workspace_source_options() -> set[str]:
     forwarded_viewer_options = {"--target", "--rail", "--gateway", "--gateway-mode"}
-    return set(VIEWER_OPTION_RE.findall(read("apps/x11/workspace/main.c"))) - forwarded_viewer_options
+    return set(VIEWER_OPTION_RE.findall(read("apps/common/workspace_options.c"))) - forwarded_viewer_options
 
 
 def documented_options(path: str) -> set[str]:

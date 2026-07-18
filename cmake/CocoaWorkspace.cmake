@@ -14,7 +14,7 @@ if(LIBRDP_BUILD_COCOA_WORKSPACE)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(librdp-cocoa-workspace PRIVATE
-        librdp
+        librdp_app_common
         ${LIBRDP_COCOA_FRAMEWORK}
     )
     librdp_apply_system_definitions(librdp-cocoa-workspace)
