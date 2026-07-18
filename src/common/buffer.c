@@ -21,6 +21,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int rdp_buffer_state_valid(const rdp_buffer* buffer)
+{
+    if (!buffer || buffer->length > buffer->capacity)
+        return 0;
+    return (buffer->data == NULL) == (buffer->capacity == 0);
+}
+
 void rdp_buffer_init(rdp_buffer* buffer)
 {
     if (!buffer)
@@ -45,7 +52,7 @@ librdp_status rdp_buffer_reserve(rdp_buffer* buffer, size_t capacity)
     uint8_t* resized = NULL;
     size_t next = 0;
 
-    if (!buffer)
+    if (!rdp_buffer_state_valid(buffer))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (capacity <= buffer->capacity)
         return LIBRDP_STATUS_OK;
@@ -74,7 +81,7 @@ librdp_status rdp_buffer_append(rdp_buffer* buffer, const void* data, size_t len
     int source_in_buffer = 0;
     uint8_t* snapshot = NULL;
 
-    if (!buffer || (!data && length > 0))
+    if (!rdp_buffer_state_valid(buffer) || (!data && length > 0))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length > ((size_t)-1) - buffer->length)
         return LIBRDP_STATUS_NO_MEMORY;
@@ -159,7 +166,7 @@ librdp_status rdp_buffer_append_u32_be(rdp_buffer* buffer, uint32_t value)
 
 librdp_status rdp_buffer_consume(rdp_buffer* buffer, size_t length)
 {
-    if (!buffer || length > buffer->length)
+    if (!rdp_buffer_state_valid(buffer) || length > buffer->length)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (length > 0)
         memmove(buffer->data, buffer->data + length, buffer->length - length);

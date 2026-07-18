@@ -654,7 +654,7 @@ librdp_status librdp_usb_selector_parse(const char* selector,
     if (end != separator)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     b = strtoul(separator + 1, &end, base);
-    if (!end || *end != '\0')
+    if (*end != '\0')
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
     if (explicit_bus)
@@ -683,7 +683,7 @@ librdp_status librdp_usb_selector_parse(const char* selector,
                 if (end != separator)
                     return LIBRDP_STATUS_INVALID_ARGUMENT;
                 b = strtoul(separator + 1, &end, 16);
-                if (!end || *end != '\0')
+                if (*end != '\0')
                     return LIBRDP_STATUS_INVALID_ARGUMENT;
             }
             if (a > 0xfffful || b > 0xfffful)

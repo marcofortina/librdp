@@ -13,8 +13,6 @@
 #ifndef LIBRDP_X11_VIEWER_TRACE_H
 #define LIBRDP_X11_VIEWER_TRACE_H
 
-#include <stdarg.h>
-
 typedef enum x11_trace_category
 {
     X11_TRACE_CLIENT = 1
@@ -40,10 +38,5 @@ void x11_trace_event(x11_trace_category category, const char* event, const char*
     X11_TRACE_PRINTF(3, 4);
 void x11_trace_event_level(x11_trace_category category, x11_trace_level level, const char* event, const char* fmt, ...)
     X11_TRACE_PRINTF(4, 5);
-void x11_trace_event_level_v(x11_trace_category category,
-                             x11_trace_level level,
-                             const char* event,
-                             const char* fmt,
-                             va_list ap);
 
 #endif

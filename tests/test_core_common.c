@@ -246,6 +246,16 @@ int test_buffer_stream(void)
     CHECK(buffer.data[0] == 1u && buffer.data[1] == 2u && buffer.data[2] == 3u && buffer.data[3] == 4u);
 
     rdp_buffer_free(&buffer);
+    buffer.capacity = 8u;
+    CHECK(rdp_buffer_reserve(&buffer, 4u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_buffer_append_u8(&buffer, 1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_buffer_consume(&buffer, 0u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_init(&buffer);
+    buffer.length = 1u;
+    CHECK(rdp_buffer_reserve(&buffer, 1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_buffer_append(&buffer, NULL, 0u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(rdp_buffer_consume(&buffer, 0u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    rdp_buffer_init(&buffer);
     return 0;
 }
 

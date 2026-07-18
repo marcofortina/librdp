@@ -14,6 +14,7 @@
 #include "viewer_trace.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -148,13 +149,11 @@ int x11_trace_enabled_level(x11_trace_category category, x11_trace_level level)
     return level <= g_x11_trace.level;
 }
 
-void x11_trace_event_level_v(x11_trace_category category,
-                             x11_trace_level level,
-                             const char* event,
-                             const char* fmt,
-                             va_list ap)
+static void x11_trace_emit_message(x11_trace_category category,
+                                   x11_trace_level level,
+                                   const char* event,
+                                   const char* message)
 {
-    char message[1024];
     char escaped[2048];
     uint64_t now = 0;
     uint64_t elapsed_us = 0;
@@ -162,10 +161,7 @@ void x11_trace_event_level_v(x11_trace_category category,
 
     if (!event || !x11_trace_enabled_level(category, level))
         return;
-    message[0] = '\0';
-    if (fmt)
-        (void)vsnprintf(message, sizeof(message), fmt, ap);
-    x11_trace_escape_message(message, escaped, sizeof(escaped));
+    x11_trace_escape_message(message ? message : "", escaped, sizeof(escaped));
     now = x11_trace_now_ns();
     if (g_x11_trace.first_ns != 0 && now >= g_x11_trace.first_ns)
         elapsed_us = (now - g_x11_trace.first_ns) / 1000u;
@@ -183,18 +179,24 @@ void x11_trace_event_level_v(x11_trace_category category,
 
 void x11_trace_event(x11_trace_category category, const char* event, const char* fmt, ...)
 {
+    char message[1024] = {0};
     va_list ap;
 
     va_start(ap, fmt);
-    x11_trace_event_level_v(category, X11_TRACE_LEVEL_INFO, event, fmt, ap);
+    if (fmt)
+        (void)vsnprintf(message, sizeof(message), fmt, ap);
     va_end(ap);
+    x11_trace_emit_message(category, X11_TRACE_LEVEL_INFO, event, message);
 }
 
 void x11_trace_event_level(x11_trace_category category, x11_trace_level level, const char* event, const char* fmt, ...)
 {
+    char message[1024] = {0};
     va_list ap;
 
     va_start(ap, fmt);
-    x11_trace_event_level_v(category, level, event, fmt, ap);
+    if (fmt)
+        (void)vsnprintf(message, sizeof(message), fmt, ap);
     va_end(ap);
+    x11_trace_emit_message(category, level, event, message);
 }
