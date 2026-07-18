@@ -4,13 +4,14 @@
  */
 /*
  * Module: Cocoa media backend tests.
- * Coverage: selector validation, camera media bounds, deterministic file
- * source samples, and rejection of malformed capture requests without opening
- * real devices.
+ * Coverage: viewer option adaptation, selector validation, camera media
+ * bounds, deterministic file source samples, and rejection of malformed
+ * capture requests without opening real devices.
  * Failure policy: malformed local sources and oversized media formats must be
  * rejected before AVFoundation or filesystem capture starts.
  */
 
+#include "cocoa_cli.h"
 #include "cocoa_media.h"
 
 #import <Foundation/Foundation.h>
@@ -58,6 +59,33 @@ static int test_camera_source_policy(void)
     CHECK(cocoa_camera_source_allowed("device=Built-in Camera"));
     CHECK(cocoa_camera_source_allowed("file=/tmp/camera.mjpg"));
     CHECK(cocoa_camera_source_allowed("/tmp/camera.mjpg"));
+    return 1;
+}
+
+static int test_cocoa_viewer_options(void)
+{
+    char* argv[] = {
+        (char*)"viewer",
+        (char*)"--target",
+        (char*)"host.example",
+        (char*)"--audio-output",
+        (char*)"--audio-input",
+        (char*)"--camera",
+        (char*)"device=default",
+    };
+    cocoa_viewer_options options;
+    librdp_settings* settings = librdp_settings_new();
+
+    CHECK(settings != NULL);
+    CHECK(cocoa_viewer_configure_settings(settings,
+                                          &options,
+                                          (int)(sizeof(argv) / sizeof(argv[0])),
+                                          argv));
+    CHECK(strcmp(librdp_settings_audio_output_device(settings), "coreaudio") == 0);
+    CHECK(strcmp(librdp_settings_audio_input_device(settings), "coreaudio") == 0);
+    CHECK(strcmp(librdp_settings_camera_source(settings, 0), "device=default") == 0);
+    client_options_clear(&options);
+    librdp_settings_free(settings);
     return 1;
 }
 
@@ -141,6 +169,7 @@ int main(void)
 
     @autoreleasepool
     {
+        ok &= test_cocoa_viewer_options();
         ok &= test_camera_source_policy();
         ok &= test_camera_media_policy();
         ok &= test_camera_file_source();

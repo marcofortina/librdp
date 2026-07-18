@@ -15,14 +15,17 @@ if(LIBRDP_BUILD_COCOA_VIEWER)
     find_library(LIBRDP_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(LIBRDP_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
     add_executable(librdp-cocoa-viewer
+        apps/cocoa/viewer/cocoa_cli.c
+        apps/cocoa/viewer/cocoa_session_loop.c
         apps/cocoa/viewer/main.m
         apps/cocoa/viewer/cocoa_media.m
     )
     target_include_directories(librdp-cocoa-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
     )
     target_link_libraries(librdp-cocoa-viewer PRIVATE
-        librdp
+        librdp_app_common
         ${LIBRDP_COCOA_FRAMEWORK}
         ${LIBRDP_AUDIOTOOLBOX_FRAMEWORK}
         ${LIBRDP_AVFOUNDATION_FRAMEWORK}
@@ -45,14 +48,16 @@ if(LIBRDP_BUILD_COCOA_VIEWER)
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_cocoa_media
             tests/test_cocoa_media.m
+            apps/cocoa/viewer/cocoa_cli.c
             apps/cocoa/viewer/cocoa_media.m
         )
         target_include_directories(test_cocoa_media PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/viewer
         )
         target_link_libraries(test_cocoa_media PRIVATE
-            librdp
+            librdp_app_common
             ${LIBRDP_COCOA_FRAMEWORK}
             ${LIBRDP_AUDIOTOOLBOX_FRAMEWORK}
             ${LIBRDP_AVFOUNDATION_FRAMEWORK}

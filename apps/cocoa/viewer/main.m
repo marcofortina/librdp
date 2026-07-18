@@ -8,9 +8,9 @@
  * is serialized on the same thread, and framebuffer bytes are borrowed only
  * while drawing.
  * Ownership: settings are released after session creation, the session owns
- * protocol state, and AppKit owns windows, views, timers, and events.
+ * protocol state, and AppKit owns windows, views, run-loop sources, and events.
  * Threading: single-threaded AppKit event loop; callbacks are invoked by the
- * timer-driven session dispatch path.
+ * descriptor-driven session dispatch path.
  * Trust boundary: command-line values and remote desktop pixels are untrusted
  * inputs; credentials are copied into settings and never printed.
  */
@@ -18,50 +18,16 @@
 #import <Cocoa/Cocoa.h>
 #include <librdp/librdp.h>
 
+#include "client_callbacks.h"
+#include "cocoa_cli.h"
 #include "cocoa_media.h"
+#include "cocoa_session_loop.h"
 
 #include <ctype.h>
-#include <errno.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct cocoa_viewer_options
-{
-    const char* target;
-    const char* username;
-    const char* password;
-    const char* domain;
-    const char* rail_app;
-    const char* gateway_url;
-    const char* gateway_username;
-    const char* gateway_password;
-    const char* gateway_domain;
-    const char* audio_output_device;
-    const char* audio_input_device;
-    const char* video_output_path;
-    const char* camera_source;
-    int argc;
-    char** argv;
-    uint16_t port;
-    uint32_t width;
-    uint32_t height;
-    librdp_security_mode security;
-    librdp_gateway_mode gateway_mode;
-    uint32_t gateway_timeout_ms;
-    int gateway_has_timeout;
-    int gateway_no_session_credentials;
-    int accept_tls_certificate;
-    int tls_prompt_certificate;
-    int tls_accept_any_certificate;
-    int audio_output_requested;
-    int audio_input_requested;
-    int video_requested;
-    int camera_requested;
-    int show_help;
-} cocoa_viewer_options;
 
 #define COCOA_AUDIO_OUTPUT_FORMATS_MAX 16u
 #define COCOA_AUDIO_INPUT_BUFFER_BYTES 16384u
@@ -78,9 +44,9 @@ typedef struct cocoa_viewer_options
     uint8_t _audioInputBuffer[COCOA_AUDIO_INPUT_BUFFER_BYTES];
 }
 @property(nonatomic, assign) librdp_session* session;
+@property(nonatomic, assign) cocoa_session_loop* sessionLoop;
 @property(nonatomic, strong) NSWindow* window;
 @property(nonatomic, strong) CocoaViewerView* view;
-@property(nonatomic, strong) NSTimer* timer;
 @property(nonatomic, strong) NSCursor* currentCursor;
 @property(nonatomic, assign) cocoa_audio_backend* audio;
 @property(nonatomic, assign) cocoa_camera_source* camera;
@@ -102,9 +68,9 @@ typedef struct cocoa_viewer_options
 - (id)initWithSession:(librdp_session*)session width:(uint32_t)width height:(uint32_t)height;
 - (BOOL)configureMediaWithOptions:(const cocoa_viewer_options*)options;
 - (void)shutdownMedia;
-- (void)start;
+- (void)shutdownSession;
+- (BOOL)start;
 - (void)markDirty;
-- (void)driveSession:(NSTimer*)timer;
 - (void)pumpAudioInput;
 - (void)handleAudioEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope;
 - (void)handleVideoEnvelope:(librdp_session*)session envelope:(const librdp_event_envelope*)envelope;
@@ -117,685 +83,6 @@ typedef struct cocoa_viewer_options
 - (void)handleClipboardEnvelope:(const librdp_event_envelope*)envelope;
 - (void)publishLocalPasteboardIfChanged;
 @end
-
-static void cocoa_viewer_usage(FILE* stream, const char* program)
-{
-    fprintf(stream,
-            "usage: %s --target host [--port port] [--user name] [--password value] "
-            "[--domain name] [--width px] [--height px] [--security auto|rdp|tls|nla] "
-            "[--tls-prompt-cert] [--tls-accept-any-cert] [--accept-tls-certificate] "
-            "[--gateway url] [--gateway-mode http-connect|rdg-http] "
-            "[--gateway-user name] [--gateway-password value] [--gateway-domain name] "
-            "[--gateway-timeout ms] [--gateway-no-session-credentials] [--drive name=path] "
-            "[--serial name=path] [--parallel name=path] [--printer name=driver=path] "
-            "[--audio-output [device=name]] [--audio-input [device=name]] [--video file=path] "
-            "[--camera device=default|device=id|file=path] [--smartcard [pcsc|source]] [--usb vid:pid|bus:dev] "
-            "[--pnp] [--webauthn [fido2|mock|provider]] [--webauthn-rp-id id] "
-            "[--rail app=path] [--cr2] [--echo] [--telemetry] [--multitransport]\n",
-            program);
-}
-
-static int cocoa_viewer_need_value(int argc, int* index, const char* option)
-{
-    if (*index + 1 < argc)
-    {
-        *index += 1;
-        return 1;
-    }
-    fprintf(stderr, "%s requires a value\n", option);
-    return 0;
-}
-
-static int cocoa_viewer_parse_u16(const char* text, uint16_t* value)
-{
-    char* end = NULL;
-    unsigned long parsed = 0;
-
-    if (!text || !value)
-        return 0;
-    errno = 0;
-    parsed = strtoul(text, &end, 10);
-    if (errno != 0 || !end || *end != '\0' || parsed == 0 || parsed > UINT16_MAX)
-        return 0;
-    *value = (uint16_t)parsed;
-    return 1;
-}
-
-static int cocoa_viewer_parse_size(const char* text, uint32_t* value)
-{
-    char* end = NULL;
-    unsigned long parsed = 0;
-
-    if (!text || !value)
-        return 0;
-    errno = 0;
-    parsed = strtoul(text, &end, 10);
-    if (errno != 0 || !end || *end != '\0' || parsed == 0 || parsed > 8192ul)
-        return 0;
-    *value = (uint32_t)parsed;
-    return 1;
-}
-
-static int cocoa_viewer_parse_u32(const char* text, uint32_t* value)
-{
-    char* end = NULL;
-    unsigned long parsed = 0;
-
-    if (!text || !value)
-        return 0;
-    errno = 0;
-    parsed = strtoul(text, &end, 10);
-    if (errno != 0 || !end || *end != '\0' || parsed > UINT32_MAX)
-        return 0;
-    *value = (uint32_t)parsed;
-    return 1;
-}
-
-static int cocoa_viewer_parse_security(const char* text, librdp_security_mode* mode)
-{
-    if (!text || !mode)
-        return 0;
-    if (strcmp(text, "auto") == 0)
-        *mode = LIBRDP_SECURITY_AUTO;
-    else if (strcmp(text, "rdp") == 0)
-        *mode = LIBRDP_SECURITY_STANDARD;
-    else if (strcmp(text, "tls") == 0)
-        *mode = LIBRDP_SECURITY_TLS;
-    else if (strcmp(text, "nla") == 0)
-        *mode = LIBRDP_SECURITY_NLA;
-    else
-        return 0;
-    return 1;
-}
-
-static int cocoa_viewer_parse_gateway_mode(const char* text, librdp_gateway_mode* mode)
-{
-    if (!text || !mode)
-        return 0;
-    if (strcmp(text, "http-connect") == 0)
-        *mode = LIBRDP_GATEWAY_HTTP_CONNECT;
-    else if (strcmp(text, "rdg-http") == 0)
-        *mode = LIBRDP_GATEWAY_RDG_HTTP;
-    else
-        return 0;
-    return 1;
-}
-
-static const char* cocoa_viewer_rail_value(const char* text)
-{
-    const char prefix[] = "app=";
-
-    if (!text)
-        return NULL;
-    if (strncmp(text, prefix, sizeof(prefix) - 1u) != 0 || text[sizeof(prefix) - 1u] == '\0')
-        return NULL;
-    return text + sizeof(prefix) - 1u;
-}
-
-static const char* cocoa_viewer_value_after_prefix(const char* text, const char* prefix)
-{
-    size_t prefix_len = 0;
-
-    if (!text || !prefix)
-        return NULL;
-    prefix_len = strlen(prefix);
-    if (strncmp(text, prefix, prefix_len) != 0 || text[prefix_len] == '\0')
-        return NULL;
-    return text + prefix_len;
-}
-
-static int cocoa_viewer_add_drive_arg(librdp_settings* settings, const char* text)
-{
-    const char* separator = NULL;
-    char name[8];
-    size_t name_len = 0;
-
-    if (!settings || !text)
-        return 0;
-    separator = strchr(text, '=');
-    if (!separator || separator == text || separator[1] == '\0')
-        return 0;
-    name_len = (size_t)(separator - text);
-    if (name_len >= sizeof(name))
-        return 0;
-    memcpy(name, text, name_len);
-    name[name_len] = '\0';
-    return librdp_settings_add_drive(settings, name, separator + 1) == LIBRDP_STATUS_OK;
-}
-
-static int cocoa_viewer_add_port_arg(librdp_settings* settings, const char* text, int serial)
-{
-    const char* separator = NULL;
-    char name[8];
-    size_t name_len = 0;
-
-    if (!settings || !text)
-        return 0;
-    separator = strchr(text, '=');
-    if (!separator || separator == text || separator[1] == '\0')
-        return 0;
-    name_len = (size_t)(separator - text);
-    if (name_len >= sizeof(name))
-        return 0;
-    memcpy(name, text, name_len);
-    name[name_len] = '\0';
-    if (serial)
-        return librdp_settings_add_serial_port(settings, name, separator + 1) == LIBRDP_STATUS_OK;
-    return librdp_settings_add_parallel_port(settings, name, separator + 1) == LIBRDP_STATUS_OK;
-}
-
-static int cocoa_viewer_add_printer_arg(librdp_settings* settings, const char* text)
-{
-    const char* first = NULL;
-    const char* second = NULL;
-    char name[128];
-    char driver[128];
-    size_t name_len = 0;
-    size_t driver_len = 0;
-
-    if (!settings || !text)
-        return 0;
-    first = strchr(text, '=');
-    if (!first || first == text || first[1] == '\0')
-        return 0;
-    second = strchr(first + 1, '=');
-    if (!second || second == first + 1 || second[1] == '\0')
-        return 0;
-    name_len = (size_t)(first - text);
-    driver_len = (size_t)(second - first - 1u);
-    if (name_len >= sizeof(name) || driver_len >= sizeof(driver))
-        return 0;
-    memcpy(name, text, name_len);
-    name[name_len] = '\0';
-    memcpy(driver, first + 1, driver_len);
-    driver[driver_len] = '\0';
-    return librdp_settings_add_printer(settings, name, driver, second + 1) == LIBRDP_STATUS_OK;
-}
-
-static const char* cocoa_viewer_optional_value(int argc, int* index, char** argv)
-{
-    if (!index || !argv || *index + 1 >= argc)
-        return NULL;
-    if (strncmp(argv[*index + 1], "--", 2) == 0)
-        return NULL;
-    *index += 1;
-    return argv[*index];
-}
-
-/*
- * Parse viewer launch policy into borrowed command-line views. Credentials and
- * gateway settings are copied later by public settings setters, so this phase
- * only validates syntax and option combinations.
- */
-static int cocoa_viewer_parse_args(int argc, char** argv, cocoa_viewer_options* options)
-{
-    int i = 0;
-
-    if (!options)
-        return 0;
-    memset(options, 0, sizeof(*options));
-    options->argc = argc;
-    options->argv = argv;
-    options->port = 3389u;
-    options->width = 1024u;
-    options->height = 768u;
-    options->security = LIBRDP_SECURITY_AUTO;
-    options->gateway_mode = LIBRDP_GATEWAY_HTTP_CONNECT;
-    for (i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
-            options->show_help = 1;
-        else if (strcmp(argv[i], "--target") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->target = argv[i];
-        }
-        else if (strcmp(argv[i], "--port") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_u16(argv[i], &options->port))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--user") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->username = argv[i];
-        }
-        else if (strcmp(argv[i], "--password") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->password = argv[i];
-        }
-        else if (strcmp(argv[i], "--domain") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->domain = argv[i];
-        }
-        else if (strcmp(argv[i], "--width") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_size(argv[i], &options->width))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--height") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_size(argv[i], &options->height))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--security") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_security(argv[i], &options->security))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--tls-prompt-cert") == 0)
-            options->tls_prompt_certificate = 1;
-        else if (strcmp(argv[i], "--tls-accept-any-cert") == 0)
-            options->tls_accept_any_certificate = 1;
-        else if (strcmp(argv[i], "--accept-tls-certificate") == 0)
-        {
-            options->accept_tls_certificate = 1;
-            options->tls_accept_any_certificate = 1;
-        }
-        else if (strcmp(argv[i], "--rail") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->rail_app = cocoa_viewer_rail_value(argv[i]);
-            if (!options->rail_app)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--gateway") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->gateway_url = argv[i];
-        }
-        else if (strcmp(argv[i], "--gateway-mode") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_gateway_mode(argv[i], &options->gateway_mode))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--gateway-user") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->gateway_username = argv[i];
-        }
-        else if (strcmp(argv[i], "--gateway-password") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->gateway_password = argv[i];
-        }
-        else if (strcmp(argv[i], "--gateway-domain") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-            options->gateway_domain = argv[i];
-        }
-        else if (strcmp(argv[i], "--gateway-timeout") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]) ||
-                !cocoa_viewer_parse_u32(argv[i], &options->gateway_timeout_ms))
-                return 0;
-            options->gateway_has_timeout = 1;
-        }
-        else if (strcmp(argv[i], "--gateway-no-session-credentials") == 0)
-            options->gateway_no_session_credentials = 1;
-        else if (strcmp(argv[i], "--drive") == 0 ||
-                 strcmp(argv[i], "--serial") == 0 ||
-                 strcmp(argv[i], "--parallel") == 0 ||
-                 strcmp(argv[i], "--printer") == 0 ||
-                 strcmp(argv[i], "--video") == 0 ||
-                 strcmp(argv[i], "--camera") == 0 ||
-                 strcmp(argv[i], "--usb") == 0 ||
-                 strcmp(argv[i], "--webauthn-rp-id") == 0)
-        {
-            if (!cocoa_viewer_need_value(argc, &i, argv[i]))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--audio-output") == 0 ||
-                 strcmp(argv[i], "--audio-input") == 0 ||
-                 strcmp(argv[i], "--smartcard") == 0 ||
-                 strcmp(argv[i], "--webauthn") == 0)
-        {
-            if (i + 1 < argc && strncmp(argv[i + 1], "--", 2) != 0)
-                i++;
-        }
-        else if (strcmp(argv[i], "--pnp") == 0 ||
-                 strcmp(argv[i], "--cr2") == 0 ||
-                 strcmp(argv[i], "--echo") == 0 ||
-                 strcmp(argv[i], "--telemetry") == 0 ||
-                 strcmp(argv[i], "--multitransport") == 0)
-        {
-        }
-        else
-        {
-            fprintf(stderr, "unknown option: %s\n", argv[i]);
-            return 0;
-        }
-    }
-    if (!options->show_help && (!options->target || options->target[0] == '\0'))
-    {
-        fprintf(stderr, "--target is required\n");
-        return 0;
-    }
-    return 1;
-}
-
-/*
- * Apply feature-oriented CLI arguments after the base connection settings have
- * been created. This pass crosses the local CLI trust boundary, writes directly
- * into librdp_settings, and relies on public validation for selector syntax,
- * ownership copies, feature state, and per-setting limit checks.
- */
-static int cocoa_viewer_apply_feature_args(librdp_settings* settings, cocoa_viewer_options* options)
-{
-    int i = 1;
-
-    if (!settings || !options)
-        return 0;
-    while (i < options->argc)
-    {
-        char** argv = options->argv;
-
-        if (strcmp(argv[i], "--drive") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                !cocoa_viewer_add_drive_arg(settings, argv[i]))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--serial") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                !cocoa_viewer_add_port_arg(settings, argv[i], 1))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--parallel") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                !cocoa_viewer_add_port_arg(settings, argv[i], 0))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--printer") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                !cocoa_viewer_add_printer_arg(settings, argv[i]))
-                return 0;
-        }
-        else if (strcmp(argv[i], "--audio-output") == 0)
-        {
-            const char* value = cocoa_viewer_optional_value(options->argc, &i, argv);
-            const char* device = cocoa_viewer_value_after_prefix(value, "device=");
-
-            if (!device)
-                device = value ? value : "coreaudio";
-            options->audio_output_requested = 1;
-            options->audio_output_device = device;
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_OUTPUT, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_set_audio_output_device(settings, device) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--audio-input") == 0)
-        {
-            const char* value = cocoa_viewer_optional_value(options->argc, &i, argv);
-            const char* device = cocoa_viewer_value_after_prefix(value, "device=");
-
-            if (!device)
-                device = value ? value : "coreaudio";
-            options->audio_input_requested = 1;
-            options->audio_input_device = device;
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_AUDIO_INPUT, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_set_audio_input_device(settings, device) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--video") == 0)
-        {
-            const char* value = NULL;
-            const char* path = NULL;
-
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]))
-                return 0;
-            value = argv[i];
-            path = cocoa_viewer_value_after_prefix(value, "file=");
-            if (!path)
-                path = value;
-            options->video_requested = 1;
-            options->video_output_path = path;
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_VIDEO, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_set_video_output_path(settings, path) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--camera") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                !cocoa_camera_source_allowed(argv[i]) ||
-                librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CAMERA, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_add_camera(settings, argv[i]) != LIBRDP_STATUS_OK)
-                return 0;
-            options->camera_requested = 1;
-            options->camera_source = argv[i];
-        }
-        else if (strcmp(argv[i], "--smartcard") == 0)
-        {
-            const char* value = cocoa_viewer_optional_value(options->argc, &i, argv);
-
-            if (!value)
-                value = "pcsc";
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_SMARTCARD, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_add_smartcard(settings, value) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--usb") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                librdp_settings_enable_feature(settings, LIBRDP_FEATURE_USB, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_add_usb_device(settings, argv[i]) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--pnp") == 0)
-        {
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_PNP, 1) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--webauthn") == 0)
-        {
-            const char* value = cocoa_viewer_optional_value(options->argc, &i, argv);
-
-            if (!value)
-                value = "fido2";
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_WEBAUTHN, 1) != LIBRDP_STATUS_OK ||
-                librdp_settings_set_webauthn_provider(settings, value) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--webauthn-rp-id") == 0)
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]) ||
-                librdp_settings_add_webauthn_rp_id(settings, argv[i]) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--cr2") == 0)
-        {
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_CR2, 1) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--echo") == 0)
-        {
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_ECHO, 1) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--telemetry") == 0)
-        {
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_TELEMETRY, 1) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--multitransport") == 0)
-        {
-            if (librdp_settings_enable_feature(settings, LIBRDP_FEATURE_MULTITRANSPORT, 1) != LIBRDP_STATUS_OK)
-                return 0;
-        }
-        else if (strcmp(argv[i], "--tls-prompt-cert") == 0 ||
-                 strcmp(argv[i], "--tls-accept-any-cert") == 0 ||
-                 strcmp(argv[i], "--accept-tls-certificate") == 0 ||
-                 strcmp(argv[i], "--gateway-no-session-credentials") == 0)
-        {
-        }
-        else if (strcmp(argv[i], "--webauthn-rp-id") != 0 &&
-                 (strcmp(argv[i], "--target") == 0 || strcmp(argv[i], "--port") == 0 ||
-                  strcmp(argv[i], "--user") == 0 || strcmp(argv[i], "--password") == 0 ||
-                  strcmp(argv[i], "--domain") == 0 || strcmp(argv[i], "--width") == 0 ||
-                  strcmp(argv[i], "--height") == 0 || strcmp(argv[i], "--security") == 0 ||
-                  strcmp(argv[i], "--rail") == 0 || strcmp(argv[i], "--gateway") == 0 ||
-                  strcmp(argv[i], "--gateway-mode") == 0 || strcmp(argv[i], "--gateway-user") == 0 ||
-                  strcmp(argv[i], "--gateway-password") == 0 || strcmp(argv[i], "--gateway-domain") == 0 ||
-                  strcmp(argv[i], "--gateway-timeout") == 0))
-        {
-            if (!cocoa_viewer_need_value(options->argc, &i, argv[i]))
-                return 0;
-        }
-        i++;
-    }
-    if (librdp_settings_feature_enabled(settings, LIBRDP_FEATURE_WEBAUTHN) &&
-        librdp_settings_webauthn_rp_id_count(settings) == 0)
-        return 0;
-    return 1;
-}
-
-static librdp_tls_certificate_decision cocoa_viewer_tls_callback(
-    const librdp_tls_certificate_info* certificate,
-    void* user_data)
-{
-    const cocoa_viewer_options* options = (const cocoa_viewer_options*)user_data;
-    char answer[16];
-
-    if (!certificate || !options)
-        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
-    fprintf(stderr, "tls_certificate host=\"%s\"\n", certificate->host ? certificate->host : "");
-    fprintf(stderr, "tls_certificate subject=\"%s\"\n", certificate->subject ? certificate->subject : "");
-    fprintf(stderr, "tls_certificate issuer=\"%s\"\n", certificate->issuer ? certificate->issuer : "");
-    fprintf(stderr, "tls_certificate sha256=%s\n", certificate->sha256_fingerprint);
-    fprintf(stderr,
-            "tls_certificate verify_status=%s native_verify_result=%ld\n",
-            librdp_status_name(certificate->verify_status),
-            certificate->native_verify_result);
-    if (options->tls_accept_any_certificate || options->accept_tls_certificate)
-    {
-        fprintf(stderr, "tls_certificate decision=accepted mode=auto\n");
-        return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
-    }
-    if (!options->tls_prompt_certificate)
-        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
-    fprintf(stderr, "Accept this TLS certificate for this connection? [y/N] ");
-    fflush(stderr);
-    if (!fgets(answer, sizeof(answer), stdin))
-        return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
-    if (answer[0] == 'y' || answer[0] == 'Y')
-    {
-        fprintf(stderr, "tls_certificate decision=accepted mode=prompt\n");
-        return LIBRDP_TLS_CERTIFICATE_DECISION_ACCEPT;
-    }
-    fprintf(stderr, "tls_certificate decision=rejected mode=prompt\n");
-    return LIBRDP_TLS_CERTIFICATE_DECISION_REJECT;
-}
-
-/*
- * Build the public settings object consumed by the session. All strings
- * accepted from Cocoa CLI parsing are copied by librdp setters before this
- * function returns; certificate callbacks retain only the startup options
- * object for the lifetime of the connection attempt.
- */
-static librdp_settings* cocoa_viewer_create_settings(cocoa_viewer_options* options)
-{
-    librdp_settings* settings = NULL;
-    librdp_tls_policy tls_policy;
-
-    if (!options)
-        return NULL;
-    settings = librdp_settings_new();
-    if (!settings)
-        return NULL;
-    if (librdp_settings_set_target(settings, options->target) != LIBRDP_STATUS_OK ||
-        librdp_settings_set_port(settings, options->port) != LIBRDP_STATUS_OK ||
-        librdp_settings_set_desktop_size(settings, options->width, options->height) != LIBRDP_STATUS_OK ||
-        librdp_settings_set_security_mode(settings, options->security) != LIBRDP_STATUS_OK ||
-        librdp_settings_enable_feature(settings, LIBRDP_FEATURE_DISPLAY_CONTROL, 1) != LIBRDP_STATUS_OK)
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    if (options->username && librdp_settings_set_username(settings, options->username) != LIBRDP_STATUS_OK)
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    if (options->password && librdp_settings_set_password(settings, options->password) != LIBRDP_STATUS_OK)
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    if (options->domain && librdp_settings_set_domain(settings, options->domain) != LIBRDP_STATUS_OK)
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    if (options->rail_app && librdp_settings_add_rail_app(settings, options->rail_app) != LIBRDP_STATUS_OK)
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    if (options->gateway_url)
-    {
-        librdp_gateway_config gateway_config;
-
-        if (librdp_gateway_config_init(&gateway_config) != LIBRDP_STATUS_OK)
-        {
-            librdp_settings_free(settings);
-            return NULL;
-        }
-        gateway_config.mode = options->gateway_mode;
-        gateway_config.url = options->gateway_url;
-        gateway_config.username = options->gateway_username;
-        gateway_config.password = options->gateway_password;
-        gateway_config.domain = options->gateway_domain;
-        gateway_config.timeout_ms = options->gateway_has_timeout ? options->gateway_timeout_ms : 0u;
-        gateway_config.use_session_credentials = options->gateway_no_session_credentials ? 0 : 1;
-        if (librdp_settings_set_gateway_config(settings, &gateway_config) != LIBRDP_STATUS_OK)
-        {
-            librdp_settings_free(settings);
-            return NULL;
-        }
-    }
-    if (options->accept_tls_certificate || options->tls_prompt_certificate || options->tls_accept_any_certificate)
-    {
-        if (librdp_tls_policy_init(&tls_policy) != LIBRDP_STATUS_OK)
-        {
-            librdp_settings_free(settings);
-            return NULL;
-        }
-        tls_policy.mode = LIBRDP_TLS_POLICY_TOFU;
-        tls_policy.use_system_store = 1;
-        tls_policy.certificate_callback = cocoa_viewer_tls_callback;
-        tls_policy.certificate_callback_user_data = options;
-        if (librdp_settings_set_tls_policy(settings, &tls_policy) != LIBRDP_STATUS_OK)
-        {
-            librdp_settings_free(settings);
-            return NULL;
-        }
-    }
-    if (!cocoa_viewer_apply_feature_args(settings, options))
-    {
-        librdp_settings_free(settings);
-        return NULL;
-    }
-    return settings;
-}
 
 static void cocoa_viewer_graphics_callback(librdp_session* session,
                                            const librdp_graphics_update* update,
@@ -891,6 +178,51 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
             return 1;
     }
     return 0;
+}
+
+static void cocoa_viewer_session_prepare(void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    if (!controller || controller.closed)
+        return;
+    [controller publishLocalPasteboardIfChanged];
+    [controller pumpAudioInput];
+    if (controller.dirty)
+    {
+        controller.dirty = NO;
+        [controller.view setNeedsDisplay:YES];
+    }
+}
+
+static int cocoa_viewer_session_timeout(void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    if (!controller)
+        return -1;
+    return controller.audioInputActive ? 10 : 100;
+}
+
+static void cocoa_viewer_session_status(librdp_status status,
+                                        librdp_session_state state,
+                                        void* user_data)
+{
+    CocoaViewerController* controller = (__bridge CocoaViewerController*)user_data;
+
+    if (!controller)
+        return;
+    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_CLOSED &&
+        status != LIBRDP_STATUS_CANCELLED)
+    {
+        fprintf(stderr, "session dispatch failed: %s\n", librdp_status_string(status));
+    }
+    if (status != LIBRDP_STATUS_OK || state == LIBRDP_SESSION_CLOSED ||
+        state == LIBRDP_SESSION_FAILED || state == LIBRDP_SESSION_CANCELLED)
+    {
+        controller.closed = YES;
+        [NSApp terminate:nil];
+    }
 }
 
 @implementation CocoaViewerView
@@ -1068,6 +400,7 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
 - (id)initWithSession:(librdp_session*)session width:(uint32_t)width height:(uint32_t)height
 {
     NSRect frame = NSMakeRect(0.0, 0.0, (CGFloat)width, (CGFloat)height);
+    cocoa_session_loop_callbacks callbacks;
 
     self = [super init];
     if (!self)
@@ -1087,6 +420,14 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
     self.currentCursor = [NSCursor arrowCursor];
     self.pasteboardChangeCount = [[NSPasteboard generalPasteboard] changeCount];
     self.audioOutputCurrentFormat = UINT32_MAX;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.prepare = cocoa_viewer_session_prepare;
+    callbacks.timeout = cocoa_viewer_session_timeout;
+    callbacks.status = cocoa_viewer_session_status;
+    callbacks.user_data = (__bridge void*)self;
+    self.sessionLoop = cocoa_session_loop_new(session, &callbacks);
+    if (!self.sessionLoop)
+        return nil;
     return self;
 }
 
@@ -1145,17 +486,30 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
     self.audioOutputCurrentFormat = UINT32_MAX;
 }
 
-- (void)start
+- (void)shutdownSession
 {
+    if (!self.sessionLoop)
+        return;
+    (void)cocoa_session_loop_disconnect(self.sessionLoop);
+    cocoa_session_loop_free(self.sessionLoop);
+    self.sessionLoop = NULL;
+}
+
+- (BOOL)start
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:self.view];
     [NSApp activateIgnoringOtherApps:YES];
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.01
-                                                  target:self
-                                                selector:@selector(driveSession:)
-                                                userInfo:nil
-                                                 repeats:YES];
+    status = cocoa_session_loop_start(self.sessionLoop);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        fprintf(stderr, "session loop failed: %s\n", librdp_status_string(status));
+        return NO;
+    }
+    return YES;
 }
 
 - (void)markDirty
@@ -1343,36 +697,6 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
     {
         (void)fwrite(event->data, 1, event->data_len, self.videoOutputFile);
         fflush(self.videoOutputFile);
-    }
-}
-
-- (void)driveSession:(NSTimer*)timer
-{
-    librdp_status status = LIBRDP_STATUS_OK;
-    librdp_session_state state = LIBRDP_SESSION_IDLE;
-
-    (void)timer;
-    if (!self.session || self.closed)
-        return;
-    [self publishLocalPasteboardIfChanged];
-    [self pumpAudioInput];
-    status = librdp_session_run_once(self.session, 0);
-    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_CLOSED)
-        fprintf(stderr, "session dispatch failed: %s\n", librdp_status_string(status));
-    state = librdp_session_get_state(self.session);
-    if (status == LIBRDP_STATUS_CLOSED || state == LIBRDP_SESSION_CLOSED ||
-        state == LIBRDP_SESSION_FAILED || state == LIBRDP_SESSION_CANCELLED)
-    {
-        self.closed = YES;
-        [self.timer invalidate];
-        self.timer = nil;
-        [NSApp terminate:nil];
-        return;
-    }
-    if (self.dirty)
-    {
-        self.dirty = NO;
-        [self.view setNeedsDisplay:YES];
     }
 }
 
@@ -1660,6 +984,7 @@ static int cocoa_viewer_channel_name_contains(const char* name, size_t name_len,
 int main(int argc, char** argv)
 {
     cocoa_viewer_options options;
+    client_callbacks callbacks;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     CocoaViewerController* controller = nil;
@@ -1668,27 +993,32 @@ int main(int argc, char** argv)
 
     @autoreleasepool
     {
-        if (!cocoa_viewer_parse_args(argc, argv, &options))
+        settings = librdp_settings_new();
+        if (!settings)
+        {
+            fprintf(stderr, "failed to create settings\n");
+            return 1;
+        }
+        if (!cocoa_viewer_configure_settings(settings, &options, argc, argv))
         {
             cocoa_viewer_usage(stderr, argv[0]);
+            client_options_clear(&options);
+            librdp_settings_free(settings);
             return 2;
         }
         if (options.show_help)
         {
             cocoa_viewer_usage(stdout, argv[0]);
+            client_options_clear(&options);
+            librdp_settings_free(settings);
             return 0;
-        }
-        settings = cocoa_viewer_create_settings(&options);
-        if (!settings)
-        {
-            fprintf(stderr, "failed to create settings\n");
-            return 1;
         }
         session = librdp_session_new(settings);
         librdp_settings_free(settings);
         if (!session)
         {
             fprintf(stderr, "failed to create session\n");
+            client_options_clear(&options);
             return 1;
         }
         controller = [[CocoaViewerController alloc] initWithSession:session width:options.width height:options.height];
@@ -1696,35 +1026,65 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "failed to create viewer window\n");
             librdp_session_free(session);
+            client_options_clear(&options);
             return 1;
         }
         if (![controller configureMediaWithOptions:&options])
         {
             fprintf(stderr, "failed to configure media backends\n");
             [controller shutdownMedia];
+            [controller shutdownSession];
             librdp_session_free(session);
+            client_options_clear(&options);
             return 1;
         }
-        librdp_session_set_graphics_update_callback(session, cocoa_viewer_graphics_callback, (__bridge void*)controller);
-        librdp_session_set_pointer_callback(session, cocoa_viewer_pointer_callback, (__bridge void*)controller);
-        librdp_session_set_channel_callback(session, cocoa_viewer_channel_callback, (__bridge void*)controller);
-        librdp_session_set_clipboard_callback(session, cocoa_viewer_clipboard_callback, (__bridge void*)controller);
-        librdp_session_set_audio_callback(session, cocoa_viewer_audio_callback, (__bridge void*)controller);
-        librdp_session_set_video_callback(session, cocoa_viewer_video_callback, (__bridge void*)controller);
-        status = librdp_session_connect(session);
+        client_callbacks_init(&callbacks);
+        callbacks.graphics_update = cocoa_viewer_graphics_callback;
+        callbacks.graphics_update_user_data = (__bridge void*)controller;
+        callbacks.pointer = cocoa_viewer_pointer_callback;
+        callbacks.pointer_user_data = (__bridge void*)controller;
+        callbacks.channel = cocoa_viewer_channel_callback;
+        callbacks.channel_user_data = (__bridge void*)controller;
+        callbacks.clipboard = cocoa_viewer_clipboard_callback;
+        callbacks.clipboard_user_data = (__bridge void*)controller;
+        callbacks.audio = cocoa_viewer_audio_callback;
+        callbacks.audio_user_data = (__bridge void*)controller;
+        callbacks.video = cocoa_viewer_video_callback;
+        callbacks.video_user_data = (__bridge void*)controller;
+        status = client_callbacks_apply(session, &callbacks);
+        if (status != LIBRDP_STATUS_OK)
+        {
+            fprintf(stderr, "callback registration failed: %s\n", librdp_status_string(status));
+            [controller shutdownMedia];
+            [controller shutdownSession];
+            librdp_session_free(session);
+            client_options_clear(&options);
+            return 1;
+        }
+        status = cocoa_session_loop_connect(controller.sessionLoop);
         if (status != LIBRDP_STATUS_OK)
         {
             fprintf(stderr, "connect failed: %s\n", librdp_status_string(status));
             [controller shutdownMedia];
+            [controller shutdownSession];
             librdp_session_free(session);
+            client_options_clear(&options);
             return 1;
         }
         [NSApplication sharedApplication];
-        [controller start];
+        if (![controller start])
+        {
+            [controller shutdownMedia];
+            [controller shutdownSession];
+            librdp_session_free(session);
+            client_options_clear(&options);
+            return 1;
+        }
         [NSApp run];
-        (void)librdp_session_disconnect(session);
         [controller shutdownMedia];
+        [controller shutdownSession];
         librdp_session_free(session);
+        client_options_clear(&options);
         exit_code = 0;
     }
     return exit_code;
