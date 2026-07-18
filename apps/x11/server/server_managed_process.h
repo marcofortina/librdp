@@ -26,6 +26,7 @@
 
 #define X11_MANAGED_PROCESS_VERSION 1u
 #define X11_MANAGED_PROCESS_MAX_ARGUMENTS 64u
+#define X11_MANAGED_PROCESS_MAX_JOINED 8u
 
 typedef struct x11_managed_process_config
 {
@@ -52,6 +53,8 @@ typedef struct x11_managed_process_group
     pid_t process_group;
     pid_t xserver_pid;
     pid_t desktop_pid;
+    pid_t joined_pids[X11_MANAGED_PROCESS_MAX_JOINED];
+    size_t joined_count;
     char display_name[64];
     char authority_path[4096];
     char xorg_config_path[4096];
@@ -70,7 +73,7 @@ librdp_status x11_managed_process_resize(
     uint32_t height);
 librdp_status x11_managed_process_join(
     const x11_managed_process_config* config,
-    const x11_managed_process_group* group,
+    x11_managed_process_group* group,
     const char* executable,
     char* const argv[],
     int retained_descriptor,

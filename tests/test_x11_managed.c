@@ -56,6 +56,12 @@ static void test_message_start(x11_managed_ipc_message* message)
     memcpy(message->xserver_command,
            "/usr/bin/Xorg",
            sizeof("/usr/bin/Xorg"));
+    memcpy(message->runtime_directory,
+           "/tmp/librdp-managed-test",
+           sizeof("/tmp/librdp-managed-test"));
+    memcpy(message->control_socket,
+           "/tmp/librdp-managed-test.sock",
+           sizeof("/tmp/librdp-managed-test.sock"));
 }
 
 static int test_roundtrip(void)
@@ -82,6 +88,7 @@ static int test_roundtrip(void)
     CHECK(strcmp(received.username, sent.username) == 0);
     CHECK(strcmp(received.domain, sent.domain) == 0);
     CHECK(strcmp(received.password, sent.password) == 0);
+    CHECK(strcmp(received.control_socket, sent.control_socket) == 0);
     x11_managed_ipc_message_clear(&sent);
     x11_managed_ipc_message_clear(&received);
     CHECK(close(sockets[0]) == 0);

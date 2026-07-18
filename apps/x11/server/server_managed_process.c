@@ -886,7 +886,7 @@ librdp_status x11_managed_process_start(
 
 librdp_status x11_managed_process_join(
     const x11_managed_process_config* config,
-    const x11_managed_process_group* group,
+    x11_managed_process_group* group,
     const char* executable,
     char* const argv[],
     int retained_descriptor,
@@ -896,7 +896,8 @@ librdp_status x11_managed_process_join(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!x11_managed_process_config_valid(config) || !group ||
-        group->process_group <= 0)
+        group->process_group <= 0 ||
+        group->joined_count >= X11_MANAGED_PROCESS_MAX_JOINED)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = x11_managed_process_build_environment(config,
                                                    &environment);
@@ -912,6 +913,8 @@ librdp_status x11_managed_process_join(
             child_pid);
     }
     x11_managed_process_environment_free(&environment);
+    if (status == LIBRDP_STATUS_OK)
+        group->joined_pids[group->joined_count++] = *child_pid;
     return status;
 }
 
@@ -1013,6 +1016,8 @@ librdp_status x11_managed_process_stop(
     int timeout_ms)
 {
     uint64_t deadline = 0u;
+    size_t index = 0u;
+    int joined_alive = 0;
 
     if (!group || group->version != X11_MANAGED_PROCESS_VERSION ||
         group->size < sizeof(*group) || timeout_ms < 0 ||
@@ -1023,24 +1028,44 @@ librdp_status x11_managed_process_stop(
         (void)kill(-group->process_group, SIGTERM);
         deadline =
             x11_managed_process_now_ms() + (uint64_t)timeout_ms;
-        while ((x11_managed_process_alive(group->xserver_pid) ||
-                x11_managed_process_alive(group->desktop_pid) ||
-                x11_managed_process_group_alive(
-                    group->process_group)) &&
-               x11_managed_process_now_ms() < deadline)
+        do
         {
             struct pollfd wait;
 
+            joined_alive = 0;
+            for (index = 0u; index < group->joined_count; index++)
+            {
+                if (x11_managed_process_alive(
+                        group->joined_pids[index]))
+                    joined_alive = 1;
+            }
+            if (!x11_managed_process_alive(group->xserver_pid) &&
+                !x11_managed_process_alive(group->desktop_pid) &&
+                !joined_alive &&
+                !x11_managed_process_group_alive(
+                    group->process_group))
+                break;
             memset(&wait, 0, sizeof(wait));
             (void)poll(&wait, 0u, 20);
         }
+        while (x11_managed_process_now_ms() < deadline);
+        joined_alive = 0;
+        for (index = 0u; index < group->joined_count; index++)
+        {
+            if (x11_managed_process_alive(
+                    group->joined_pids[index]))
+                joined_alive = 1;
+        }
         if (x11_managed_process_alive(group->xserver_pid) ||
             x11_managed_process_alive(group->desktop_pid) ||
+            joined_alive ||
             x11_managed_process_group_alive(group->process_group))
             (void)kill(-group->process_group, SIGKILL);
     }
     x11_managed_process_reap(group->desktop_pid);
     x11_managed_process_reap(group->xserver_pid);
+    for (index = 0u; index < group->joined_count; index++)
+        x11_managed_process_reap(group->joined_pids[index]);
     if (group->authority_path[0] != '\0')
         (void)unlink(group->authority_path);
     if (group->xorg_config_path[0] != '\0')

@@ -426,11 +426,12 @@ static librdp_status x11_managed_registry_prepare_entry(
             sizeof(slot->entry.authority_path),
             slot->entry.runtime_directory,
             "Xauthority") ||
-        !x11_managed_registry_join(
+        !x11_managed_registry_path(
             slot->entry.agent_socket_path,
             sizeof(slot->entry.agent_socket_path),
-            slot->entry.runtime_directory,
-            "agent.sock") ||
+            registry->runtime_root,
+            "%s/session-%016llx.sock",
+            (unsigned long long)slot->entry.session_id) ||
         mkdir(slot->entry.runtime_directory, 0700) != 0)
         return LIBRDP_STATUS_IO_ERROR;
     slot->runtime_created = 1;

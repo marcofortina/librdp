@@ -359,12 +359,13 @@ librdp_status x11_managed_ipc_message_validate(
     if (!message || message->version != X11_MANAGED_IPC_VERSION ||
         message->size < sizeof(*message) ||
         message->type < X11_MANAGED_IPC_START ||
-        message->type > X11_MANAGED_IPC_STOP ||
+        message->type > X11_MANAGED_IPC_AUTHENTICATED ||
         message->request_id == 0u ||
         (message->flags & ~known_flags) != 0u ||
         message->status > LIBRDP_STATUS_OK ||
         message->status < LIBRDP_STATUS_CANCELLED ||
         message->port > UINT16_MAX ||
+        message->auth_outcome > 5u ||
         message->width > X11_MANAGED_IPC_MAX_DIMENSION ||
         message->height > X11_MANAGED_IPC_MAX_DIMENSION ||
         !x11_managed_ipc_string_terminated(
@@ -384,6 +385,9 @@ librdp_status x11_managed_ipc_message_validate(
             message->runtime_directory,
             sizeof(message->runtime_directory)) ||
         !x11_managed_ipc_string_terminated(
+            message->control_socket,
+            sizeof(message->control_socket)) ||
+        !x11_managed_ipc_string_terminated(
             message->desktop_command,
             sizeof(message->desktop_command)) ||
         !x11_managed_ipc_string_terminated(
@@ -400,9 +404,14 @@ librdp_status x11_managed_ipc_message_validate(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (message->type == X11_MANAGED_IPC_START &&
         (message->username[0] == '\0' ||
-         message->width == 0u || message->height == 0u ||
-         message->desktop_command[0] == '\0' ||
-         message->xserver_command[0] == '\0'))
+         message->width == 0u || message->height == 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (message->type == X11_MANAGED_IPC_START &&
+        message->session_id != 0u &&
+        (message->desktop_command[0] == '\0' ||
+         message->xserver_command[0] == '\0' ||
+         message->runtime_directory[0] != '/' ||
+         message->control_socket[0] != '/'))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((message->type == X11_MANAGED_IPC_ATTACH ||
          (message->flags & X11_MANAGED_IPC_RECONNECT) != 0u) &&
@@ -423,6 +432,10 @@ librdp_status x11_managed_ipc_message_validate(
          message->reconnect_token[0] == '\0' ||
          message->display_name[0] == '\0' ||
          message->port == 0u))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (message->type == X11_MANAGED_IPC_AUTHENTICATED &&
+        (message->username[0] == '\0' ||
+         message->auth_outcome != 1u))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     return LIBRDP_STATUS_OK;
 }
@@ -457,6 +470,7 @@ static librdp_status x11_managed_ipc_encode(
         !x11_managed_ipc_put_u32(&cursor, message->port) ||
         !x11_managed_ipc_put_u32(&cursor, message->security_mode) ||
         !x11_managed_ipc_put_u32(&cursor, message->max_peers) ||
+        !x11_managed_ipc_put_u32(&cursor, message->auth_outcome) ||
         !x11_managed_ipc_put_u32(&cursor, (uint32_t)message->status) ||
         !x11_managed_ipc_put_string(
             &cursor, message->username, sizeof(message->username)) ||
@@ -480,6 +494,10 @@ static librdp_status x11_managed_ipc_encode(
             &cursor,
             message->runtime_directory,
             sizeof(message->runtime_directory)) ||
+        !x11_managed_ipc_put_string(
+            &cursor,
+            message->control_socket,
+            sizeof(message->control_socket)) ||
         !x11_managed_ipc_put_string(
             &cursor,
             message->desktop_command,
@@ -532,6 +550,7 @@ static librdp_status x11_managed_ipc_decode(
         !x11_managed_ipc_get_u32(&cursor, &message->port) ||
         !x11_managed_ipc_get_u32(&cursor, &message->security_mode) ||
         !x11_managed_ipc_get_u32(&cursor, &message->max_peers) ||
+        !x11_managed_ipc_get_u32(&cursor, &message->auth_outcome) ||
         !x11_managed_ipc_get_u32(&cursor, &status_value) ||
         !x11_managed_ipc_get_string(
             &cursor, message->username, sizeof(message->username)) ||
@@ -555,6 +574,10 @@ static librdp_status x11_managed_ipc_decode(
             &cursor,
             message->runtime_directory,
             sizeof(message->runtime_directory)) ||
+        !x11_managed_ipc_get_string(
+            &cursor,
+            message->control_socket,
+            sizeof(message->control_socket)) ||
         !x11_managed_ipc_get_string(
             &cursor,
             message->desktop_command,
@@ -638,7 +661,7 @@ librdp_status x11_managed_ipc_receive(
         x11_managed_ipc_read_u16(frame + 6u) <
             X11_MANAGED_IPC_START ||
         x11_managed_ipc_read_u16(frame + 6u) >
-            X11_MANAGED_IPC_STOP ||
+            X11_MANAGED_IPC_AUTHENTICATED ||
         x11_managed_ipc_read_u32(frame + 20u) != 0u ||
         payload_len == 0u ||
         payload_len >

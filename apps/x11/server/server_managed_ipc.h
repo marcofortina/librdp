@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define X11_MANAGED_IPC_VERSION 2u
+#define X11_MANAGED_IPC_VERSION 3u
 #define X11_MANAGED_IPC_MAX_FRAME_BYTES 32768u
 #define X11_MANAGED_IPC_USERNAME_BYTES 256u
 #define X11_MANAGED_IPC_DOMAIN_BYTES 256u
@@ -44,7 +44,8 @@ typedef enum x11_managed_ipc_type
     X11_MANAGED_IPC_READY = 7,
     X11_MANAGED_IPC_ERROR = 8,
     X11_MANAGED_IPC_PING = 9,
-    X11_MANAGED_IPC_STOP = 10
+    X11_MANAGED_IPC_STOP = 10,
+    X11_MANAGED_IPC_AUTHENTICATED = 11
 } x11_managed_ipc_type;
 
 typedef enum x11_managed_ipc_flag
@@ -88,6 +89,7 @@ typedef struct x11_managed_ipc_message
     uint32_t port;
     uint32_t security_mode;
     uint32_t max_peers;
+    uint32_t auth_outcome;
     librdp_status status;
     char username[X11_MANAGED_IPC_USERNAME_BYTES];
     char domain[X11_MANAGED_IPC_DOMAIN_BYTES];
@@ -96,6 +98,7 @@ typedef struct x11_managed_ipc_message
     char display_name[X11_MANAGED_IPC_DISPLAY_BYTES];
     char bind_address[X11_MANAGED_IPC_ADDRESS_BYTES];
     char runtime_directory[X11_MANAGED_IPC_PATH_BYTES];
+    char control_socket[X11_MANAGED_IPC_PATH_BYTES];
     char desktop_command[X11_MANAGED_IPC_COMMAND_BYTES];
     char xserver_command[X11_MANAGED_IPC_COMMAND_BYTES];
     char tls_certificate[X11_MANAGED_IPC_PATH_BYTES];
