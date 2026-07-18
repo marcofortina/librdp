@@ -19,7 +19,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct mock_platform_context
@@ -34,6 +38,11 @@ typedef struct mock_platform_context
     unsigned int stops;
     unsigned int frame_requests;
     unsigned int releases;
+    unsigned int dispatches;
+    int event_read_fd;
+    int event_write_fd;
+    short event_revents;
+    int timeout_ms;
 } mock_platform_context;
 
 static int check_int(int condition, const char* expression, int line)
@@ -56,10 +65,22 @@ static librdp_status mock_get_pollfds(void* context,
                                       size_t capacity,
                                       size_t* count)
 {
-    (void)context;
-    if (!count || (capacity > 0u && !fds))
+    mock_platform_context* mock = (mock_platform_context*)context;
+    size_t required = mock && mock->event_read_fd >= 0 ? 1u : 0u;
+
+    if (!mock || !count || (capacity > 0u && !fds))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *count = 0u;
+    *count = required;
+    if (!fds && capacity == 0u)
+        return LIBRDP_STATUS_OK;
+    if (capacity < required)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (required > 0u)
+    {
+        fds[0].fd = mock->event_read_fd;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+    }
     return LIBRDP_STATUS_OK;
 }
 
@@ -67,22 +88,48 @@ static librdp_status mock_notify_poll(void* context,
                                      const struct pollfd* fds,
                                      size_t count)
 {
-    (void)context;
-    return count == 0u && !fds ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (mock->event_read_fd < 0)
+        return count == 0u && !fds ? LIBRDP_STATUS_OK
+                                  : LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!fds || count != 1u || fds[0].fd != mock->event_read_fd)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->event_revents = fds[0].revents;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_dispatch(void* context, unsigned int max_events)
 {
-    (void)context;
-    return max_events > 0u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+    uint8_t byte = 0;
+    ssize_t count = 0;
+
+    if (!mock || max_events == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (mock->event_read_fd >= 0 && (mock->event_revents & POLLIN) != 0)
+    {
+        do
+        {
+            count = read(mock->event_read_fd, &byte, sizeof(byte));
+        } while (count < 0 && errno == EINTR);
+        if (count != (ssize_t)sizeof(byte))
+            return LIBRDP_STATUS_IO_ERROR;
+        mock->event_revents = 0;
+    }
+    mock->dispatches++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_get_timeout(void* context, int* timeout_ms)
 {
-    (void)context;
-    if (!timeout_ms)
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !timeout_ms)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *timeout_ms = -1;
+    *timeout_ms = mock->timeout_ms;
     return LIBRDP_STATUS_OK;
 }
 
@@ -354,6 +401,9 @@ static int test_platform_contract(void)
     mock_platform_context mock;
 
     memset(&mock, 0, sizeof(mock));
+    mock.event_read_fd = -1;
+    mock.event_write_fd = -1;
+    mock.timeout_ms = -1;
 
     server_platform_init(&platform);
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_OK);
@@ -431,6 +481,9 @@ static void configure_mock_platform(server_host_config* config,
     size_t index = 0;
 
     memset(mock, 0, sizeof(*mock));
+    mock->event_read_fd = -1;
+    mock->event_write_fd = -1;
+    mock->timeout_ms = -1;
     for (index = 0; index < 4u; index++)
         mock->permissions[index] = SERVER_PLATFORM_PERMISSION_GRANTED;
     config->platform.capture.vtable = &mock_capture;
@@ -545,6 +598,81 @@ static int test_host_lifecycle(void)
     return 0;
 }
 
+typedef struct cancel_thread_context
+{
+    server_host* host;
+    librdp_status status;
+} cancel_thread_context;
+
+static void* cancel_host_after_delay(void* user_data)
+{
+    cancel_thread_context* context = (cancel_thread_context*)user_data;
+    struct timespec delay;
+
+    delay.tv_sec = 0;
+    delay.tv_nsec = 20000000L;
+    (void)nanosleep(&delay, NULL);
+    context->status = server_host_cancel(context->host);
+    return NULL;
+}
+
+/*
+ * Merge listener, provider and wakeup descriptors into one blocking poll,
+ * prove that provider dispatch is not periodic, and wake a blocked owner
+ * thread through the only cross-thread host operation.
+ */
+static int test_host_poll_loop(void)
+{
+    server_host_config config;
+    server_host* host = NULL;
+    mock_platform_context mock;
+    cancel_thread_context cancel;
+    pthread_t thread;
+    uint8_t byte = 1u;
+    int event_fds[2] = {-1, -1};
+    int client = -1;
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    CHECK(pipe(event_fds) == 0);
+    CHECK(fcntl(event_fds[0], F_SETFL, O_NONBLOCK) == 0);
+    CHECK(fcntl(event_fds[1], F_SETFL, O_NONBLOCK) == 0);
+    mock.event_read_fd = event_fds[0];
+    mock.event_write_fd = event_fds[1];
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+
+    client = connect_loopback(server_host_local_port(host));
+    CHECK(client >= 0);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 1u);
+    CHECK(mock.dispatches == 0u);
+
+    CHECK(write(mock.event_write_fd, &byte, sizeof(byte)) ==
+          (ssize_t)sizeof(byte));
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+    CHECK(mock.dispatches == 1u);
+    CHECK(server_host_run_once(host, 10) == LIBRDP_STATUS_TIMEOUT);
+    CHECK(mock.dispatches == 1u);
+    CHECK(server_host_wakeup(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+
+    memset(&cancel, 0, sizeof(cancel));
+    cancel.host = host;
+    cancel.status = LIBRDP_STATUS_STATE;
+    CHECK(pthread_create(&thread, NULL, cancel_host_after_delay, &cancel) == 0);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_CANCELLED);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(cancel.status == LIBRDP_STATUS_OK);
+    CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
+    server_host_free(host);
+    close(client);
+    close(event_fds[0]);
+    close(event_fds[1]);
+    return 0;
+}
+
 /*
  * Exercise coalescing, hard queue bounds, pacing, backpressure and resize
  * invalidation so a stalled peer cannot retain capture-owned frame storage or
@@ -642,6 +770,8 @@ int main(void)
     if (test_dirty_scheduler() != 0)
         return 1;
     if (test_host_lifecycle() != 0)
+        return 1;
+    if (test_host_poll_loop() != 0)
         return 1;
     puts("app server tests passed");
     return 0;

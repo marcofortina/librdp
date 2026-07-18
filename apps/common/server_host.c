@@ -14,39 +14,13 @@
  * server surface APIs receive them.
  */
 
-#include "server_host.h"
+#include "server_host_internal.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct server_host_peer_slot
-{
-    struct server_host* host;
-    librdp_server_peer* protocol;
-    server_dirty_scheduler* dirty;
-    uint32_t id;
-    uint32_t generation;
-    uint32_t surface_width;
-    uint32_t surface_height;
-    server_host_peer_state state;
-    int occupied;
-    int input_owner;
-} server_host_peer_slot;
-
-struct server_host
-{
-    librdp_server* listener;
-    server_platform platform;
-    server_dirty_config dirty_config;
-    server_host_peer_slot* peers;
-    size_t peer_capacity;
-    size_t peer_count;
-    uint32_t next_peer_id;
-    unsigned int max_work_per_iteration;
-    server_host_input_policy input_policy;
-    server_host_state state;
-    server_host_provider_state provider_states[SERVER_PLATFORM_PROVIDER_COUNT];
-};
+#include <unistd.h>
 
 void server_host_config_init(server_host_config* config)
 {
@@ -86,6 +60,16 @@ static int server_host_config_valid(const server_host_config* config)
            server_platform_validate(&config->platform) == LIBRDP_STATUS_OK;
 }
 
+static int server_host_configure_wakeup_fd(int fd)
+{
+    int status_flags = fcntl(fd, F_GETFL, 0);
+    int descriptor_flags = fcntl(fd, F_GETFD, 0);
+
+    return status_flags >= 0 && descriptor_flags >= 0 &&
+           fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) == 0 &&
+           fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC) == 0;
+}
+
 server_host* server_host_new(const server_host_config* config)
 {
     server_host* host = NULL;
@@ -114,6 +98,31 @@ server_host* server_host_new(const server_host_config* config)
         free(host);
         return NULL;
     }
+    host->wakeup_read_fd = -1;
+    host->wakeup_write_fd = -1;
+    {
+        int wakeup_fds[2] = {-1, -1};
+
+        if (pipe(wakeup_fds) != 0)
+        {
+            librdp_server_free(host->listener);
+            free(host->peers);
+            free(host);
+            return NULL;
+        }
+        if (!server_host_configure_wakeup_fd(wakeup_fds[0]) ||
+            !server_host_configure_wakeup_fd(wakeup_fds[1]))
+        {
+            close(wakeup_fds[0]);
+            close(wakeup_fds[1]);
+            librdp_server_free(host->listener);
+            free(host->peers);
+            free(host);
+            return NULL;
+        }
+        host->wakeup_read_fd = wakeup_fds[0];
+        host->wakeup_write_fd = wakeup_fds[1];
+    }
     host->platform = config->platform;
     host->dirty_config = config->dirty;
     host->peer_capacity = config->max_peers;
@@ -121,6 +130,7 @@ server_host* server_host_new(const server_host_config* config)
     host->input_policy = config->input_policy;
     host->state = SERVER_HOST_NEW;
     host->next_peer_id = 1u;
+    atomic_init(&host->cancellation_requested, 0);
     for (index = 0; index < SERVER_PLATFORM_PROVIDER_COUNT; index++)
     {
         host->provider_states[index] =
@@ -132,8 +142,8 @@ server_host* server_host_new(const server_host_config* config)
     return host;
 }
 
-static server_host_peer_slot* server_host_find_peer(server_host* host,
-                                                    uint32_t peer_id)
+server_host_peer_slot* server_host_find_peer_slot(server_host* host,
+                                                  uint32_t peer_id)
 {
     size_t index = 0;
 
@@ -147,7 +157,7 @@ static server_host_peer_slot* server_host_find_peer(server_host* host,
     return NULL;
 }
 
-static void server_host_release_peer_slot(server_host_peer_slot* slot)
+void server_host_release_peer_slot(server_host_peer_slot* slot)
 {
     if (!slot || !slot->occupied)
         return;
@@ -591,11 +601,22 @@ static void server_host_stop_providers(server_host* host)
 librdp_status server_host_start(server_host* host)
 {
     librdp_status status = LIBRDP_STATUS_OK;
+    uint8_t wakeup_bytes[64];
+    ssize_t count = 0;
 
     if (!host)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (host->state != SERVER_HOST_NEW && host->state != SERVER_HOST_STOPPED)
         return LIBRDP_STATUS_STATE;
+    atomic_store_explicit(&host->cancellation_requested,
+                          0,
+                          memory_order_release);
+    do
+    {
+        count = read(host->wakeup_read_fd,
+                     wakeup_bytes,
+                     sizeof(wakeup_bytes));
+    } while (count > 0 || (count < 0 && errno == EINTR));
     host->state = SERVER_HOST_STARTING;
     status = server_host_start_providers(host);
     if (status == LIBRDP_STATUS_OK)
@@ -634,6 +655,11 @@ void server_host_free(server_host* host)
         return;
     (void)server_host_stop(host);
     librdp_server_free(host->listener);
+    if (host->wakeup_read_fd >= 0)
+        close(host->wakeup_read_fd);
+    if (host->wakeup_write_fd >= 0)
+        close(host->wakeup_write_fd);
+    free(host->pollfds);
     free(host->peers);
     memset(host, 0, sizeof(*host));
     free(host);
@@ -829,7 +855,8 @@ librdp_status server_host_peer_at(const server_host* host,
 
 librdp_status server_host_close_peer(server_host* host, uint32_t peer_id)
 {
-    server_host_peer_slot* slot = server_host_find_peer(host, peer_id);
+    server_host_peer_slot* slot =
+        server_host_find_peer_slot(host, peer_id);
 
     if (!slot)
         return LIBRDP_STATUS_INVALID_ARGUMENT;

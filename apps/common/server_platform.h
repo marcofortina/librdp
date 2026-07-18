@@ -164,8 +164,9 @@ typedef struct server_platform_permission_sink
 } server_platform_permission_sink;
 
 /*
- * Event-source methods expose only POSIX poll descriptors. A provider with no
- * asynchronous work leaves events NULL; otherwise all methods are required.
+ * Event-source methods expose only POSIX poll descriptors. get_pollfds accepts
+ * fds NULL with capacity zero as a count query. A provider with no asynchronous
+ * work leaves events NULL; otherwise all methods are required.
  */
 typedef struct server_platform_event_source_vtable
 {

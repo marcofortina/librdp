@@ -1,0 +1,62 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+ * Module: internal state shared by desktop-server host modules.
+ * Invariants: peer slots and poll storage belong to one host, and generations
+ * distinguish every reuse of a slot.
+ * Ownership: the host owns peer handles, schedulers, poll storage and wakeup
+ * descriptors; platform contexts remain borrowed.
+ * Threading: only cancellation_requested and the wakeup write descriptor are
+ * touched cross-thread; every other field is owner-thread confined.
+ * Trust boundary: poll and peer metadata remain private so native providers
+ * cannot mutate protocol ownership directly.
+ */
+
+#ifndef LIBRDP_APP_SERVER_HOST_INTERNAL_H
+#define LIBRDP_APP_SERVER_HOST_INTERNAL_H
+
+#include "server_host.h"
+
+#include <stdatomic.h>
+
+typedef struct server_host_peer_slot
+{
+    struct server_host* host;
+    librdp_server_peer* protocol;
+    server_dirty_scheduler* dirty;
+    uint32_t id;
+    uint32_t generation;
+    uint32_t surface_width;
+    uint32_t surface_height;
+    server_host_peer_state state;
+    int occupied;
+    int input_owner;
+} server_host_peer_slot;
+
+struct server_host
+{
+    librdp_server* listener;
+    server_platform platform;
+    server_dirty_config dirty_config;
+    server_host_peer_slot* peers;
+    size_t peer_capacity;
+    size_t peer_count;
+    uint32_t next_peer_id;
+    unsigned int max_work_per_iteration;
+    server_host_input_policy input_policy;
+    server_host_state state;
+    server_host_provider_state provider_states[SERVER_PLATFORM_PROVIDER_COUNT];
+    struct pollfd* pollfds;
+    size_t poll_capacity;
+    int wakeup_read_fd;
+    int wakeup_write_fd;
+    atomic_int cancellation_requested;
+};
+
+server_host_peer_slot* server_host_find_peer_slot(server_host* host,
+                                                  uint32_t peer_id);
+void server_host_release_peer_slot(server_host_peer_slot* slot);
+
+#endif

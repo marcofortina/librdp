@@ -104,6 +104,9 @@ server_host_provider_state server_host_get_provider_state(
     server_platform_provider_kind kind);
 uint16_t server_host_local_port(const server_host* host);
 librdp_status server_host_accept_pending(server_host* host);
+librdp_status server_host_run_once(server_host* host, int timeout_ms);
+librdp_status server_host_wakeup(server_host* host);
+librdp_status server_host_cancel(server_host* host);
 size_t server_host_peer_count(const server_host* host);
 librdp_status server_host_peer_at(const server_host* host,
                                   size_t index,
