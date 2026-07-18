@@ -686,7 +686,7 @@ static void server_host_clipboard_data(
                            data->data_len);
 }
 
-static void server_host_clipboard_request(
+static librdp_status server_host_clipboard_request(
     const server_platform_clipboard_request* request,
     void* user_data)
 {
@@ -694,7 +694,7 @@ static void server_host_clipboard_request(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!host || !host->clipboard || !request)
-        return;
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = server_clipboard_runtime_platform_request(host->clipboard,
                                                        request);
     server_host_metric_add(&host->metrics.clipboard_events, 1u);
@@ -704,9 +704,10 @@ static void server_host_clipboard_request(
                            status,
                            request->request_id,
                            1u);
+    return status;
 }
 
-static void server_host_clipboard_file_request(
+static librdp_status server_host_clipboard_file_request(
     const server_platform_clipboard_file_request* request,
     void* user_data)
 {
@@ -714,7 +715,7 @@ static void server_host_clipboard_file_request(
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!host || !host->clipboard || !request)
-        return;
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     status = server_clipboard_runtime_platform_file_request(host->clipboard,
                                                             request);
     server_host_metric_add(&host->metrics.clipboard_events, 1u);
@@ -724,6 +725,35 @@ static void server_host_clipboard_file_request(
                            status,
                            request->request_id,
                            request->requested_bytes);
+    return status;
+}
+
+static librdp_status server_host_clipboard_cancel(
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    uint64_t request_id,
+    void* user_data)
+{
+    server_host* host = (server_host*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host || !host->clipboard)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = server_clipboard_runtime_platform_cancel(
+        host->clipboard,
+        peer_id,
+        generation,
+        ownership_generation,
+        request_id);
+    server_host_metric_add(&host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           server_host_find_peer_slot(host, peer_id),
+                           status,
+                           request_id,
+                           0u);
+    return status;
 }
 
 static void server_host_drive_request(
@@ -1065,6 +1095,7 @@ static librdp_status server_host_start_providers(server_host* host)
             clipboard_sink.request = server_host_clipboard_request;
             clipboard_sink.file_request =
                 server_host_clipboard_file_request;
+            clipboard_sink.cancel = server_host_clipboard_cancel;
             clipboard_sink.user_data = host;
             host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] =
                 SERVER_HOST_PROVIDER_STARTING;

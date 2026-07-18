@@ -63,6 +63,7 @@ typedef struct x11_server_test_state
     uint64_t format_count;
     uint64_t data_count;
     uint64_t request_count;
+    uint64_t cancel_count;
     uint64_t permission_count;
     uint32_t last_width;
     uint32_t last_height;
@@ -76,6 +77,7 @@ typedef struct x11_server_test_state
     uint32_t clipboard_peer_id;
     uint32_t clipboard_peer_generation;
     int send_large_clipboard;
+    int defer_clipboard_response;
 } x11_server_test_state;
 
 static void test_sleep_ms(unsigned int milliseconds)
@@ -252,7 +254,7 @@ static void test_clipboard_data(
     }
 }
 
-static void test_clipboard_request(
+static librdp_status test_clipboard_request(
     const server_platform_clipboard_request* request,
     void* user_data)
 {
@@ -266,10 +268,12 @@ static void test_clipboard_request(
     size_t index = 0u;
 
     if (!state || !request || !state->clipboard)
-        return;
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     state->request_count++;
     state->clipboard_peer_id = request->peer_id;
     state->clipboard_peer_generation = request->generation;
+    if (state->defer_clipboard_response)
+        return LIBRDP_STATUS_OK;
     memset(&response, 0, sizeof(response));
     response.peer_id = request->peer_id;
     response.generation = request->generation;
@@ -284,11 +288,11 @@ static void test_clipboard_request(
         response.data_len = sizeof(utf16_text);
         (void)state->clipboard->write_data(state->clipboard_context,
                                            &response);
-        return;
+        return LIBRDP_STATUS_OK;
     }
     large = (uint8_t*)malloc(large_units * 2u + 2u);
     if (!large)
-        return;
+        return LIBRDP_STATUS_NO_MEMORY;
     for (index = 0u; index < large_units; index++)
     {
         large[index * 2u] = 'x';
@@ -301,14 +305,32 @@ static void test_clipboard_request(
     (void)state->clipboard->write_data(state->clipboard_context,
                                        &response);
     free(large);
+    return LIBRDP_STATUS_OK;
 }
 
-static void test_clipboard_file_request(
+static librdp_status test_clipboard_file_request(
     const server_platform_clipboard_file_request* request,
     void* user_data)
 {
     (void)request;
     (void)user_data;
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+static librdp_status test_clipboard_cancel(
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    uint64_t request_id,
+    void* user_data)
+{
+    x11_server_test_state* state = (x11_server_test_state*)user_data;
+
+    if (!state || peer_id == 0u || generation == 0u ||
+        ownership_generation == 0u || request_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    state->cancel_count++;
+    return LIBRDP_STATUS_OK;
 }
 
 static void test_permission_changed(
@@ -713,6 +735,7 @@ static int test_x11_providers(const char* display_name)
     Atom property = None;
     uint8_t* selection = NULL;
     size_t selection_len = 0u;
+    uint64_t request_count = 0u;
     unsigned int index = 0u;
 
     memset(&state, 0, sizeof(state));
@@ -807,6 +830,7 @@ static int test_x11_providers(const char* display_name)
     clipboard_sink.data = test_clipboard_data;
     clipboard_sink.request = test_clipboard_request;
     clipboard_sink.file_request = test_clipboard_file_request;
+    clipboard_sink.cancel = test_clipboard_cancel;
     clipboard_sink.user_data = &state;
     CHECK(clipboard->start(context, &clipboard_sink) == LIBRDP_STATUS_OK);
     state.clipboard = clipboard;
@@ -925,6 +949,30 @@ static int test_x11_providers(const char* display_name)
     for (index = 0u; index < selection_len; index++)
         CHECK(selection[index] == 'x');
     free(selection);
+
+    state.send_large_clipboard = 0;
+    state.defer_clipboard_response = 1;
+    request_count = state.request_count;
+    XConvertSelection(client,
+                      XInternAtom(client, "CLIPBOARD", False),
+                      XInternAtom(client, "UTF8_STRING", False),
+                      property,
+                      requestor,
+                      CurrentTime);
+    XFlush(client);
+    for (index = 0u;
+         index < 20u && state.request_count == request_count;
+         index++)
+        CHECK(test_dispatch_platform(capture, context, 100));
+    CHECK(state.request_count == request_count + 1u);
+    x11_server_context_test_expire_clipboard(context);
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, SelectionNotify, &event, 1000u));
+        CHECK(event.xselection.property == None);
+    }
+    CHECK(state.cancel_count == 1u);
 
     clipboard->stop(context);
     pointer->stop(context);

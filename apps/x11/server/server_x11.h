@@ -64,4 +64,9 @@ librdp_status x11_server_context_set_permission(
     server_platform_permission_kind kind,
     server_platform_permission_state state);
 
+#ifdef LIBRDP_X11_SERVER_TESTING
+void x11_server_context_test_expire_clipboard(
+    x11_server_context* context);
+#endif
+
 #endif

@@ -1293,6 +1293,38 @@ librdp_status server_clipboard_runtime_platform_file_request(
     return status;
 }
 
+librdp_status server_clipboard_runtime_platform_cancel(
+    server_clipboard_runtime* runtime,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    uint64_t request_id)
+{
+    server_clipboard_peer* peer = NULL;
+    server_clipboard_pending* pending = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!runtime || peer_id == 0u || generation == 0u ||
+        ownership_generation == 0u || request_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    peer = server_clipboard_find_peer(runtime, peer_id, generation);
+    if (!peer || ownership_generation != runtime->published_generation ||
+        ownership_generation != peer->ownership_generation)
+        return LIBRDP_STATUS_STATE;
+    if (peer->remote_data.kind == SERVER_CLIPBOARD_PENDING_REMOTE_DATA &&
+        peer->remote_data.request_id == request_id)
+        pending = &peer->remote_data;
+    else if (peer->remote_file.kind ==
+                 SERVER_CLIPBOARD_PENDING_REMOTE_FILE &&
+             peer->remote_file.request_id == request_id)
+        pending = &peer->remote_file;
+    if (!pending)
+        return LIBRDP_STATUS_STATE;
+    status = peer->protocol->cancel_requests(peer->protocol_context);
+    server_clipboard_pending_clear(runtime, pending);
+    return status;
+}
+
 void server_clipboard_runtime_revoke(server_clipboard_runtime* runtime)
 {
     uint32_t index = 0;

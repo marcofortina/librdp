@@ -29,7 +29,7 @@
 #define SERVER_PLATFORM_CAPTURE_VERSION 1u
 #define SERVER_PLATFORM_POINTER_VERSION 1u
 #define SERVER_PLATFORM_INPUT_VERSION 1u
-#define SERVER_PLATFORM_CLIPBOARD_VERSION 3u
+#define SERVER_PLATFORM_CLIPBOARD_VERSION 4u
 #define SERVER_PLATFORM_DRIVE_VERSION 2u
 #define SERVER_PLATFORM_PERMISSION_VERSION 1u
 
@@ -190,11 +190,17 @@ typedef void (*server_platform_clipboard_formats_callback)(
 typedef void (*server_platform_clipboard_data_callback)(
     const server_platform_clipboard_data* data,
     void* user_data);
-typedef void (*server_platform_clipboard_request_callback)(
+typedef librdp_status (*server_platform_clipboard_request_callback)(
     const server_platform_clipboard_request* request,
     void* user_data);
-typedef void (*server_platform_clipboard_file_request_callback)(
+typedef librdp_status (*server_platform_clipboard_file_request_callback)(
     const server_platform_clipboard_file_request* request,
+    void* user_data);
+typedef librdp_status (*server_platform_clipboard_cancel_callback)(
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    uint64_t request_id,
     void* user_data);
 typedef void (*server_platform_drive_request_callback)(
     const server_platform_drive_request* request,
@@ -226,6 +232,7 @@ typedef struct server_platform_clipboard_sink
     server_platform_clipboard_data_callback data;
     server_platform_clipboard_request_callback request;
     server_platform_clipboard_file_request_callback file_request;
+    server_platform_clipboard_cancel_callback cancel;
     void* user_data;
 } server_platform_clipboard_sink;
 

@@ -133,6 +133,12 @@ librdp_status server_clipboard_runtime_platform_request(
 librdp_status server_clipboard_runtime_platform_file_request(
     server_clipboard_runtime* runtime,
     const server_platform_clipboard_file_request* request);
+librdp_status server_clipboard_runtime_platform_cancel(
+    server_clipboard_runtime* runtime,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    uint64_t request_id);
 void server_clipboard_runtime_revoke(server_clipboard_runtime* runtime);
 
 #endif

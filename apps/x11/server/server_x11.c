@@ -512,6 +512,7 @@ static librdp_status x11_server_events_dispatch(void* opaque,
         x11_server_clipboard_handle_event(context, &event);
         dispatched++;
     }
+    x11_server_clipboard_dispatch_timeout(context, x11_server_now_ns());
     if (context->capture_due && context->capture_started)
         return x11_server_capture_frame(context);
     return LIBRDP_STATUS_OK;
@@ -521,10 +522,13 @@ static librdp_status x11_server_events_get_next_timeout(void* opaque,
                                                         int* timeout_ms)
 {
     x11_server_context* context = (x11_server_context*)opaque;
+    int clipboard_timeout = -1;
 
     if (!context || !timeout_ms)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *timeout_ms = context->capture_due ? 0 : -1;
+    clipboard_timeout =
+        x11_server_clipboard_next_timeout_ms(context, x11_server_now_ns());
+    *timeout_ms = context->capture_due ? 0 : clipboard_timeout;
     return LIBRDP_STATUS_OK;
 }
 

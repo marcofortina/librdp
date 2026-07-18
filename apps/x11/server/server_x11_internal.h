@@ -32,6 +32,7 @@
 #include <sys/shm.h>
 
 #define X11_SERVER_CLIPBOARD_MAX_FORMATS 8u
+#define X11_SERVER_CLIPBOARD_TIMEOUT_NS 10000000000ull
 typedef struct x11_server_shm_image
 {
     XImage* image;
@@ -50,6 +51,7 @@ typedef struct x11_server_clipboard_read
     int active;
     int incremental;
     int discovering_formats;
+    uint64_t deadline_ns;
 } x11_server_clipboard_read;
 
 typedef struct x11_server_clipboard_write
@@ -63,6 +65,7 @@ typedef struct x11_server_clipboard_write
     size_t offset;
     int active;
     int incremental;
+    uint64_t deadline_ns;
 } x11_server_clipboard_write;
 
 struct x11_server_context
@@ -172,6 +175,10 @@ void x11_server_pointer_handle_event(x11_server_context* context,
                                      const XEvent* event);
 void x11_server_clipboard_handle_event(x11_server_context* context,
                                        const XEvent* event);
+void x11_server_clipboard_dispatch_timeout(x11_server_context* context,
+                                           uint64_t now_ns);
+int x11_server_clipboard_next_timeout_ms(const x11_server_context* context,
+                                         uint64_t now_ns);
 void x11_server_pointer_emit(x11_server_context* context, int include_shape);
 
 extern const server_platform_capture_vtable x11_server_capture_vtable;

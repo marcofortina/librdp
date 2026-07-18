@@ -28,6 +28,15 @@
 #define X11_SERVER_CLIPBOARD_MAX_BYTES (16u * 1024u * 1024u)
 #define X11_SERVER_CLIPBOARD_CHUNK_BYTES 65536u
 
+static uint64_t x11_server_clipboard_deadline(void)
+{
+    uint64_t now_ns = x11_server_now_ns();
+
+    if (now_ns > UINT64_MAX - X11_SERVER_CLIPBOARD_TIMEOUT_NS)
+        return UINT64_MAX;
+    return now_ns + X11_SERVER_CLIPBOARD_TIMEOUT_NS;
+}
+
 static void x11_server_clipboard_read_clear(x11_server_context* context)
 {
     x11_server_clipboard_read* read = context ? &context->clipboard_read : NULL;
@@ -85,6 +94,7 @@ static int x11_server_clipboard_append(x11_server_clipboard_read* read,
     if (length > 0u)
         memcpy(read->data + read->length, data, length);
     read->length = required;
+    read->deadline_ns = x11_server_clipboard_deadline();
     return 1;
 }
 
@@ -620,6 +630,7 @@ static void x11_server_clipboard_handle_selection_notify(
     if (type == context->atom_incr)
     {
         read->incremental = 1;
+        read->deadline_ns = x11_server_clipboard_deadline();
         XDeleteProperty(context->display,
                         context->owner_window,
                         selection->property);
@@ -686,6 +697,8 @@ static void x11_server_clipboard_handle_incr_read(
         XFree(data);
     if (length == 0u)
         x11_server_clipboard_deliver_read(context, LIBRDP_STATUS_OK);
+    else
+        read->deadline_ns = x11_server_clipboard_deadline();
 }
 
 static void x11_server_clipboard_handle_incr_write(
@@ -726,6 +739,7 @@ static void x11_server_clipboard_handle_incr_write(
                     write->data + write->offset,
                     (int)chunk);
     write->offset += chunk;
+    write->deadline_ns = x11_server_clipboard_deadline();
     XFlush(context->display);
 }
 
@@ -737,6 +751,7 @@ static void x11_server_clipboard_begin_discovery(
     context->clipboard_read.active = 1;
     context->clipboard_read.discovering_formats = 1;
     context->clipboard_read.target = context->atom_targets;
+    context->clipboard_read.deadline_ns = x11_server_clipboard_deadline();
     XConvertSelection(context->display,
                       context->atom_clipboard,
                       context->atom_targets,
@@ -756,6 +771,16 @@ static void x11_server_clipboard_handle_owner(
         return;
     if (event->owner == None)
     {
+        if (context->clipboard_read.active &&
+            !context->clipboard_read.discovering_formats)
+        {
+            x11_server_clipboard_deliver_read(context,
+                                              LIBRDP_STATUS_CANCELLED);
+        }
+        else
+        {
+            x11_server_clipboard_read_clear(context);
+        }
         x11_server_clipboard_files_reset(context->clipboard_files);
         context->clipboard_local_generation++;
         if (context->clipboard_sink.formats)
@@ -845,6 +870,7 @@ static void x11_server_clipboard_handle_selection_request(
     context->clipboard_write.target = request->target;
     {
         server_platform_clipboard_request platform_request;
+        librdp_status status = LIBRDP_STATUS_OK;
 
         memset(&platform_request, 0, sizeof(platform_request));
         platform_request.peer_id = context->clipboard_remote_peer_id;
@@ -855,10 +881,125 @@ static void x11_server_clipboard_handle_selection_request(
         platform_request.request_id =
             context->clipboard_write.request_id;
         platform_request.format_id = format_id;
-        context->clipboard_sink.request(
+        status = context->clipboard_sink.request(
             &platform_request,
             context->clipboard_sink.user_data);
+
+        if (status != LIBRDP_STATUS_OK)
+        {
+            x11_server_clipboard_send_selection_notify(context,
+                                                       &context->clipboard_write.request,
+                                                       None);
+            x11_server_clipboard_write_clear(context);
+            return;
+        }
     }
+    context->clipboard_write.deadline_ns = x11_server_clipboard_deadline();
+}
+
+static void x11_server_clipboard_cancel_write(x11_server_context* context)
+{
+    x11_server_clipboard_write* write = NULL;
+
+    if (!context || !context->clipboard_write.active)
+        return;
+    write = &context->clipboard_write;
+    if (context->clipboard_sink.cancel &&
+        context->clipboard_remote_peer_id != 0u &&
+        context->clipboard_remote_peer_generation != 0u &&
+        context->clipboard_remote_generation != 0u)
+    {
+        (void)context->clipboard_sink.cancel(
+            context->clipboard_remote_peer_id,
+            context->clipboard_remote_peer_generation,
+            context->clipboard_remote_generation,
+            write->request_id,
+            context->clipboard_sink.user_data);
+    }
+    if (write->incremental)
+    {
+        XChangeProperty(context->display,
+                        write->request.requestor,
+                        write->request.property,
+                        write->target,
+                        8,
+                        PropModeReplace,
+                        NULL,
+                        0);
+        XFlush(context->display);
+    }
+    else
+    {
+        x11_server_clipboard_send_selection_notify(context,
+                                                   &write->request,
+                                                   None);
+    }
+    x11_server_clipboard_write_clear(context);
+}
+
+void x11_server_clipboard_dispatch_timeout(x11_server_context* context,
+                                           uint64_t now_ns)
+{
+    if (!context || !context->clipboard_started)
+        return;
+    if (context->clipboard_read.active &&
+        context->clipboard_read.deadline_ns != 0u &&
+        now_ns >= context->clipboard_read.deadline_ns)
+    {
+        if (context->clipboard_read.discovering_formats)
+            x11_server_clipboard_read_clear(context);
+        else
+            x11_server_clipboard_deliver_read(context,
+                                              LIBRDP_STATUS_TIMEOUT);
+    }
+    if (context->clipboard_write.active &&
+        context->clipboard_write.deadline_ns != 0u &&
+        now_ns >= context->clipboard_write.deadline_ns)
+        x11_server_clipboard_cancel_write(context);
+}
+
+static int x11_server_clipboard_deadline_timeout_ms(uint64_t deadline_ns,
+                                                    uint64_t now_ns)
+{
+    uint64_t remaining_ns = 0u;
+    uint64_t timeout_ms = 0u;
+
+    if (deadline_ns == 0u)
+        return -1;
+    if (now_ns >= deadline_ns)
+        return 0;
+    remaining_ns = deadline_ns - now_ns;
+    timeout_ms = remaining_ns / 1000000u;
+    if ((remaining_ns % 1000000u) != 0u)
+        timeout_ms++;
+    return timeout_ms > (uint64_t)INT_MAX ? INT_MAX : (int)timeout_ms;
+}
+
+int x11_server_clipboard_next_timeout_ms(const x11_server_context* context,
+                                         uint64_t now_ns)
+{
+    int read_timeout = -1;
+    int write_timeout = -1;
+
+    if (!context || !context->clipboard_started)
+        return -1;
+    if (context->clipboard_read.active)
+    {
+        read_timeout = x11_server_clipboard_deadline_timeout_ms(
+            context->clipboard_read.deadline_ns,
+            now_ns);
+    }
+    if (context->clipboard_write.active)
+    {
+        write_timeout = x11_server_clipboard_deadline_timeout_ms(
+            context->clipboard_write.deadline_ns,
+            now_ns);
+    }
+    if (read_timeout < 0)
+        return write_timeout;
+    if (write_timeout < 0)
+        return read_timeout;
+    return read_timeout < write_timeout ? read_timeout : write_timeout;
 }
 
 void x11_server_clipboard_handle_event(x11_server_context* context,
@@ -877,11 +1018,11 @@ void x11_server_clipboard_handle_event(x11_server_context* context,
     {
         if (event->xselectionclear.selection == context->atom_clipboard)
         {
+            x11_server_clipboard_cancel_write(context);
             context->clipboard_remote_peer_id = 0u;
             context->clipboard_remote_peer_generation = 0u;
             context->clipboard_remote_generation = 0u;
             context->remote_format_count = 0u;
-            x11_server_clipboard_write_clear(context);
         }
     }
     else if (event->type == PropertyNotify)
@@ -907,7 +1048,7 @@ static librdp_status x11_server_clipboard_start(
     x11_server_context* context = (x11_server_context*)opaque;
 
     if (!context || !sink || !sink->formats || !sink->data ||
-        !sink->request || !sink->file_request)
+        !sink->request || !sink->file_request || !sink->cancel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (context->clipboard_started)
         return LIBRDP_STATUS_STATE;
@@ -1013,6 +1154,7 @@ static librdp_status x11_server_clipboard_request_data(
     context->clipboard_read.request_id = request_id;
     context->clipboard_read.format_id = format_id;
     context->clipboard_read.target = target;
+    context->clipboard_read.deadline_ns = x11_server_clipboard_deadline();
     XConvertSelection(context->display,
                       context->atom_clipboard,
                       target,
@@ -1098,6 +1240,7 @@ static librdp_status x11_server_clipboard_write_data(
     }
     write->data = converted;
     write->length = converted_len;
+    write->deadline_ns = x11_server_clipboard_deadline();
     if (converted_len <= X11_SERVER_CLIPBOARD_CHUNK_BYTES)
     {
         XChangeProperty(context->display,
@@ -1198,3 +1341,11 @@ const server_platform_clipboard_vtable x11_server_clipboard_vtable = {
     x11_server_clipboard_release_ownership,
     NULL,
 };
+
+#ifdef LIBRDP_X11_SERVER_TESTING
+void x11_server_context_test_expire_clipboard(
+    x11_server_context* context)
+{
+    x11_server_clipboard_dispatch_timeout(context, UINT64_MAX);
+}
+#endif

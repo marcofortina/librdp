@@ -273,7 +273,7 @@ static librdp_status mock_clipboard_start(
     mock_platform_context* mock = (mock_platform_context*)context;
 
     if (!mock || !sink || !sink->formats || !sink->data ||
-        !sink->request || !sink->file_request)
+        !sink->request || !sink->file_request || !sink->cancel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     mock->clipboard_sink = *sink;
     mock->starts++;
@@ -942,6 +942,27 @@ static int test_clipboard_runtime(void)
     request.request_id = 42u;
     CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
           LIBRDP_STATUS_OK);
+    CHECK(server_clipboard_runtime_platform_cancel(
+              runtime,
+              request.peer_id,
+              request.generation,
+              request.ownership_generation,
+              request.request_id) == LIBRDP_STATUS_OK);
+    CHECK(protocol.cancellations == 1u);
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(server_clipboard_runtime_platform_cancel(
+              runtime,
+              request.peer_id,
+              request.generation,
+              request.ownership_generation,
+              request.request_id) == LIBRDP_STATUS_STATE);
+    request.request_id = 43u;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_OK);
     CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
     event.type = LIBRDP_SERVER_CLIPBOARD_CANCELLED;
     event.related_type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_RESPONSE;
@@ -1100,7 +1121,7 @@ static int test_clipboard_runtime(void)
     CHECK(protocol.file_responses == 2u && !protocol.response_ok);
 
     server_clipboard_runtime_remove_peer(runtime, 7u, 1u);
-    CHECK(protocol.cancellations == 1u);
+    CHECK(protocol.cancellations == 2u);
     CHECK(platform.clipboard_cancels == 1u);
     request.generation = 1u;
     CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
@@ -1118,7 +1139,7 @@ static int test_clipboard_runtime(void)
     CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
           LIBRDP_STATUS_STATE);
     server_clipboard_runtime_free(runtime);
-    CHECK(protocol.cancellations == 3u);
+    CHECK(protocol.cancellations == 4u);
     return 0;
 }
 
