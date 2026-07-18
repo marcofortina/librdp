@@ -43,6 +43,7 @@ struct server_host
     server_platform platform;
     server_dirty_config dirty_config;
     server_host_peer_slot* peers;
+    server_clipboard_runtime* clipboard;
     size_t peer_capacity;
     size_t peer_count;
     uint32_t next_peer_id;
@@ -56,6 +57,8 @@ struct server_host
     void* trace_user_data;
     uint64_t trace_sequence;
     server_host_metrics metrics;
+    uint16_t next_pointer_cache_index;
+    uint8_t pointer_visible;
     int listener_running;
     struct pollfd* pollfds;
     size_t poll_capacity;

@@ -22,6 +22,24 @@
 #include <string.h>
 #include <unistd.h>
 
+typedef struct server_host_provider_mapping
+{
+    librdp_server_extension_family family;
+    server_platform_provider_kind provider;
+} server_host_provider_mapping;
+
+static const server_host_provider_mapping server_host_provider_mappings[] = {
+    {LIBRDP_SERVER_EXTENSION_GRAPHICS, SERVER_PLATFORM_PROVIDER_CAPTURE},
+    {LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR, SERVER_PLATFORM_PROVIDER_POINTER},
+    {LIBRDP_SERVER_EXTENSION_CORE_INPUT, SERVER_PLATFORM_PROVIDER_INPUT},
+    {LIBRDP_SERVER_EXTENSION_TOUCH_INPUT, SERVER_PLATFORM_PROVIDER_INPUT},
+    {LIBRDP_SERVER_EXTENSION_CLIPBOARD, SERVER_PLATFORM_PROVIDER_CLIPBOARD},
+};
+
+static uint16_t server_host_peer_clipboard_channel(
+    const librdp_server_peer* peer,
+    uint16_t joined_channel_id);
+
 void server_host_config_init(server_host_config* config)
 {
     if (!config)
@@ -32,6 +50,7 @@ void server_host_config_init(server_host_config* config)
     (void)librdp_server_config_init(&config->server);
     server_platform_init(&config->platform);
     server_dirty_config_init(&config->dirty);
+    server_clipboard_config_init(&config->clipboard);
     config->max_peers = 4u;
     config->max_work_per_iteration = 32u;
     config->input_policy = SERVER_HOST_INPUT_FIRST_ACTIVE;
@@ -56,6 +75,8 @@ static int server_host_config_valid(const server_host_config* config)
            config->input_policy <= SERVER_HOST_INPUT_EXPLICIT &&
            config->platform.capture.vtable &&
            config->platform.permission.vtable &&
+           server_clipboard_config_validate(&config->clipboard) ==
+               LIBRDP_STATUS_OK &&
            server_dirty_config_validate(&config->dirty) == LIBRDP_STATUS_OK &&
            server_platform_validate(&config->platform) == LIBRDP_STATUS_OK;
 }
@@ -126,6 +147,26 @@ server_host* server_host_new(const server_host_config* config)
     host->platform = config->platform;
     host->dirty_config = config->dirty;
     host->peer_capacity = config->max_peers;
+    if (host->platform.clipboard.vtable)
+    {
+        server_clipboard_config clipboard_config = config->clipboard;
+
+        clipboard_config.max_peers = config->max_peers;
+        host->clipboard = server_clipboard_runtime_new(
+            &clipboard_config,
+            (const server_platform_clipboard_vtable*)
+                host->platform.clipboard.vtable,
+            host->platform.clipboard.context);
+        if (!host->clipboard)
+        {
+            close(host->wakeup_read_fd);
+            close(host->wakeup_write_fd);
+            librdp_server_free(host->listener);
+            free(host->peers);
+            free(host);
+            return NULL;
+        }
+    }
     host->max_work_per_iteration = config->max_work_per_iteration;
     host->input_policy = config->input_policy;
     host->trace_callback = config->trace_callback;
@@ -214,25 +255,17 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
     if (slot->protocol)
     {
         server_host_cancel_peer_protocol(slot->protocol);
-        if (host &&
-            host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD])
+        if (host && host->clipboard)
         {
-            const server_platform_clipboard_vtable* clipboard =
-                (const server_platform_clipboard_vtable*)
-                    host->platform.clipboard.vtable;
-
-            clipboard->cancel_peer(host->platform.clipboard.context,
-                                   slot->id,
-                                   slot->clipboard_generation);
-            clipboard->release_ownership(
-                host->platform.clipboard.context,
-                slot->clipboard_generation);
+            server_clipboard_runtime_remove_peer(host->clipboard,
+                                                 slot->id,
+                                                 slot->generation);
             server_host_metric_add(&host->metrics.clipboard_cleanups, 1u);
             server_host_trace_emit(host,
                                    SERVER_HOST_TRACE_CLIPBOARD_CLEANUP,
                                    slot,
                                    LIBRDP_STATUS_OK,
-                                   slot->clipboard_generation,
+                                   slot->generation,
                                    1u);
         }
         if (host && host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE])
@@ -483,12 +516,111 @@ static void server_host_capture_lost(librdp_status status, void* user_data)
     host->state = SERVER_HOST_FAILED;
 }
 
+/*
+ * Validate one borrowed native pointer snapshot, then emit only normalized
+ * public server updates to active peers. Shape storage is never retained,
+ * cache indices advance once per accepted shape, and one peer send failure is
+ * isolated to its metrics rather than suppressing updates for other peers.
+ */
 static void server_host_pointer_update(
     const server_platform_pointer* pointer,
     void* user_data)
 {
-    (void)pointer;
-    (void)user_data;
+    server_host* host = (server_host*)user_data;
+    librdp_server_pointer_update update;
+    size_t index = 0;
+    int position_valid = 0;
+
+    if (!host || !pointer || host->state != SERVER_HOST_LISTENING)
+        return;
+    position_valid =
+        pointer->x >= 0 && pointer->y >= 0 &&
+        (uint32_t)pointer->x <= UINT16_MAX &&
+        (uint32_t)pointer->y <= UINT16_MAX;
+    if (pointer->visible && !position_valid)
+        return;
+    if (pointer->shape_valid &&
+        (pointer->width == 0u || pointer->height == 0u ||
+         pointer->width > UINT16_MAX || pointer->height > UINT16_MAX ||
+         pointer->hotspot_x >= pointer->width ||
+         pointer->hotspot_y >= pointer->height || !pointer->pixels))
+        return;
+
+    for (index = 0; index < host->peer_capacity; index++)
+    {
+        server_host_peer_slot* slot = &host->peers[index];
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        if (!slot->occupied || !slot->protocol ||
+            slot->state != SERVER_HOST_PEER_ACTIVE)
+            continue;
+        (void)librdp_server_pointer_update_init(&update);
+        if (!pointer->visible)
+        {
+            update.type = LIBRDP_SERVER_POINTER_HIDDEN;
+            status = librdp_server_peer_send_pointer_update(slot->protocol,
+                                                            &update);
+        }
+        else
+        {
+            if (pointer->shape_valid)
+            {
+                update.type = LIBRDP_SERVER_POINTER_SHAPE;
+                update.cache_index = host->next_pointer_cache_index;
+                update.hotspot_x = (uint16_t)pointer->hotspot_x;
+                update.hotspot_y = (uint16_t)pointer->hotspot_y;
+                update.width = (uint16_t)pointer->width;
+                update.height = (uint16_t)pointer->height;
+                update.stride = pointer->stride;
+                update.pixels = pointer->pixels;
+                update.pixels_len = pointer->pixels_len;
+                status = librdp_server_peer_send_pointer_update(slot->protocol,
+                                                                &update);
+            }
+            else if (!host->pointer_visible)
+            {
+                update.type = LIBRDP_SERVER_POINTER_DEFAULT;
+                status = librdp_server_peer_send_pointer_update(slot->protocol,
+                                                                &update);
+            }
+            if (status == LIBRDP_STATUS_OK)
+            {
+                (void)librdp_server_pointer_update_init(&update);
+                update.type = LIBRDP_SERVER_POINTER_POSITION;
+                update.x = (uint16_t)pointer->x;
+                update.y = (uint16_t)pointer->y;
+                status = librdp_server_peer_send_pointer_update(slot->protocol,
+                                                                &update);
+            }
+        }
+        if (status == LIBRDP_STATUS_OK)
+        {
+            server_host_metric_add(&host->metrics.pointer_updates, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_POINTER_UPDATE,
+                                   slot,
+                                   status,
+                                   pointer->sequence,
+                                   1u);
+        }
+        else
+        {
+            server_host_metric_add(&host->metrics.pointer_failures, 1u);
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_POINTER_FAILED,
+                                   slot,
+                                   status,
+                                   pointer->sequence,
+                                   1u);
+        }
+    }
+    if (pointer->shape_valid)
+    {
+        host->next_pointer_cache_index++;
+        if (host->next_pointer_cache_index == 0u)
+            host->next_pointer_cache_index = 1u;
+    }
+    host->pointer_visible = pointer->visible ? 1u : 0u;
 }
 
 static void server_host_clipboard_formats(
@@ -498,15 +630,19 @@ static void server_host_clipboard_formats(
     void* user_data)
 {
     server_host* host = (server_host*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    (void)formats;
-    if (!host)
+    if (!host || !host->clipboard)
         return;
+    status = server_clipboard_runtime_platform_formats(host->clipboard,
+                                                       formats,
+                                                       format_count,
+                                                       generation);
     server_host_metric_add(&host->metrics.clipboard_events, 1u);
     server_host_trace_emit(host,
                            SERVER_HOST_TRACE_CLIPBOARD_EVENT,
                            NULL,
-                           LIBRDP_STATUS_OK,
+                           status,
                            generation,
                            (uint64_t)format_count);
 }
@@ -516,16 +652,58 @@ static void server_host_clipboard_data(
     void* user_data)
 {
     server_host* host = (server_host*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!host || !data)
+    if (!host || !host->clipboard || !data)
         return;
+    status = server_clipboard_runtime_platform_data(host->clipboard, data);
     server_host_metric_add(&host->metrics.clipboard_events, 1u);
     server_host_trace_emit(host,
                            SERVER_HOST_TRACE_CLIPBOARD_EVENT,
                            NULL,
-                           LIBRDP_STATUS_OK,
+                           status,
                            data->request_id,
                            data->data_len);
+}
+
+static void server_host_clipboard_request(
+    const server_platform_clipboard_request* request,
+    void* user_data)
+{
+    server_host* host = (server_host*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host || !host->clipboard || !request)
+        return;
+    status = server_clipboard_runtime_platform_request(host->clipboard,
+                                                       request);
+    server_host_metric_add(&host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           server_host_find_peer_slot(host, request->peer_id),
+                           status,
+                           request->request_id,
+                           1u);
+}
+
+static void server_host_clipboard_file_request(
+    const server_platform_clipboard_file_request* request,
+    void* user_data)
+{
+    server_host* host = (server_host*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host || !host->clipboard || !request)
+        return;
+    status = server_clipboard_runtime_platform_file_request(host->clipboard,
+                                                            request);
+    server_host_metric_add(&host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           server_host_find_peer_slot(host, request->peer_id),
+                           status,
+                           request->request_id,
+                           request->requested_bytes);
 }
 
 static void server_host_drive_request(uint32_t peer_id,
@@ -548,6 +726,12 @@ static void server_host_drive_request(uint32_t peer_id,
                            1u);
 }
 
+/*
+ * Apply native permission changes to both listener bookkeeping and every live
+ * peer provider gate. Revocation cancels domain state before disabling the
+ * protocol path; regrant only reactivates clipboard transport when its static
+ * channel was already joined, preserving negotiation and ownership ordering.
+ */
 static void server_host_permission_changed(
     server_platform_permission_kind kind,
     server_platform_permission_state state,
@@ -577,6 +761,8 @@ static void server_host_permission_changed(
     }
     if (provider < SERVER_PLATFORM_PROVIDER_COUNT)
     {
+        size_t index = 0;
+
         host->provider_states[provider] =
             state == SERVER_PLATFORM_PERMISSION_GRANTED
                 ? SERVER_HOST_PROVIDER_READY
@@ -591,7 +777,119 @@ static void server_host_permission_changed(
                                    : LIBRDP_STATUS_STATE,
                                (uint64_t)kind,
                                (uint64_t)state);
+        if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD &&
+            state != SERVER_PLATFORM_PERMISSION_GRANTED &&
+            host->clipboard)
+            server_clipboard_runtime_revoke(host->clipboard);
+        for (index = 0; index < host->peer_capacity; index++)
+        {
+            server_host_peer_slot* slot = &host->peers[index];
+            size_t mapping_index = 0;
+
+            if (!slot->occupied || !slot->protocol)
+                continue;
+            for (mapping_index = 0;
+                 mapping_index <
+                     sizeof(server_host_provider_mappings) /
+                         sizeof(server_host_provider_mappings[0]);
+                 mapping_index++)
+            {
+                const server_host_provider_mapping* mapping =
+                    &server_host_provider_mappings[mapping_index];
+
+                if (mapping->provider != provider)
+                    continue;
+                (void)librdp_server_peer_enable_extension_provider(
+                    slot->protocol,
+                    mapping->family,
+                    state == SERVER_PLATFORM_PERMISSION_GRANTED);
+            }
+            if (state == SERVER_PLATFORM_PERMISSION_GRANTED)
+            {
+                if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD &&
+                    host->clipboard)
+                {
+                    uint16_t channel_id =
+                        server_host_peer_clipboard_channel(slot->protocol, 0u);
+
+                    if (channel_id != 0u)
+                    {
+                        (void)server_clipboard_runtime_channel_ready(
+                            host->clipboard,
+                            slot->id,
+                            slot->generation,
+                            channel_id);
+                    }
+                }
+                continue;
+            }
+            if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD)
+            {
+                (void)librdp_server_peer_cancel_clipboard_requests(
+                    slot->protocol);
+            }
+        }
+        if (state != SERVER_PLATFORM_PERMISSION_GRANTED &&
+            kind == SERVER_PLATFORM_PERMISSION_INPUT)
+            server_host_release_input_owner(host);
     }
+}
+
+/*
+ * Publish only providers that completed native startup and permission checks.
+ * Listener state is copied into accepted peers, while later permission
+ * revocation is applied through the peer-scoped provider API.
+ */
+static librdp_status server_host_configure_listener_providers(server_host* host)
+{
+    size_t index = 0;
+
+    if (!host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (index = 0;
+         index < sizeof(server_host_provider_mappings) /
+                     sizeof(server_host_provider_mappings[0]);
+         index++)
+    {
+        const server_host_provider_mapping* mapping =
+            &server_host_provider_mappings[index];
+        librdp_status status = librdp_server_enable_extension_provider(
+            host->listener,
+            mapping->family,
+            host->provider_states[mapping->provider] ==
+                SERVER_HOST_PROVIDER_READY);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status server_host_configure_peer_providers(
+    server_host* host,
+    librdp_server_peer* peer)
+{
+    size_t index = 0;
+
+    if (!host || !peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (index = 0;
+         index < sizeof(server_host_provider_mappings) /
+                     sizeof(server_host_provider_mappings[0]);
+         index++)
+    {
+        const server_host_provider_mapping* mapping =
+            &server_host_provider_mappings[index];
+        librdp_status status = librdp_server_peer_enable_extension_provider(
+            peer,
+            mapping->family,
+            host->provider_states[mapping->provider] ==
+                SERVER_HOST_PROVIDER_READY);
+
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 /*
@@ -693,6 +991,9 @@ static librdp_status server_host_start_providers(server_host* host)
             memset(&clipboard_sink, 0, sizeof(clipboard_sink));
             clipboard_sink.formats = server_host_clipboard_formats;
             clipboard_sink.data = server_host_clipboard_data;
+            clipboard_sink.request = server_host_clipboard_request;
+            clipboard_sink.file_request =
+                server_host_clipboard_file_request;
             clipboard_sink.user_data = host;
             host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] =
                 SERVER_HOST_PROVIDER_STARTING;
@@ -767,6 +1068,7 @@ static void server_host_stop_providers(server_host* host)
     if (clipboard &&
         host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD])
     {
+        server_clipboard_runtime_revoke(host->clipboard);
         clipboard->stop(host->platform.clipboard.context);
         host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] =
@@ -845,6 +1147,8 @@ librdp_status server_host_start(server_host* host)
                            0u,
                            1u);
     status = server_host_start_providers(host);
+    if (status == LIBRDP_STATUS_OK)
+        status = server_host_configure_listener_providers(host);
     if (status == LIBRDP_STATUS_OK)
         status = librdp_server_listen(host->listener);
     if (status != LIBRDP_STATUS_OK)
@@ -925,6 +1229,7 @@ void server_host_free(server_host* host)
         return;
     (void)server_host_stop(host);
     librdp_server_free(host->listener);
+    server_clipboard_runtime_free(host->clipboard);
     if (host->wakeup_read_fd >= 0)
         close(host->wakeup_read_fd);
     if (host->wakeup_write_fd >= 0)
@@ -955,6 +1260,135 @@ uint16_t server_host_local_port(const server_host* host)
     return host ? librdp_server_local_port(host->listener) : 0u;
 }
 
+static librdp_status server_host_clipboard_send_monitor_ready(
+    void* context,
+    uint16_t channel_id)
+{
+    return librdp_server_peer_send_clipboard_monitor_ready(
+        (librdp_server_peer*)context,
+        channel_id);
+}
+
+static librdp_status server_host_clipboard_send_capabilities(
+    void* context,
+    uint16_t channel_id,
+    uint32_t flags)
+{
+    return librdp_server_peer_send_clipboard_capabilities(
+        (librdp_server_peer*)context,
+        channel_id,
+        flags);
+}
+
+static librdp_status server_host_clipboard_send_format_list(
+    void* context,
+    uint16_t channel_id,
+    const librdp_server_clipboard_format* formats,
+    uint32_t format_count,
+    int long_names)
+{
+    return librdp_server_peer_send_clipboard_format_list(
+        (librdp_server_peer*)context,
+        channel_id,
+        formats,
+        format_count,
+        long_names);
+}
+
+static librdp_status server_host_clipboard_send_format_list_response(
+    void* context,
+    uint16_t channel_id,
+    int ok)
+{
+    return librdp_server_peer_send_clipboard_format_list_response(
+        (librdp_server_peer*)context,
+        channel_id,
+        ok);
+}
+
+static librdp_status server_host_clipboard_send_data_request(
+    void* context,
+    uint16_t channel_id,
+    uint32_t format_id)
+{
+    return librdp_server_peer_send_clipboard_format_data_request(
+        (librdp_server_peer*)context,
+        channel_id,
+        format_id);
+}
+
+static librdp_status server_host_clipboard_send_data_response(
+    void* context,
+    uint16_t channel_id,
+    int ok,
+    const void* data,
+    size_t data_len)
+{
+    return librdp_server_peer_send_clipboard_format_data_response(
+        (librdp_server_peer*)context,
+        channel_id,
+        ok,
+        data,
+        data_len);
+}
+
+static librdp_status server_host_clipboard_send_file_request(
+    void* context,
+    uint16_t channel_id,
+    uint32_t stream_id,
+    int32_t file_index,
+    uint32_t flags,
+    uint64_t position,
+    uint32_t requested_bytes,
+    const uint32_t* clip_data_id)
+{
+    return librdp_server_peer_send_clipboard_file_contents_request(
+        (librdp_server_peer*)context,
+        channel_id,
+        stream_id,
+        file_index,
+        flags,
+        position,
+        requested_bytes,
+        clip_data_id);
+}
+
+static librdp_status server_host_clipboard_send_file_response(
+    void* context,
+    uint16_t channel_id,
+    int ok,
+    uint32_t stream_id,
+    const void* data,
+    size_t data_len)
+{
+    return librdp_server_peer_send_clipboard_file_contents_response(
+        (librdp_server_peer*)context,
+        channel_id,
+        ok,
+        stream_id,
+        data,
+        data_len);
+}
+
+static librdp_status server_host_clipboard_cancel_requests(void* context)
+{
+    return librdp_server_peer_cancel_clipboard_requests(
+        (librdp_server_peer*)context);
+}
+
+static const server_clipboard_protocol_vtable
+    server_host_clipboard_protocol = {
+        server_host_clipboard_send_monitor_ready,
+        server_host_clipboard_send_capabilities,
+        server_host_clipboard_send_format_list,
+        server_host_clipboard_send_format_list_response,
+        server_host_clipboard_send_data_request,
+        server_host_clipboard_send_data_response,
+        server_host_clipboard_send_file_request,
+        server_host_clipboard_send_file_response,
+        server_host_clipboard_cancel_requests,
+    };
+
 static void server_host_peer_input(librdp_server_peer* peer,
                                    const librdp_server_input_event* event,
                                    void* user_data)
@@ -963,6 +1397,56 @@ static void server_host_peer_input(librdp_server_peer* peer,
     (void)server_host_dispatch_peer_input(
         (server_host_peer_slot*)user_data,
         event);
+}
+
+static void server_host_peer_clipboard(
+    librdp_server_peer* peer,
+    const librdp_server_clipboard_event* event,
+    void* user_data)
+{
+    server_host_peer_slot* slot = (server_host_peer_slot*)user_data;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    (void)peer;
+    if (!slot || !slot->host || !slot->host->clipboard || !event)
+        return;
+    status = server_clipboard_runtime_protocol_event(
+        slot->host->clipboard,
+        slot->id,
+        slot->generation,
+        event);
+    server_host_metric_add(&slot->host->metrics.clipboard_events, 1u);
+    server_host_trace_emit(slot->host,
+                           SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                           slot,
+                           status,
+                           (uint64_t)event->type,
+                           event->data_len);
+}
+
+static uint16_t server_host_peer_clipboard_channel(
+    const librdp_server_peer* peer,
+    uint16_t joined_channel_id)
+{
+    uint32_t count = librdp_server_peer_static_channel_count(peer);
+    uint32_t index = 0;
+
+    for (index = 0; index < count; index++)
+    {
+        librdp_server_static_channel_info info;
+
+        if (librdp_server_static_channel_info_init(&info) !=
+                LIBRDP_STATUS_OK ||
+            librdp_server_peer_static_channel_at(peer, index, &info) !=
+                LIBRDP_STATUS_OK)
+            continue;
+        if (info.joined &&
+            (joined_channel_id == 0u ||
+             info.channel_id == joined_channel_id) &&
+            strcmp(info.name, "cliprdr") == 0)
+            return info.channel_id;
+    }
+    return 0u;
 }
 
 static int server_host_event_is_native_input(
@@ -1060,8 +1544,7 @@ static void server_host_peer_event(librdp_server_peer* peer,
 {
     server_host_peer_slot* slot = (server_host_peer_slot*)user_data;
 
-    (void)peer;
-    if (!slot || !event)
+    if (!slot || !peer || !event)
         return;
     if (event->type == LIBRDP_SERVER_EVENT_STATE_CHANGED)
     {
@@ -1097,6 +1580,40 @@ static void server_host_peer_event(librdp_server_peer* peer,
     else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
     {
         slot->state = SERVER_HOST_PEER_FAILED;
+    }
+    else if (event->type == LIBRDP_SERVER_EVENT_CHANNEL_JOINED &&
+             slot->host->clipboard &&
+             slot->host
+                     ->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] ==
+                 SERVER_HOST_PROVIDER_READY)
+    {
+        uint16_t channel_id =
+            server_host_peer_clipboard_channel(peer, event->channel_id);
+
+        if (channel_id != 0u)
+        {
+            librdp_status status =
+                server_clipboard_runtime_channel_ready(
+                    slot->host->clipboard,
+                    slot->id,
+                    slot->generation,
+                    channel_id);
+
+            if (status != LIBRDP_STATUS_OK)
+            {
+                (void)librdp_server_peer_enable_extension_provider(
+                    peer,
+                    LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                    0);
+                server_host_trace_emit(
+                    slot->host,
+                    SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                    slot,
+                    status,
+                    channel_id,
+                    1u);
+            }
+        }
     }
 }
 
@@ -1149,6 +1666,8 @@ static librdp_status server_host_prepare_peer_slot(
                                            slot->surface_height,
                                            0u,
                                            0);
+    if (status == LIBRDP_STATUS_OK)
+        status = server_host_configure_peer_providers(host, peer);
     if (status != LIBRDP_STATUS_OK)
         return status;
     status = librdp_server_peer_set_input_callback(peer,
@@ -1159,6 +1678,22 @@ static librdp_status server_host_prepare_peer_slot(
         status = librdp_server_peer_set_event_callback(peer,
                                                        server_host_peer_event,
                                                        slot);
+    }
+    if (status == LIBRDP_STATUS_OK && host->clipboard)
+    {
+        status = librdp_server_peer_set_clipboard_callback(
+            peer,
+            server_host_peer_clipboard,
+            slot);
+    }
+    if (status == LIBRDP_STATUS_OK && host->clipboard)
+    {
+        status = server_clipboard_runtime_add_peer(
+            host->clipboard,
+            slot->id,
+            slot->generation,
+            &server_host_clipboard_protocol,
+            peer);
     }
     if (status != LIBRDP_STATUS_OK)
         return status;

@@ -17,6 +17,7 @@
 #define LIBRDP_APP_SERVER_HOST_H
 
 #include "server_dirty.h"
+#include "server_clipboard.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
@@ -91,7 +92,9 @@ typedef enum server_host_trace_type
     SERVER_HOST_TRACE_QUEUE_PRESSURE = 20,
     SERVER_HOST_TRACE_WAKEUP = 21,
     SERVER_HOST_TRACE_SHUTDOWN_START = 22,
-    SERVER_HOST_TRACE_SHUTDOWN_DONE = 23
+    SERVER_HOST_TRACE_SHUTDOWN_DONE = 23,
+    SERVER_HOST_TRACE_POINTER_UPDATE = 24,
+    SERVER_HOST_TRACE_POINTER_FAILED = 25
 } server_host_trace_type;
 
 typedef struct server_host_trace_event
@@ -126,6 +129,8 @@ typedef struct server_host_metrics
     uint64_t peers_failed;
     uint64_t capture_frames;
     uint64_t capture_frames_dropped;
+    uint64_t pointer_updates;
+    uint64_t pointer_failures;
     uint64_t dirty_regions;
     uint64_t frames_presented;
     uint64_t frames_deferred;
@@ -149,6 +154,7 @@ typedef struct server_host_config
     librdp_server_config server;
     server_platform platform;
     server_dirty_config dirty;
+    server_clipboard_config clipboard;
     uint32_t max_peers;
     unsigned int max_work_per_iteration;
     server_host_input_policy input_policy;

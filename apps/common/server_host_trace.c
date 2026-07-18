@@ -48,6 +48,8 @@ static const server_host_trace_name_entry server_host_trace_names[] = {
     {SERVER_HOST_TRACE_WAKEUP, "server.host.wakeup"},
     {SERVER_HOST_TRACE_SHUTDOWN_START, "server.host.shutdown.start"},
     {SERVER_HOST_TRACE_SHUTDOWN_DONE, "server.host.shutdown.done"},
+    {SERVER_HOST_TRACE_POINTER_UPDATE, "server.host.pointer.update"},
+    {SERVER_HOST_TRACE_POINTER_FAILED, "server.host.pointer.failed"},
 };
 
 uint64_t server_host_now_ns(void)

@@ -11,6 +11,7 @@
  */
 
 #include "server_dirty.h"
+#include "server_clipboard.h"
 #include "server_host_internal.h"
 #include "server_platform.h"
 
@@ -46,11 +47,43 @@ typedef struct mock_platform_context
     uint32_t last_cleanup_peer_id;
     uint32_t last_clipboard_generation;
     uint32_t last_drive_generation;
+    uint64_t last_clipboard_request_id;
+    uint64_t last_clipboard_ownership_generation;
+    uint32_t last_clipboard_format_id;
+    uint32_t last_clipboard_stream_id;
+    uint32_t published_format_ids[8];
+    size_t published_format_count;
+    size_t clipboard_written_bytes;
+    librdp_status clipboard_written_status;
+    uint8_t clipboard_written_data[64];
+    server_platform_clipboard_file_request last_file_request;
     int event_read_fd;
     int event_write_fd;
     short event_revents;
     int timeout_ms;
 } mock_platform_context;
+
+typedef struct mock_clipboard_protocol
+{
+    unsigned int monitor_ready;
+    unsigned int capabilities;
+    unsigned int format_lists;
+    unsigned int format_list_responses;
+    unsigned int data_requests;
+    unsigned int data_responses;
+    unsigned int file_requests;
+    unsigned int file_responses;
+    unsigned int cancellations;
+    uint16_t channel_id;
+    uint32_t capability_flags;
+    uint32_t format_ids[8];
+    uint32_t format_count;
+    uint32_t requested_format_id;
+    uint32_t stream_id;
+    int response_ok;
+    size_t response_len;
+    uint8_t response_data[64];
+} mock_clipboard_protocol;
 
 #define MOCK_TRACE_CAPACITY 128u
 
@@ -235,7 +268,8 @@ static librdp_status mock_clipboard_start(
 {
     mock_platform_context* mock = (mock_platform_context*)context;
 
-    if (!mock || !sink || !sink->formats || !sink->data)
+    if (!mock || !sink || !sink->formats || !sink->data ||
+        !sink->request || !sink->file_request)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     mock->clipboard_sink = *sink;
     mock->starts++;
@@ -248,28 +282,64 @@ static librdp_status mock_publish_formats(
     size_t format_count,
     uint64_t generation)
 {
-    (void)context;
-    (void)generation;
-    return format_count == 0u || formats
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+    size_t index = 0;
+
+    if (!mock || (format_count > 0u && !formats) ||
+        format_count > sizeof(mock->published_format_ids) /
+                           sizeof(mock->published_format_ids[0]))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->published_format_count = format_count;
+    mock->last_clipboard_ownership_generation = generation;
+    for (index = 0; index < format_count; index++)
+        mock->published_format_ids[index] = formats[index].id;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_request_data(void* context,
                                        uint64_t request_id,
                                        uint32_t format_id)
 {
-    (void)context;
-    return request_id != 0u && format_id != 0u
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || request_id == 0u || format_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->last_clipboard_request_id = request_id;
+    mock->last_clipboard_format_id = format_id;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_request_file(
+    void* context,
+    const server_platform_clipboard_file_request* request)
+{
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !request || request->request_id == 0u ||
+        request->stream_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->last_file_request = *request;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_write_data(void* context,
                                      const server_platform_clipboard_data* data)
 {
-    (void)context;
-    return data ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !data ||
+        data->data_len > sizeof(mock->clipboard_written_data))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->last_clipboard_request_id = data->request_id;
+    mock->last_clipboard_format_id = data->format_id;
+    mock->last_clipboard_stream_id = data->stream_id;
+    mock->last_clipboard_ownership_generation =
+        data->ownership_generation;
+    mock->clipboard_written_status = data->status;
+    mock->clipboard_written_bytes = data->data_len;
+    if (data->data_len > 0u)
+        memcpy(mock->clipboard_written_data, data->data, data->data_len);
+    return LIBRDP_STATUS_OK;
 }
 
 static void mock_release_ownership(void* context, uint64_t generation)
@@ -381,6 +451,179 @@ static librdp_status mock_permission_change(
                : LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
+static librdp_status mock_clipboard_send_monitor_ready(void* context,
+                                                       uint16_t channel_id)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->monitor_ready++;
+    protocol->channel_id = channel_id;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_capabilities(void* context,
+                                                      uint16_t channel_id,
+                                                      uint32_t flags)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->capabilities++;
+    protocol->channel_id = channel_id;
+    protocol->capability_flags = flags;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_format_list(
+    void* context,
+    uint16_t channel_id,
+    const librdp_server_clipboard_format* formats,
+    uint32_t format_count,
+    int long_names)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+    uint32_t index = 0;
+
+    if (!protocol || channel_id == 0u ||
+        (format_count > 0u && !formats) || !long_names ||
+        format_count > sizeof(protocol->format_ids) /
+                           sizeof(protocol->format_ids[0]))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->format_lists++;
+    protocol->channel_id = channel_id;
+    protocol->format_count = format_count;
+    for (index = 0; index < format_count; index++)
+        protocol->format_ids[index] = formats[index].format_id;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_format_list_response(
+    void* context,
+    uint16_t channel_id,
+    int ok)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->format_list_responses++;
+    protocol->response_ok = ok;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_data_request(void* context,
+                                                      uint16_t channel_id,
+                                                      uint32_t format_id)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u || format_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->data_requests++;
+    protocol->requested_format_id = format_id;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_save_response(
+    mock_clipboard_protocol* protocol,
+    int ok,
+    uint32_t stream_id,
+    const void* data,
+    size_t data_len)
+{
+    if (!protocol || (!data && data_len > 0u) ||
+        data_len > sizeof(protocol->response_data))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->response_ok = ok;
+    protocol->stream_id = stream_id;
+    protocol->response_len = data_len;
+    if (data_len > 0u)
+        memcpy(protocol->response_data, data, data_len);
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_data_response(void* context,
+                                                       uint16_t channel_id,
+                                                       int ok,
+                                                       const void* data,
+                                                       size_t data_len)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->data_responses++;
+    return mock_clipboard_save_response(protocol, ok, 0u, data, data_len);
+}
+
+static librdp_status mock_clipboard_send_file_request(
+    void* context,
+    uint16_t channel_id,
+    uint32_t stream_id,
+    int32_t file_index,
+    uint32_t flags,
+    uint64_t position,
+    uint32_t requested_bytes,
+    const uint32_t* clip_data_id)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    (void)file_index;
+    (void)flags;
+    (void)position;
+    (void)requested_bytes;
+    (void)clip_data_id;
+    if (!protocol || channel_id == 0u || stream_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->file_requests++;
+    protocol->stream_id = stream_id;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status mock_clipboard_send_file_response(void* context,
+                                                       uint16_t channel_id,
+                                                       int ok,
+                                                       uint32_t stream_id,
+                                                       const void* data,
+                                                       size_t data_len)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol || channel_id == 0u || stream_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->file_responses++;
+    return mock_clipboard_save_response(protocol,
+                                        ok,
+                                        stream_id,
+                                        data,
+                                        data_len);
+}
+
+static librdp_status mock_clipboard_cancel_requests(void* context)
+{
+    mock_clipboard_protocol* protocol = (mock_clipboard_protocol*)context;
+
+    if (!protocol)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    protocol->cancellations++;
+    return LIBRDP_STATUS_OK;
+}
+
+static const server_clipboard_protocol_vtable mock_clipboard_protocol_vtable = {
+    mock_clipboard_send_monitor_ready,
+    mock_clipboard_send_capabilities,
+    mock_clipboard_send_format_list,
+    mock_clipboard_send_format_list_response,
+    mock_clipboard_send_data_request,
+    mock_clipboard_send_data_response,
+    mock_clipboard_send_file_request,
+    mock_clipboard_send_file_response,
+    mock_clipboard_cancel_requests,
+};
+
 static const server_platform_event_source_vtable mock_events = {
     SERVER_PLATFORM_EVENT_SOURCE_VERSION,
     sizeof(server_platform_event_source_vtable),
@@ -421,6 +664,7 @@ static const server_platform_clipboard_vtable mock_clipboard = {
     mock_stop,
     mock_publish_formats,
     mock_request_data,
+    mock_request_file,
     mock_write_data,
     mock_clipboard_cancel_peer,
     mock_release_ownership,
@@ -516,6 +760,347 @@ static int test_platform_contract(void)
 }
 
 /*
+ * Exercise the common clipboard state machine without a window system or wire
+ * socket. The sequence covers both ownership directions, platform chunking,
+ * file ranges, loop suppression, stale generations, limits and one terminal
+ * response per correlated request.
+ */
+static int test_clipboard_runtime(void)
+{
+    static const char html_name[] = LIBRDP_CLIPBOARD_FORMAT_NAME_HTML;
+    static const char png_name[] = LIBRDP_CLIPBOARD_FORMAT_NAME_PNG;
+    static const char file_name[] =
+        LIBRDP_CLIPBOARD_FORMAT_NAME_FILEGROUPDESCRIPTORW;
+    static const uint8_t remote_data[] = {'h', 't', 'm', 'l'};
+    static const uint8_t first_chunk[] = {'a', 'b'};
+    static const uint8_t second_chunk[] = {'c', 'd'};
+    static const uint8_t file_data[] = {'f', 'i', 'l', 'e'};
+    static const uint8_t remote_file_data[] = {'x', 'y'};
+    server_clipboard_config config;
+    server_clipboard_runtime* runtime = NULL;
+    server_platform_clipboard_format local_formats[4];
+    librdp_server_clipboard_format remote_formats[4];
+    librdp_server_clipboard_event event;
+    server_platform_clipboard_request request;
+    server_platform_clipboard_file_request file_request;
+    server_platform_clipboard_data data;
+    mock_platform_context platform;
+    mock_clipboard_protocol protocol;
+    uint64_t ownership_generation = 0u;
+    uint64_t local_request_id = 0u;
+    unsigned int format_lists = 0u;
+
+    memset(&platform, 0, sizeof(platform));
+    memset(&protocol, 0, sizeof(protocol));
+    server_clipboard_config_init(&config);
+    config.max_peers = 2u;
+    config.max_formats = 4u;
+    config.max_pending_requests = 8u;
+    config.max_data_bytes = 8u;
+    config.max_file_range_bytes = 8u;
+    CHECK(server_clipboard_config_validate(&config) == LIBRDP_STATUS_OK);
+    config.max_formats = 0u;
+    CHECK(server_clipboard_config_validate(&config) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    config.max_formats = 4u;
+    runtime = server_clipboard_runtime_new(&config,
+                                           &mock_clipboard,
+                                           &platform);
+    CHECK(runtime != NULL);
+    CHECK(server_clipboard_runtime_add_peer(
+              runtime,
+              7u,
+              1u,
+              &mock_clipboard_protocol_vtable,
+              &protocol) == LIBRDP_STATUS_OK);
+    CHECK(server_clipboard_runtime_add_peer(
+              runtime,
+              7u,
+              1u,
+              &mock_clipboard_protocol_vtable,
+              &protocol) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(server_clipboard_runtime_channel_ready(runtime, 7u, 1u, 1005u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.monitor_ready == 1u);
+    CHECK(protocol.capabilities == 1u);
+    CHECK((protocol.capability_flags &
+           LIBRDP_CLIPBOARD_CAP_STREAM_FILECLIP_ENABLED) != 0u);
+    CHECK(protocol.format_lists == 1u && protocol.format_count == 0u);
+
+    memset(local_formats, 0, sizeof(local_formats));
+    local_formats[0].mime_type = "text/plain;charset=utf-8";
+    local_formats[1].mime_type = "text/html";
+    local_formats[2].mime_type = "image/png";
+    local_formats[3].mime_type = "text/uri-list";
+    CHECK(server_clipboard_runtime_platform_formats(runtime,
+                                                    local_formats,
+                                                    4u,
+                                                    10u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.format_lists == 2u && protocol.format_count == 4u);
+    CHECK(protocol.format_ids[0] == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
+    CHECK(protocol.format_ids[1] == LIBRDP_CLIPBOARD_FORMAT_HTML);
+    CHECK(protocol.format_ids[2] == LIBRDP_CLIPBOARD_FORMAT_PNG);
+    CHECK(protocol.format_ids[3] ==
+          LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW);
+    memset(&request, 0, sizeof(request));
+    request.peer_id = 7u;
+    request.generation = 1u;
+    request.request_id = 40u;
+    request.format_id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_STATE);
+
+    memset(remote_formats, 0, sizeof(remote_formats));
+    remote_formats[0].format_id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    remote_formats[1].format_id = 0xd001u;
+    remote_formats[1].name = html_name;
+    remote_formats[1].name_len = strlen(html_name);
+    remote_formats[2].format_id = 0xd002u;
+    remote_formats[2].name = png_name;
+    remote_formats[2].name_len = strlen(png_name);
+    remote_formats[3].format_id = 0xd003u;
+    remote_formats[3].name = file_name;
+    remote_formats[3].name_len = strlen(file_name);
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_LIST;
+    event.channel_id = 1005u;
+    event.formats = remote_formats;
+    event.format_count = 4u;
+    event.long_format_names = 0u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.format_list_responses == 1u && protocol.response_ok);
+    CHECK(platform.published_format_count == 4u);
+    ownership_generation = platform.last_clipboard_ownership_generation;
+    CHECK(ownership_generation != 0u);
+    format_lists = protocol.format_lists;
+    CHECK(server_clipboard_runtime_platform_formats(runtime,
+                                                    local_formats,
+                                                    4u,
+                                                    ownership_generation) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.format_lists == format_lists);
+
+    memset(&request, 0, sizeof(request));
+    request.peer_id = 7u;
+    request.generation = 1u;
+    request.ownership_generation = ownership_generation;
+    request.request_id = 41u;
+    request.format_id = 0xd001u;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.data_requests == 1u);
+    CHECK(protocol.requested_format_id == request.format_id);
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_RESPONSE;
+    event.channel_id = 1005u;
+    event.success = 1u;
+    event.data = remote_data;
+    event.data_len = sizeof(remote_data);
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(platform.last_clipboard_request_id == request.request_id);
+    CHECK(platform.clipboard_written_status == LIBRDP_STATUS_OK);
+    CHECK(platform.clipboard_written_bytes == sizeof(remote_data));
+    CHECK(memcmp(platform.clipboard_written_data,
+                 remote_data,
+                 sizeof(remote_data)) == 0);
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    request.request_id = 42u;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_CANCELLED;
+    event.related_type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_RESPONSE;
+    event.channel_id = 1005u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_CANCELLED);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_REQUEST;
+    event.channel_id = 1005u;
+    event.format_id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    local_request_id = platform.last_clipboard_request_id;
+    CHECK(local_request_id != 0u);
+    memset(&data, 0, sizeof(data));
+    data.peer_id = 7u;
+    data.generation = 1u;
+    data.request_id = local_request_id;
+    data.format_id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+    data.status = LIBRDP_STATUS_OK;
+    data.data = first_chunk;
+    data.data_len = sizeof(first_chunk);
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.data_responses == 0u);
+    data.data = second_chunk;
+    data.data_len = sizeof(second_chunk);
+    data.final_chunk = 1;
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.data_responses == 1u && protocol.response_ok);
+    CHECK(protocol.response_len == 4u);
+    CHECK(memcmp(protocol.response_data, "abcd", 4u) == 0);
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_STATE);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_REQUEST;
+    event.channel_id = 1005u;
+    event.format_id = LIBRDP_CLIPBOARD_FORMAT_HTML;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    memset(&data, 0, sizeof(data));
+    data.peer_id = 7u;
+    data.generation = 1u;
+    data.request_id = platform.last_clipboard_request_id;
+    data.format_id = LIBRDP_CLIPBOARD_FORMAT_HTML;
+    data.status = LIBRDP_STATUS_OK;
+    data.final_chunk = 1;
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.data_responses == 2u && protocol.response_ok);
+    CHECK(protocol.response_len == 0u);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_REQUEST;
+    event.channel_id = 1005u;
+    event.format_id = LIBRDP_CLIPBOARD_FORMAT_PNG;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    memset(&data, 0, sizeof(data));
+    data.peer_id = 7u;
+    data.generation = 1u;
+    data.request_id = platform.last_clipboard_request_id;
+    data.format_id = LIBRDP_CLIPBOARD_FORMAT_PNG;
+    data.status = LIBRDP_STATUS_OK;
+    data.data = (const uint8_t*)"123456789";
+    data.data_len = 9u;
+    data.final_chunk = 1;
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(protocol.data_responses == 3u && !protocol.response_ok);
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_REQUEST;
+    event.channel_id = 1005u;
+    event.stream_id = 31u;
+    event.file_index = 2;
+    event.file_flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+    event.position = 4u;
+    event.requested_bytes = 4u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(platform.last_file_request.stream_id == event.stream_id);
+    memset(&data, 0, sizeof(data));
+    data.peer_id = 7u;
+    data.generation = 1u;
+    data.request_id = platform.last_file_request.request_id;
+    data.stream_id = event.stream_id;
+    data.status = LIBRDP_STATUS_OK;
+    data.data = file_data;
+    data.data_len = sizeof(file_data);
+    data.final_chunk = 1;
+    CHECK(server_clipboard_runtime_platform_data(runtime, &data) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.file_responses == 1u && protocol.response_ok);
+    CHECK(protocol.stream_id == event.stream_id);
+    CHECK(protocol.response_len == sizeof(file_data));
+
+    memset(&file_request, 0, sizeof(file_request));
+    file_request.peer_id = 7u;
+    file_request.generation = 1u;
+    file_request.ownership_generation = ownership_generation;
+    file_request.request_id = 73u;
+    file_request.stream_id = 43u;
+    file_request.file_index = 1;
+    file_request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+    file_request.position = 9u;
+    file_request.requested_bytes = 2u;
+    CHECK(server_clipboard_runtime_platform_file_request(runtime,
+                                                         &file_request) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.file_requests == 1u);
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_RESPONSE;
+    event.channel_id = 1005u;
+    event.stream_id = file_request.stream_id;
+    event.success = 1u;
+    event.data = remote_file_data;
+    event.data_len = sizeof(remote_file_data);
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(platform.last_clipboard_request_id == file_request.request_id);
+    CHECK(platform.last_clipboard_stream_id == file_request.stream_id);
+    CHECK(platform.clipboard_written_bytes == sizeof(remote_file_data));
+
+    CHECK(librdp_server_clipboard_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_REQUEST;
+    event.channel_id = 1005u;
+    event.stream_id = 55u;
+    event.requested_bytes = 9u;
+    CHECK(server_clipboard_runtime_protocol_event(runtime,
+                                                  7u,
+                                                  1u,
+                                                  &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(protocol.file_responses == 2u && !protocol.response_ok);
+
+    server_clipboard_runtime_remove_peer(runtime, 7u, 1u);
+    CHECK(protocol.cancellations == 1u);
+    CHECK(platform.clipboard_cancels == 1u);
+    request.generation = 1u;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(server_clipboard_runtime_add_peer(
+              runtime,
+              7u,
+              2u,
+              &mock_clipboard_protocol_vtable,
+              &protocol) == LIBRDP_STATUS_OK);
+    CHECK(server_clipboard_runtime_channel_ready(runtime, 7u, 2u, 1006u) ==
+          LIBRDP_STATUS_OK);
+    server_clipboard_runtime_revoke(runtime);
+    request.generation = 2u;
+    CHECK(server_clipboard_runtime_platform_request(runtime, &request) ==
+          LIBRDP_STATUS_STATE);
+    server_clipboard_runtime_free(runtime);
+    CHECK(protocol.cancellations == 3u);
+    return 0;
+}
+
+/*
  * Close and reuse one slot while asserting that every peer-scoped platform
  * resource is revoked with the old generation before the replacement peer is
  * accepted and requests a fresh capture frame.
@@ -547,7 +1132,7 @@ static int test_host_reconnect_cleanup(void)
     CHECK(server_host_close_peer(host, first_id) == LIBRDP_STATUS_OK);
     CHECK(mock.releases == 1u);
     CHECK(mock.clipboard_cancels == 1u);
-    CHECK(mock.clipboard_releases == 1u);
+    CHECK(mock.clipboard_releases == 0u);
     CHECK(mock.drive_peer_removals == 1u);
     CHECK(mock.last_cleanup_peer_id == first_id);
     CHECK(mock.last_clipboard_generation == 1u);
@@ -563,7 +1148,7 @@ static int test_host_reconnect_cleanup(void)
     CHECK(mock.frame_requests == 2u);
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(mock.clipboard_cancels == 2u);
-    CHECK(mock.clipboard_releases == 2u);
+    CHECK(mock.clipboard_releases == 0u);
     CHECK(mock.drive_peer_removals == 2u);
     CHECK(mock.last_clipboard_generation == 2u);
     CHECK(mock.last_drive_generation == 2u);
@@ -636,6 +1221,7 @@ static int test_host_lifecycle(void)
     uint8_t pixels[4u * 3u * 4u];
     uint16_t port = 0;
     uint32_t first_id = 0;
+    int provider_ready = 0;
     int clients[3] = {-1, -1, -1};
 
     server_host_config_init(&config);
@@ -649,6 +1235,26 @@ static int test_host_lifecycle(void)
     CHECK(server_host_get_provider_state(
               host,
               SERVER_PLATFORM_PROVIDER_CAPTURE) == SERVER_HOST_PROVIDER_READY);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_GRAPHICS,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(provider_ready);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(provider_ready);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(provider_ready);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(!provider_ready);
     CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
     port = server_host_local_port(host);
     CHECK(port != 0u);
@@ -668,6 +1274,26 @@ static int test_host_lifecycle(void)
     first_id = first.id;
     CHECK(first.generation == 1u);
     CHECK(first.state == SERVER_HOST_PEER_ACCEPTED);
+    {
+        server_host_peer_slot* first_slot =
+            server_host_find_peer_slot(host, first.id);
+
+        CHECK(first_slot != NULL);
+        CHECK(librdp_server_peer_get_extension_provider_status(
+                  first_slot->protocol,
+                  LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                  &provider_ready) == LIBRDP_STATUS_OK);
+        CHECK(provider_ready);
+        CHECK(mock.permission_sink.changed != NULL);
+        mock.permission_sink.changed(SERVER_PLATFORM_PERMISSION_CLIPBOARD,
+                                     SERVER_PLATFORM_PERMISSION_DENIED,
+                                     mock.permission_sink.user_data);
+        CHECK(librdp_server_peer_get_extension_provider_status(
+                  first_slot->protocol,
+                  LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                  &provider_ready) == LIBRDP_STATUS_OK);
+        CHECK(!provider_ready);
+    }
     CHECK(server_host_close_peer(host, first_id) == LIBRDP_STATUS_OK);
     CHECK(server_host_peer_count(host) == 1u);
 
@@ -678,6 +1304,17 @@ static int test_host_lifecycle(void)
     CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
     CHECK(reused.id != first_id);
     CHECK(reused.generation == 2u);
+    {
+        server_host_peer_slot* reused_slot =
+            server_host_find_peer_slot(host, reused.id);
+
+        CHECK(reused_slot != NULL);
+        CHECK(librdp_server_peer_get_extension_provider_status(
+                  reused_slot->protocol,
+                  LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+                  &provider_ready) == LIBRDP_STATUS_OK);
+        CHECK(!provider_ready);
+    }
 
     memset(&frame, 0, sizeof(frame));
     memset(pixels, 0x5a, sizeof(pixels));
@@ -1020,7 +1657,7 @@ static int test_host_trace_metrics(void)
         CHECK(strstr(event->name, (const char*)canary_data) == NULL);
     }
     for (index = SERVER_HOST_TRACE_LISTENER_START;
-         index <= SERVER_HOST_TRACE_SHUTDOWN_DONE;
+         index <= SERVER_HOST_TRACE_POINTER_FAILED;
          index++)
     {
         CHECK(strcmp(server_host_trace_name((server_host_trace_type)index),
@@ -1142,6 +1779,8 @@ static int test_dirty_scheduler(void)
 int main(void)
 {
     if (test_platform_contract() != 0)
+        return 1;
+    if (test_clipboard_runtime() != 0)
         return 1;
     if (test_dirty_scheduler() != 0)
         return 1;

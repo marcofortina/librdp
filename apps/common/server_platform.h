@@ -29,7 +29,7 @@
 #define SERVER_PLATFORM_CAPTURE_VERSION 1u
 #define SERVER_PLATFORM_POINTER_VERSION 1u
 #define SERVER_PLATFORM_INPUT_VERSION 1u
-#define SERVER_PLATFORM_CLIPBOARD_VERSION 1u
+#define SERVER_PLATFORM_CLIPBOARD_VERSION 2u
 #define SERVER_PLATFORM_DRIVE_VERSION 1u
 #define SERVER_PLATFORM_PERMISSION_VERSION 1u
 
@@ -78,12 +78,41 @@ typedef struct server_platform_clipboard_format
 
 typedef struct server_platform_clipboard_data
 {
+    uint32_t peer_id;
+    uint32_t generation;
+    uint64_t ownership_generation;
     uint64_t request_id;
     uint32_t format_id;
+    uint32_t stream_id;
+    librdp_status status;
     const uint8_t* data;
     size_t data_len;
     int final_chunk;
 } server_platform_clipboard_data;
+
+typedef struct server_platform_clipboard_request
+{
+    uint32_t peer_id;
+    uint32_t generation;
+    uint64_t ownership_generation;
+    uint64_t request_id;
+    uint32_t format_id;
+} server_platform_clipboard_request;
+
+typedef struct server_platform_clipboard_file_request
+{
+    uint32_t peer_id;
+    uint32_t generation;
+    uint64_t ownership_generation;
+    uint64_t request_id;
+    uint32_t stream_id;
+    int32_t file_index;
+    uint32_t flags;
+    uint64_t position;
+    uint32_t requested_bytes;
+    uint8_t has_clip_data_id;
+    uint32_t clip_data_id;
+} server_platform_clipboard_file_request;
 
 typedef struct server_platform_drive_volume
 {
@@ -123,6 +152,12 @@ typedef void (*server_platform_clipboard_formats_callback)(
 typedef void (*server_platform_clipboard_data_callback)(
     const server_platform_clipboard_data* data,
     void* user_data);
+typedef void (*server_platform_clipboard_request_callback)(
+    const server_platform_clipboard_request* request,
+    void* user_data);
+typedef void (*server_platform_clipboard_file_request_callback)(
+    const server_platform_clipboard_file_request* request,
+    void* user_data);
 typedef void (*server_platform_drive_request_callback)(uint32_t peer_id,
                                                        uint32_t generation,
                                                        uint64_t request_id,
@@ -148,6 +183,8 @@ typedef struct server_platform_clipboard_sink
 {
     server_platform_clipboard_formats_callback formats;
     server_platform_clipboard_data_callback data;
+    server_platform_clipboard_request_callback request;
+    server_platform_clipboard_file_request_callback file_request;
     void* user_data;
 } server_platform_clipboard_sink;
 
@@ -227,6 +264,8 @@ typedef struct server_platform_clipboard_vtable
     librdp_status (*request_data)(void* context,
                                   uint64_t request_id,
                                   uint32_t format_id);
+    librdp_status (*request_file)(void* context,
+                                 const server_platform_clipboard_file_request* request);
     librdp_status (*write_data)(void* context,
                                 const server_platform_clipboard_data* data);
     void (*cancel_peer)(void* context,

@@ -36,10 +36,20 @@ typedef struct librdp_session librdp_session;
 #define LIBRDP_CLIPBOARD_FORMAT_DIB 8u         /**< Device-independent bitmap clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT 13u /**< UTF-16 text clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_HDROP 15u      /**< File-list clipboard format identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW 0xc001u /**< Registered file-descriptor list identifier. */
+#define LIBRDP_CLIPBOARD_FORMAT_FILECONTENTS 0xc002u /**< Registered file-content stream identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_HTML 0xc100u   /**< Local registered HTML clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_PNG 0xc101u    /**< Local registered PNG clipboard format identifier. */
 #define LIBRDP_CLIPBOARD_FORMAT_NAME_HTML "HTML Format" /**< Registered HTML clipboard format name. */
 #define LIBRDP_CLIPBOARD_FORMAT_NAME_PNG "PNG"          /**< Registered PNG clipboard format name. */
+#define LIBRDP_CLIPBOARD_FORMAT_NAME_FILEGROUPDESCRIPTORW "FileGroupDescriptorW" /**< Registered file-list format name. */
+#define LIBRDP_CLIPBOARD_CAP_USE_LONG_FORMAT_NAMES 0x00000002u /**< Negotiate long clipboard format names. */
+#define LIBRDP_CLIPBOARD_CAP_STREAM_FILECLIP_ENABLED 0x00000004u /**< Negotiate streamed file clipboard data. */
+#define LIBRDP_CLIPBOARD_CAP_FILECLIP_NO_FILE_PATHS 0x00000008u /**< Omit local filesystem paths from file metadata. */
+#define LIBRDP_CLIPBOARD_CAP_CAN_LOCK_CLIPDATA 0x00000010u /**< Negotiate clipboard generation locking. */
+#define LIBRDP_CLIPBOARD_CAP_HUGE_FILE_SUPPORT 0x00000020u /**< Negotiate 64-bit file offsets. */
+#define LIBRDP_CLIPBOARD_FILECONTENTS_SIZE 0x00000001u /**< Request file size metadata. */
+#define LIBRDP_CLIPBOARD_FILECONTENTS_RANGE 0x00000002u /**< Request one file byte range. */
 
 /**
  * @brief Clipboard format descriptor delivered by format-list events.
