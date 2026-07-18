@@ -112,7 +112,7 @@ static SCShareableContent* cocoa_server_shareable_content(
     }
     [SCShareableContent
         getShareableContentExcludingDesktopWindows:NO
-                                onScreenWindowsOnly:YES
+                                onScreenWindowsOnly:NO
                                  completionHandler:^(
                                      SCShareableContent* value,
                                      NSError* value_error) {
@@ -139,24 +139,61 @@ static SCShareableContent* cocoa_server_shareable_content(
     return content;
 }
 
-static SCContentFilter* cocoa_server_select_filter(
-    const cocoa_server_config* config,
+static SCContentFilter* cocoa_server_select_initial_filter(
+    cocoa_server_context* context,
     SCShareableContent* content)
 {
-    if (config->source_kind == COCOA_SERVER_SOURCE_DISPLAY)
+    if (context->config.source_kind == COCOA_SERVER_SOURCE_DISPLAY)
     {
-        if ((NSUInteger)config->source_id >=
+        SCDisplay* display = nil;
+
+        if ((NSUInteger)context->config.source_id >=
             [[content displays] count])
             return nil;
+        display = [[content displays]
+            objectAtIndex:(NSUInteger)context->config.source_id];
+        context->stable_source_id = (uint32_t)[display displayID];
         return [[SCContentFilter alloc]
-            initWithDisplay:[[content displays]
-                                objectAtIndex:
-                                    (NSUInteger)config->source_id]
+            initWithDisplay:display
           excludingWindows:@[]];
     }
     for (SCWindow* window in [content windows])
     {
-        if ([window windowID] == (CGWindowID)config->source_id)
+        if ([window windowID] ==
+            (CGWindowID)context->config.source_id)
+        {
+            context->stable_source_id =
+                (uint32_t)[window windowID];
+            return [[SCContentFilter alloc]
+                initWithDesktopIndependentWindow:window];
+        }
+    }
+    return nil;
+}
+
+static SCContentFilter* cocoa_server_select_stable_filter(
+    cocoa_server_context* context,
+    SCShareableContent* content)
+{
+    if (context->config.source_kind ==
+        COCOA_SERVER_SOURCE_DISPLAY)
+    {
+        for (SCDisplay* display in [content displays])
+        {
+            if ([display displayID] ==
+                (CGDirectDisplayID)context->stable_source_id)
+            {
+                return [[SCContentFilter alloc]
+                    initWithDisplay:display
+                  excludingWindows:@[]];
+            }
+        }
+        return nil;
+    }
+    for (SCWindow* window in [content windows])
+    {
+        if ([window windowID] ==
+            (CGWindowID)context->stable_source_id)
         {
             return [[SCContentFilter alloc]
                 initWithDesktopIndependentWindow:window];
@@ -199,7 +236,7 @@ static int cocoa_server_prepare_stream(
     if (!content)
         return 0;
     context->filter =
-        cocoa_server_select_filter(&context->config, content);
+        cocoa_server_select_initial_filter(context, content);
     [content release];
     if (!context->filter ||
         !cocoa_server_filter_dimensions(context->filter,
@@ -256,6 +293,206 @@ static int cocoa_server_prepare_stream(
         return 0;
     }
     return 1;
+}
+
+static SCStreamConfiguration*
+cocoa_server_stream_configuration(
+    const cocoa_server_context* context,
+    uint32_t width,
+    uint32_t height)
+{
+    SCStreamConfiguration* configuration =
+        [[SCStreamConfiguration alloc] init];
+
+    if (!configuration)
+        return nil;
+    [configuration setWidth:(size_t)width];
+    [configuration setHeight:(size_t)height];
+    [configuration setPixelFormat:kCVPixelFormatType_32BGRA];
+    [configuration setShowsCursor:YES];
+    [configuration setQueueDepth:3];
+    [configuration
+        setMinimumFrameInterval:
+            CMTimeMake(1, (int32_t)context->config.max_fps)];
+    return configuration;
+}
+
+static librdp_status cocoa_server_wait_for_filter_update(
+    SCStream* stream,
+    SCContentFilter* filter)
+{
+    __block NSError* error = nil;
+    dispatch_semaphore_t semaphore =
+        dispatch_semaphore_create(0);
+    long wait_result = 0;
+
+    if (!semaphore)
+        return LIBRDP_STATUS_NO_MEMORY;
+    [stream updateContentFilter:filter
+              completionHandler:^(NSError* value) {
+                  if (value)
+                      error = [value retain];
+                  dispatch_semaphore_signal(semaphore);
+              }];
+    wait_result = dispatch_semaphore_wait(
+        semaphore,
+        dispatch_time(DISPATCH_TIME_NOW, 10ll * NSEC_PER_SEC));
+    cocoa_server_release_dispatch_object(
+        (dispatch_object_t)semaphore);
+    if (wait_result != 0)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (error)
+    {
+        [error release];
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status cocoa_server_wait_for_config_update(
+    SCStream* stream,
+    SCStreamConfiguration* configuration)
+{
+    __block NSError* error = nil;
+    dispatch_semaphore_t semaphore =
+        dispatch_semaphore_create(0);
+    long wait_result = 0;
+
+    if (!semaphore)
+        return LIBRDP_STATUS_NO_MEMORY;
+    [stream updateConfiguration:configuration
+              completionHandler:^(NSError* value) {
+                  if (value)
+                      error = [value retain];
+                  dispatch_semaphore_signal(semaphore);
+              }];
+    wait_result = dispatch_semaphore_wait(
+        semaphore,
+        dispatch_time(DISPATCH_TIME_NOW, 10ll * NSEC_PER_SEC));
+    cocoa_server_release_dispatch_object(
+        (dispatch_object_t)semaphore);
+    if (wait_result != 0)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (error)
+    {
+        [error release];
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status cocoa_server_wait_for_restart(
+    SCStream* stream)
+{
+    __block NSError* error = nil;
+    dispatch_semaphore_t semaphore =
+        dispatch_semaphore_create(0);
+    long wait_result = 0;
+
+    if (!semaphore)
+        return LIBRDP_STATUS_NO_MEMORY;
+    [stream startCaptureWithCompletionHandler:^(NSError* value) {
+        if (value)
+            error = [value retain];
+        dispatch_semaphore_signal(semaphore);
+    }];
+    wait_result = dispatch_semaphore_wait(
+        semaphore,
+        dispatch_time(DISPATCH_TIME_NOW, 15ll * NSEC_PER_SEC));
+    cocoa_server_release_dispatch_object(
+        (dispatch_object_t)semaphore);
+    if (wait_result != 0)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (error)
+    {
+        [error release];
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Re-enumerate the stable source and update filter and pixel geometry as one
+ * bounded operation. Existing provider objects remain active until both
+ * framework updates succeed; failed refresh never publishes partial geometry.
+ */
+librdp_status cocoa_server_refresh_topology(
+    cocoa_server_context* context,
+    int restart_stream)
+{
+    SCShareableContent* content = nil;
+    SCContentFilter* filter = nil;
+    SCStreamConfiguration* configuration = nil;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int changed = 0;
+
+    if (!context || !context->stream ||
+        !context->capture_started)
+        return LIBRDP_STATUS_STATE;
+    content = cocoa_server_shareable_content(&status);
+    if (!content)
+        return status;
+    filter = cocoa_server_select_stable_filter(context, content);
+    [content release];
+    if (!filter ||
+        !cocoa_server_filter_dimensions(filter, &width, &height))
+    {
+        [filter release];
+        return LIBRDP_STATUS_CLOSED;
+    }
+    if ((size_t)width > context->config.max_frame_bytes / 4u ||
+        (size_t)height >
+            context->config.max_frame_bytes /
+                ((size_t)width * 4u))
+    {
+        [filter release];
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    changed = width != context->width ||
+              height != context->height;
+    if (!changed && !restart_stream)
+    {
+        [filter release];
+        return LIBRDP_STATUS_OK;
+    }
+    configuration =
+        cocoa_server_stream_configuration(context, width, height);
+    if (!configuration)
+    {
+        [filter release];
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    status =
+        cocoa_server_wait_for_filter_update(context->stream, filter);
+    if (status == LIBRDP_STATUS_OK)
+        status = cocoa_server_wait_for_config_update(
+            context->stream,
+            configuration);
+    if (status == LIBRDP_STATUS_OK && restart_stream)
+        status = cocoa_server_wait_for_restart(context->stream);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        pthread_mutex_lock(&context->lock);
+        free(context->pending_frame.pixels);
+        memset(&context->pending_frame,
+               0,
+               sizeof(context->pending_frame));
+        context->width = width;
+        context->height = height;
+        context->force_full_frame = 1;
+        pthread_mutex_unlock(&context->lock);
+        [context->filter release];
+        context->filter = filter;
+        filter = nil;
+        [context->stream_config release];
+        context->stream_config = configuration;
+        configuration = nil;
+    }
+    [configuration release];
+    [filter release];
+    return status;
 }
 
 cocoa_server_context* cocoa_server_context_new(

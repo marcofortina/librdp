@@ -64,10 +64,15 @@ struct cocoa_server_context
     librdp_status pending_lost_status;
     uint32_t width;
     uint32_t height;
+    uint32_t stable_source_id;
     uint64_t next_sequence;
     int capture_started;
     int permission_started;
     int capture_lost;
+    int restart_required;
+    int topology_refresh_required;
+    int stopping;
+    int force_full_frame;
 };
 
 uint64_t cocoa_server_now_ns(void);
@@ -75,6 +80,9 @@ void cocoa_server_capture_enqueue(cocoa_server_context* context,
                                   CMSampleBufferRef sample);
 void cocoa_server_capture_lost(cocoa_server_context* context,
                                librdp_status status);
+librdp_status cocoa_server_refresh_topology(
+    cocoa_server_context* context,
+    int restart_stream);
 extern const server_platform_capture_vtable cocoa_server_capture_vtable;
 extern const server_platform_permission_vtable cocoa_server_permission_vtable;
 

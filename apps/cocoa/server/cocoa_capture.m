@@ -161,6 +161,58 @@ static int cocoa_server_frame_complete(CMSampleBufferRef sample)
            [status integerValue] == SCFrameStatusComplete;
 }
 
+static int cocoa_server_content_dimensions(
+    CMSampleBufferRef sample,
+    uint32_t* width,
+    uint32_t* height)
+{
+    CFArrayRef attachments = NULL;
+    NSDictionary* metadata = nil;
+    id rect_value = nil;
+    NSNumber* scale_value = nil;
+    CGRect rect = CGRectZero;
+    double scale = 0.0;
+    double pixel_width = 0.0;
+    double pixel_height = 0.0;
+
+    if (!sample || !width || !height)
+        return 0;
+    attachments =
+        CMSampleBufferGetSampleAttachmentsArray(sample, false);
+    if (!attachments || CFArrayGetCount(attachments) < 1)
+        return 0;
+    metadata =
+        (NSDictionary*)CFArrayGetValueAtIndex(attachments, 0);
+    rect_value =
+        [metadata objectForKey:SCStreamFrameInfoContentRect];
+    scale_value =
+        [metadata objectForKey:SCStreamFrameInfoScaleFactor];
+    if ([rect_value isKindOfClass:[NSString class]])
+        rect = CGRectFromString((NSString*)rect_value);
+    else if ([rect_value isKindOfClass:[NSValue class]])
+        rect = [(NSValue*)rect_value rectValue];
+    else
+        return 0;
+    if (![scale_value isKindOfClass:[NSNumber class]])
+        return 0;
+    scale = [scale_value doubleValue];
+    pixel_width = ceil(rect.size.width * scale);
+    pixel_height = ceil(rect.size.height * scale);
+    if (!isfinite(pixel_width) || !isfinite(pixel_height) ||
+        pixel_width < 1.0 || pixel_height < 1.0 ||
+        pixel_width > 16384.0 || pixel_height > 16384.0)
+        return 0;
+    *width = (uint32_t)pixel_width;
+    *height = (uint32_t)pixel_height;
+    return 1;
+}
+
+/*
+ * Convert one complete pixel buffer into the newest pending packet. Allocation
+ * and copy sizes are checked before locking; under the mutex, frame replacement
+ * is atomic and content-geometry drift schedules a topology refresh without
+ * calling native framework methods from the capture queue.
+ */
 void cocoa_server_capture_enqueue(cocoa_server_context* context,
                                   CMSampleBufferRef sample)
 {
@@ -171,6 +223,9 @@ void cocoa_server_capture_enqueue(cocoa_server_context* context,
     size_t height = 0u;
     size_t stride = 0u;
     void* base = NULL;
+    uint32_t content_width = 0u;
+    uint32_t content_height = 0u;
+    int content_dimensions_valid = 0;
 
     if (!context || !sample || !CMSampleBufferIsValid(sample) ||
         !cocoa_server_frame_complete(sample))
@@ -219,15 +274,28 @@ void cocoa_server_capture_enqueue(cocoa_server_context* context,
         COCOA_SERVER_MAX_DIRTY_RECTS);
     packet.timestamp_ns = cocoa_server_now_ns();
     packet.ready = 1;
+    content_dimensions_valid = cocoa_server_content_dimensions(
+        sample,
+        &content_width,
+        &content_height);
     CVPixelBufferUnlockBaseAddress(
         image, kCVPixelBufferLock_ReadOnly);
 
     pthread_mutex_lock(&context->lock);
+    if (context->force_full_frame)
+    {
+        packet.dirty_count = 0u;
+        context->force_full_frame = 0;
+    }
+    if ((content_dimensions_valid &&
+         (content_width != context->width ||
+          content_height != context->height)) ||
+        packet.width != context->width ||
+        packet.height != context->height)
+        context->topology_refresh_required = 1;
     packet.sequence = ++context->next_sequence;
     free(context->pending_frame.pixels);
     context->pending_frame = packet;
-    context->width = packet.width;
-    context->height = packet.height;
     pthread_mutex_unlock(&context->lock);
     cocoa_server_wakeup(context);
 }
@@ -238,7 +306,13 @@ void cocoa_server_capture_lost(cocoa_server_context* context,
     if (!context)
         return;
     pthread_mutex_lock(&context->lock);
+    if (context->stopping)
+    {
+        pthread_mutex_unlock(&context->lock);
+        return;
+    }
     context->capture_lost = 1;
+    context->restart_required = 1;
     context->pending_lost_status = status;
     pthread_mutex_unlock(&context->lock);
     cocoa_server_wakeup(context);
@@ -320,6 +394,9 @@ static void cocoa_server_capture_stop(void* opaque)
 
     if (!context || !context->capture_started)
         return;
+    pthread_mutex_lock(&context->lock);
+    context->stopping = 1;
+    pthread_mutex_unlock(&context->lock);
     semaphore = dispatch_semaphore_create(0);
     [context->stream stopCaptureWithCompletionHandler:^(NSError* error) {
         (void)error;
@@ -339,6 +416,11 @@ static void cocoa_server_capture_stop(void* opaque)
         });
     }
     context->capture_started = 0;
+    pthread_mutex_lock(&context->lock);
+    context->stopping = 0;
+    context->capture_lost = 0;
+    context->restart_required = 0;
+    pthread_mutex_unlock(&context->lock);
     memset(&context->capture_sink, 0, sizeof(context->capture_sink));
 }
 
@@ -410,7 +492,10 @@ static librdp_status cocoa_server_events_dispatch(void* opaque,
         (cocoa_server_context*)opaque;
     cocoa_server_frame_packet frame;
     librdp_status lost_status = LIBRDP_STATUS_OK;
+    librdp_status topology_status = LIBRDP_STATUS_OK;
     int lost = 0;
+    int restart = 0;
+    int refresh_topology = 0;
 
     if (!context || max_events == 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -426,9 +511,13 @@ static librdp_status cocoa_server_events_dispatch(void* opaque,
     if (context->capture_lost)
     {
         lost = 1;
+        restart = context->restart_required;
         lost_status = context->pending_lost_status;
         context->capture_lost = 0;
+        context->restart_required = 0;
     }
+    refresh_topology = context->topology_refresh_required;
+    context->topology_refresh_required = 0;
     pthread_mutex_unlock(&context->lock);
     if (frame.ready && context->capture_sink.frame)
     {
@@ -449,6 +538,18 @@ static librdp_status cocoa_server_events_dispatch(void* opaque,
             context->capture_sink.user_data);
     }
     free(frame.pixels);
+    if (restart || refresh_topology)
+    {
+        topology_status =
+            cocoa_server_refresh_topology(context, restart);
+        if (topology_status == LIBRDP_STATUS_OK)
+            lost = 0;
+        else if (!lost)
+        {
+            lost = 1;
+            lost_status = topology_status;
+        }
+    }
     if (lost && context->capture_sink.lost)
         context->capture_sink.lost(
             lost_status,
