@@ -72,6 +72,7 @@
 #include <openssl/evp.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PCHECK(expr)                                                                                                   \
@@ -218,6 +219,58 @@ static int test_tpkt_x224(void)
     rdp_buffer_free(&standard_confirm);
     rdp_buffer_free(&standard_x224);
     rdp_buffer_free(&x224);
+    return 0;
+}
+
+/*
+ * Covers the complete 16-bit TPKT wire-length boundary and verifies that
+ * rejected lengths cannot alter a caller buffer that already contains data.
+ */
+static int test_tpkt_write_boundaries(void)
+{
+    const size_t maximum_payload = (size_t)UINT16_MAX - 4u;
+    const uint8_t prefix[] = {0xa5u, 0x5au, 0x11u};
+    uint8_t marker = 0x7cu;
+    uint8_t* payload = NULL;
+    uint8_t* original_data = NULL;
+    size_t original_length = 0;
+    size_t original_capacity = 0;
+    rdp_buffer packet;
+    rdp_tpkt parsed;
+
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_buffer_append(&packet, prefix, sizeof(prefix)) == LIBRDP_STATUS_OK);
+    original_data = packet.data;
+    original_length = packet.length;
+    original_capacity = packet.capacity;
+
+    PCHECK(rdp_tpkt_write(&packet, &marker, maximum_payload + 1u) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(packet.data == original_data);
+    PCHECK(packet.length == original_length);
+    PCHECK(packet.capacity == original_capacity);
+    PCHECK(memcmp(packet.data, prefix, sizeof(prefix)) == 0);
+
+    PCHECK(rdp_tpkt_write(&packet, &marker, SIZE_MAX) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(packet.data == original_data);
+    PCHECK(packet.length == original_length);
+    PCHECK(packet.capacity == original_capacity);
+    PCHECK(memcmp(packet.data, prefix, sizeof(prefix)) == 0);
+    rdp_buffer_free(&packet);
+
+    payload = (uint8_t*)malloc(maximum_payload);
+    PCHECK(payload != NULL);
+    memset(payload, 0x3cu, maximum_payload);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_tpkt_write(&packet, payload, maximum_payload) == LIBRDP_STATUS_OK);
+    PCHECK(packet.length == (size_t)UINT16_MAX);
+    PCHECK(packet.data[0] == 3u && packet.data[1] == 0u);
+    PCHECK(packet.data[2] == 0xffu && packet.data[3] == 0xffu);
+    PCHECK(rdp_tpkt_parse(packet.data, packet.length, &parsed) == LIBRDP_STATUS_OK);
+    PCHECK(parsed.payload_len == maximum_payload);
+    PCHECK(parsed.payload[0] == 0x3cu && parsed.payload[maximum_payload - 1u] == 0x3cu);
+
+    rdp_buffer_free(&packet);
+    free(payload);
     return 0;
 }
 
@@ -593,6 +646,8 @@ static int test_mcs_gcc_capabilities(void)
 int test_protocol_core_vectors(void)
 {
     if (test_tpkt_x224() != 0)
+        return 1;
+    if (test_tpkt_write_boundaries() != 0)
         return 1;
     if (test_gcc_client_name_regression() != 0)
         return 1;

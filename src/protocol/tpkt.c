@@ -21,22 +21,26 @@
 
 librdp_status rdp_tpkt_write(rdp_buffer* buffer, const void* payload, size_t payload_len)
 {
+    rdp_buffer frame;
     librdp_status status = LIBRDP_STATUS_OK;
-    const size_t total = payload_len + 4u;
+    size_t total = 0;
 
-    if (!buffer || (!payload && payload_len > 0) || total > 0xffffu)
+    if (!buffer || (!payload && payload_len > 0) || payload_len > (size_t)UINT16_MAX - 4u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_buffer_append_u8(buffer, 3);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u8(buffer, 0);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    status = rdp_buffer_append_u16_be(buffer, (uint16_t)total);
-    if (status != LIBRDP_STATUS_OK)
-        return status;
-    return rdp_buffer_append(buffer, payload, payload_len);
+    total = payload_len + 4u;
+    rdp_buffer_init(&frame);
+    status = rdp_buffer_append_u8(&frame, 3);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u8(&frame, 0);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append_u16_be(&frame, (uint16_t)total);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(&frame, payload, payload_len);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_append(buffer, frame.data, frame.length);
+    rdp_buffer_free(&frame);
+    return status;
 }
 
 librdp_status rdp_tpkt_parse(const void* data, size_t length, rdp_tpkt* packet)
