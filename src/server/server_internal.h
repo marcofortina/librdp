@@ -73,6 +73,7 @@ typedef struct rdp_server_drive_pending
     uint32_t completion_id;
     uint32_t device_id;
     uint32_t file_id;
+    uint32_t information_class;
     librdp_server_drive_request_id request_id;
     librdp_server_drive_operation operation;
 } rdp_server_drive_pending;

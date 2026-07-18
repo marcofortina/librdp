@@ -20,11 +20,22 @@
 #include "common/charset.h"
 #include "server/server_channels.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define RDP_SERVER_DRIVE_MAX_PATH_BYTES 32768u
 #define RDP_SERVER_DRIVE_MAX_REQUEST_BYTES (16u * 1024u * 1024u)
+#define RDP_SERVER_DRIVE_STATUS_NO_SUCH_DEVICE 0xc000000eu
+#define RDP_SERVER_DRIVE_STATUS_INVALID_PARAMETER 0xc000000du
+#define RDP_SERVER_DRIVE_STATUS_NO_SUCH_FILE 0xc000000fu
+#define RDP_SERVER_DRIVE_STATUS_ACCESS_DENIED 0xc0000022u
+#define RDP_SERVER_DRIVE_STATUS_BUFFER_TOO_SMALL 0xc0000023u
+#define RDP_SERVER_DRIVE_STATUS_OBJECT_NAME_COLLISION 0xc0000035u
+#define RDP_SERVER_DRIVE_STATUS_NOT_SUPPORTED 0xc00000bbu
+#define RDP_SERVER_DRIVE_STATUS_NOT_A_DIRECTORY 0xc0000103u
+#define RDP_SERVER_DRIVE_STATUS_NO_MORE_FILES 0x80000006u
+#define RDP_SERVER_DRIVE_STATUS_TOO_MANY_OPEN_FILES 0xc000011fu
 
 static char* rdp_server_drive_copy_name(const char* value)
 {
@@ -315,6 +326,203 @@ librdp_status librdp_server_drive_event_init(
     event->version = LIBRDP_SERVER_DRIVE_EVENT_VERSION;
     event->size = (uint32_t)sizeof(*event);
     event->status = LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_status librdp_server_drive_metadata_init(
+    librdp_server_drive_metadata* metadata)
+{
+    if (!metadata)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->version = LIBRDP_SERVER_DRIVE_METADATA_VERSION;
+    metadata->size = (uint32_t)sizeof(*metadata);
+    metadata->link_count = 1u;
+    return LIBRDP_STATUS_OK;
+}
+
+librdp_server_drive_io_result
+librdp_server_drive_classify_io_status(uint32_t io_status)
+{
+    switch (io_status)
+    {
+        case RDP_DEVICE_REDIRECTION_STATUS_SUCCESS:
+            return LIBRDP_SERVER_DRIVE_IO_SUCCESS;
+        case RDP_SERVER_DRIVE_STATUS_NO_SUCH_DEVICE:
+        case RDP_SERVER_DRIVE_STATUS_NO_SUCH_FILE:
+            return LIBRDP_SERVER_DRIVE_IO_NOT_FOUND;
+        case RDP_SERVER_DRIVE_STATUS_ACCESS_DENIED:
+            return LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED;
+        case RDP_SERVER_DRIVE_STATUS_OBJECT_NAME_COLLISION:
+            return LIBRDP_SERVER_DRIVE_IO_ALREADY_EXISTS;
+        case RDP_SERVER_DRIVE_STATUS_NOT_A_DIRECTORY:
+            return LIBRDP_SERVER_DRIVE_IO_NOT_DIRECTORY;
+        case RDP_SERVER_DRIVE_STATUS_NO_MORE_FILES:
+            return LIBRDP_SERVER_DRIVE_IO_NO_MORE_FILES;
+        case RDP_SERVER_DRIVE_STATUS_INVALID_PARAMETER:
+            return LIBRDP_SERVER_DRIVE_IO_INVALID;
+        case RDP_SERVER_DRIVE_STATUS_NOT_SUPPORTED:
+            return LIBRDP_SERVER_DRIVE_IO_UNSUPPORTED;
+        case RDP_SERVER_DRIVE_STATUS_BUFFER_TOO_SMALL:
+        case RDP_SERVER_DRIVE_STATUS_TOO_MANY_OPEN_FILES:
+            return LIBRDP_SERVER_DRIVE_IO_RESOURCE_LIMIT;
+        default:
+            return LIBRDP_SERVER_DRIVE_IO_ERROR;
+    }
+}
+
+static uint32_t rdp_server_drive_read_u32(const uint8_t* data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8u) |
+           ((uint32_t)data[2] << 16u) |
+           ((uint32_t)data[3] << 24u);
+}
+
+static uint64_t rdp_server_drive_read_u64(const uint8_t* data)
+{
+    return (uint64_t)rdp_server_drive_read_u32(data) |
+           ((uint64_t)rdp_server_drive_read_u32(data + 4u) << 32u);
+}
+
+static int rdp_server_drive_metadata_valid(
+    const librdp_server_drive_metadata* metadata)
+{
+    return metadata &&
+           metadata->version == LIBRDP_SERVER_DRIVE_METADATA_VERSION &&
+           metadata->size >= sizeof(*metadata);
+}
+
+/*
+ * Decode the fixed FileAllInformation aggregate without exposing its wire
+ * layout to platform providers. Validation precedes the metadata assignment so
+ * a malformed client response cannot leave a partially updated result.
+ */
+librdp_status librdp_server_drive_decode_file_metadata(
+    uint32_t information_class,
+    const void* data,
+    size_t data_len,
+    librdp_server_drive_metadata* metadata)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    librdp_server_drive_metadata parsed;
+
+    if (!data || !rdp_server_drive_metadata_valid(metadata) ||
+        information_class != LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len < 100u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed = *metadata;
+    parsed.creation_time = rdp_server_drive_read_u64(bytes);
+    parsed.access_time = rdp_server_drive_read_u64(bytes + 8u);
+    parsed.write_time = rdp_server_drive_read_u64(bytes + 16u);
+    parsed.change_time = rdp_server_drive_read_u64(bytes + 24u);
+    parsed.attributes = rdp_server_drive_read_u32(bytes + 32u);
+    parsed.allocation_size = rdp_server_drive_read_u64(bytes + 40u);
+    parsed.file_size = rdp_server_drive_read_u64(bytes + 48u);
+    parsed.link_count = rdp_server_drive_read_u32(bytes + 56u);
+    parsed.delete_pending = bytes[60u] != 0u ? 1u : 0u;
+    parsed.directory = bytes[61u] != 0u ? 1u : 0u;
+    parsed.file_id = rdp_server_drive_read_u64(bytes + 64u);
+    if ((rdp_server_drive_read_u32(bytes + 96u) & 1u) != 0u ||
+        (size_t)rdp_server_drive_read_u32(bytes + 96u) !=
+            data_len - 100u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *metadata = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Decode one independently bounded directory record and convert its borrowed
+ * UTF-16 name. Relative record offsets remain scoped to the supplied response,
+ * and the caller receives no pointers into untrusted protocol storage.
+ */
+librdp_status librdp_server_drive_decode_directory_entry(
+    uint32_t information_class,
+    const void* data,
+    size_t data_len,
+    size_t offset,
+    librdp_server_drive_metadata* metadata,
+    char* name,
+    size_t name_capacity,
+    size_t* name_length,
+    size_t* next_offset)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    librdp_server_drive_metadata parsed;
+    char* converted = NULL;
+    size_t converted_len = 0u;
+    size_t record_len = 0u;
+    uint32_t relative_next = 0u;
+    uint32_t encoded_name_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !rdp_server_drive_metadata_valid(metadata) ||
+        !name_length || !next_offset ||
+        (name == NULL && name_capacity != 0u) ||
+        information_class !=
+            LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (offset > data_len || data_len - offset < 64u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    relative_next = rdp_server_drive_read_u32(bytes + offset);
+    if (relative_next != 0u)
+    {
+        if (relative_next < 64u || (relative_next & 7u) != 0u ||
+            (size_t)relative_next > data_len - offset)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        record_len = relative_next;
+    }
+    else
+        record_len = data_len - offset;
+    encoded_name_len = rdp_server_drive_read_u32(bytes + offset + 60u);
+    if ((encoded_name_len & 1u) != 0u ||
+        (size_t)encoded_name_len > record_len - 64u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed = *metadata;
+    parsed.creation_time = rdp_server_drive_read_u64(bytes + offset + 8u);
+    parsed.access_time = rdp_server_drive_read_u64(bytes + offset + 16u);
+    parsed.write_time = rdp_server_drive_read_u64(bytes + offset + 24u);
+    parsed.change_time = rdp_server_drive_read_u64(bytes + offset + 32u);
+    parsed.file_size = rdp_server_drive_read_u64(bytes + offset + 40u);
+    parsed.allocation_size =
+        rdp_server_drive_read_u64(bytes + offset + 48u);
+    parsed.attributes =
+        rdp_server_drive_read_u32(bytes + offset + 56u);
+    parsed.directory =
+        (parsed.attributes &
+         LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY) != 0u
+            ? 1u
+            : 0u;
+    status = rdp_charset_utf16le_to_utf8_alloc(
+        bytes + offset + 64u,
+        encoded_name_len,
+        0,
+        &converted,
+        &converted_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (converted_len == SIZE_MAX)
+    {
+        free(converted);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    *name_length = converted_len + 1u;
+    *next_offset = relative_next != 0u ? offset + relative_next : 0u;
+    *metadata = parsed;
+    if (!name)
+    {
+        free(converted);
+        return LIBRDP_STATUS_OK;
+    }
+    if (name_capacity < converted_len + 1u)
+    {
+        free(converted);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    memcpy(name, converted, converted_len);
+    name[converted_len] = '\0';
+    free(converted);
     return LIBRDP_STATUS_OK;
 }
 
@@ -907,6 +1115,7 @@ librdp_status librdp_server_peer_submit_drive_request(
         pending->completion_id = completion_id;
         pending->device_id = device->device_id;
         pending->file_id = file_id;
+        pending->information_class = request->information_class;
         pending->operation = request->operation;
         pending->request_id =
             ((uint64_t)peer->drive_reconnect_generation << 32u) |

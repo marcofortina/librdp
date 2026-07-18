@@ -39,6 +39,14 @@ extern "C" {
 #define LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION 1u /**< Current librdp_server_clipboard_event version. */
 #define LIBRDP_SERVER_DRIVE_REQUEST_VERSION 1u /**< Current librdp_server_drive_request version. */
 #define LIBRDP_SERVER_DRIVE_EVENT_VERSION 1u /**< Current librdp_server_drive_event version. */
+#define LIBRDP_SERVER_DRIVE_METADATA_VERSION 1u /**< Current librdp_server_drive_metadata version. */
+#define LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION 1u /**< Directory-entry information class. */
+#define LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION 18u /**< Composite file-information class. */
+#define LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_READONLY 0x00000001u /**< Read-only file attribute. */
+#define LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_HIDDEN 0x00000002u /**< Hidden file attribute. */
+#define LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY 0x00000010u /**< Directory file attribute. */
+#define LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_ARCHIVE 0x00000020u /**< Archive file attribute. */
+#define LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_NORMAL 0x00000080u /**< Normal file attribute. */
 #define LIBRDP_SERVER_EXTENSION_STATE_VERSION 1u /**< Current librdp_server_extension_state version. */
 #define LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION 1u /**< Current librdp_server_credentials_request version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
@@ -549,6 +557,54 @@ typedef enum librdp_server_drive_event_type
     LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED = 3, /**< A submitted request completed. */
     LIBRDP_SERVER_DRIVE_REQUEST_CANCELLED = 4 /**< A submitted request was cancelled locally. */
 } librdp_server_drive_event_type;
+
+/**
+ * @brief Platform-neutral classification of a client-drive I/O status.
+ *
+ * The values intentionally hide protocol status numbers from applications.
+ * Unknown remote failures map to LIBRDP_SERVER_DRIVE_IO_ERROR.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_drive_io_result
+{
+    LIBRDP_SERVER_DRIVE_IO_SUCCESS = 0, /**< Operation completed successfully. */
+    LIBRDP_SERVER_DRIVE_IO_NOT_FOUND = 1, /**< Device or path was not found. */
+    LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED = 2, /**< Policy or permissions denied access. */
+    LIBRDP_SERVER_DRIVE_IO_ALREADY_EXISTS = 3, /**< A create target already exists. */
+    LIBRDP_SERVER_DRIVE_IO_NOT_DIRECTORY = 4, /**< A directory operation targeted another type. */
+    LIBRDP_SERVER_DRIVE_IO_NO_MORE_FILES = 5, /**< Directory enumeration reached its end. */
+    LIBRDP_SERVER_DRIVE_IO_INVALID = 6, /**< The client rejected request parameters. */
+    LIBRDP_SERVER_DRIVE_IO_UNSUPPORTED = 7, /**< The client does not support the operation. */
+    LIBRDP_SERVER_DRIVE_IO_RESOURCE_LIMIT = 8, /**< A client resource limit was reached. */
+    LIBRDP_SERVER_DRIVE_IO_ERROR = 9 /**< Other remote filesystem failure. */
+} librdp_server_drive_io_result;
+
+/**
+ * @brief Normalized metadata decoded from a client-drive response.
+ *
+ * Timestamps retain the protocol's unsigned 100-nanosecond representation.
+ * Applications that need native times may convert them without depending on
+ * platform-specific types in this public structure.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_metadata
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_DRIVE_METADATA_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    uint64_t creation_time; /**< Creation timestamp in protocol time units. */
+    uint64_t access_time; /**< Last-access timestamp in protocol time units. */
+    uint64_t write_time; /**< Last-write timestamp in protocol time units. */
+    uint64_t change_time; /**< Metadata-change timestamp in protocol time units. */
+    uint64_t file_size; /**< Logical file size in bytes. */
+    uint64_t allocation_size; /**< Allocated byte count. */
+    uint64_t file_id; /**< Stable remote identifier when supplied, otherwise zero. */
+    uint32_t attributes; /**< LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_* bitmask. */
+    uint32_t link_count; /**< Link count when supplied, otherwise one. */
+    uint8_t directory; /**< Non-zero when the entry is a directory. */
+    uint8_t delete_pending; /**< Non-zero when deletion is pending. */
+} librdp_server_drive_metadata;
 
 /**
  * @brief Validated client-drive announcement or request result.
@@ -1142,6 +1198,105 @@ LIBRDP_API librdp_status librdp_server_drive_request_init(
  */
 LIBRDP_API librdp_status librdp_server_drive_event_init(
     librdp_server_drive_event* event);
+
+/**
+ * @brief Initialize normalized client-drive metadata.
+ *
+ * @param[out] metadata Caller-owned object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metadata is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_drive_metadata_init(
+    librdp_server_drive_metadata* metadata);
+
+/**
+ * @brief Classify a raw client-drive completion status.
+ *
+ * @param[in] io_status Status value from librdp_server_drive_event.
+ *
+ * @return A stable platform-neutral result category. Unknown status values
+ * return LIBRDP_SERVER_DRIVE_IO_ERROR.
+ *
+ * @note Thread-safety: this function has no mutable state.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_server_drive_io_result
+librdp_server_drive_classify_io_status(uint32_t io_status);
+
+/**
+ * @brief Decode a composite file-information completion.
+ *
+ * The current API accepts LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION. The input
+ * is the borrowed data/data_len pair from the matching successful drive event.
+ * No pointer into data is retained.
+ *
+ * @param[in] information_class Information class used for the request.
+ * @param[in] data Completion bytes; must not be NULL.
+ * @param[in] data_len Number of bytes available at data.
+ * @param[in,out] metadata Initialized caller-owned result; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for an
+ * unsupported class or invalid arguments; LIBRDP_STATUS_PROTOCOL_ERROR for a
+ * malformed or truncated response.
+ *
+ * @note Thread-safety: this function reads only caller-owned storage.
+ * @warning File metadata can reveal sensitive user information and is not
+ * emitted to trace by this function.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_drive_decode_file_metadata(
+    uint32_t information_class,
+    const void* data,
+    size_t data_len,
+    librdp_server_drive_metadata* metadata);
+
+/**
+ * @brief Decode one directory entry from a completion buffer.
+ *
+ * The current API accepts
+ * LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION. offset is zero for the
+ * first entry and next_offset receives zero after the final entry. Pass name
+ * as NULL with name_capacity zero to query the required UTF-8 byte count,
+ * including its trailing NUL.
+ *
+ * @param[in] information_class Information class used for the request.
+ * @param[in] data Completion bytes; must not be NULL.
+ * @param[in] data_len Number of bytes available at data.
+ * @param[in] offset Byte offset of the entry to decode.
+ * @param[in,out] metadata Initialized caller-owned result; must not be NULL.
+ * @param[out] name Caller-owned UTF-8 destination, or NULL for a size query.
+ * @param[in] name_capacity Bytes available at name; must be zero when name is
+ * NULL.
+ * @param[out] name_length Required bytes including the NUL; must not be NULL.
+ * @param[out] next_offset Offset of the next entry, or zero after the final
+ * entry; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or a valid size query;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for invalid arguments or an unsupported
+ * class; LIBRDP_STATUS_PROTOCOL_ERROR for malformed offsets, lengths or UTF-16;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when name is too small;
+ * LIBRDP_STATUS_NO_MEMORY on conversion failure;
+ * LIBRDP_STATUS_UNSUPPORTED when character conversion is unavailable.
+ *
+ * @note Thread-safety: this function uses no shared mutable state.
+ * @warning Directory names can reveal sensitive user information and are not
+ * emitted to trace by this function.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_drive_decode_directory_entry(
+    uint32_t information_class,
+    const void* data,
+    size_t data_len,
+    size_t offset,
+    librdp_server_drive_metadata* metadata,
+    char* name,
+    size_t name_capacity,
+    size_t* name_length,
+    size_t* next_offset);
 
 /**
  * @brief Initialize a server runtime event value.

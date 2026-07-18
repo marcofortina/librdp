@@ -263,6 +263,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_security COMMAND test_server security)
     add_test(NAME server_lifecycle COMMAND test_server lifecycle)
     add_test(NAME server_channels COMMAND test_server channels)
+    add_test(NAME server_drive_metadata COMMAND test_server drive-metadata)
     add_test(NAME server_graphics COMMAND test_server graphics)
     add_test(NAME server_runtime COMMAND test_server runtime)
     add_test(NAME smoke_server_standard COMMAND test_server smoke-standard)
@@ -293,6 +294,7 @@ if(LIBRDP_BUILD_TESTS)
         server_feature_status
         server_lifecycle
         server_channels
+        server_drive_metadata
         server_graphics
         PROPERTIES TIMEOUT 30
     )

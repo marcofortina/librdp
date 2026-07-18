@@ -56,6 +56,20 @@ typedef struct test_server_drive_context
     int valid;
 } test_server_drive_context;
 
+static void test_server_write_u32(uint8_t* data, uint32_t value)
+{
+    data[0] = (uint8_t)(value & 0xffu);
+    data[1] = (uint8_t)((value >> 8u) & 0xffu);
+    data[2] = (uint8_t)((value >> 16u) & 0xffu);
+    data[3] = (uint8_t)((value >> 24u) & 0xffu);
+}
+
+static void test_server_write_u64(uint8_t* data, uint64_t value)
+{
+    test_server_write_u32(data, (uint32_t)(value & UINT32_MAX));
+    test_server_write_u32(data + 4u, (uint32_t)(value >> 32u));
+}
+
 static void test_server_clipboard_callback(
     librdp_server_peer* peer,
     const librdp_server_clipboard_event* event,
@@ -280,6 +294,177 @@ int test_server_lifecycle_focused(void)
     SCHECK(librdp_server_peer_close(fixture.peer) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_get_pollfds(fixture.peer, NULL, 0, &count) == LIBRDP_STATUS_STATE);
     test_server_peer_fixture_close(&fixture);
+    return 0;
+}
+
+/*
+ * Exercises the public drive metadata boundary with complete synthetic
+ * information records, malformed lengths, unsupported classes, status
+ * normalization, UTF-16 conversion, and size-query behavior.
+ */
+int test_server_drive_metadata_focused(void)
+{
+    uint8_t file_info[104];
+    uint8_t directory_info[72];
+    librdp_server_drive_metadata metadata;
+    librdp_server_drive_metadata before;
+    char name[16];
+    size_t name_length = 0u;
+    size_t next_offset = 0u;
+
+    memset(file_info, 0, sizeof(file_info));
+    memset(directory_info, 0, sizeof(directory_info));
+    SCHECK(librdp_server_drive_metadata_init(NULL) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_drive_metadata_init(&metadata) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(metadata.version == LIBRDP_SERVER_DRIVE_METADATA_VERSION);
+    SCHECK(metadata.size == sizeof(metadata));
+    SCHECK(metadata.link_count == 1u);
+    SCHECK(librdp_server_drive_classify_io_status(0u) ==
+           LIBRDP_SERVER_DRIVE_IO_SUCCESS);
+    SCHECK(librdp_server_drive_classify_io_status(0xc000000fu) ==
+           LIBRDP_SERVER_DRIVE_IO_NOT_FOUND);
+    SCHECK(librdp_server_drive_classify_io_status(0xc0000022u) ==
+           LIBRDP_SERVER_DRIVE_IO_ACCESS_DENIED);
+    SCHECK(librdp_server_drive_classify_io_status(0xc0000035u) ==
+           LIBRDP_SERVER_DRIVE_IO_ALREADY_EXISTS);
+    SCHECK(librdp_server_drive_classify_io_status(0xc0000103u) ==
+           LIBRDP_SERVER_DRIVE_IO_NOT_DIRECTORY);
+    SCHECK(librdp_server_drive_classify_io_status(0x80000006u) ==
+           LIBRDP_SERVER_DRIVE_IO_NO_MORE_FILES);
+    SCHECK(librdp_server_drive_classify_io_status(0xc000000du) ==
+           LIBRDP_SERVER_DRIVE_IO_INVALID);
+    SCHECK(librdp_server_drive_classify_io_status(0xc00000bbu) ==
+           LIBRDP_SERVER_DRIVE_IO_UNSUPPORTED);
+    SCHECK(librdp_server_drive_classify_io_status(0xc0000023u) ==
+           LIBRDP_SERVER_DRIVE_IO_RESOURCE_LIMIT);
+    SCHECK(librdp_server_drive_classify_io_status(0xdeadbeefu) ==
+           LIBRDP_SERVER_DRIVE_IO_ERROR);
+
+    test_server_write_u64(file_info, 11u);
+    test_server_write_u64(file_info + 8u, 12u);
+    test_server_write_u64(file_info + 16u, 13u);
+    test_server_write_u64(file_info + 24u, 14u);
+    test_server_write_u32(
+        file_info + 32u,
+        LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_ARCHIVE);
+    test_server_write_u64(file_info + 40u, 4096u);
+    test_server_write_u64(file_info + 48u, 1234u);
+    test_server_write_u32(file_info + 56u, 2u);
+    file_info[60u] = 1u;
+    test_server_write_u64(file_info + 64u, 99u);
+    test_server_write_u32(file_info + 96u, 4u);
+    file_info[100u] = 'x';
+    file_info[102u] = 'y';
+    SCHECK(librdp_server_drive_decode_file_metadata(
+               LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION,
+               file_info,
+               sizeof(file_info),
+               &metadata) == LIBRDP_STATUS_OK);
+    SCHECK(metadata.creation_time == 11u);
+    SCHECK(metadata.access_time == 12u);
+    SCHECK(metadata.write_time == 13u);
+    SCHECK(metadata.change_time == 14u);
+    SCHECK(metadata.allocation_size == 4096u);
+    SCHECK(metadata.file_size == 1234u);
+    SCHECK(metadata.link_count == 2u);
+    SCHECK(metadata.delete_pending == 1u);
+    SCHECK(metadata.directory == 0u);
+    SCHECK(metadata.file_id == 99u);
+    before = metadata;
+    file_info[96u]--;
+    SCHECK(librdp_server_drive_decode_file_metadata(
+               LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION,
+               file_info,
+               sizeof(file_info),
+               &metadata) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    SCHECK(memcmp(&metadata, &before, sizeof(metadata)) == 0);
+    file_info[96u]++;
+    SCHECK(librdp_server_drive_decode_file_metadata(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               file_info,
+               sizeof(file_info),
+               &metadata) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    metadata.version++;
+    SCHECK(librdp_server_drive_decode_file_metadata(
+               LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION,
+               file_info,
+               sizeof(file_info),
+               &metadata) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_drive_metadata_init(&metadata) ==
+           LIBRDP_STATUS_OK);
+
+    test_server_write_u64(directory_info + 8u, 21u);
+    test_server_write_u64(directory_info + 16u, 22u);
+    test_server_write_u64(directory_info + 24u, 23u);
+    test_server_write_u64(directory_info + 32u, 24u);
+    test_server_write_u64(directory_info + 40u, 55u);
+    test_server_write_u64(directory_info + 48u, 4096u);
+    test_server_write_u32(
+        directory_info + 56u,
+        LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY);
+    test_server_write_u32(directory_info + 60u, 8u);
+    directory_info[64u] = 'n';
+    directory_info[66u] = 'o';
+    directory_info[68u] = 'd';
+    directory_info[70u] = 'e';
+    SCHECK(librdp_server_drive_decode_directory_entry(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               directory_info,
+               sizeof(directory_info),
+               0u,
+               &metadata,
+               NULL,
+               0u,
+               &name_length,
+               &next_offset) == LIBRDP_STATUS_OK);
+    SCHECK(name_length == 5u);
+    SCHECK(next_offset == 0u);
+    SCHECK(metadata.directory == 1u);
+    SCHECK(metadata.file_size == 55u);
+    SCHECK(librdp_server_drive_decode_directory_entry(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               directory_info,
+               sizeof(directory_info),
+               0u,
+               &metadata,
+               name,
+               4u,
+               &name_length,
+               &next_offset) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+    SCHECK(librdp_server_drive_decode_directory_entry(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               directory_info,
+               sizeof(directory_info),
+               0u,
+               &metadata,
+               name,
+               sizeof(name),
+               &name_length,
+               &next_offset) == LIBRDP_STATUS_OK);
+    SCHECK(strcmp(name, "node") == 0);
+    SCHECK(librdp_server_drive_decode_directory_entry(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               directory_info,
+               sizeof(directory_info),
+               sizeof(directory_info),
+               &metadata,
+               name,
+               sizeof(name),
+               &name_length,
+               &next_offset) == LIBRDP_STATUS_PROTOCOL_ERROR);
+    directory_info[60u] = 7u;
+    SCHECK(librdp_server_drive_decode_directory_entry(
+               LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+               directory_info,
+               sizeof(directory_info),
+               0u,
+               &metadata,
+               name,
+               sizeof(name),
+               &name_length,
+               &next_offset) == LIBRDP_STATUS_PROTOCOL_ERROR);
     return 0;
 }
 

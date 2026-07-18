@@ -16,6 +16,8 @@
 
 #include "channels/filesystem_redirection.h"
 
+#include <librdp/server.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -42,6 +44,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_buffer buffer;
     const uint8_t path[] = {'f', 0, 0, 0};
     rdp_filesystem_redirection_lock_info locks[1];
+    librdp_server_drive_metadata metadata;
+    char name[64];
+    size_t name_length = 0u;
+    size_t next_offset = 0u;
     uint32_t bounded_data = size < 64u ? (uint32_t)size : 64u;
 
     if (!data && size > 0)
@@ -63,6 +69,24 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     (void)rdp_filesystem_redirection_parse_close_response(data, size, &completion_response);
     (void)rdp_filesystem_redirection_parse_length_response(data, size, &length_response);
     (void)rdp_filesystem_redirection_parse_lock_response(data, size, &completion_response);
+    if (librdp_server_drive_metadata_init(&metadata) == LIBRDP_STATUS_OK)
+    {
+        (void)librdp_server_drive_decode_file_metadata(
+            LIBRDP_SERVER_DRIVE_FILE_ALL_INFORMATION,
+            data,
+            size,
+            &metadata);
+        (void)librdp_server_drive_decode_directory_entry(
+            LIBRDP_SERVER_DRIVE_FILE_DIRECTORY_INFORMATION,
+            data,
+            size,
+            0u,
+            &metadata,
+            name,
+            sizeof(name),
+            &name_length,
+            &next_offset);
+    }
 
     rdp_buffer_init(&buffer);
     (void)rdp_filesystem_redirection_write_create_request(&buffer, 1, 2, 3, 0, 0, 0, 0, 0, 0, path, sizeof(path));

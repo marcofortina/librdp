@@ -50,6 +50,10 @@ LIBRDP_0.1 {
         librdp_server_clipboard_event_init;
         librdp_server_drive_request_init;
         librdp_server_drive_event_init;
+        librdp_server_drive_metadata_init;
+        librdp_server_drive_classify_io_status;
+        librdp_server_drive_decode_file_metadata;
+        librdp_server_drive_decode_directory_entry;
         librdp_server_credentials_request_init;
         librdp_server_status_init;
         librdp_server_metrics_init;

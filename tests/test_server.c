@@ -61,6 +61,8 @@ static int run_named(const char* name)
         return test_server_lifecycle_focused();
     if (strcmp(name, "channels") == 0)
         return test_server_channels_focused();
+    if (strcmp(name, "drive-metadata") == 0)
+        return test_server_drive_metadata_focused();
     if (strcmp(name, "graphics") == 0)
         return test_server_graphics_focused();
     if (strcmp(name, "runtime") == 0)
@@ -85,6 +87,7 @@ int main(int argc, char** argv)
         return 1;
     if (test_server_lifecycle_focused() != 0 ||
         test_server_channels_focused() != 0 ||
+        test_server_drive_metadata_focused() != 0 ||
         test_server_graphics_focused() != 0)
         return 1;
     return test_server_loopback_standard_activation_sequence();

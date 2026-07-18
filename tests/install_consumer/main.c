@@ -9,6 +9,7 @@ int main(void)
 {
     librdp_server_clipboard_event clipboard_event;
     librdp_server_drive_event drive_event;
+    librdp_server_drive_metadata drive_metadata;
     librdp_server_drive_request drive_request;
     librdp_server_drive_request_id drive_request_id = 0u;
     librdp_server_pointer_update pointer_update;
@@ -46,8 +47,11 @@ int main(void)
             LIBRDP_STATUS_OK ||
         librdp_server_drive_request_init(&drive_request) !=
             LIBRDP_STATUS_OK ||
+        librdp_server_drive_metadata_init(&drive_metadata) !=
+            LIBRDP_STATUS_OK ||
         drive_event.version != LIBRDP_SERVER_DRIVE_EVENT_VERSION ||
         drive_request.version != LIBRDP_SERVER_DRIVE_REQUEST_VERSION ||
+        drive_metadata.version != LIBRDP_SERVER_DRIVE_METADATA_VERSION ||
         librdp_server_peer_set_drive_callback(NULL, NULL, NULL) !=
             LIBRDP_STATUS_INVALID_ARGUMENT ||
         librdp_server_peer_submit_drive_request(

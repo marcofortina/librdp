@@ -47,6 +47,7 @@ typedef struct server_drive_pending
     uint64_t deadline_ns;
     uint64_t reserved_bytes;
     librdp_server_drive_operation operation;
+    uint32_t information_class;
     librdp_status terminal_status;
     int reserves_file;
     int occupied;
@@ -436,6 +437,7 @@ static librdp_status server_drive_complete(
                             : LIBRDP_SERVER_DRIVE_REQUEST_CANCELLED;
     completion.status = status;
     completion.operation = pending->operation;
+    completion.information_class = pending->information_class;
     if (event)
     {
         completion.io_status = event->io_status;
@@ -1188,6 +1190,8 @@ static librdp_status server_drive_complete_immediate(
     completion.status = status;
     completion.operation =
         request ? request->operation.operation : (librdp_server_drive_operation)0;
+    completion.information_class =
+        request ? request->operation.information_class : 0u;
     return runtime->platform->complete(runtime->platform_context,
                                        &completion);
 }
@@ -1277,6 +1281,7 @@ librdp_status server_drive_runtime_platform_request(
     pending->protocol_request_id = protocol_request_id;
     pending->volume_id = volume->volume_id;
     pending->operation = normalized.operation;
+    pending->information_class = normalized.information_class;
     pending->reserved_bytes = reservation;
     pending->deadline_ns =
         now_ns + (uint64_t)runtime->config.request_timeout_ms *

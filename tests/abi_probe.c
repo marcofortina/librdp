@@ -62,6 +62,8 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_drive_request", librdp_server_drive_request, ",");
     ABI_TYPE_ENTRY("librdp_server_drive_event_type", librdp_server_drive_event_type, ",");
     ABI_TYPE_ENTRY("librdp_server_drive_event", librdp_server_drive_event, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_io_result", librdp_server_drive_io_result, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_metadata", librdp_server_drive_metadata, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_family", librdp_server_extension_family, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_event", librdp_server_extension_event, ",");
     ABI_TYPE_ENTRY("librdp_server_event_type", librdp_server_event_type, ",");

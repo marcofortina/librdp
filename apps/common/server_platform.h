@@ -145,6 +145,7 @@ typedef struct server_platform_drive_completion
     librdp_server_drive_operation operation;
     librdp_server_drive_device_handle device;
     librdp_server_drive_file_handle file;
+    uint32_t information_class;
     uint32_t information;
     uint64_t transferred;
     const uint8_t* data;
