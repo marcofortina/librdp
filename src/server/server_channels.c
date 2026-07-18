@@ -2538,12 +2538,43 @@ static librdp_status rdp_server_dynamic_emit_reassembled(librdp_server_peer* pee
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Known extension channels require a registered family or feature provider.
+ * Unknown application channels retain the explicit accept-callback contract
+ * and are not assigned built-in feature state.
+ */
+static int rdp_server_dynamic_provider_ready(
+    const librdp_server_peer* peer,
+    librdp_server_extension_family family,
+    librdp_feature feature)
+{
+    if (!peer)
+        return 0;
+    if (family == LIBRDP_SERVER_EXTENSION_UNKNOWN)
+        return 1;
+    if (rdp_server_extension_provider_ready(
+            peer->backend_extension_families,
+            family))
+        return 1;
+    return (uint32_t)feature != 0u &&
+           (peer->backend_features & (uint32_t)feature) != 0u;
+}
+
+/*
+ * Validate and answer one client DVC CREATE transaction. Duplicate IDs and
+ * malformed names fail the parser path, unavailable known providers receive a
+ * not-supported response without invoking application code, and no channel
+ * slot becomes visible until every admission check has succeeded.
+ */
 static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
                                                       const uint8_t* data,
                                                       size_t data_len)
 {
     rdp_dynamic_channel_create_request request;
     rdp_server_dynamic_channel* channel = NULL;
+    librdp_server_extension_family family =
+        LIBRDP_SERVER_EXTENSION_UNKNOWN;
+    librdp_feature feature = (librdp_feature)0;
     rdp_buffer response;
     uint32_t status_code = RDP_DYNAMIC_CHANNEL_STATUS_OK;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -2558,7 +2589,20 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         status = LIBRDP_STATUS_LIMIT_EXCEEDED;
     if (status == LIBRDP_STATUS_OK && rdp_server_find_dynamic_channel_any(peer, request.channel_id))
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
-    if (status == LIBRDP_STATUS_OK && peer->dynamic_channel_accept_callback)
+    if (status == LIBRDP_STATUS_OK)
+    {
+        rdp_server_extension_classify_name((const char*)request.name,
+                                           request.name_len,
+                                           &family,
+                                           &feature);
+        accepted = rdp_server_dynamic_provider_ready(peer,
+                                                     family,
+                                                     feature);
+        if (!accepted)
+            status_code = RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED;
+    }
+    if (status == LIBRDP_STATUS_OK && accepted &&
+        peer->dynamic_channel_accept_callback)
     {
         accepted = peer->dynamic_channel_accept_callback(peer,
                                                          request.channel_id,
@@ -2584,9 +2628,6 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         (void)rdp_server_send_dynamic_packet(peer, &response);
     if (status == LIBRDP_STATUS_OK && accepted && channel)
     {
-        librdp_server_extension_family family = LIBRDP_SERVER_EXTENSION_UNKNOWN;
-        librdp_feature feature = (librdp_feature)0;
-
         memset(channel, 0, sizeof(*channel));
         channel->channel_id = request.channel_id;
         channel->channel_id_bytes = request.channel_id_bytes;
@@ -2594,7 +2635,6 @@ static librdp_status rdp_server_dynamic_handle_create(librdp_server_peer* peer,
         channel->open = 1;
         memcpy(channel->name, request.name, request.name_len);
         channel->name[request.name_len] = '\0';
-        rdp_server_extension_classify_name(channel->name, strlen(channel->name), &family, &feature);
         rdp_server_extension_state_mark_open(peer, family, 0, request.channel_id, request.priority);
         rdp_buffer_init(&channel->fragment);
         peer->dynamic_channel_count++;

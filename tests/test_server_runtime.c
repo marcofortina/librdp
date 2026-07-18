@@ -357,6 +357,18 @@ int test_server_loopback_standard_activation_sequence(void)
                                                    LIBRDP_SERVER_EXTENSION_CR2,
                                                    1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_GRAPHICS,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_DISPLAY_CONTROL,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_CORE_INPUT,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
+                                                   LIBRDP_SERVER_EXTENSION_TOUCH_INPUT,
+                                                   1) == LIBRDP_STATUS_OK);
+    SCHECK(librdp_server_enable_extension_provider(server,
                                                    LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR,
                                                    1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_enable_extension_provider(server,
@@ -1227,6 +1239,47 @@ int test_server_loopback_standard_activation_sequence(void)
            runtime_context.rejected_dynamic_channel_id == 6);
     SCHECK(runtime_context.dynamic_open_count == 0);
     SCHECK(librdp_server_peer_dynamic_channel_count(peer) == 0);
+    SCHECK(librdp_server_peer_enable_extension_provider(
+               peer,
+               LIBRDP_SERVER_EXTENSION_CORE_INPUT,
+               0) == LIBRDP_STATUS_OK);
+    dvc_packet.length = 0;
+    SCHECK(rdp_dynamic_channel_write_create_request(
+               &dvc_packet,
+               7,
+               1,
+               0,
+               RDP_CORE_INPUT_CHANNEL_NAME,
+               strlen(RDP_CORE_INPUT_CHANNEL_NAME)) == LIBRDP_STATUS_OK);
+    SCHECK(test_server_send_channel_payload(client_fd,
+                                            attach_confirm.user_id,
+                                            dynamic_static_channel_id,
+                                            &dvc_packet));
+    status = librdp_server_peer_run_once(peer, 1000);
+    SCHECK(status == LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_static_channel_data(
+        client_fd,
+        response,
+        sizeof(response),
+        &client_security,
+        &channel_plaintext,
+        &response_channel_id,
+        &dvc_payload,
+        &dvc_payload_len));
+    SCHECK(response_channel_id == dynamic_static_channel_id);
+    SCHECK(rdp_dynamic_channel_parse_create_response(
+               dvc_payload,
+               dvc_payload_len,
+               &dvc_create_response) == LIBRDP_STATUS_OK);
+    SCHECK(dvc_create_response.channel_id == 7 &&
+           dvc_create_response.status_code ==
+               RDP_DYNAMIC_CHANNEL_STATUS_NOT_SUPPORTED);
+    SCHECK(runtime_context.dynamic_accept_count == 0 &&
+           runtime_context.dynamic_reject_count == 1);
+    SCHECK(librdp_server_peer_enable_extension_provider(
+               peer,
+               LIBRDP_SERVER_EXTENSION_CORE_INPUT,
+               1) == LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_open_dynamic_channel(NULL, 8, 0, RDP_ECHO_CHANNEL_NAME) ==
            LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_peer_open_dynamic_channel(peer, 8, 4, RDP_ECHO_CHANNEL_NAME) ==
