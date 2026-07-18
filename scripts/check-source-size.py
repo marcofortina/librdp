@@ -25,7 +25,6 @@ BASELINE_LIMITS = {
     "tests/test_core_support.c": 3399,
     "tests/test_protocol_channels.c": 5350,
     "tests/test_protocol_graphics.c": 5035,
-    "tests/test_protocol_security.c": 9914,
     "tests/test_server_runtime.c": 3528,
 }
 

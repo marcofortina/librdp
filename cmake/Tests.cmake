@@ -99,12 +99,19 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_protocol
         tests/test_protocol.c
+        tests/test_protocol_activation.c
+        tests/test_protocol_authentication.c
         tests/test_protocol_channels.c
+        tests/test_protocol_clipboard.c
+        tests/test_protocol_codecs.c
         tests/test_protocol_core.c
         tests/test_protocol_devices.c
         tests/test_protocol_graphics.c
+        tests/test_protocol_graphics_pipeline.c
+        tests/test_protocol_interaction.c
         tests/test_protocol_security.c
         tests/test_protocol_transport.c
+        tests/test_protocol_updates.c
     )
     target_compile_definitions(test_protocol PRIVATE LIBRDP_TEST_PROTOCOL_MAIN)
     librdp_configure_test_executable(test_protocol)
@@ -193,8 +200,15 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME protocol COMMAND test_protocol)
     add_test(NAME protocol_core COMMAND test_protocol core)
     add_test(NAME protocol_channels COMMAND test_protocol channels)
+    add_test(NAME protocol_updates COMMAND test_protocol updates)
+    add_test(NAME protocol_codecs COMMAND test_protocol codecs)
+    add_test(NAME protocol_activation COMMAND test_protocol activation)
     add_test(NAME protocol_security COMMAND test_protocol security)
+    add_test(NAME protocol_interaction COMMAND test_protocol interaction)
     add_test(NAME protocol_graphics COMMAND test_protocol graphics)
+    add_test(NAME protocol_graphics_pipeline COMMAND test_protocol graphics-pipeline)
+    add_test(NAME protocol_clipboard COMMAND test_protocol clipboard)
+    add_test(NAME protocol_authentication COMMAND test_protocol authentication)
     add_test(NAME protocol_devices COMMAND test_protocol devices)
     add_test(NAME protocol_transport COMMAND test_protocol transport)
     add_test(NAME transport COMMAND test_transport)
@@ -246,13 +260,20 @@ if(LIBRDP_BUILD_TESTS)
     set_tests_properties(core_features PROPERTIES TIMEOUT 30)
     set_tests_properties(
         protocol
+        protocol_codecs
         protocol_channels
         protocol_security
         protocol_graphics
+        protocol_graphics_pipeline
         PROPERTIES TIMEOUT 90
     )
     set_tests_properties(
         protocol_core
+        protocol_updates
+        protocol_activation
+        protocol_interaction
+        protocol_clipboard
+        protocol_authentication
         protocol_devices
         protocol_transport
         PROPERTIES TIMEOUT 30
