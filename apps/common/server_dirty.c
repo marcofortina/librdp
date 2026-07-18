@@ -62,6 +62,14 @@ static int server_dirty_config_valid(const server_dirty_config* config)
            config->max_regions_per_frame <= config->max_regions;
 }
 
+librdp_status server_dirty_config_validate(
+    const server_dirty_config* config)
+{
+    return server_dirty_config_valid(config)
+               ? LIBRDP_STATUS_OK
+               : LIBRDP_STATUS_INVALID_ARGUMENT;
+}
+
 server_dirty_scheduler* server_dirty_scheduler_new(
     const server_dirty_config* config)
 {

@@ -68,7 +68,8 @@ static int server_platform_capture_valid(const server_platform_binding* binding)
     return server_platform_header_valid(table,
                                         SERVER_PLATFORM_CAPTURE_VERSION,
                                         sizeof(*table)) &&
-           table->start && table->stop && server_platform_events_valid(table->events);
+           table->start && table->stop && table->request_frame &&
+           server_platform_events_valid(table->events);
 }
 
 static int server_platform_pointer_valid(const server_platform_binding* binding)

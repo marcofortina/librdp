@@ -53,6 +53,8 @@ typedef struct server_dirty_scheduler server_dirty_scheduler;
 
 void server_dirty_config_init(server_dirty_config* config);
 void server_dirty_metrics_init(server_dirty_metrics* metrics);
+librdp_status server_dirty_config_validate(
+    const server_dirty_config* config);
 server_dirty_scheduler* server_dirty_scheduler_new(
     const server_dirty_config* config);
 void server_dirty_scheduler_free(server_dirty_scheduler* scheduler);

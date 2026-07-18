@@ -11,12 +11,30 @@
  */
 
 #include "server_dirty.h"
+#include "server_host.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
 
 #include <stdio.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+typedef struct mock_platform_context
+{
+    server_platform_capture_sink capture_sink;
+    server_platform_pointer_sink pointer_sink;
+    server_platform_clipboard_sink clipboard_sink;
+    server_platform_drive_sink drive_sink;
+    server_platform_permission_sink permission_sink;
+    server_platform_permission_state permissions[4];
+    unsigned int starts;
+    unsigned int stops;
+    unsigned int frame_requests;
+    unsigned int releases;
+} mock_platform_context;
 
 static int check_int(int condition, const char* expression, int line)
 {
@@ -71,22 +89,43 @@ static librdp_status mock_get_timeout(void* context, int* timeout_ms)
 static librdp_status mock_capture_start(void* context,
                                         const server_platform_capture_sink* sink)
 {
-    (void)context;
-    return sink && sink->frame && sink->lost
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !sink || !sink->frame || !sink->lost)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->capture_sink = *sink;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
 }
 
 static void mock_stop(void* context)
 {
-    (void)context;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (mock)
+        mock->stops++;
+}
+
+static librdp_status mock_request_frame(void* context)
+{
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->frame_requests++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_pointer_start(void* context,
                                         const server_platform_pointer_sink* sink)
 {
-    (void)context;
-    return sink && sink->update ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !sink || !sink->update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->pointer_sink = *sink;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_inject(void* context,
@@ -98,17 +137,23 @@ static librdp_status mock_inject(void* context,
 
 static void mock_release_all(void* context)
 {
-    (void)context;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (mock)
+        mock->releases++;
 }
 
 static librdp_status mock_clipboard_start(
     void* context,
     const server_platform_clipboard_sink* sink)
 {
-    (void)context;
-    return sink && sink->formats && sink->data
-               ? LIBRDP_STATUS_OK
-               : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !sink || !sink->formats || !sink->data)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->clipboard_sink = *sink;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_publish_formats(
@@ -150,8 +195,13 @@ static void mock_release_ownership(void* context, uint64_t generation)
 static librdp_status mock_drive_start(void* context,
                                       const server_platform_drive_sink* sink)
 {
-    (void)context;
-    return sink && sink->request ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !sink || !sink->request)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->drive_sink = *sink;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_drive_present(
@@ -188,8 +238,13 @@ static librdp_status mock_permission_start(
     void* context,
     const server_platform_permission_sink* sink)
 {
-    (void)context;
-    return sink && sink->changed ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !sink || !sink->changed)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->permission_sink = *sink;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
 }
 
 static librdp_status mock_permission_query(
@@ -197,11 +252,14 @@ static librdp_status mock_permission_query(
     server_platform_permission_kind kind,
     server_platform_permission_state* state)
 {
-    (void)context;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
     if (!state || kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *state = SERVER_PLATFORM_PERMISSION_GRANTED;
+    if (!mock)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *state = mock->permissions[(size_t)kind - 1u];
     return LIBRDP_STATUS_OK;
 }
 
@@ -230,6 +288,7 @@ static const server_platform_capture_vtable mock_capture = {
     sizeof(server_platform_capture_vtable),
     mock_capture_start,
     mock_stop,
+    mock_request_frame,
     &mock_events,
 };
 
@@ -292,7 +351,9 @@ static int test_platform_contract(void)
     server_platform_capture_vtable bad_capture = mock_capture;
     server_platform_event_source_vtable bad_events = mock_events;
     void* context = NULL;
-    int marker = 7;
+    mock_platform_context mock;
+
+    memset(&mock, 0, sizeof(mock));
 
     server_platform_init(&platform);
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_OK);
@@ -300,17 +361,17 @@ static int test_platform_contract(void)
                                           SERVER_PLATFORM_PROVIDER_CAPTURE));
 
     platform.capture.vtable = &mock_capture;
-    platform.capture.context = &marker;
+    platform.capture.context = &mock;
     platform.pointer.vtable = &mock_pointer;
-    platform.pointer.context = &marker;
+    platform.pointer.context = &mock;
     platform.input.vtable = &mock_input;
-    platform.input.context = &marker;
+    platform.input.context = &mock;
     platform.clipboard.vtable = &mock_clipboard;
-    platform.clipboard.context = &marker;
+    platform.clipboard.context = &mock;
     platform.drive.vtable = &mock_drive;
-    platform.drive.context = &marker;
+    platform.drive.context = &mock;
     platform.permission.vtable = &mock_permission;
-    platform.permission.context = &marker;
+    platform.permission.context = &mock;
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_OK);
     CHECK(server_platform_provider_ready(&platform,
                                          SERVER_PLATFORM_PROVIDER_CAPTURE));
@@ -319,8 +380,8 @@ static int test_platform_contract(void)
     CHECK(server_platform_provider_events(&platform,
                                           SERVER_PLATFORM_PROVIDER_CAPTURE,
                                           &context) == &mock_events);
-    CHECK(context == &marker);
-    context = &marker;
+    CHECK(context == &mock);
+    context = &mock;
     CHECK(server_platform_provider_events(&platform,
                                           SERVER_PLATFORM_PROVIDER_INPUT,
                                           &context) == NULL);
@@ -337,9 +398,150 @@ static int test_platform_contract(void)
     platform.capture.vtable = &bad_capture;
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_INVALID_ARGUMENT);
     platform.capture.vtable = NULL;
-    platform.capture.context = &marker;
+    platform.capture.context = &mock;
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(server_platform_validate(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    return 0;
+}
+
+static int connect_loopback(uint16_t port)
+{
+    struct sockaddr_in address;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (fd < 0)
+        return -1;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(fd,
+                (const struct sockaddr*)&address,
+                (socklen_t)sizeof(address)) != 0)
+    {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void configure_mock_platform(server_host_config* config,
+                                    mock_platform_context* mock)
+{
+    size_t index = 0;
+
+    memset(mock, 0, sizeof(*mock));
+    for (index = 0; index < 4u; index++)
+        mock->permissions[index] = SERVER_PLATFORM_PERMISSION_GRANTED;
+    config->platform.capture.vtable = &mock_capture;
+    config->platform.capture.context = mock;
+    config->platform.pointer.vtable = &mock_pointer;
+    config->platform.pointer.context = mock;
+    config->platform.input.vtable = &mock_input;
+    config->platform.input.context = mock;
+    config->platform.clipboard.vtable = &mock_clipboard;
+    config->platform.clipboard.context = mock;
+    config->platform.drive.vtable = &mock_drive;
+    config->platform.drive.context = mock;
+    config->platform.permission.vtable = &mock_permission;
+    config->platform.permission.context = mock;
+}
+
+/*
+ * Own listener and peer slots through start, bounded accept, slot reuse,
+ * capture resize and deterministic stop while all native providers remain
+ * represented only by opaque mock contexts.
+ */
+static int test_host_lifecycle(void)
+{
+    server_host_config config;
+    server_host_peer_info first;
+    server_host_peer_info reused;
+    server_host* host = NULL;
+    mock_platform_context mock;
+    server_platform_frame frame;
+    uint8_t pixels[4u * 3u * 4u];
+    uint16_t port = 0;
+    uint32_t first_id = 0;
+    int clients[3] = {-1, -1, -1};
+
+    server_host_config_init(&config);
+    config.max_peers = 2u;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_get_state(host) == SERVER_HOST_NEW);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_get_state(host) == SERVER_HOST_LISTENING);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_CAPTURE) == SERVER_HOST_PROVIDER_READY);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
+    port = server_host_local_port(host);
+    CHECK(port != 0u);
+
+    clients[0] = connect_loopback(port);
+    CHECK(clients[0] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    clients[1] = connect_loopback(port);
+    CHECK(clients[1] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 2u);
+    CHECK(mock.frame_requests == 2u);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    server_host_peer_info_init(&first);
+    CHECK(server_host_peer_at(host, 0u, &first) == LIBRDP_STATUS_OK);
+    first_id = first.id;
+    CHECK(first.generation == 1u);
+    CHECK(first.state == SERVER_HOST_PEER_ACCEPTED);
+    CHECK(server_host_close_peer(host, first_id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 1u);
+
+    clients[2] = connect_loopback(port);
+    CHECK(clients[2] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&reused);
+    CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
+    CHECK(reused.id != first_id);
+    CHECK(reused.generation == 2u);
+
+    memset(&frame, 0, sizeof(frame));
+    memset(pixels, 0x5a, sizeof(pixels));
+    frame.width = 4u;
+    frame.height = 3u;
+    frame.stride = 16u;
+    frame.pixels = pixels;
+    frame.pixels_len = sizeof(pixels);
+    frame.sequence = 1u;
+    frame.timestamp_ns = 1000u;
+    CHECK(mock.capture_sink.frame != NULL);
+    mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
+    server_host_peer_info_init(&reused);
+    CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
+    CHECK(reused.desktop_width == 4u && reused.desktop_height == 3u);
+
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
+    CHECK(server_host_peer_count(host) == 0u);
+    CHECK(mock.releases == 1u);
+    CHECK(mock.stops == 5u);
+    server_host_free(host);
+    close(clients[0]);
+    close(clients[1]);
+    close(clients[2]);
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    mock.permissions[SERVER_PLATFORM_PERMISSION_CAPTURE - 1u] =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
+    CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
+    CHECK(mock.stops == 1u);
+    server_host_free(host);
     return 0;
 }
 
@@ -438,6 +640,8 @@ int main(void)
     if (test_platform_contract() != 0)
         return 1;
     if (test_dirty_scheduler() != 0)
+        return 1;
+    if (test_host_lifecycle() != 0)
         return 1;
     puts("app server tests passed");
     return 0;

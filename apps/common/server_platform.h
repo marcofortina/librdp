@@ -47,6 +47,7 @@ typedef struct server_platform_frame
     uint32_t height;
     size_t stride;
     const uint8_t* pixels;
+    size_t pixels_len;
     const server_platform_rect* dirty_rects;
     size_t dirty_count;
     uint64_t sequence;
@@ -63,6 +64,7 @@ typedef struct server_platform_pointer
     int32_t y;
     size_t stride;
     const uint8_t* pixels;
+    size_t pixels_len;
     uint64_t sequence;
     int visible;
     int shape_valid;
@@ -187,6 +189,7 @@ typedef struct server_platform_capture_vtable
     librdp_status (*start)(void* context,
                            const server_platform_capture_sink* sink);
     void (*stop)(void* context);
+    librdp_status (*request_frame)(void* context);
     const server_platform_event_source_vtable* events;
 } server_platform_capture_vtable;
 
