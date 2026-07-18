@@ -534,7 +534,6 @@ librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* session
                     if (status != LIBRDP_STATUS_OK)
                     {
                         io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
-                        status = LIBRDP_STATUS_OK;
                     }
                     else
                     {
@@ -635,7 +634,6 @@ librdp_status rdp_session_handle_pnp_redirection_message(librdp_session* session
                     else
                     {
                         io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
-                        status = LIBRDP_STATUS_OK;
                     }
                 }
                 status = rdp_pnp_redirection_write_write_reply(&response,

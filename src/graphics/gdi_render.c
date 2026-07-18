@@ -173,7 +173,7 @@ static librdp_status rdp_gdi_render_read_delta_points(rdp_stream* stream,
                                                       uint32_t count,
                                                       rdp_gdi_render_point* points)
 {
-    uint8_t zero_bits[(RDP_GDI_RENDER_MAX_POINTS + 3u) / 4u];
+    uint8_t zero_bits[(RDP_GDI_RENDER_MAX_POINTS + 3u) / 4u] = {0};
     size_t zero_bits_len = 0;
     uint32_t i = 0;
 
@@ -229,7 +229,7 @@ static librdp_status rdp_gdi_render_read_delta_rects(rdp_stream* stream,
                                                      uint32_t count,
                                                      rdp_gdi_render_rect* rects)
 {
-    uint8_t zero_bits[(RDP_GDI_RENDER_MAX_RECTS + 1u) / 2u];
+    uint8_t zero_bits[(RDP_GDI_RENDER_MAX_RECTS + 1u) / 2u] = {0};
     size_t zero_bits_len = 0;
     uint32_t i = 0;
 

@@ -13,6 +13,7 @@
 
 #include "test_server_support.h"
 #include "test_server_suites.h"
+#include "server/server_channels.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -88,6 +89,7 @@ int test_server_channels_focused(void)
     int provider_enabled = 0;
     static const uint8_t payload[] = { 0x11, 0x22 };
 
+    SCHECK(!rdp_server_channel_allowed(NULL, RDP_MCS_GLOBAL_CHANNEL_ID));
     SCHECK(test_server_peer_fixture_open(&fixture));
     SCHECK(librdp_server_peer_set_channel_callback(fixture.peer, test_server_channel_callback, NULL) ==
            LIBRDP_STATUS_OK);

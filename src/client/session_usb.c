@@ -333,7 +333,7 @@ static librdp_status rdp_session_usb_send_device_announcements(librdp_session* s
 #ifdef RDP_HAVE_LIBUSB
         rdp_usb_backend_device backend_device;
         int have_backend_device = 0;
-        const char* backend_name = "descriptor";
+        const char* backend_name = NULL;
 #endif
 
         rdp_buffer_init(&packet);

@@ -338,6 +338,11 @@ static uint32_t rdp_session_drive_fstatat(librdp_session* session,
     io_status = rdp_session_drive_open_parent_dir(session, device_id, relative_path, &parent_fd, &basename);
     if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
         return io_status;
+    if (!basename)
+    {
+        (void)close(parent_fd);
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
     if (fstatat(parent_fd, basename, st, AT_SYMLINK_NOFOLLOW) != 0)
     {
         if (errno == ENOENT)
@@ -390,6 +395,11 @@ static uint32_t rdp_session_drive_open_path(librdp_session* session,
     io_status = rdp_session_drive_open_parent_dir(session, device_id, relative_path, &parent_fd, &basename);
     if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
         return io_status;
+    if (!basename)
+    {
+        (void)close(parent_fd);
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
     *fd = openat(parent_fd, basename, flags | O_CLOEXEC | O_NOFOLLOW, mode);
     if (*fd < 0)
         io_status = rdp_session_errno_to_device_status(errno);
@@ -419,6 +429,11 @@ static uint32_t rdp_session_drive_unlinkat(librdp_session* session,
     io_status = rdp_session_drive_open_parent_dir(session, device_id, relative_path, &parent_fd, &basename);
     if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
         return io_status;
+    if (!basename)
+    {
+        (void)close(parent_fd);
+        return RDP_SESSION_DEVICE_INVALID_PARAMETER;
+    }
     if (unlinkat(parent_fd, basename, flags) != 0)
         io_status = rdp_session_errno_to_device_status(errno);
     free(basename);
@@ -440,6 +455,8 @@ static uint32_t rdp_session_drive_renameat(librdp_session* session,
     io_status = rdp_session_drive_open_parent_dir(session, device_id, old_path, &old_parent_fd, &old_base);
     if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
         io_status = rdp_session_drive_open_parent_dir(session, device_id, new_path, &new_parent_fd, &new_base);
+    if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS && (!old_base || !new_base))
+        io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
     if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
         renameat(old_parent_fd, old_base, new_parent_fd, new_base) != 0)
         io_status = rdp_session_errno_to_device_status(errno);
@@ -1965,7 +1982,13 @@ static librdp_status rdp_session_make_query_directory(librdp_session* session,
     {
         *directory_path = rdp_session_strdup_range(file->path, strlen(file->path));
         *pattern = rdp_session_strdup_range("*", 1);
-        return *directory_path && *pattern ? LIBRDP_STATUS_OK : LIBRDP_STATUS_NO_MEMORY;
+        if (*directory_path && *pattern)
+            return LIBRDP_STATUS_OK;
+        free(*directory_path);
+        free(*pattern);
+        *directory_path = NULL;
+        *pattern = NULL;
+        return LIBRDP_STATUS_NO_MEMORY;
     }
 
     status = rdp_session_utf16le_path_to_utf8(request->path, request->path_len, &relative);
@@ -2591,6 +2614,8 @@ static uint32_t rdp_session_apply_link_information(librdp_session* session,
                                                           new_path,
                                                           &new_parent_fd,
                                                           &new_base);
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS && (!old_base || !new_base))
+            io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
         if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
             linkat(old_parent_fd, old_base, new_parent_fd, new_base, 0) != 0)
             io_status = rdp_session_errno_to_device_status(errno);
@@ -2695,6 +2720,8 @@ static uint32_t rdp_session_apply_link_information_ex(
                                                           new_path,
                                                           &new_parent_fd,
                                                           &new_base);
+        if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS && (!old_base || !new_base))
+            io_status = RDP_SESSION_DEVICE_INVALID_PARAMETER;
         if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
             linkat(old_parent_fd, old_base, new_parent_fd, new_base, 0) != 0)
             io_status = rdp_session_errno_to_device_status(errno);
@@ -3380,8 +3407,6 @@ static librdp_status rdp_session_handle_filesystem_query_volume(librdp_session* 
     {
         rdp_buffer_init(&payload);
         io_status = rdp_session_drive_root_fd(session, drive_index, &root_fd);
-        if (io_status != RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
-            status = LIBRDP_STATUS_STATE;
     }
     if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS && drive_index != UINT32_MAX)
     {
@@ -4311,12 +4336,10 @@ static librdp_status rdp_session_handle_filesystem_security(librdp_session* sess
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 io_status = RDP_SESSION_DEVICE_ACCESS_DENIED;
-                status = LIBRDP_STATUS_OK;
             }
             else if (status != LIBRDP_STATUS_OK)
             {
                 io_status = rdp_session_filesystem_error_from_status(status);
-                status = LIBRDP_STATUS_OK;
             }
             else if (payload.length > request.length)
             {

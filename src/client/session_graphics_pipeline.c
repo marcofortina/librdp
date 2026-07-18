@@ -1363,7 +1363,7 @@ static librdp_status rdp_session_graphics_progressive_render_tile(librdp_session
     uint32_t width = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
     uint32_t height = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
     int extrapolate = 0;
-    const char* stage = "base_quant.y";
+    const char* stage = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !surface || !region || !rendered_tiles || !failed_tiles || !missing_tiles)
@@ -1549,7 +1549,7 @@ static librdp_status rdp_session_graphics_progressive_render_upgrade(
     uint32_t width = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
     uint32_t height = RDP_GRAPHICS_PROGRESSIVE_TILE_SIZE;
     int extrapolate = 0;
-    const char* stage = "state";
+    const char* stage = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session || !surface || !region || !tile || !rendered_tiles || !failed_tiles || !missing_tiles)

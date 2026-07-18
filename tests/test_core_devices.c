@@ -123,6 +123,17 @@ static int test_smartcard_backend_mock(void)
     CHECK(response_len == mock.transmit_response_len);
     CHECK(memcmp(response, mock.transmit_response, response_len) == 0);
     CHECK(atomic_load_explicit(&mock.transmit_calls, memory_order_relaxed) == 1u);
+    response_len = sizeof(response);
+    CHECK(rdp_smartcard_backend_transmit(&backend,
+                                         context,
+                                         handle,
+                                         &send_pci,
+                                         NULL,
+                                         0,
+                                         &recv_pci,
+                                         response,
+                                         &response_len) == SCARD_S_SUCCESS);
+    CHECK(response_len == mock.transmit_response_len);
 
     atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
     mock.hang_status_change_ms = 250u;

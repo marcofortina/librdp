@@ -556,6 +556,8 @@ librdp_status rdp_server_handle_client_info(librdp_server_peer* peer, const rdp_
     rdp_client_info_summary summary;
     librdp_status status = rdp_server_parse_x224_data_packet(packet, &data, &data_len);
 
+    memset(&request, 0, sizeof(request));
+    memset(&summary, 0, sizeof(summary));
     if (status == LIBRDP_STATUS_OK)
         status = rdp_mcs_parse_send_data_request(data, data_len, &request);
     if (status == LIBRDP_STATUS_OK &&

@@ -1548,7 +1548,7 @@ static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
     const rdp_rfx_band* bands = NULL;
     size_t band_count = 0;
     size_t i = 0;
-    const char* stage = "state";
+    const char* stage = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!component_name || !quant || !delta || !component || !coefficients)
@@ -1911,8 +1911,6 @@ static librdp_status rdp_rfx_rlgr_decode_core(rdp_rfx_rlgr_mode mode,
                 if (written == coefficient_count)
                     return rdp_rfx_rlgr_finish(written, coefficients_written);
                 k = rdp_rfx_update_param(&kp, RDP_RFX_RLGR_UP_GR);
-                if (written == coefficient_count)
-                    return rdp_rfx_rlgr_finish(written, coefficients_written);
             }
             if (rdp_rfx_read_bits(&reader, (uint8_t)k, &run) != LIBRDP_STATUS_OK)
                 return rdp_rfx_rlgr_tail_or_error(coefficients,

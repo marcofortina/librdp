@@ -1085,10 +1085,11 @@ librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
 int rdp_server_channel_allowed(const librdp_server_peer* peer, uint16_t channel_id)
 {
     uint16_t first_static = (uint16_t)(RDP_MCS_GLOBAL_CHANNEL_ID + 1u);
-    uint16_t last_static = (uint16_t)(first_static + peer->advertised_channel_count);
+    uint16_t last_static = 0;
 
     if (!peer)
         return 0;
+    last_static = (uint16_t)(first_static + peer->advertised_channel_count);
     if (channel_id == peer->user_id || channel_id == RDP_MCS_GLOBAL_CHANNEL_ID)
         return 1;
     return channel_id >= first_static && channel_id < last_static;

@@ -801,12 +801,10 @@ static librdp_status rdp_session_handle_printer_length_irp(librdp_session* sessi
             if (status == LIBRDP_STATUS_UNSUPPORTED)
             {
                 io_status = RDP_SESSION_DEVICE_NOT_SUPPORTED;
-                status = LIBRDP_STATUS_OK;
             }
             else if (status != LIBRDP_STATUS_OK)
             {
                 io_status = rdp_session_filesystem_error_from_status(status);
-                status = LIBRDP_STATUS_OK;
             }
             else if (payload.length > request.length && request.length > 0)
             {
@@ -1020,4 +1018,3 @@ librdp_status rdp_session_handle_printer_io_request(librdp_session* session,
             return rdp_session_handle_printer_not_supported(session, &request);
     }
 }
-

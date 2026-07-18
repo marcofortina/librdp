@@ -4119,8 +4119,12 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
             return status;
         width = decoded.width;
         height = decoded.height;
+        if (decoded.stride > INT32_MAX)
+        {
+            rdp_gdi_image_clear(&decoded);
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
         stride = (int32_t)decoded.stride;
-        pixel_format = RDP_GDIPLUS_PIXEL_FORMAT_32BPP_ARGB;
         pixels = decoded.pixels;
     }
     else if (pixel_format != RDP_GDIPLUS_PIXEL_FORMAT_32BPP_ARGB &&
@@ -4131,9 +4135,9 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
             (*unsupported)++;
         return LIBRDP_STATUS_OK;
     }
-    abs_stride = stride < 0 ? (size_t)(-stride) : (size_t)stride;
+    abs_stride = stride < 0 ? (size_t)(-(int64_t)stride) : (size_t)stride;
     source_bottom_up = decoded.pixels ? 0 : stride > 0;
-    if (abs_stride < (size_t)width * 4u ||
+    if (abs_stride == 0u || abs_stride < (size_t)width * 4u ||
         (size_t)height > ((size_t)-1) / abs_stride ||
         (!decoded.pixels && image->data_len - 28u < (size_t)height * abs_stride))
     {
@@ -4146,9 +4150,14 @@ static librdp_status rdp_gdi_backend_render_gdiplus_image(
         src_x = 0;
     if (src_y < 0)
         src_y = 0;
-    if (src_width == 0u || src_x >= (int32_t)width)
+    if ((uint32_t)src_x >= width || (uint32_t)src_y >= height)
+    {
+        rdp_gdi_image_clear(&decoded);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (src_width == 0u)
         src_width = width - (uint32_t)src_x;
-    if (src_height == 0u || src_y >= (int32_t)height)
+    if (src_height == 0u)
         src_height = height - (uint32_t)src_y;
     if (src_width > width - (uint32_t)src_x)
         src_width = width - (uint32_t)src_x;

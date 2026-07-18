@@ -180,18 +180,30 @@ static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
     if (completed)
         *completed = 0;
     if (!fn)
+    {
+        if (cleanup)
+            cleanup(arg);
         return SCARD_E_UNSUPPORTED_FEATURE;
+    }
     job = (rdp_smartcard_job*)calloc(1, sizeof(*job));
     if (!job)
+    {
+        if (cleanup)
+            cleanup(arg);
         return SCARD_E_NO_MEMORY;
+    }
     if (pthread_mutex_init(&job->mutex, NULL) != 0)
     {
+        if (cleanup)
+            cleanup(arg);
         free(job);
         return SCARD_E_NO_MEMORY;
     }
     if (pthread_cond_init(&job->cond, NULL) != 0)
     {
         pthread_mutex_destroy(&job->mutex);
+        if (cleanup)
+            cleanup(arg);
         free(job);
         return SCARD_E_NO_MEMORY;
     }
@@ -200,7 +212,7 @@ static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
     job->cleanup = cleanup;
     if (pthread_create(&job->thread, NULL, rdp_smartcard_job_main, job) != 0)
     {
-        rdp_smartcard_job_destroy(job, 0);
+        rdp_smartcard_job_destroy(job, 1);
         return SCARD_E_NO_MEMORY;
     }
 
@@ -1440,7 +1452,8 @@ LONG rdp_smartcard_backend_transmit(rdp_smartcard_backend* backend,
         rdp_smartcard_transmit_cleanup(call);
         return SCARD_E_NO_MEMORY;
     }
-    memcpy(call->send_data, send_data, send_len);
+    if (send_len > 0)
+        memcpy(call->send_data, send_data, send_len);
     call->backend = backend;
     call->handle = handle;
     call->send_pci = *send_pci;

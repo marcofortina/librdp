@@ -504,7 +504,7 @@ static librdp_status rdp_clearcodec_decode_band_vbar(rdp_clearcodec_context* con
         uint8_t y_off = (uint8_t)((header >> 8) & 0x3fu);
         uint8_t short_count = 0;
         const uint8_t* short_pixels = NULL;
-        uint8_t converted[RDP_CLEARCODEC_VBAR_STRIDE];
+        uint8_t converted[RDP_CLEARCODEC_VBAR_STRIDE] = {0};
         uint8_t i = 0;
 
         if (y_off < y_on || y_off > band_height)

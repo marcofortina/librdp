@@ -121,6 +121,10 @@ static int test_html_format_offsets(void)
     CHECK(x11_clipboard_extract_html_fragment(formatted, formatted_len, &fragment, &fragment_len) == 1);
     CHECK(fragment_len == sizeof(html) - 1u);
     CHECK(memcmp(fragment, html, fragment_len) == 0);
+    CHECK(x11_clipboard_extract_html_fragment(NULL, formatted_len, &fragment, &fragment_len) == 0);
+    CHECK(x11_clipboard_extract_html_fragment(formatted, formatted_len, NULL, &fragment_len) == 0);
+    CHECK(x11_clipboard_extract_html_fragment(formatted, formatted_len, &fragment, NULL) == 0);
+    CHECK(x11_clipboard_parse_html_offset(formatted, formatted_len, NULL, &fragment_len) == 0);
     free(formatted);
     return 0;
 }

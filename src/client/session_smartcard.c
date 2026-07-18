@@ -1115,7 +1115,6 @@ static librdp_status rdp_session_smartcard_handle_list_reader_groups(
         {
             pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
         }
-        free(merged_groups);
     }
 #endif
     if (pcsc_status == SCARD_S_SUCCESS && groups_len > 0 && groups)
@@ -1253,7 +1252,6 @@ static librdp_status rdp_session_smartcard_handle_list_readers(
         {
             pcsc_status = (LONG)RDP_SESSION_SCARD_E_NO_MEMORY;
         }
-        free(merged_readers);
     }
 #endif
     if (pcsc_status == SCARD_S_SUCCESS && readers_len > 0 && readers)

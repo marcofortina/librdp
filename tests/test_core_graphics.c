@@ -567,6 +567,86 @@ int test_gdiplus_compressed_images_render_pixels(void)
 
     rdp_buffer_free(&payload);
     rdp_buffer_free(&stream);
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    records = 0u;
+    rasterized = 0u;
+    unsupported = 0u;
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x0026200au) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff0000ffu) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff00ff00u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffffffffu) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_float(&payload, 2.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(rasterized == 0u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
+    rdp_buffer_init(&stream);
+    rdp_buffer_init(&payload);
+    records = 0u;
+    rasterized = 0u;
+    unsupported = 0u;
+
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 1u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 2u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 8u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0x0026200au) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff0000ffu) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xff00ff00u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffff0000u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0xffffffffu) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_record(&stream, 0x4008u, 0x0505u, &payload));
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_buffer_append_u32_le(&payload, 0u) == LIBRDP_STATUS_OK);
+    CHECK(append_gdiplus_float(&payload, 3.0f));
+    CHECK(append_gdiplus_float(&payload, 0.0f));
+    CHECK(append_gdiplus_float(&payload, 1.0f));
+    CHECK(append_gdiplus_float(&payload, 1.0f));
+    CHECK(append_gdiplus_compressed_rect(&payload, 0u, 0u, 2u, 2u));
+    CHECK(append_gdiplus_record(&stream, 0x401au, 0x4005u, &payload));
+    CHECK(rdp_gdi_backend_render_gdiplus_stream(RDP_GDI_BACKEND_SOFTWARE,
+                                                surface,
+                                                stream.data,
+                                                stream.length,
+                                                &records,
+                                                &rasterized,
+                                                &unsupported) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(rasterized == 0u);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_free(&stream);
     librdp_surface_free(surface);
     return 0;
 }

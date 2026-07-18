@@ -51,6 +51,10 @@ int x11_clipboard_accumulate_incr_chunk(uint8_t** buffer,
 size_t x11_clipboard_next_incr_chunk_size(size_t total, size_t offset, size_t chunk_limit);
 int x11_clipboard_incr_timed_out(uint64_t now_ms, uint64_t deadline_ms);
 int x11_clipboard_build_html_format(const uint8_t* html, size_t html_len, uint8_t** out, size_t* out_len);
+int x11_clipboard_parse_html_offset(const uint8_t* data,
+                                    size_t data_len,
+                                    const char* key,
+                                    size_t* value);
 int x11_clipboard_extract_html_fragment(const uint8_t* data,
                                         size_t data_len,
                                         const uint8_t** fragment,

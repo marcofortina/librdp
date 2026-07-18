@@ -708,7 +708,6 @@ librdp_status rdp_server_read_tpkt(librdp_server_peer* peer,
     {
         pfd.revents = peer->pending_revents;
         peer->pending_revents = 0;
-        poll_result = 1;
     }
     else
     {

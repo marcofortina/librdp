@@ -1563,8 +1563,8 @@ static void rdp_session_emit_composited_invalidations(librdp_session* session,
             &session->composited_tree.invalidations[i];
         uint32_t left = 0;
         uint32_t top = 0;
-        uint32_t right = surface_width;
-        uint32_t bottom = surface_height;
+        uint32_t right = 0;
+        uint32_t bottom = 0;
         uint8_t fallback_full = 0;
 
         if (!invalidation->active || invalidation->generation <= before_invalidation_count)

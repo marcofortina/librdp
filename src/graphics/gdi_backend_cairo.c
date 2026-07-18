@@ -155,7 +155,7 @@ librdp_status rdp_gdi_backend_cairo_fill_rect(librdp_surface* surface,
                                               uint32_t color)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_t* cr = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -193,7 +193,7 @@ librdp_status rdp_gdi_backend_cairo_blit_bgra32(librdp_surface* surface,
                                                 size_t stride)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_surface_t* source_surface = NULL;
     cairo_t* cr = NULL;
@@ -270,7 +270,7 @@ librdp_status rdp_gdi_backend_cairo_draw_line(librdp_surface* surface,
                                               uint32_t* dirty_bottom)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_t* cr = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -351,7 +351,7 @@ librdp_status rdp_gdi_backend_cairo_fill_polygon(librdp_surface* surface,
                                                  uint32_t* dirty_bottom)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_t* cr = NULL;
     uint32_t i = 0;
@@ -430,7 +430,7 @@ librdp_status rdp_gdi_backend_cairo_fill_ellipse(librdp_surface* surface,
                                                  const rdp_gdi_backend_clip* clip)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_t* cr = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -472,7 +472,7 @@ librdp_status rdp_gdi_backend_cairo_draw_ellipse(librdp_surface* surface,
                                                  const rdp_gdi_backend_clip* clip)
 {
 #if defined(RDP_HAVE_CAIRO)
-    librdp_surface_mapping mapping;
+    librdp_surface_mapping mapping = {0};
     cairo_surface_t* cairo_surface = NULL;
     cairo_t* cr = NULL;
     librdp_status status = LIBRDP_STATUS_OK;

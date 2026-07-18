@@ -249,15 +249,18 @@ int x11_clipboard_build_html_format(const uint8_t* html, size_t html_len, uint8_
     return 1;
 }
 
-static int x11_clipboard_parse_html_offset(const uint8_t* data,
-                                           size_t data_len,
-                                           const char* key,
-                                           size_t* value)
+int x11_clipboard_parse_html_offset(const uint8_t* data,
+                                    size_t data_len,
+                                    const char* key,
+                                    size_t* value)
 {
-    const size_t key_len = strlen(key);
+    size_t key_len = 0;
     size_t i = 0;
 
-    if (!data || !key || !value || data_len < key_len)
+    if (!data || !key || !value)
+        return 0;
+    key_len = strlen(key);
+    if (data_len < key_len)
         return 0;
     for (i = 0; i + key_len < data_len; i++)
     {
