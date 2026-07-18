@@ -21,6 +21,7 @@ if(LIBRDP_APP_COMMON_REQUIRED)
         apps/common/client_providers.c
         apps/common/client_runtime.c
         apps/common/client_tls.c
+        apps/common/server_dirty.c
         apps/common/server_platform.c
         apps/common/workspace_options.c
     )

@@ -10,6 +10,7 @@
  * Determinism: providers are in-memory mocks and network tests use loopback.
  */
 
+#include "server_dirty.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
@@ -342,9 +343,101 @@ static int test_platform_contract(void)
     return 0;
 }
 
+/*
+ * Exercise coalescing, hard queue bounds, pacing, backpressure and resize
+ * invalidation so a stalled peer cannot retain capture-owned frame storage or
+ * grow dirty-region memory.
+ */
+static int test_dirty_scheduler(void)
+{
+    server_dirty_config config;
+    server_dirty_metrics metrics;
+    server_dirty_scheduler* scheduler = NULL;
+    const server_platform_rect* ready = NULL;
+    server_platform_rect rect = {10u, 10u, 20u, 20u};
+    server_platform_rect adjacent = {30u, 10u, 5u, 20u};
+    server_platform_rect separate = {80u, 80u, 10u, 10u};
+    server_platform_rect overflow = {99u, 99u, 2u, 2u};
+    size_t count = 0;
+    int timeout_ms = -1;
+
+    server_dirty_config_init(&config);
+    config.max_regions = 2u;
+    config.max_regions_per_frame = 1u;
+    config.frame_interval_ns = 10000000u;
+    scheduler = server_dirty_scheduler_new(&config);
+    CHECK(scheduler != NULL);
+    CHECK(server_dirty_scheduler_resize(scheduler, 100u, 100u, 100u, 0) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &rect, 100u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &adjacent, 100u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_peek(scheduler, 100u, &ready, &count,
+                                      &timeout_ms) == LIBRDP_STATUS_OK);
+    CHECK(ready != NULL);
+    CHECK(count == 1u);
+    CHECK(ready[0].x == 10u && ready[0].y == 10u);
+    CHECK(ready[0].width == 25u && ready[0].height == 20u);
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &separate, 100u) ==
+          LIBRDP_STATUS_OK);
+    rect.x = 50u;
+    rect.y = 50u;
+    rect.width = 5u;
+    rect.height = 5u;
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &rect, 100u) ==
+          LIBRDP_STATUS_OK);
+    server_dirty_metrics_init(&metrics);
+    CHECK(server_dirty_scheduler_get_metrics(scheduler, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.pending_regions == 1u);
+    CHECK(metrics.merged_regions == 1u);
+    CHECK(metrics.queue_collapses == 1u);
+    CHECK(server_dirty_scheduler_commit(scheduler, 1u, 100u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &separate, 101u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_peek(scheduler, 101u, &ready, &count,
+                                      &timeout_ms) == LIBRDP_STATUS_AGAIN);
+    CHECK(ready == NULL && count == 0u && timeout_ms == 10);
+    CHECK(server_dirty_scheduler_peek(scheduler, 10000100u, &ready, &count,
+                                      &timeout_ms) == LIBRDP_STATUS_OK);
+    CHECK(count == 1u && timeout_ms == 0);
+    CHECK(server_dirty_scheduler_defer(scheduler, 10000100u) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_peek(scheduler, 10000100u, &ready, &count,
+                                      &timeout_ms) == LIBRDP_STATUS_AGAIN);
+    CHECK(timeout_ms == 10);
+    CHECK(server_dirty_scheduler_resize(scheduler, 64u, 48u, 20000000u, 1) ==
+          LIBRDP_STATUS_OK);
+    CHECK(server_dirty_scheduler_peek(scheduler, 20000000u, &ready, &count,
+                                      &timeout_ms) == LIBRDP_STATUS_OK);
+    CHECK(count == 1u);
+    CHECK(ready[0].x == 0u && ready[0].y == 0u);
+    CHECK(ready[0].width == 64u && ready[0].height == 48u);
+    CHECK(server_dirty_scheduler_invalidate(scheduler, &overflow, 20000000u) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    server_dirty_metrics_init(&metrics);
+    CHECK(server_dirty_scheduler_get_metrics(scheduler, &metrics) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metrics.deferred_frames == 1u);
+    CHECK(metrics.presented_regions == 1u);
+    CHECK(metrics.surface_resizes == 2u);
+    server_dirty_scheduler_free(scheduler);
+
+    config.max_regions = 0u;
+    CHECK(server_dirty_scheduler_new(&config) == NULL);
+    server_dirty_config_init(&config);
+    config.max_regions = SERVER_DIRTY_MAX_REGIONS + 1u;
+    CHECK(server_dirty_scheduler_new(&config) == NULL);
+    return 0;
+}
+
 int main(void)
 {
     if (test_platform_contract() != 0)
+        return 1;
+    if (test_dirty_scheduler() != 0)
         return 1;
     puts("app server tests passed");
     return 0;
