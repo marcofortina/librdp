@@ -19,6 +19,23 @@
 
 #include "server_cli.h"
 
+typedef struct x11_server_runtime x11_server_runtime;
+
+x11_server_runtime* x11_server_runtime_new(
+    const x11_server_options* options,
+    librdp_status* status);
+void x11_server_runtime_free(x11_server_runtime* runtime);
+librdp_status x11_server_runtime_start(x11_server_runtime* runtime);
+librdp_status x11_server_runtime_run_once(x11_server_runtime* runtime,
+                                          int timeout_ms);
+librdp_status x11_server_runtime_wakeup(x11_server_runtime* runtime);
+librdp_status x11_server_runtime_cancel(x11_server_runtime* runtime);
+uint16_t x11_server_runtime_local_port(
+    const x11_server_runtime* runtime);
+uint32_t x11_server_runtime_width(
+    const x11_server_runtime* runtime);
+uint32_t x11_server_runtime_height(
+    const x11_server_runtime* runtime);
 int x11_server_run_shadow(const x11_server_options* options);
 
 #endif

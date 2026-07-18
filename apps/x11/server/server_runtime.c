@@ -25,13 +25,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-static server_host* x11_server_signal_host = NULL;
+struct x11_server_runtime
+{
+    x11_server_context* native;
+    server_host* host;
+    librdp_security_mode security_mode;
+    int started;
+};
+
+static x11_server_runtime* x11_server_signal_runtime = NULL;
 
 static void x11_server_signal_handler(int signal_number)
 {
     (void)signal_number;
-    if (x11_server_signal_host)
-        (void)server_host_cancel(x11_server_signal_host);
+    if (x11_server_signal_runtime)
+        (void)x11_server_runtime_cancel(x11_server_signal_runtime);
 }
 
 static void x11_server_trace(const server_host_trace_event* event,
@@ -65,18 +73,26 @@ static int x11_server_install_signals(void)
            sigaction(SIGTERM, &action, NULL) == 0;
 }
 
-int x11_server_run_shadow(const x11_server_options* options)
+x11_server_runtime* x11_server_runtime_new(
+    const x11_server_options* options,
+    librdp_status* output_status)
 {
     x11_server_config native_config;
-    x11_server_context* native = NULL;
     server_host_config host_config;
-    server_host* host = NULL;
+    x11_server_runtime* runtime = NULL;
     const char* password = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
-    int result = 1;
 
-    if (!options)
-        return 1;
+    if (output_status)
+        *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!options || !output_status)
+        return NULL;
+    runtime = (x11_server_runtime*)calloc(1u, sizeof(*runtime));
+    if (!runtime)
+    {
+        *output_status = LIBRDP_STATUS_NO_MEMORY;
+        return NULL;
+    }
     x11_server_config_init(&native_config);
     native_config.display_name = options->display_name;
     native_config.source_kind = options->source_kind;
@@ -87,17 +103,20 @@ int x11_server_run_shadow(const x11_server_options* options)
     native_config.allow_clipboard = options->allow_clipboard;
     native_config.allow_drive = options->allow_drive;
     native_config.drive_mount = options->drive_mount;
-    native = x11_server_context_new(&native_config);
-    if (!native)
+    runtime->native = x11_server_context_new(&native_config);
+    if (!runtime->native)
     {
-        fprintf(stderr, "error=x11_context status=unsupported\n");
-        return 1;
+        *output_status = LIBRDP_STATUS_UNSUPPORTED;
+        free(runtime);
+        return NULL;
     }
     server_host_config_init(&host_config);
     host_config.server.bind_address = options->bind_address;
     host_config.server.port = options->port;
-    host_config.server.width = x11_server_context_width(native);
-    host_config.server.height = x11_server_context_height(native);
+    host_config.server.width =
+        x11_server_context_width(runtime->native);
+    host_config.server.height =
+        x11_server_context_height(runtime->native);
     host_config.server.server_name = "librdp-x11-server";
     host_config.server.security_mode = options->security_mode;
     host_config.server.tls_certificate_path = options->tls_certificate;
@@ -109,10 +128,10 @@ int x11_server_run_shadow(const x11_server_options* options)
         password = getenv(options->password_environment);
         if (!password || password[0] == '\0')
         {
-            fprintf(stderr,
-                    "error=credentials status=missing_environment\n");
-            x11_server_context_free(native);
-            return 1;
+            *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            x11_server_context_free(runtime->native);
+            free(runtime);
+            return NULL;
         }
         host_config.server.nla_password = password;
     }
@@ -124,29 +143,118 @@ int x11_server_run_shadow(const x11_server_options* options)
     host_config.drive.read_only = options->drive_read_only;
     host_config.trace_callback = x11_server_trace;
     host_config.trace_user_data = stderr;
-    status = x11_server_context_platform(native, &host_config.platform);
+    status = x11_server_context_platform(runtime->native,
+                                         &host_config.platform);
     if (status != LIBRDP_STATUS_OK)
     {
-        fprintf(stderr,
-                "error=platform status=%s\n",
-                librdp_status_name(status));
-        x11_server_context_free(native);
-        return 1;
+        *output_status = status;
+        x11_server_context_free(runtime->native);
+        free(runtime);
+        return NULL;
     }
-    host = server_host_new(&host_config);
-    if (!host)
+    runtime->host = server_host_new(&host_config);
+    if (!runtime->host)
     {
-        fprintf(stderr, "error=host_create status=no_memory\n");
-        x11_server_context_free(native);
+        *output_status = LIBRDP_STATUS_NO_MEMORY;
+        x11_server_context_free(runtime->native);
+        free(runtime);
+        return NULL;
+    }
+    runtime->security_mode = options->security_mode;
+    *output_status = LIBRDP_STATUS_OK;
+    return runtime;
+}
+
+void x11_server_runtime_free(x11_server_runtime* runtime)
+{
+    if (!runtime)
+        return;
+    (void)server_host_stop(runtime->host);
+    server_host_free(runtime->host);
+    x11_server_context_free(runtime->native);
+    memset(runtime, 0, sizeof(*runtime));
+    free(runtime);
+}
+
+librdp_status x11_server_runtime_start(x11_server_runtime* runtime)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!runtime || !runtime->host || runtime->started)
+        return LIBRDP_STATUS_STATE;
+    status = server_host_start(runtime->host);
+    if (status == LIBRDP_STATUS_OK)
+        runtime->started = 1;
+    return status;
+}
+
+librdp_status x11_server_runtime_run_once(x11_server_runtime* runtime,
+                                          int timeout_ms)
+{
+    if (!runtime || !runtime->host || !runtime->started)
+        return LIBRDP_STATUS_STATE;
+    return server_host_run_once(runtime->host, timeout_ms);
+}
+
+librdp_status x11_server_runtime_wakeup(x11_server_runtime* runtime)
+{
+    if (!runtime || !runtime->host || !runtime->started)
+        return LIBRDP_STATUS_STATE;
+    return server_host_wakeup(runtime->host);
+}
+
+librdp_status x11_server_runtime_cancel(x11_server_runtime* runtime)
+{
+    if (!runtime || !runtime->host || !runtime->started)
+        return LIBRDP_STATUS_STATE;
+    return server_host_cancel(runtime->host);
+}
+
+uint16_t x11_server_runtime_local_port(
+    const x11_server_runtime* runtime)
+{
+    return runtime && runtime->host
+               ? server_host_local_port(runtime->host)
+               : 0u;
+}
+
+uint32_t x11_server_runtime_width(
+    const x11_server_runtime* runtime)
+{
+    return runtime && runtime->native
+               ? x11_server_context_width(runtime->native)
+               : 0u;
+}
+
+uint32_t x11_server_runtime_height(
+    const x11_server_runtime* runtime)
+{
+    return runtime && runtime->native
+               ? x11_server_context_height(runtime->native)
+               : 0u;
+}
+
+int x11_server_run_shadow(const x11_server_options* options)
+{
+    x11_server_runtime* runtime = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+    int result = 1;
+
+    runtime = x11_server_runtime_new(options, &status);
+    if (!runtime)
+    {
+        fprintf(stderr,
+                "error=runtime_create status=%s\n",
+                librdp_status_name(status));
         return 1;
     }
-    x11_server_signal_host = host;
+    x11_server_signal_runtime = runtime;
     if (!x11_server_install_signals())
     {
         fprintf(stderr, "error=signals status=io_error\n");
         goto cleanup;
     }
-    status = server_host_start(host);
+    status = x11_server_runtime_start(runtime);
     if (status != LIBRDP_STATUS_OK)
     {
         fprintf(stderr,
@@ -157,17 +265,17 @@ int x11_server_run_shadow(const x11_server_options* options)
     fprintf(stderr,
             "librdp x11-server state=listening port=%u mode=shadow "
             "security=%s width=%u height=%u\n",
-            server_host_local_port(host),
-            options->security_mode == LIBRDP_SECURITY_NLA
+            x11_server_runtime_local_port(runtime),
+            runtime->security_mode == LIBRDP_SECURITY_NLA
                 ? "nla"
-                : options->security_mode == LIBRDP_SECURITY_TLS
+                : runtime->security_mode == LIBRDP_SECURITY_TLS
                       ? "tls"
                       : "standard",
-            x11_server_context_width(native),
-            x11_server_context_height(native));
+            x11_server_runtime_width(runtime),
+            x11_server_runtime_height(runtime));
     do
     {
-        status = server_host_run_once(host, -1);
+        status = x11_server_runtime_run_once(runtime, -1);
     } while (status == LIBRDP_STATUS_OK ||
              status == LIBRDP_STATUS_TIMEOUT ||
              status == LIBRDP_STATUS_AGAIN);
@@ -181,9 +289,7 @@ int x11_server_run_shadow(const x11_server_options* options)
     }
 
 cleanup:
-    x11_server_signal_host = NULL;
-    (void)server_host_stop(host);
-    server_host_free(host);
-    x11_server_context_free(native);
+    x11_server_signal_runtime = NULL;
+    x11_server_runtime_free(runtime);
     return result;
 }
