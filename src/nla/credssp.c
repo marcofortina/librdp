@@ -1781,6 +1781,15 @@ librdp_status rdp_credssp_ntlm_server_security_init(rdp_ntlm_security_context* c
     return status;
 }
 
+static void rdp_credssp_buffer_rollback(rdp_buffer* buffer, size_t base)
+{
+    if (!buffer || base > buffer->length)
+        return;
+    if (buffer->data && buffer->length > base)
+        OPENSSL_cleanse(buffer->data + base, buffer->length - base);
+    buffer->length = base;
+}
+
 librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
                                     const void* data,
                                     size_t length,
@@ -1788,8 +1797,8 @@ librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
 {
     const uint8_t* plain = (const uint8_t*)data;
     uint8_t seq[4];
-    uint8_t digest[16];
-    uint8_t checksum[8];
+    uint8_t digest[16] = {0};
+    uint8_t checksum[8] = {0};
     size_t base = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1813,7 +1822,9 @@ librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
         status = rdp_buffer_append(wrapped, plain, length);
     if (status != LIBRDP_STATUS_OK)
     {
+        rdp_credssp_buffer_rollback(wrapped, base);
         OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
     }
 
@@ -1821,8 +1832,9 @@ librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
     status = rdp_ntlm_rc4_crypt(&context->send_rc4, wrapped->data + base + 16u, length);
     if (status != LIBRDP_STATUS_OK)
     {
-        wrapped->length = base;
+        rdp_credssp_buffer_rollback(wrapped, base);
         OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
     }
     memcpy(checksum, digest, sizeof(checksum));
@@ -1831,7 +1843,7 @@ librdp_status rdp_credssp_ntlm_wrap(rdp_ntlm_security_context* context,
     status = rdp_ntlm_rc4_crypt(&context->send_rc4, checksum, sizeof(checksum));
     if (status != LIBRDP_STATUS_OK)
     {
-        wrapped->length = base;
+        rdp_credssp_buffer_rollback(wrapped, base);
         OPENSSL_cleanse(digest, sizeof(digest));
         OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
@@ -1852,8 +1864,8 @@ librdp_status rdp_credssp_ntlm_unwrap(rdp_ntlm_security_context* context,
 {
     const uint8_t* wrapped = (const uint8_t*)data;
     uint8_t seq[4];
-    uint8_t digest[16];
-    uint8_t checksum[8];
+    uint8_t digest[16] = {0};
+    uint8_t checksum[8] = {0};
     size_t base = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
@@ -1872,7 +1884,9 @@ librdp_status rdp_credssp_ntlm_unwrap(rdp_ntlm_security_context* context,
     status = rdp_ntlm_rc4_crypt(&context->recv_rc4, plain->data + base, plain->length - base);
     if (status != LIBRDP_STATUS_OK)
     {
-        plain->length = base;
+        rdp_credssp_buffer_rollback(plain, base);
+        OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
     }
     rdp_write_u32_le_bytes(seq, context->recv_seq);
@@ -1886,24 +1900,29 @@ librdp_status rdp_credssp_ntlm_unwrap(rdp_ntlm_security_context* context,
                                 0,
                                 digest);
     if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_credssp_buffer_rollback(plain, base);
+        OPENSSL_cleanse(digest, sizeof(digest));
+        OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
+    }
     memcpy(checksum, digest, sizeof(checksum));
 
     /* CodeQL cpp/weak-cryptographic-algorithm false positive: RC4 is protocol-required legacy RDP/NTLM compatibility via OpenSSL EVP. */
     status = rdp_ntlm_rc4_crypt(&context->recv_rc4, checksum, sizeof(checksum));
     if (status != LIBRDP_STATUS_OK)
     {
-        plain->length = base;
+        rdp_credssp_buffer_rollback(plain, base);
         OPENSSL_cleanse(digest, sizeof(digest));
         OPENSSL_cleanse(checksum, sizeof(checksum));
         return status;
     }
-    if (memcmp(wrapped + 4u, checksum, sizeof(checksum)) != 0)
+    if (CRYPTO_memcmp(wrapped + 4u, checksum, sizeof(checksum)) != 0)
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     else
         context->recv_seq++;
     if (status != LIBRDP_STATUS_OK)
-        plain->length = base;
+        rdp_credssp_buffer_rollback(plain, base);
     OPENSSL_cleanse(digest, sizeof(digest));
     OPENSSL_cleanse(checksum, sizeof(checksum));
     return status;

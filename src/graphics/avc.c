@@ -639,7 +639,10 @@ static librdp_status rdp_avc_h264_open(rdp_avc_h264* h264)
     h264->packet = av_packet_alloc();
     h264->frame = av_frame_alloc();
     if (!h264->context || !h264->packet || !h264->frame)
+    {
+        rdp_avc_h264_free(h264);
         return LIBRDP_STATUS_NO_MEMORY;
+    }
     h264->context->thread_count = 1;
     if (avcodec_open2(h264->context, codec, NULL) < 0)
     {

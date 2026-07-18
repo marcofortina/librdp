@@ -155,6 +155,8 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer spnego_authenticate;
     rdp_buffer ntlm_wrapped;
     rdp_buffer ntlm_unwrapped;
+    rdp_buffer corrupt_wrapped;
+    rdp_buffer corrupt_plain;
     rdp_buffer pub_key_auth;
     rdp_buffer server_pub_key_auth;
     rdp_buffer client_sequence_pub_key_auth;
@@ -173,6 +175,8 @@ int test_protocol_authentication_vectors(void)
     rdp_ntlm_authenticate_result failed_auth_result;
     rdp_ntlm_security_context ntlm_security;
     rdp_ntlm_security_context server_security;
+    rdp_ntlm_security_context corrupt_client_security;
+    rdp_ntlm_security_context corrupt_server_security;
     rdp_ntlm_security_context client_sequence_security;
     rdp_ntlm_security_context server_sequence_security;
     const uint8_t* extracted_ntlm = NULL;
@@ -191,6 +195,8 @@ int test_protocol_authentication_vectors(void)
     memset(&failed_auth_result, 0, sizeof(failed_auth_result));
     memset(&ntlm_security, 0, sizeof(ntlm_security));
     memset(&server_security, 0, sizeof(server_security));
+    memset(&corrupt_client_security, 0, sizeof(corrupt_client_security));
+    memset(&corrupt_server_security, 0, sizeof(corrupt_server_security));
     memset(&client_sequence_security, 0, sizeof(client_sequence_security));
     memset(&server_sequence_security, 0, sizeof(server_sequence_security));
     rdp_buffer_init(&ntlm_negotiate);
@@ -201,6 +207,8 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer_init(&spnego_authenticate);
     rdp_buffer_init(&ntlm_wrapped);
     rdp_buffer_init(&ntlm_unwrapped);
+    rdp_buffer_init(&corrupt_wrapped);
+    rdp_buffer_init(&corrupt_plain);
     rdp_buffer_init(&pub_key_auth);
     rdp_buffer_init(&server_pub_key_auth);
     rdp_buffer_init(&client_sequence_pub_key_auth);
@@ -389,6 +397,20 @@ int test_protocol_authentication_vectors(void)
         memcpy(server_security.client_signing_key, ntlm_security.server_signing_key, sizeof(server_security.client_signing_key));
         server_security.send_rc4 = ntlm_security.recv_rc4;
         server_security.send_seq = ntlm_security.recv_seq;
+        corrupt_client_security = ntlm_security;
+        corrupt_server_security = server_security;
+        PCHECK(rdp_buffer_append(&corrupt_plain, "keep", 4u) == LIBRDP_STATUS_OK);
+        PCHECK(rdp_credssp_ntlm_wrap(&corrupt_server_security, "peer", 4u, &corrupt_wrapped) ==
+               LIBRDP_STATUS_OK);
+        corrupt_wrapped.data[4] ^= 0x80u;
+        PCHECK(rdp_credssp_ntlm_unwrap(&corrupt_client_security,
+                                       corrupt_wrapped.data,
+                                       corrupt_wrapped.length,
+                                       &corrupt_plain) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        PCHECK(corrupt_plain.length == 4u && memcmp(corrupt_plain.data, "keep", 4u) == 0);
+        PCHECK(corrupt_plain.data[4] == 0u && corrupt_plain.data[5] == 0u &&
+               corrupt_plain.data[6] == 0u && corrupt_plain.data[7] == 0u);
+        PCHECK(corrupt_client_security.recv_seq == ntlm_security.recv_seq);
         PCHECK(rdp_credssp_ntlm_wrap(&server_security, "peer", 4, &ntlm_wrapped) == LIBRDP_STATUS_OK);
         PCHECK(rdp_credssp_ntlm_unwrap(&ntlm_security,
                                        ntlm_wrapped.data + 20,
@@ -460,6 +482,8 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer_free(&client_sequence_pub_key_auth);
     rdp_buffer_free(&server_pub_key_auth);
     rdp_buffer_free(&pub_key_auth);
+    rdp_buffer_free(&corrupt_plain);
+    rdp_buffer_free(&corrupt_wrapped);
     rdp_buffer_free(&ntlm_unwrapped);
     rdp_buffer_free(&ntlm_wrapped);
     rdp_buffer_free(&spnego_authenticate);
@@ -470,6 +494,8 @@ int test_protocol_authentication_vectors(void)
     rdp_buffer_free(&ntlm_negotiate);
     OPENSSL_cleanse(&failed_auth_result, sizeof(failed_auth_result));
     OPENSSL_cleanse(&server_auth_result, sizeof(server_auth_result));
+    OPENSSL_cleanse(&corrupt_client_security, sizeof(corrupt_client_security));
+    OPENSSL_cleanse(&corrupt_server_security, sizeof(corrupt_server_security));
     OPENSSL_cleanse(&client_sequence_security, sizeof(client_sequence_security));
     OPENSSL_cleanse(&server_sequence_security, sizeof(server_sequence_security));
     return 0;
