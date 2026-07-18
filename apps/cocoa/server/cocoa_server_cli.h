@@ -30,6 +30,7 @@ typedef struct cocoa_server_options
     const char* nla_username;
     const char* nla_domain;
     const char* password_environment;
+    const char* drive_mount;
     cocoa_server_source_kind source_kind;
     uint32_t source_id;
     librdp_security_mode security_mode;

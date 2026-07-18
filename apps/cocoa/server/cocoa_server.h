@@ -41,6 +41,7 @@ typedef struct cocoa_server_config
     int allow_capture;
     int allow_input;
     int allow_clipboard;
+    int allow_drive;
 } cocoa_server_config;
 
 typedef struct cocoa_server_context cocoa_server_context;

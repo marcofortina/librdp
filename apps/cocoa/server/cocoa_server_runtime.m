@@ -15,6 +15,7 @@
 #include "cocoa_server_runtime.h"
 
 #include "cocoa_server.h"
+#include "server_fuse.h"
 #include "server_host.h"
 
 #include <signal.h>
@@ -73,11 +74,18 @@ static const char* cocoa_server_security_name(
     return "standard";
 }
 
+/*
+ * Construct optional providers before exposing the listener, then transfer
+ * their borrowed vtables to one shared host. Every startup failure unwinds the
+ * host, native capture and FUSE mount in reverse order; credentials remain
+ * borrowed from their named environment entry and are never traced.
+ */
 int cocoa_server_run(const cocoa_server_options* options)
 {
     cocoa_server_config native_config;
     server_host_config host_config;
     cocoa_server_context* native = NULL;
+    server_fuse* drive = NULL;
     server_host* host = NULL;
     const char* password = NULL;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -93,12 +101,34 @@ int cocoa_server_run(const cocoa_server_options* options)
     native_config.allow_capture = options->allow_capture;
     native_config.allow_input = options->allow_input;
     native_config.allow_clipboard = options->allow_clipboard;
+    native_config.allow_drive = options->allow_drive;
+    if (options->allow_drive)
+    {
+        server_fuse_config drive_config;
+
+        if (!server_fuse_available())
+        {
+            fprintf(stderr,
+                    "error=drive_provider status=unsupported\n");
+            return 1;
+        }
+        server_fuse_config_init(&drive_config);
+        drive_config.mount_path = options->drive_mount;
+        drive = server_fuse_new(&drive_config);
+        if (!drive)
+        {
+            fprintf(stderr,
+                    "error=drive_provider status=invalid_argument\n");
+            return 1;
+        }
+    }
     native = cocoa_server_context_new(&native_config, &status);
     if (!native)
     {
         fprintf(stderr,
                 "error=native_context status=%s\n",
                 librdp_status_name(status));
+        server_fuse_free(drive);
         return 1;
     }
     server_host_config_init(&host_config);
@@ -124,6 +154,7 @@ int cocoa_server_run(const cocoa_server_options* options)
             fprintf(stderr,
                     "error=credentials status=invalid_argument\n");
             cocoa_server_context_free(native);
+            server_fuse_free(drive);
             return 1;
         }
         host_config.server.nla_password = password;
@@ -138,6 +169,14 @@ int cocoa_server_run(const cocoa_server_options* options)
     status = cocoa_server_context_platform(
         native,
         &host_config.platform);
+    if (status == LIBRDP_STATUS_OK && drive)
+    {
+        host_config.platform.drive.vtable = server_fuse_vtable();
+        host_config.platform.drive.context = drive;
+        status = server_platform_validate(&host_config.platform);
+    }
+    host_config.drive.enabled = options->allow_drive;
+    host_config.drive.read_only = 1;
     if (status == LIBRDP_STATUS_OK)
         host = server_host_new(&host_config);
     if (status != LIBRDP_STATUS_OK || !host)
@@ -149,6 +188,7 @@ int cocoa_server_run(const cocoa_server_options* options)
                         ? LIBRDP_STATUS_NO_MEMORY
                         : status));
         cocoa_server_context_free(native);
+        server_fuse_free(drive);
         return 1;
     }
     cocoa_server_signal_host = host;
@@ -184,5 +224,6 @@ int cocoa_server_run(const cocoa_server_options* options)
     cocoa_server_signal_host = NULL;
     server_host_free(host);
     cocoa_server_context_free(native);
+    server_fuse_free(drive);
     return result;
 }

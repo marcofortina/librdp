@@ -107,8 +107,12 @@ librdp_summary_target_backend(
 )
 librdp_summary_viewer_backend(xrandr LIBRDP_WITH_XRANDR LIBRDP_XRANDR_FOUND)
 librdp_summary_target_backend(
-    fuse3-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
+    fuse3-x11-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
     LIBRDP_BUILD_X11_SERVER librdp-x11-server
+)
+librdp_summary_target_backend(
+    fuse3-cocoa-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
+    LIBRDP_BUILD_COCOA_SERVER librdp-cocoa-server
 )
 librdp_summary_target_backend(
     pam-managed-server LIBRDP_WITH_PAM LIBRDP_PAM_FOUND

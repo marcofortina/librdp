@@ -42,6 +42,7 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         apps/cocoa/server/cocoa_server.m
         apps/cocoa/server/cocoa_server_cli.c
         apps/cocoa/server/cocoa_server_runtime.m
+        apps/common/server_fuse.c
     )
     target_include_directories(librdp-cocoa-server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
@@ -58,6 +59,14 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         ${LIBRDP_COCOA_SERVER_SCREENCAPTUREKIT_FRAMEWORK}
         Threads::Threads
     )
+    if(LIBRDP_FUSE3_FOUND)
+        target_compile_definitions(librdp-cocoa-server PRIVATE
+            LIBRDP_HAVE_FUSE3=1
+        )
+        target_link_libraries(librdp-cocoa-server PRIVATE
+            PkgConfig::LIBRDP_FUSE3
+        )
+    endif()
     target_compile_options(librdp-cocoa-server PRIVATE
         $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
         $<$<COMPILE_LANGUAGE:OBJC>:-mmacosx-version-min=12.3>

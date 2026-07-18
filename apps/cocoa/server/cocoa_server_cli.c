@@ -4,9 +4,9 @@
  */
 /*
  * Module: Cocoa desktop-server CLI parser.
- * Invariants: unsupported managed sessions and unimplemented providers fail
- * before native initialization, while TLS and NLA options are validated as
- * complete sets.
+ * Invariants: unsupported managed sessions and incomplete provider selections
+ * fail before native initialization, while TLS and NLA options are validated
+ * as complete sets.
  * Ownership: successful parsing retains no storage and borrows argv strings.
  * Threading: parsing is single-threaded.
  * Trust boundary: unknown flags, overflow, unsafe security downgrade and
@@ -50,7 +50,8 @@ void cocoa_server_usage(FILE* stream, const char* program)
         "[--max-fps count] [--max-frame-bytes bytes] "
         "[--security tls|nla|standard] [--allow-standard-security] "
         "[--user name] [--domain name] [--password-env name] "
-        "[--allow-input] [--allow-clipboard]\n",
+        "[--allow-input] [--allow-clipboard] "
+        "[--allow-drive --drive-mount path]\n",
         program);
 }
 
@@ -127,11 +128,10 @@ static int cocoa_server_validate_options(const cocoa_server_options* options)
         fprintf(stderr, "--allow-capture is required\n");
         return 0;
     }
-    if (options->allow_drive)
+    if (options->allow_drive &&
+        (!options->drive_mount || options->drive_mount[0] == '\0'))
     {
-        fprintf(stderr,
-                "the drive provider is not enabled "
-                "in this build\n");
+        fprintf(stderr, "--allow-drive requires --drive-mount\n");
         return 0;
     }
     if (options->security_mode == LIBRDP_SECURITY_STANDARD &&
@@ -286,6 +286,13 @@ int cocoa_server_parse_options(int argc,
                 argv[index][0] == '\0')
                 return 0;
             options->password_environment = argv[index];
+        }
+        else if (strcmp(option, "--drive-mount") == 0)
+        {
+            if (!cocoa_server_take_value(argc, argv, &index) ||
+                argv[index][0] == '\0')
+                return 0;
+            options->drive_mount = argv[index];
         }
         else if (strcmp(option, "--allow-standard-security") == 0)
             options->allow_standard_security = 1;

@@ -67,7 +67,9 @@ static int cocoa_server_config_valid(
            (config->allow_input == 0 ||
             config->allow_input == 1) &&
            (config->allow_clipboard == 0 ||
-            config->allow_clipboard == 1);
+            config->allow_clipboard == 1) &&
+           (config->allow_drive == 0 ||
+            config->allow_drive == 1);
 }
 
 static int cocoa_server_set_nonblocking(int descriptor)
@@ -682,6 +684,12 @@ static librdp_status cocoa_server_permission_query(
                 ? SERVER_PLATFORM_PERMISSION_GRANTED
                 : SERVER_PLATFORM_PERMISSION_DENIED;
     }
+    else if (kind == SERVER_PLATFORM_PERMISSION_DRIVE)
+    {
+        *state = context->config.allow_drive
+                     ? SERVER_PLATFORM_PERMISSION_GRANTED
+                     : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
     else
         *state = SERVER_PLATFORM_PERMISSION_DENIED;
     return LIBRDP_STATUS_OK;
@@ -714,6 +722,9 @@ static librdp_status cocoa_server_permission_request(
     else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD &&
              context->config.allow_clipboard &&
              context->clipboard)
+        state = SERVER_PLATFORM_PERMISSION_GRANTED;
+    else if (kind == SERVER_PLATFORM_PERMISSION_DRIVE &&
+             context->config.allow_drive)
         state = SERVER_PLATFORM_PERMISSION_GRANTED;
     else
         return LIBRDP_STATUS_UNSUPPORTED;

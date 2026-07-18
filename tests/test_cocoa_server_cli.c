@@ -156,6 +156,26 @@ static int test_modes_and_provider_policy(void)
         (char*)"--tls-key",
         (char*)"/tmp/server.key",
     };
+    char* drive_missing_mount[] = {
+        (char*)"server",
+        (char*)"--allow-capture",
+        (char*)"--allow-drive",
+        (char*)"--tls-cert",
+        (char*)"/tmp/server.crt",
+        (char*)"--tls-key",
+        (char*)"/tmp/server.key",
+    };
+    char* drive[] = {
+        (char*)"server",
+        (char*)"--allow-capture",
+        (char*)"--allow-drive",
+        (char*)"--drive-mount",
+        (char*)"/tmp/client-drives",
+        (char*)"--tls-cert",
+        (char*)"/tmp/server.crt",
+        (char*)"--tls-key",
+        (char*)"/tmp/server.key",
+    };
     cocoa_server_options options;
 
     CHECK(cocoa_server_parse_options(
@@ -172,6 +192,18 @@ static int test_modes_and_provider_policy(void)
               clipboard,
               &options) == 1);
     CHECK(options.allow_clipboard == 1);
+    CHECK(cocoa_server_parse_options(
+              (int)(sizeof(drive_missing_mount) /
+                    sizeof(drive_missing_mount[0])),
+              drive_missing_mount,
+              &options) == 0);
+    CHECK(cocoa_server_parse_options(
+              (int)(sizeof(drive) / sizeof(drive[0])),
+              drive,
+              &options) == 1);
+    CHECK(options.allow_drive == 1);
+    CHECK(strcmp(options.drive_mount,
+                 "/tmp/client-drives") == 0);
     return 1;
 }
 
