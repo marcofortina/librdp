@@ -14,6 +14,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         xfixes
         xrandr
         xkbcommon
+        xau
     )
     add_executable(librdp-x11-server
         apps/x11/x11_keymap.c
@@ -25,6 +26,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_input.c
         apps/x11/server/server_managed_auth.c
         apps/x11/server/server_managed_ipc.c
+        apps/x11/server/server_managed_process.c
         apps/x11/server/server_managed_registry.c
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
@@ -75,6 +77,8 @@ if(LIBRDP_BUILD_X11_SERVER)
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
+        find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
+
         add_executable(test_x11_managed
             tests/test_x11_managed.c
             apps/x11/server/server_managed_ipc.c
@@ -138,7 +142,37 @@ if(LIBRDP_BUILD_X11_SERVER)
         set_tests_properties(x11_managed_auth PROPERTIES TIMEOUT 15)
         add_dependencies(librdp_tests test_x11_managed_auth)
 
-        find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
+        if(LIBRDP_XVFB_EXECUTABLE)
+            add_executable(test_x11_managed_process
+                tests/test_x11_managed_process.c
+                apps/x11/server/server_managed_auth.c
+                apps/x11/server/server_managed_process.c
+            )
+            target_include_directories(test_x11_managed_process PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+            )
+            target_compile_definitions(test_x11_managed_process PRIVATE
+                LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
+            )
+            target_link_libraries(test_x11_managed_process PRIVATE
+                librdp
+                OpenSSL::Crypto
+                PkgConfig::LIBRDP_X11_SERVER
+            )
+            librdp_apply_system_definitions(test_x11_managed_process)
+            librdp_apply_warning_options(test_x11_managed_process)
+            librdp_apply_sanitizer_compile_options(
+                test_x11_managed_process)
+            librdp_apply_sanitizer_link_options(
+                test_x11_managed_process)
+            add_test(NAME x11_managed_process
+                COMMAND test_x11_managed_process)
+            set_tests_properties(x11_managed_process
+                PROPERTIES TIMEOUT 15)
+            add_dependencies(librdp_tests test_x11_managed_process)
+        endif()
+
         if(LIBRDP_XVFB_EXECUTABLE)
             add_executable(test_x11_server
                 tests/test_x11_server.c
