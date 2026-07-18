@@ -103,10 +103,10 @@ librdp_summary_target_backend(
 )
 librdp_summary_target_backend(
     pam-managed-server LIBRDP_WITH_PAM LIBRDP_PAM_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-session-broker
+    LIBRDP_BUILD_X11_SERVER librdp-x11-session-supervisor
 )
 librdp_summary_target_backend(
     bsdauth-managed-server LIBRDP_WITH_BSDAUTH LIBRDP_BSDAUTH_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-session-broker
+    LIBRDP_BUILD_X11_SERVER librdp-x11-session-supervisor
 )
 message(STATUS "librdp feature summary end")

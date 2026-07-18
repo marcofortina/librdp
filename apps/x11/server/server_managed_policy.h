@@ -38,6 +38,7 @@ typedef struct x11_managed_policy
     char supervisor_path[X11_MANAGED_IPC_PATH_BYTES];
     char agent_path[X11_MANAGED_IPC_PATH_BYTES];
     char xserver_path[X11_MANAGED_IPC_PATH_BYTES];
+    char authentication_service[X11_MANAGED_POLICY_NAME_BYTES];
     char desktop_command[X11_MANAGED_IPC_COMMAND_BYTES];
     char bind_address[X11_MANAGED_IPC_ADDRESS_BYTES];
     char tls_certificate[X11_MANAGED_IPC_PATH_BYTES];

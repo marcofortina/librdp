@@ -97,12 +97,12 @@ static librdp_status x11_managed_ipc_wait(
         return LIBRDP_STATUS_TIMEOUT;
     if (result < 0)
         return LIBRDP_STATUS_IO_ERROR;
+    if ((poll_descriptor.revents & events) != 0)
+        return LIBRDP_STATUS_OK;
     if ((poll_descriptor.revents &
          (POLLERR | POLLHUP | POLLNVAL)) != 0)
         return LIBRDP_STATUS_IO_ERROR;
-    if ((poll_descriptor.revents & events) == 0)
-        return LIBRDP_STATUS_AGAIN;
-    return LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_AGAIN;
 }
 
 static librdp_status x11_managed_ipc_write_all(
@@ -418,7 +418,9 @@ librdp_status x11_managed_ipc_message_validate(
          message->control_socket[0] != '/'))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if ((message->type == X11_MANAGED_IPC_ATTACH ||
-         (message->flags & X11_MANAGED_IPC_RECONNECT) != 0u) &&
+         (message->type == X11_MANAGED_IPC_START &&
+          message->session_id != 0u &&
+          (message->flags & X11_MANAGED_IPC_RECONNECT) != 0u)) &&
         message->reconnect_token[0] == '\0')
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (message->type == X11_MANAGED_IPC_RESIZE &&

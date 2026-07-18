@@ -79,6 +79,7 @@ void x11_managed_registry_config_init(
 x11_managed_registry* x11_managed_registry_new(
     const x11_managed_registry_config* config);
 void x11_managed_registry_free(x11_managed_registry* registry);
+void x11_managed_registry_forget(x11_managed_registry* registry);
 size_t x11_managed_registry_count(
     const x11_managed_registry* registry);
 size_t x11_managed_registry_capacity(

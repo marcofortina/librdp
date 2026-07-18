@@ -75,6 +75,8 @@ static int test_roundtrip(void)
     x11_managed_ipc_message_init(&received);
     CHECK(x11_managed_ipc_send(sockets[0], &sent, 1000) ==
           LIBRDP_STATUS_OK);
+    CHECK(close(sockets[0]) == 0);
+    sockets[0] = -1;
     CHECK(x11_managed_ipc_receive(sockets[1], &received, 1000) ==
           LIBRDP_STATUS_OK);
     CHECK(received.type == sent.type);
@@ -91,7 +93,6 @@ static int test_roundtrip(void)
     CHECK(strcmp(received.control_socket, sent.control_socket) == 0);
     x11_managed_ipc_message_clear(&sent);
     x11_managed_ipc_message_clear(&received);
-    CHECK(close(sockets[0]) == 0);
     CHECK(close(sockets[1]) == 0);
     return 0;
 }
@@ -102,6 +103,18 @@ static int test_validation_and_cleansing(void)
     size_t index = 0u;
 
     test_message_start(&message);
+    CHECK(x11_managed_ipc_message_validate(&message) ==
+          LIBRDP_STATUS_OK);
+    message.flags |= X11_MANAGED_IPC_RECONNECT;
+    CHECK(x11_managed_ipc_message_validate(&message) ==
+          LIBRDP_STATUS_OK);
+    message.session_id = 1u;
+    CHECK(x11_managed_ipc_message_validate(&message) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    memcpy(message.reconnect_token,
+           "0123456789abcdef0123456789abcdef"
+           "0123456789abcdef0123456789abcdef",
+           X11_MANAGED_IPC_TOKEN_BYTES);
     CHECK(x11_managed_ipc_message_validate(&message) ==
           LIBRDP_STATUS_OK);
     message.width = 0u;

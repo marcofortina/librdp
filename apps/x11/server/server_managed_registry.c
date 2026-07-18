@@ -360,6 +360,33 @@ void x11_managed_registry_free(x11_managed_registry* registry)
     free(registry);
 }
 
+/*
+ * Drop only the in-process view during broker replacement. Persistent
+ * supervisors retain the generated paths and a replacement broker reconstructs
+ * entries from their kernel-authenticated control sockets.
+ */
+void x11_managed_registry_forget(x11_managed_registry* registry)
+{
+    size_t index = 0u;
+
+    if (!registry)
+        return;
+    for (index = 0u; index < registry->config.max_sessions; index++)
+    {
+        x11_managed_registry_slot* slot = &registry->slots[index];
+
+        if (slot->display_lock_fd >= 0)
+            (void)close(slot->display_lock_fd);
+        OPENSSL_cleanse(&slot->entry, sizeof(slot->entry));
+        slot->display_lock_fd = -1;
+        slot->runtime_created = 0;
+        slot->occupied = 0;
+    }
+    free(registry->slots);
+    OPENSSL_cleanse(registry, sizeof(*registry));
+    free(registry);
+}
+
 size_t x11_managed_registry_count(
     const x11_managed_registry* registry)
 {

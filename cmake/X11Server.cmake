@@ -75,6 +75,26 @@ if(LIBRDP_BUILD_X11_SERVER)
         librdp_apply_sanitizer_link_options(${target})
     endfunction()
 
+    function(librdp_configure_x11_managed_target target)
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(${target} PRIVATE
+            librdp
+            OpenSSL::Crypto
+            Threads::Threads
+        )
+        target_compile_definitions(${target} PRIVATE
+            LIBRDP_X11_SESSION_SUPERVISOR_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-x11-session-supervisor"
+            LIBRDP_X11_SESSION_AGENT_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-x11-session-agent"
+        )
+        librdp_apply_system_definitions(${target})
+        librdp_apply_warning_options(${target})
+        librdp_apply_sanitizer_compile_options(${target})
+        librdp_apply_sanitizer_link_options(${target})
+    endfunction()
+
     add_executable(librdp-x11-server
         apps/x11/server/main.c
         apps/x11/server/server_cli.c
@@ -92,9 +112,36 @@ if(LIBRDP_BUILD_X11_SERVER)
     )
     librdp_configure_x11_server_target(librdp-x11-session-agent)
 
+    add_executable(librdp-x11-session-broker
+        apps/x11/server/session_broker.c
+        apps/x11/server/server_managed_broker.c
+        apps/x11/server/server_managed_ipc.c
+        apps/x11/server/server_managed_policy.c
+        apps/x11/server/server_managed_registry.c
+    )
+    librdp_configure_x11_managed_target(
+        librdp-x11-session-broker)
+
+    add_executable(librdp-x11-session-supervisor
+        apps/x11/server/session_supervisor.c
+        apps/x11/server/server_managed_auth.c
+        apps/x11/server/server_managed_ipc.c
+        apps/x11/server/server_managed_process.c
+        apps/x11/server/server_managed_supervisor.c
+    )
+    librdp_configure_x11_managed_target(
+        librdp-x11-session-supervisor)
+    target_link_libraries(librdp-x11-session-supervisor PRIVATE
+        PkgConfig::LIBRDP_X11_SERVER
+    )
+    librdp_apply_x11_managed_auth(
+        librdp-x11-session-supervisor)
+
     install(TARGETS
         librdp-x11-server
         librdp-x11-session-agent
+        librdp-x11-session-broker
+        librdp-x11-session-supervisor
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
@@ -166,6 +213,26 @@ if(LIBRDP_BUILD_X11_SERVER)
         set_tests_properties(x11_managed_policy
             PROPERTIES TIMEOUT 15)
         add_dependencies(librdp_tests test_x11_managed_policy)
+
+        add_executable(test_x11_managed_broker
+            tests/test_x11_managed_broker.c
+            apps/x11/server/server_managed_broker.c
+            apps/x11/server/server_managed_ipc.c
+            apps/x11/server/server_managed_policy.c
+            apps/x11/server/server_managed_registry.c
+        )
+        librdp_configure_x11_managed_target(
+            test_x11_managed_broker)
+        target_compile_definitions(
+            test_x11_managed_broker PRIVATE
+            LIBRDP_TEST_MANAGED_BROKER_PATH=\"$<TARGET_FILE:test_x11_managed_broker>\"
+        )
+        add_test(NAME x11_managed_broker
+            COMMAND test_x11_managed_broker)
+        set_tests_properties(x11_managed_broker
+            PROPERTIES TIMEOUT 30)
+        add_dependencies(librdp_tests
+            test_x11_managed_broker)
 
         add_executable(test_x11_managed_auth
             tests/test_x11_managed_auth.c

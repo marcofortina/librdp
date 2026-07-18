@@ -29,6 +29,16 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef LIBRDP_X11_SESSION_SUPERVISOR_PATH
+#define LIBRDP_X11_SESSION_SUPERVISOR_PATH \
+    "/usr/bin/librdp-x11-session-supervisor"
+#endif
+
+#ifndef LIBRDP_X11_SESSION_AGENT_PATH
+#define LIBRDP_X11_SESSION_AGENT_PATH \
+    "/usr/bin/librdp-x11-session-agent"
+#endif
+
 static int x11_managed_policy_copy(char* output,
                                    size_t capacity,
                                    const char* input)
@@ -117,11 +127,11 @@ void x11_managed_policy_init(x11_managed_policy* policy)
     (void)x11_managed_policy_copy(
         policy->supervisor_path,
         sizeof(policy->supervisor_path),
-        "/usr/bin/librdp-x11-session-supervisor");
+        LIBRDP_X11_SESSION_SUPERVISOR_PATH);
     (void)x11_managed_policy_copy(
         policy->agent_path,
         sizeof(policy->agent_path),
-        "/usr/bin/librdp-x11-session-agent");
+        LIBRDP_X11_SESSION_AGENT_PATH);
     (void)x11_managed_policy_copy(
         policy->xserver_path,
         sizeof(policy->xserver_path),
@@ -130,6 +140,10 @@ void x11_managed_policy_init(x11_managed_policy* policy)
         policy->bind_address,
         sizeof(policy->bind_address),
         "127.0.0.1");
+    (void)x11_managed_policy_copy(
+        policy->authentication_service,
+        sizeof(policy->authentication_service),
+        "librdp");
     policy->security_mode = LIBRDP_SECURITY_NLA;
     policy->max_sessions = 32u;
     policy->max_sessions_per_user = 2u;
@@ -177,6 +191,8 @@ int x11_managed_policy_valid(const x11_managed_policy* policy)
         !x11_managed_policy_absolute(
             policy->desktop_command,
             sizeof(policy->desktop_command)) ||
+        !x11_managed_policy_name_valid(
+            policy->authentication_service) ||
         policy->bind_address[0] == '\0' ||
         strnlen(policy->bind_address,
                 sizeof(policy->bind_address)) >=
