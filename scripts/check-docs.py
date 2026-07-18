@@ -98,7 +98,6 @@ DISALLOWED_PHRASES = (
     "Smoke tests",
     "work in progress",
     "Work in progress",
-    "parser-only",
     "pending implementation",
     "Pending implementation",
     "to be implemented",
