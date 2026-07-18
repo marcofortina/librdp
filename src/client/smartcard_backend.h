@@ -79,6 +79,8 @@ typedef enum rdp_smartcard_backend_kind
 } rdp_smartcard_backend_kind;
 
 typedef struct rdp_smartcard_backend rdp_smartcard_backend;
+typedef struct rdp_smartcard_provider rdp_smartcard_provider;
+typedef struct rdp_smartcard_job_queue rdp_smartcard_job_queue;
 
 typedef struct rdp_smartcard_mock_backend
 {
@@ -105,8 +107,10 @@ typedef struct rdp_smartcard_mock_backend
     uint32_t hang_connect_ms;
     uint32_t hang_status_change_ms;
     uint32_t hang_transmit_ms;
+    int ignore_connect_cancel;
     atomic_uint cancel_calls;
     atomic_uint connect_calls;
+    atomic_uint connect_active;
     atomic_uint disconnect_calls;
     atomic_uint status_change_calls;
     atomic_uint transmit_calls;
@@ -172,6 +176,8 @@ struct rdp_smartcard_backend
     const rdp_smartcard_backend_ops* ops;
     void* user_data;
     uint32_t timeout_ms;
+    rdp_smartcard_provider* provider;
+    rdp_smartcard_job_queue* jobs;
 };
 
 void rdp_smartcard_backend_init_none(rdp_smartcard_backend* backend);
@@ -179,6 +185,8 @@ void rdp_smartcard_backend_init_pcsc(rdp_smartcard_backend* backend);
 void rdp_smartcard_mock_backend_init(rdp_smartcard_mock_backend* mock);
 void rdp_smartcard_backend_init_mock(rdp_smartcard_backend* backend, rdp_smartcard_mock_backend* mock);
 void rdp_smartcard_backend_set_timeout(rdp_smartcard_backend* backend, uint32_t timeout_ms);
+void rdp_smartcard_backend_drain(rdp_smartcard_backend* backend);
+void rdp_smartcard_backend_clear(rdp_smartcard_backend* backend);
 
 LONG rdp_smartcard_backend_establish_context(rdp_smartcard_backend* backend, DWORD scope, SCARDCONTEXT* context);
 LONG rdp_smartcard_backend_release_context(rdp_smartcard_backend* backend, SCARDCONTEXT context);

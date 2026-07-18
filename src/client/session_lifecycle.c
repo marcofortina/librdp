@@ -156,6 +156,9 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->avc = rdp_avc_decoder_new();
     if (!session->avc)
     {
+#ifdef RDP_HAVE_PCSC
+        rdp_smartcard_backend_clear(&session->smartcard_backend);
+#endif
         rdp_nscodec_context_free(&session->surface_nscodec);
         rdp_clearcodec_context_free(&session->clearcodec);
         rdp_bulk_decompressor_free(&session->bulk_decompressor);
@@ -181,6 +184,9 @@ void librdp_session_free(librdp_session* session)
         return;
     (void)librdp_session_disconnect(session);
     rdp_session_smartcard_reset(session);
+#ifdef RDP_HAVE_PCSC
+    rdp_smartcard_backend_clear(&session->smartcard_backend);
+#endif
     rdp_session_usb_redirection_reset(session);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);

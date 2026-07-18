@@ -6,10 +6,12 @@
  * Module: smartcard backend adapters and timeout workers.
  * Invariants: blocking connect, status-change, and transmit calls operate on
  * backend-owned copies so timed-out workers cannot access session stack data.
- * Ownership: timeout jobs own duplicated strings and buffers until the worker
- * exits; successful jobs transfer provider handles explicitly to the caller.
- * Threading: one short-lived worker is created per blocking provider call, and
- * cancellation is requested before a timed-out job is detached.
+ * Ownership: timeout jobs own duplicated strings, buffers, and a provider
+ * reference until a joinable worker exits; successful jobs transfer provider
+ * handles explicitly to the caller.
+ * Threading: one tracked worker is created per blocking provider call.
+ * Disconnect requests cancellation and joins every outstanding worker before
+ * provider or session storage can be released.
  * Trust boundary: native smartcard providers receive only bounded lengths and
  * sanitized pointers prepared by the session parser.
  */
@@ -43,21 +45,31 @@ typedef struct rdp_smartcard_job
     pthread_t thread;
     rdp_smartcard_job_fn fn;
     rdp_smartcard_job_cleanup_fn cleanup;
+    rdp_smartcard_job_cancel_fn cancel;
     void* arg;
     LONG result;
     int done;
-    int detached;
+    int cancel_requested;
+    struct rdp_smartcard_job* next;
 } rdp_smartcard_job;
 
-typedef struct rdp_smartcard_cancel_context
+struct rdp_smartcard_provider
 {
-    rdp_smartcard_backend* backend;
-    SCARDCONTEXT context;
-} rdp_smartcard_cancel_context;
+    atomic_uint references;
+    const rdp_smartcard_backend_ops* ops;
+    void* user_data;
+};
+
+struct rdp_smartcard_job_queue
+{
+    pthread_mutex_t mutex;
+    rdp_smartcard_job* head;
+    int accepting;
+};
 
 typedef struct rdp_smartcard_status_change_args
 {
-    rdp_smartcard_backend* backend;
+    rdp_smartcard_provider* provider;
     SCARDCONTEXT context;
     DWORD timeout;
     SCARD_READERSTATE* states;
@@ -67,7 +79,7 @@ typedef struct rdp_smartcard_status_change_args
 
 typedef struct rdp_smartcard_connect_args
 {
-    rdp_smartcard_backend* backend;
+    rdp_smartcard_provider* provider;
     SCARDCONTEXT context;
     char* reader;
     DWORD share_mode;
@@ -79,7 +91,8 @@ typedef struct rdp_smartcard_connect_args
 
 typedef struct rdp_smartcard_transmit_args
 {
-    rdp_smartcard_backend* backend;
+    rdp_smartcard_provider* provider;
+    SCARDCONTEXT context;
     SCARDHANDLE handle;
     SCARD_IO_REQUEST send_pci;
     SCARD_IO_REQUEST recv_pci;
@@ -131,6 +144,53 @@ static void rdp_smartcard_timespec_after_ms(struct timespec* out, uint32_t timeo
     }
 }
 
+static rdp_smartcard_provider* rdp_smartcard_provider_new(const rdp_smartcard_backend_ops* ops,
+                                                         void* user_data)
+{
+    rdp_smartcard_provider* provider = NULL;
+
+    if (!ops)
+        return NULL;
+    provider = (rdp_smartcard_provider*)calloc(1, sizeof(*provider));
+    if (!provider)
+        return NULL;
+    atomic_init(&provider->references, 1u);
+    provider->ops = ops;
+    provider->user_data = user_data;
+    return provider;
+}
+
+static rdp_smartcard_provider* rdp_smartcard_provider_acquire(rdp_smartcard_provider* provider)
+{
+    if (!provider)
+        return NULL;
+    atomic_fetch_add_explicit(&provider->references, 1u, memory_order_relaxed);
+    return provider;
+}
+
+static void rdp_smartcard_provider_release(rdp_smartcard_provider* provider)
+{
+    if (!provider)
+        return;
+    if (atomic_fetch_sub_explicit(&provider->references, 1u, memory_order_acq_rel) == 1u)
+        free(provider);
+}
+
+static rdp_smartcard_job_queue* rdp_smartcard_job_queue_new(void)
+{
+    rdp_smartcard_job_queue* queue = (rdp_smartcard_job_queue*)calloc(1, sizeof(*queue));
+
+    if (!queue)
+        return NULL;
+    if (pthread_mutex_init(&queue->mutex, NULL) != 0)
+    {
+        free(queue);
+        return NULL;
+    }
+    queue->accepting = 1;
+    return queue;
+}
+
 static void rdp_smartcard_job_destroy(rdp_smartcard_job* job, int cleanup_arg)
 {
     if (!job)
@@ -145,30 +205,131 @@ static void rdp_smartcard_job_destroy(rdp_smartcard_job* job, int cleanup_arg)
 static void* rdp_smartcard_job_main(void* user_data)
 {
     rdp_smartcard_job* job = (rdp_smartcard_job*)user_data;
-    int detached = 0;
     LONG result = job->fn(job->arg);
 
     pthread_mutex_lock(&job->mutex);
     job->result = result;
     job->done = 1;
-    detached = job->detached;
     pthread_cond_signal(&job->cond);
     pthread_mutex_unlock(&job->mutex);
-    if (detached)
-        rdp_smartcard_job_destroy(job, 1);
     return NULL;
 }
 
 /*
- * Run a provider operation with a bounded wait. Completed jobs leave their
- * argument owned by the caller for result harvesting; timed-out jobs detach and
- * own cleanup after the provider finally returns.
+ * Remove a job from its backend queue. Workers never mutate queue links, so the
+ * owner can unlink a completed job without racing provider execution.
  */
-static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
+static void rdp_smartcard_job_queue_remove(rdp_smartcard_job_queue* queue,
+                                           rdp_smartcard_job* job)
+{
+    rdp_smartcard_job** current = NULL;
+
+    if (!queue || !job)
+        return;
+    pthread_mutex_lock(&queue->mutex);
+    current = &queue->head;
+    while (*current)
+    {
+        if (*current == job)
+        {
+            *current = job->next;
+            job->next = NULL;
+            break;
+        }
+        current = &(*current)->next;
+    }
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static int rdp_smartcard_job_queue_add(rdp_smartcard_job_queue* queue,
+                                       rdp_smartcard_job* job)
+{
+    int added = 0;
+
+    if (!queue || !job)
+        return 0;
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->accepting)
+    {
+        job->next = queue->head;
+        queue->head = job;
+        added = 1;
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    return added;
+}
+
+static void rdp_smartcard_job_request_cancel(rdp_smartcard_job* job)
+{
+    int request = 0;
+
+    if (!job)
+        return;
+    pthread_mutex_lock(&job->mutex);
+    if (!job->done && !job->cancel_requested)
+    {
+        job->cancel_requested = 1;
+        request = 1;
+    }
+    pthread_mutex_unlock(&job->mutex);
+    if (request && job->cancel)
+        job->cancel(job->arg);
+}
+
+/*
+ * Reap timed-out jobs that completed between backend calls. Cleanup stays on
+ * the owner thread and no worker releases its own synchronization storage.
+ */
+static void rdp_smartcard_job_queue_reap(rdp_smartcard_job_queue* queue)
+{
+    rdp_smartcard_job* completed = NULL;
+    rdp_smartcard_job** current = NULL;
+
+    if (!queue)
+        return;
+    pthread_mutex_lock(&queue->mutex);
+    current = &queue->head;
+    while (*current)
+    {
+        rdp_smartcard_job* job = *current;
+        int done = 0;
+
+        pthread_mutex_lock(&job->mutex);
+        done = job->done;
+        pthread_mutex_unlock(&job->mutex);
+        if (done)
+        {
+            *current = job->next;
+            job->next = completed;
+            completed = job;
+        }
+        else
+        {
+            current = &job->next;
+        }
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    while (completed)
+    {
+        rdp_smartcard_job* next = completed->next;
+
+        completed->next = NULL;
+        pthread_join(completed->thread, NULL);
+        rdp_smartcard_job_destroy(completed, 1);
+        completed = next;
+    }
+}
+
+/*
+ * Run a provider operation with a bounded wait. Completed jobs leave their
+ * argument owned by the caller for result harvesting; timed-out jobs remain
+ * joinable and backend-owned until reap or disconnect drain.
+ */
+static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_backend* backend,
+                                           rdp_smartcard_job_fn fn,
                                            void* arg,
                                            rdp_smartcard_job_cleanup_fn cleanup,
                                            rdp_smartcard_job_cancel_fn cancel,
-                                           void* cancel_arg,
                                            uint32_t timeout_ms,
                                            int* completed)
 {
@@ -179,12 +340,13 @@ static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
 
     if (completed)
         *completed = 0;
-    if (!fn)
+    if (!backend || !backend->jobs || !fn)
     {
         if (cleanup)
             cleanup(arg);
-        return SCARD_E_UNSUPPORTED_FEATURE;
+        return fn ? SCARD_E_NO_MEMORY : SCARD_E_UNSUPPORTED_FEATURE;
     }
+    rdp_smartcard_job_queue_reap(backend->jobs);
     job = (rdp_smartcard_job*)calloc(1, sizeof(*job));
     if (!job)
     {
@@ -210,8 +372,15 @@ static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
     job->fn = fn;
     job->arg = arg;
     job->cleanup = cleanup;
+    job->cancel = cancel;
+    if (!rdp_smartcard_job_queue_add(backend->jobs, job))
+    {
+        rdp_smartcard_job_destroy(job, 1);
+        return SCARD_E_CANCELLED;
+    }
     if (pthread_create(&job->thread, NULL, rdp_smartcard_job_main, job) != 0)
     {
+        rdp_smartcard_job_queue_remove(backend->jobs, job);
         rdp_smartcard_job_destroy(job, 1);
         return SCARD_E_NO_MEMORY;
     }
@@ -229,17 +398,15 @@ static LONG rdp_smartcard_run_with_timeout(rdp_smartcard_job_fn fn,
         result = job->result;
         pthread_mutex_unlock(&job->mutex);
         pthread_join(job->thread, NULL);
+        rdp_smartcard_job_queue_remove(backend->jobs, job);
         rdp_smartcard_job_destroy(job, 0);
         if (completed)
             *completed = 1;
         return result;
     }
 
-    job->detached = 1;
-    if (cancel)
-        cancel(cancel_arg);
     pthread_mutex_unlock(&job->mutex);
-    pthread_detach(job->thread);
+    rdp_smartcard_job_request_cancel(job);
     return SCARD_E_TIMEOUT;
 }
 
@@ -820,6 +987,7 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
 {
     rdp_smartcard_mock_backend* mock = rdp_smartcard_mock(user_data);
     uint32_t waited = 0;
+    LONG status = SCARD_E_INVALID_PARAMETER;
 
     (void)context;
     (void)reader;
@@ -828,6 +996,7 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
     if (!mock || !handle || !active_protocol)
         return SCARD_E_INVALID_PARAMETER;
     atomic_fetch_add_explicit(&mock->connect_calls, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&mock->connect_active, 1u, memory_order_acq_rel);
     if (mock->connect_status == SCARD_S_SUCCESS)
     {
         *handle = mock->next_handle ? mock->next_handle : (SCARDHANDLE)2u;
@@ -835,12 +1004,19 @@ static LONG rdp_smartcard_mock_connect(void* user_data,
     }
     while (mock->hang_connect_ms > waited)
     {
-        if (atomic_load_explicit(&mock->cancelled, memory_order_acquire))
-            return SCARD_E_CANCELLED;
+        if (!mock->ignore_connect_cancel &&
+            atomic_load_explicit(&mock->cancelled, memory_order_acquire))
+        {
+            status = SCARD_E_CANCELLED;
+            break;
+        }
         rdp_smartcard_sleep_ms(10u);
         waited += 10u;
     }
-    return mock->connect_status;
+    if (waited >= mock->hang_connect_ms)
+        status = mock->connect_status;
+    atomic_fetch_sub_explicit(&mock->connect_active, 1u, memory_order_acq_rel);
+    return status;
 }
 
 static LONG rdp_smartcard_mock_disconnect(void* user_data, SCARDHANDLE handle, DWORD disposition)
@@ -1022,24 +1198,50 @@ static const rdp_smartcard_backend_ops rdp_smartcard_mock_ops = {
     rdp_smartcard_mock_set_attrib
 };
 
-void rdp_smartcard_backend_init_none(rdp_smartcard_backend* backend)
+static void rdp_smartcard_backend_initialize(rdp_smartcard_backend* backend,
+                                             rdp_smartcard_backend_kind kind,
+                                             const rdp_smartcard_backend_ops* ops,
+                                             void* user_data)
 {
     if (!backend)
         return;
     memset(backend, 0, sizeof(*backend));
-    backend->kind = RDP_SMARTCARD_BACKEND_KIND_NONE;
-    backend->ops = &rdp_smartcard_none_ops;
+    backend->kind = kind;
+    backend->ops = ops;
+    backend->user_data = user_data;
     backend->timeout_ms = RDP_SMARTCARD_BACKEND_DEFAULT_TIMEOUT_MS;
+    backend->provider = rdp_smartcard_provider_new(ops, user_data);
+    backend->jobs = rdp_smartcard_job_queue_new();
+    if (!backend->provider || !backend->jobs)
+    {
+        rdp_smartcard_provider_release(backend->provider);
+        backend->provider = NULL;
+        if (backend->jobs)
+        {
+            pthread_mutex_destroy(&backend->jobs->mutex);
+            free(backend->jobs);
+            backend->jobs = NULL;
+        }
+    }
+}
+
+void rdp_smartcard_backend_init_none(rdp_smartcard_backend* backend)
+{
+    rdp_smartcard_backend_initialize(backend,
+                                     RDP_SMARTCARD_BACKEND_KIND_NONE,
+                                     &rdp_smartcard_none_ops,
+                                     NULL);
 }
 
 void rdp_smartcard_backend_init_pcsc(rdp_smartcard_backend* backend)
 {
-    rdp_smartcard_backend_init_none(backend);
-    if (!backend)
-        return;
 #ifdef RDP_HAVE_PCSC
-    backend->kind = RDP_SMARTCARD_BACKEND_KIND_PCSC;
-    backend->ops = &rdp_smartcard_pcsc_ops;
+    rdp_smartcard_backend_initialize(backend,
+                                     RDP_SMARTCARD_BACKEND_KIND_PCSC,
+                                     &rdp_smartcard_pcsc_ops,
+                                     NULL);
+#else
+    rdp_smartcard_backend_init_none(backend);
 #endif
 }
 
@@ -1069,6 +1271,7 @@ void rdp_smartcard_mock_backend_init(rdp_smartcard_mock_backend* mock)
     mock->transmit_response_len = 2u;
     atomic_init(&mock->cancel_calls, 0u);
     atomic_init(&mock->connect_calls, 0u);
+    atomic_init(&mock->connect_active, 0u);
     atomic_init(&mock->disconnect_calls, 0u);
     atomic_init(&mock->status_change_calls, 0u);
     atomic_init(&mock->transmit_calls, 0u);
@@ -1077,13 +1280,10 @@ void rdp_smartcard_mock_backend_init(rdp_smartcard_mock_backend* mock)
 
 void rdp_smartcard_backend_init_mock(rdp_smartcard_backend* backend, rdp_smartcard_mock_backend* mock)
 {
-    if (!backend)
-        return;
-    memset(backend, 0, sizeof(*backend));
-    backend->kind = RDP_SMARTCARD_BACKEND_KIND_MOCK;
-    backend->ops = &rdp_smartcard_mock_ops;
-    backend->user_data = mock;
-    backend->timeout_ms = RDP_SMARTCARD_BACKEND_DEFAULT_TIMEOUT_MS;
+    rdp_smartcard_backend_initialize(backend,
+                                     RDP_SMARTCARD_BACKEND_KIND_MOCK,
+                                     &rdp_smartcard_mock_ops,
+                                     mock);
 }
 
 void rdp_smartcard_backend_set_timeout(rdp_smartcard_backend* backend, uint32_t timeout_ms)
@@ -1091,6 +1291,46 @@ void rdp_smartcard_backend_set_timeout(rdp_smartcard_backend* backend, uint32_t 
     if (!backend)
         return;
     backend->timeout_ms = timeout_ms ? timeout_ms : RDP_SMARTCARD_BACKEND_DEFAULT_TIMEOUT_MS;
+}
+
+void rdp_smartcard_backend_drain(rdp_smartcard_backend* backend)
+{
+    rdp_smartcard_job* jobs = NULL;
+
+    if (!backend || !backend->jobs)
+        return;
+    pthread_mutex_lock(&backend->jobs->mutex);
+    jobs = backend->jobs->head;
+    backend->jobs->head = NULL;
+    pthread_mutex_unlock(&backend->jobs->mutex);
+    for (rdp_smartcard_job* job = jobs; job; job = job->next)
+        rdp_smartcard_job_request_cancel(job);
+    while (jobs)
+    {
+        rdp_smartcard_job* next = jobs->next;
+
+        jobs->next = NULL;
+        pthread_join(jobs->thread, NULL);
+        rdp_smartcard_job_destroy(jobs, 1);
+        jobs = next;
+    }
+}
+
+void rdp_smartcard_backend_clear(rdp_smartcard_backend* backend)
+{
+    if (!backend)
+        return;
+    if (backend->jobs)
+    {
+        pthread_mutex_lock(&backend->jobs->mutex);
+        backend->jobs->accepting = 0;
+        pthread_mutex_unlock(&backend->jobs->mutex);
+        rdp_smartcard_backend_drain(backend);
+        pthread_mutex_destroy(&backend->jobs->mutex);
+        free(backend->jobs);
+    }
+    rdp_smartcard_provider_release(backend->provider);
+    memset(backend, 0, sizeof(*backend));
 }
 
 static LONG rdp_smartcard_backend_bad_args(void)
@@ -1151,11 +1391,11 @@ static LONG rdp_smartcard_status_change_job(void* arg)
 {
     rdp_smartcard_status_change_args* call = (rdp_smartcard_status_change_args*)arg;
 
-    return call->backend->ops->get_status_change(call->backend->user_data,
-                                                 call->context,
-                                                 call->timeout,
-                                                 call->states,
-                                                 call->count);
+    return call->provider->ops->get_status_change(call->provider->user_data,
+                                                  call->context,
+                                                  call->timeout,
+                                                  call->states,
+                                                  call->count);
 }
 
 static void rdp_smartcard_status_change_cleanup(void* arg)
@@ -1171,15 +1411,16 @@ static void rdp_smartcard_status_change_cleanup(void* arg)
     }
     free(call->reader_names);
     free(call->states);
+    rdp_smartcard_provider_release(call->provider);
     free(call);
 }
 
-static void rdp_smartcard_cancel_context_job(void* arg)
+static void rdp_smartcard_cancel_status_change_job(void* arg)
 {
-    rdp_smartcard_cancel_context* cancel = (rdp_smartcard_cancel_context*)arg;
+    rdp_smartcard_status_change_args* call = (rdp_smartcard_status_change_args*)arg;
 
-    if (cancel && cancel->backend)
-        (void)rdp_smartcard_backend_cancel(cancel->backend, cancel->context);
+    if (call && call->provider && call->provider->ops->cancel)
+        (void)call->provider->ops->cancel(call->provider->user_data, call->context);
 }
 
 static rdp_smartcard_status_change_args* rdp_smartcard_status_change_args_new(rdp_smartcard_backend* backend,
@@ -1200,7 +1441,12 @@ static rdp_smartcard_status_change_args* rdp_smartcard_status_change_args_new(rd
         rdp_smartcard_status_change_cleanup(call);
         return NULL;
     }
-    call->backend = backend;
+    call->provider = rdp_smartcard_provider_acquire(backend->provider);
+    if (!call->provider)
+    {
+        rdp_smartcard_status_change_cleanup(call);
+        return NULL;
+    }
     call->context = context;
     call->timeout = timeout;
     call->count = count;
@@ -1229,7 +1475,6 @@ LONG rdp_smartcard_backend_get_status_change(rdp_smartcard_backend* backend,
                                              DWORD count)
 {
     rdp_smartcard_status_change_args* call = NULL;
-    rdp_smartcard_cancel_context cancel;
     int completed = 0;
     LONG status = SCARD_S_SUCCESS;
 
@@ -1238,13 +1483,11 @@ LONG rdp_smartcard_backend_get_status_change(rdp_smartcard_backend* backend,
     call = rdp_smartcard_status_change_args_new(backend, context, timeout, readers, count);
     if (!call)
         return SCARD_E_NO_MEMORY;
-    cancel.backend = backend;
-    cancel.context = context;
-    status = rdp_smartcard_run_with_timeout(rdp_smartcard_status_change_job,
+    status = rdp_smartcard_run_with_timeout(backend,
+                                            rdp_smartcard_status_change_job,
                                             call,
                                             rdp_smartcard_status_change_cleanup,
-                                            rdp_smartcard_cancel_context_job,
-                                            &cancel,
+                                            rdp_smartcard_cancel_status_change_job,
                                             backend->timeout_ms,
                                             &completed);
     if (completed)
@@ -1275,13 +1518,21 @@ static LONG rdp_smartcard_connect_job(void* arg)
 {
     rdp_smartcard_connect_args* call = (rdp_smartcard_connect_args*)arg;
 
-    return call->backend->ops->connect(call->backend->user_data,
-                                      call->context,
-                                      call->reader,
-                                      call->share_mode,
-                                      call->preferred_protocols,
-                                      &call->handle,
-                                      &call->active_protocol);
+    return call->provider->ops->connect(call->provider->user_data,
+                                       call->context,
+                                       call->reader,
+                                       call->share_mode,
+                                       call->preferred_protocols,
+                                       &call->handle,
+                                       &call->active_protocol);
+}
+
+static void rdp_smartcard_cancel_connect_job(void* arg)
+{
+    rdp_smartcard_connect_args* call = (rdp_smartcard_connect_args*)arg;
+
+    if (call && call->provider && call->provider->ops->cancel)
+        (void)call->provider->ops->cancel(call->provider->user_data, call->context);
 }
 
 static void rdp_smartcard_connect_cleanup(void* arg)
@@ -1290,9 +1541,11 @@ static void rdp_smartcard_connect_cleanup(void* arg)
 
     if (!call)
         return;
-    if (!call->transfer_handle && call->handle != 0 && call->backend && call->backend->ops)
-        (void)call->backend->ops->disconnect(call->backend->user_data, call->handle, 0u);
+    if (!call->transfer_handle && call->handle != 0 && call->provider &&
+        call->provider->ops->disconnect)
+        (void)call->provider->ops->disconnect(call->provider->user_data, call->handle, 0u);
     free(call->reader);
+    rdp_smartcard_provider_release(call->provider);
     free(call);
 }
 
@@ -1305,7 +1558,6 @@ LONG rdp_smartcard_backend_connect(rdp_smartcard_backend* backend,
                                    DWORD* active_protocol)
 {
     rdp_smartcard_connect_args* call = NULL;
-    rdp_smartcard_cancel_context cancel;
     int completed = 0;
     LONG status = SCARD_S_SUCCESS;
 
@@ -1322,17 +1574,20 @@ LONG rdp_smartcard_backend_connect(rdp_smartcard_backend* backend,
         free(call);
         return SCARD_E_NO_MEMORY;
     }
-    call->backend = backend;
+    call->provider = rdp_smartcard_provider_acquire(backend->provider);
+    if (!call->provider)
+    {
+        rdp_smartcard_connect_cleanup(call);
+        return SCARD_E_NO_MEMORY;
+    }
     call->context = context;
     call->share_mode = share_mode;
     call->preferred_protocols = preferred_protocols;
-    cancel.backend = backend;
-    cancel.context = context;
-    status = rdp_smartcard_run_with_timeout(rdp_smartcard_connect_job,
+    status = rdp_smartcard_run_with_timeout(backend,
+                                            rdp_smartcard_connect_job,
                                             call,
                                             rdp_smartcard_connect_cleanup,
-                                            rdp_smartcard_cancel_context_job,
-                                            &cancel,
+                                            rdp_smartcard_cancel_connect_job,
                                             backend->timeout_ms,
                                             &completed);
     if (completed)
@@ -1404,14 +1659,22 @@ static LONG rdp_smartcard_transmit_job(void* arg)
 {
     rdp_smartcard_transmit_args* call = (rdp_smartcard_transmit_args*)arg;
 
-    return call->backend->ops->transmit(call->backend->user_data,
-                                        call->handle,
-                                        &call->send_pci,
-                                        call->send_data,
-                                        call->send_len,
-                                        call->recv_pci_present ? &call->recv_pci : NULL,
-                                        call->recv_data,
-                                        &call->recv_len);
+    return call->provider->ops->transmit(call->provider->user_data,
+                                         call->handle,
+                                         &call->send_pci,
+                                         call->send_data,
+                                         call->send_len,
+                                         call->recv_pci_present ? &call->recv_pci : NULL,
+                                         call->recv_data,
+                                         &call->recv_len);
+}
+
+static void rdp_smartcard_cancel_transmit_job(void* arg)
+{
+    rdp_smartcard_transmit_args* call = (rdp_smartcard_transmit_args*)arg;
+
+    if (call && call->provider && call->provider->ops->cancel)
+        (void)call->provider->ops->cancel(call->provider->user_data, call->context);
 }
 
 static void rdp_smartcard_transmit_cleanup(void* arg)
@@ -1422,6 +1685,7 @@ static void rdp_smartcard_transmit_cleanup(void* arg)
         return;
     free(call->send_data);
     free(call->recv_data);
+    rdp_smartcard_provider_release(call->provider);
     free(call);
 }
 
@@ -1436,7 +1700,6 @@ LONG rdp_smartcard_backend_transmit(rdp_smartcard_backend* backend,
                                     DWORD* recv_len)
 {
     rdp_smartcard_transmit_args* call = NULL;
-    rdp_smartcard_cancel_context cancel;
     int completed = 0;
     LONG status = SCARD_S_SUCCESS;
 
@@ -1454,7 +1717,13 @@ LONG rdp_smartcard_backend_transmit(rdp_smartcard_backend* backend,
     }
     if (send_len > 0)
         memcpy(call->send_data, send_data, send_len);
-    call->backend = backend;
+    call->provider = rdp_smartcard_provider_acquire(backend->provider);
+    if (!call->provider)
+    {
+        rdp_smartcard_transmit_cleanup(call);
+        return SCARD_E_NO_MEMORY;
+    }
+    call->context = context;
     call->handle = handle;
     call->send_pci = *send_pci;
     if (recv_pci)
@@ -1464,13 +1733,11 @@ LONG rdp_smartcard_backend_transmit(rdp_smartcard_backend* backend,
     }
     call->send_len = send_len;
     call->recv_len = *recv_len;
-    cancel.backend = backend;
-    cancel.context = context;
-    status = rdp_smartcard_run_with_timeout(rdp_smartcard_transmit_job,
+    status = rdp_smartcard_run_with_timeout(backend,
+                                            rdp_smartcard_transmit_job,
                                             call,
                                             rdp_smartcard_transmit_cleanup,
-                                            rdp_smartcard_cancel_context_job,
-                                            &cancel,
+                                            rdp_smartcard_cancel_transmit_job,
                                             backend->timeout_ms,
                                             &completed);
     if (completed)

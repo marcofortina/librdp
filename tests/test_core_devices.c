@@ -46,22 +46,6 @@ static void test_backend_sleep_ms(uint32_t timeout_ms)
         requested = remaining;
 }
 
-static int wait_backend_atomic_uint_gt(const atomic_uint* value, unsigned int baseline, uint32_t timeout_ms)
-{
-    uint32_t waited_ms = 0;
-
-    if (!value)
-        return 0;
-    while (waited_ms <= timeout_ms)
-    {
-        if (atomic_load_explicit(value, memory_order_relaxed) > baseline)
-            return 1;
-        test_backend_sleep_ms(5u);
-        waited_ms += 5u;
-    }
-    return 0;
-}
-
 /*
  * Coverage: exercises the smartcard backend boundary without a real reader.
  * Bug classes: provider timeout, cancellation, reconnect after cancellation,
@@ -177,7 +161,8 @@ static int test_smartcard_backend_mock(void)
     CHECK(active_protocol == 0);
     CHECK(atomic_load_explicit(&mock.connect_calls, memory_order_relaxed) == 2u);
     CHECK(atomic_load_explicit(&mock.cancel_calls, memory_order_relaxed) > cancel_calls);
-    CHECK(wait_backend_atomic_uint_gt(&mock.disconnect_calls, disconnect_calls, 500u));
+    rdp_smartcard_backend_drain(&backend);
+    CHECK(atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed) > disconnect_calls);
 
     atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
     mock.hang_connect_ms = 0;
@@ -186,7 +171,26 @@ static int test_smartcard_backend_mock(void)
     CHECK(rdp_smartcard_backend_reconnect(&backend, handle, 0, 0, 0, &active_protocol) == SCARD_S_SUCCESS);
     CHECK(active_protocol == mock.next_protocol);
     CHECK(rdp_smartcard_backend_disconnect(&backend, handle, 0) == SCARD_S_SUCCESS);
+
+    atomic_store_explicit(&mock.cancelled, 0u, memory_order_release);
+    disconnect_calls = atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed);
+    mock.ignore_connect_cancel = 1;
+    mock.hang_connect_ms = 100u;
+    handle = 0;
+    active_protocol = 0;
+    CHECK(rdp_smartcard_backend_connect(&backend,
+                                        context,
+                                        "Mock Reader 0",
+                                        0,
+                                        0,
+                                        &handle,
+                                        &active_protocol) == SCARD_E_TIMEOUT);
+    CHECK(atomic_load_explicit(&mock.connect_active, memory_order_acquire) == 1u);
+    rdp_smartcard_backend_drain(&backend);
+    CHECK(atomic_load_explicit(&mock.connect_active, memory_order_acquire) == 0u);
+    CHECK(atomic_load_explicit(&mock.disconnect_calls, memory_order_relaxed) > disconnect_calls);
     CHECK(rdp_smartcard_backend_release_context(&backend, context) == SCARD_S_SUCCESS);
+    rdp_smartcard_backend_clear(&backend);
     return 0;
 }
 

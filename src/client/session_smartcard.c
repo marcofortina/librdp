@@ -908,6 +908,7 @@ void rdp_session_smartcard_reset(librdp_session* session)
 {
     if (!session)
         return;
+    rdp_smartcard_backend_drain(&session->smartcard_backend);
     for (uint32_t i = 0; i < RDP_SESSION_MAX_SMARTCARD_HANDLES; i++)
     {
         rdp_session_smartcard_handle* handle = &session->smartcard_handles[i];
