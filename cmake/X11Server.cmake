@@ -33,7 +33,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_input.c
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
-        apps/x11/server/server_fuse.c
+        apps/common/server_fuse.c
         apps/x11/server/server_runtime.c
         apps/x11/server/server_x11.c
     )
@@ -417,7 +417,7 @@ if(LIBRDP_BUILD_X11_SERVER)
                 apps/x11/server/server_input.c
                 apps/x11/server/server_permission.c
                 apps/x11/server/server_pointer.c
-                apps/x11/server/server_fuse.c
+                apps/common/server_fuse.c
                 apps/x11/server/server_x11.c
             )
             target_include_directories(test_x11_server PRIVATE
@@ -428,6 +428,7 @@ if(LIBRDP_BUILD_X11_SERVER)
             )
             target_compile_definitions(test_x11_server PRIVATE
                 LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
+                LIBRDP_SERVER_FUSE_TESTING=1
                 LIBRDP_X11_SERVER_TESTING=1
             )
             target_link_libraries(test_x11_server PRIVATE

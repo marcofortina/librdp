@@ -469,7 +469,7 @@ static librdp_status x11_server_clipboard_convert_from_wire(
     {
         if (!context->fuse)
             return LIBRDP_STATUS_UNSUPPORTED;
-        return x11_server_fuse_clipboard_publish(
+        return server_fuse_clipboard_publish(
             context->fuse,
             context->clipboard_remote_peer_id,
             context->clipboard_remote_peer_generation,
@@ -500,7 +500,7 @@ static void x11_server_clipboard_clear_remote_files(
         context->clipboard_remote_peer_generation == 0u ||
         context->clipboard_remote_generation == 0u)
         return;
-    x11_server_fuse_clipboard_clear(
+    server_fuse_clipboard_clear(
         context->fuse,
         context->clipboard_remote_peer_id,
         context->clipboard_remote_peer_generation,
@@ -1129,7 +1129,7 @@ static librdp_status x11_server_clipboard_start(
     context->clipboard_sink = *sink;
     if (context->fuse)
     {
-        librdp_status status = x11_server_fuse_set_clipboard_sink(
+        librdp_status status = server_fuse_set_clipboard_sink(
             context->fuse,
             sink->file_request,
             sink->cancel,
@@ -1176,7 +1176,7 @@ static void x11_server_clipboard_stop(void* opaque)
     x11_server_clipboard_clear_remote_files(context);
     if (context->fuse)
     {
-        (void)x11_server_fuse_set_clipboard_sink(context->fuse,
+        (void)server_fuse_set_clipboard_sink(context->fuse,
                                                  NULL,
                                                  NULL,
                                                  NULL);
@@ -1214,7 +1214,7 @@ static librdp_status x11_server_clipboard_publish_formats(
         if (atom == None ||
             (atom == context->atom_uri_list &&
              (offer->formats[index].id == LIBRDP_CLIPBOARD_FORMAT_HDROP ||
-              !x11_server_fuse_clipboard_ready(context->fuse))))
+              !server_fuse_clipboard_ready(context->fuse))))
             continue;
         for (existing = 0u;
              existing < context->remote_format_count;
@@ -1321,7 +1321,7 @@ static librdp_status x11_server_clipboard_write_data(
     if (!context || !data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (data->stream_id != 0u && context->fuse)
-        return x11_server_fuse_clipboard_complete(context->fuse, data);
+        return server_fuse_clipboard_complete(context->fuse, data);
     write = &context->clipboard_write;
     if (!write->active || write->request_id != data->request_id ||
         write->format_id != data->format_id || !data->final_chunk ||

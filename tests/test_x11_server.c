@@ -906,25 +906,25 @@ static int test_clipboard_files(void)
 static int test_fuse_drive_model(void)
 {
     char path[] = "/tmp/librdp-x11-fuse-XXXXXX";
-    x11_server_fuse_config config;
-    x11_server_fuse* provider = NULL;
+    server_fuse_config config;
+    server_fuse* provider = NULL;
     server_platform_drive_volume volume;
     const server_platform_drive_vtable* drive = NULL;
 
-    if (!x11_server_fuse_available())
+    if (!server_fuse_available())
         return 0;
     CHECK(mkdtemp(path) != NULL);
     CHECK(chmod(path, 0700) == 0);
-    CHECK(x11_server_fuse_test_mount_path_secure(path));
+    CHECK(server_fuse_test_mount_path_secure(path));
     CHECK(chmod(path, 0755) == 0);
-    CHECK(!x11_server_fuse_test_mount_path_secure(path));
+    CHECK(!server_fuse_test_mount_path_secure(path));
     CHECK(chmod(path, 0700) == 0);
 
-    x11_server_fuse_config_init(&config);
+    server_fuse_config_init(&config);
     config.mount_path = path;
-    provider = x11_server_fuse_new(&config);
+    provider = server_fuse_new(&config);
     CHECK(provider != NULL);
-    drive = x11_server_fuse_vtable();
+    drive = server_fuse_vtable();
     CHECK(drive != NULL);
 
     memset(&volume, 0, sizeof(volume));
@@ -935,23 +935,23 @@ static int test_fuse_drive_model(void)
     volume.device.device_id = 9u;
     volume.name = "documents";
     volume.read_only = 1;
-    CHECK(x11_server_fuse_test_present(provider, &volume) == LIBRDP_STATUS_OK);
-    CHECK(x11_server_fuse_test_volume_count(provider) == 1u);
-    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+    CHECK(server_fuse_test_present(provider, &volume) == LIBRDP_STATUS_OK);
+    CHECK(server_fuse_test_volume_count(provider) == 1u);
+    CHECK(server_fuse_test_present(provider, &volume) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     volume.volume_id = 18u;
     volume.name = "../outside";
-    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+    CHECK(server_fuse_test_present(provider, &volume) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
     volume.name = "writable";
     volume.read_only = 0;
-    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+    CHECK(server_fuse_test_present(provider, &volume) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
 
     drive->remove(provider, 3u, 5u, 9u);
-    CHECK(x11_server_fuse_test_volume_count(provider) == 0u);
-    x11_server_fuse_free(provider);
+    CHECK(server_fuse_test_volume_count(provider) == 0u);
+    server_fuse_free(provider);
     CHECK(rmdir(path) == 0);
     return 0;
 }
@@ -965,21 +965,21 @@ static int test_fuse_drive_model(void)
 static int test_fuse_clipboard_model(void)
 {
     char path[] = "/tmp/librdp-x11-clipboard-fuse-XXXXXX";
-    x11_server_fuse_config config;
-    x11_server_fuse* provider = NULL;
+    server_fuse_config config;
+    server_fuse* provider = NULL;
     librdp_clipboard_file_metadata files[2];
     uint8_t* encoded = NULL;
     uint8_t* uri_list = NULL;
     size_t encoded_len = 0u;
     size_t uri_list_len = 0u;
 
-    if (!x11_server_fuse_available())
+    if (!server_fuse_available())
         return 0;
     CHECK(mkdtemp(path) != NULL);
     CHECK(chmod(path, 0700) == 0);
-    x11_server_fuse_config_init(&config);
+    server_fuse_config_init(&config);
     config.mount_path = path;
-    provider = x11_server_fuse_new(&config);
+    provider = server_fuse_new(&config);
     CHECK(provider != NULL);
     CHECK(librdp_clipboard_file_metadata_init(&files[0]) ==
           LIBRDP_STATUS_OK);
@@ -1003,7 +1003,7 @@ static int test_fuse_clipboard_model(void)
                                              encoded_len,
                                              &encoded_len) ==
           LIBRDP_STATUS_OK);
-    CHECK(x11_server_fuse_test_clipboard_publish(provider,
+    CHECK(server_fuse_test_clipboard_publish(provider,
                                                  7u,
                                                  9u,
                                                  11u,
@@ -1015,10 +1015,10 @@ static int test_fuse_clipboard_model(void)
     CHECK(uri_list != NULL && uri_list_len > 0u);
     CHECK(strstr((const char*)uri_list, "report%20file.txt") != NULL);
     CHECK(strstr((const char*)uri_list, "/file-2\r\n") != NULL);
-    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 2u);
+    CHECK(server_fuse_test_clipboard_file_count(provider) == 2u);
     free(uri_list);
     uri_list = NULL;
-    CHECK(x11_server_fuse_test_clipboard_publish(provider,
+    CHECK(server_fuse_test_clipboard_publish(provider,
                                                  7u,
                                                  9u,
                                                  12u,
@@ -1028,11 +1028,11 @@ static int test_fuse_clipboard_model(void)
                                                  &uri_list_len) ==
           LIBRDP_STATUS_PROTOCOL_ERROR);
     CHECK(uri_list == NULL && uri_list_len == 0u);
-    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 2u);
-    x11_server_fuse_clipboard_clear(provider, 7u, 9u, 11u);
-    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 0u);
+    CHECK(server_fuse_test_clipboard_file_count(provider) == 2u);
+    server_fuse_clipboard_clear(provider, 7u, 9u, 11u);
+    CHECK(server_fuse_test_clipboard_file_count(provider) == 0u);
     free(encoded);
-    x11_server_fuse_free(provider);
+    server_fuse_free(provider);
     CHECK(rmdir(path) == 0);
     return 0;
 }

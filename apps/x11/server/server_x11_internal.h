@@ -82,7 +82,7 @@ struct x11_server_context
     x11_server_config config;
     char* display_name;
     char* drive_mount;
-    x11_server_fuse* fuse;
+    server_fuse* fuse;
     int capture_x;
     int capture_y;
     int desktop_x;
