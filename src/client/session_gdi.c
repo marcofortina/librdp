@@ -432,7 +432,7 @@ static librdp_status rdp_session_gdi_store_cache_brush(librdp_session* session,
         for (i = 0; i < 64u; i++)
         {
             uint8_t packed = order->brush_data[i / 4u];
-            uint32_t table_index = (uint32_t)((packed >> ((3u - (i & 3u)) * 2u)) & 0x03u);
+            uint32_t table_index = ((uint32_t)packed >> ((3u - (i & 3u)) * 2u)) & 0x03u;
 
             memcpy(entry->bgra + ((size_t)i * 4u), table + table_index * 4u, 4u);
         }
@@ -1717,11 +1717,11 @@ static uint8_t rdp_session_gdi_rop3(uint8_t rop, uint8_t source, uint8_t pattern
 
     for (bit = 0; bit < 8u; bit++)
     {
-        uint8_t index = (uint8_t)((((pattern >> bit) & 1u) << 2u) |
-                                  (((source >> bit) & 1u) << 1u) |
-                                  ((dest >> bit) & 1u));
+        uint8_t index = (uint8_t)(((((uint32_t)pattern >> bit) & 1u) << 2u) |
+                                  ((((uint32_t)source >> bit) & 1u) << 1u) |
+                                  (((uint32_t)dest >> bit) & 1u));
 
-        if ((rop >> index) & 1u)
+        if (((uint32_t)rop >> index) & 1u)
             result |= (uint8_t)(1u << bit);
     }
     return result;
@@ -2159,7 +2159,7 @@ static int rdp_session_gdi_pattern_bit(const rdp_gdi_render_op* op, uint32_t x, 
     memcpy(pattern + 1u, op->brush_extra, sizeof(op->brush_extra));
     px = (uint32_t)((int64_t)x - op->brush_x) & 7u;
     py = (uint32_t)((int64_t)y - op->brush_y) & 7u;
-    return ((pattern[py] >> (7u - px)) & 1u) != 0;
+    return (((uint32_t)pattern[py] >> (7u - px)) & 1u) != 0;
 }
 
 static int rdp_session_gdi_brush_style_is_pattern(uint8_t style)

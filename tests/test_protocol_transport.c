@@ -496,7 +496,7 @@ static int test_udp_transport(void)
     buffer.length = 8u;
     unwrapped.length = (size_t)-2;
     PCHECK(rdp_udp2_unwrap_packet(&unwrapped, buffer.data, buffer.length, &prefix) ==
-           LIBRDP_STATUS_NO_MEMORY);
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     unwrapped.length = 0;
     buffer.data[5] = 1u;
     rdp_buffer_free(&unwrapped);

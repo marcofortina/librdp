@@ -1063,7 +1063,7 @@ librdp_status rdp_bitmap_decode_rect_bgra32_with_palette(const rdp_bitmap_rect* 
         {
             for (column = 0; column < rect->width; column++)
             {
-                uint32_t pixel = (src[column / 8u] >> (7u - (column % 8u))) & 0x01u;
+                uint32_t pixel = ((uint32_t)src[column / 8u] >> (7u - (column % 8u))) & 0x01u;
 
                 status = rdp_bitmap_indexed_pixel_to_bgra(pixel, palette, dst + ((size_t)column * 4u));
                 if (status != LIBRDP_STATUS_OK)
