@@ -375,10 +375,12 @@ endif()
 if(LIBRDP_QUARTZ_FOUND)
     target_compile_definitions(librdp_objects PRIVATE RDP_HAVE_QUARTZ=1)
     target_link_libraries(librdp_objects PRIVATE
+        ${LIBRDP_QUARTZ_COREFOUNDATION_LIBRARY}
         ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
         ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
     )
     librdp_link_library_targets(
+        ${LIBRDP_QUARTZ_COREFOUNDATION_LIBRARY}
         ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
         ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
     )
@@ -439,6 +441,7 @@ function(librdp_link_internal_runtime target)
     endif()
     if(LIBRDP_QUARTZ_FOUND)
         target_link_libraries(${target} PRIVATE
+            ${LIBRDP_QUARTZ_COREFOUNDATION_LIBRARY}
             ${LIBRDP_QUARTZ_COREGRAPHICS_LIBRARY}
             ${LIBRDP_QUARTZ_IMAGEIO_LIBRARY}
         )

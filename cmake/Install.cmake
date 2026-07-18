@@ -51,7 +51,11 @@ if(LIBRDP_JPEG_FOUND)
     list(APPEND LIBRDP_PC_REQUIRES_PRIVATE libjpeg)
 endif()
 if(LIBRDP_QUARTZ_FOUND)
-    list(APPEND LIBRDP_PC_LIBS_PRIVATE "-framework CoreGraphics" "-framework ImageIO")
+    list(APPEND LIBRDP_PC_LIBS_PRIVATE
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework ImageIO"
+    )
 endif()
 list(REMOVE_DUPLICATES LIBRDP_PC_REQUIRES_PRIVATE)
 list(JOIN LIBRDP_PC_REQUIRES_PRIVATE " " LIBRDP_PC_REQUIRES_PRIVATE)
