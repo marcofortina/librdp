@@ -1130,6 +1130,49 @@ static librdp_status server_clipboard_pending_append(
 }
 
 /*
+ * Data requests expose only a globally unique request identifier to native
+ * providers. Accept an omitted peer scope only when that identifier resolves
+ * to exactly one pending local operation; explicit but partial scopes fail.
+ */
+static server_clipboard_peer* server_clipboard_find_local_pending(
+    server_clipboard_runtime* runtime,
+    const server_platform_clipboard_data* data)
+{
+    server_clipboard_peer* match = NULL;
+    uint32_t index = 0u;
+
+    if (!runtime || !data)
+        return NULL;
+    if (data->peer_id != 0u || data->generation != 0u)
+    {
+        if (data->peer_id == 0u || data->generation == 0u)
+            return NULL;
+        return server_clipboard_find_peer(runtime,
+                                          data->peer_id,
+                                          data->generation);
+    }
+    for (index = 0u; index < runtime->config.max_peers; index++)
+    {
+        server_clipboard_peer* peer = &runtime->peers[index];
+        int matches_data =
+            peer->local_data.kind ==
+                SERVER_CLIPBOARD_PENDING_LOCAL_DATA &&
+            peer->local_data.request_id == data->request_id;
+        int matches_file =
+            peer->local_file.kind ==
+                SERVER_CLIPBOARD_PENDING_LOCAL_FILE &&
+            peer->local_file.request_id == data->request_id;
+
+        if (!peer->occupied || (!matches_data && !matches_file))
+            continue;
+        if (match)
+            return NULL;
+        match = peer;
+    }
+    return match;
+}
+
+/*
  * Accumulate bounded platform chunks for one client-originated request. The
  * protocol sees exactly one terminal response, including empty data and
  * provider failures, regardless of the native provider's chunk boundaries.
@@ -1144,9 +1187,7 @@ librdp_status server_clipboard_runtime_platform_data(
 
     if (!runtime || !data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    peer = server_clipboard_find_peer(runtime,
-                                      data->peer_id,
-                                      data->generation);
+    peer = server_clipboard_find_local_pending(runtime, data);
     if (!peer)
         return LIBRDP_STATUS_STATE;
     if (peer->local_data.request_id == data->request_id &&

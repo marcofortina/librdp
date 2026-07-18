@@ -1016,8 +1016,6 @@ static int test_clipboard_runtime(void)
                                                   &event) ==
           LIBRDP_STATUS_OK);
     memset(&data, 0, sizeof(data));
-    data.peer_id = 7u;
-    data.generation = 1u;
     data.request_id = platform.last_clipboard_request_id;
     data.format_id = LIBRDP_CLIPBOARD_FORMAT_HTML;
     data.status = LIBRDP_STATUS_OK;
