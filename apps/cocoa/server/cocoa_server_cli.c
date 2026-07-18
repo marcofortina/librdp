@@ -51,7 +51,7 @@ void cocoa_server_usage(FILE* stream, const char* program)
         "[--security tls|nla|standard] [--allow-standard-security] "
         "[--user name] [--domain name] [--password-env name] "
         "[--allow-input] [--allow-clipboard] "
-        "[--allow-drive --drive-mount path]\n",
+        "[--allow-drive --drive-mount path] [--non-interactive]\n",
         program);
 }
 
@@ -304,6 +304,8 @@ int cocoa_server_parse_options(int argc,
             options->allow_clipboard = 1;
         else if (strcmp(option, "--allow-drive") == 0)
             options->allow_drive = 1;
+        else if (strcmp(option, "--non-interactive") == 0)
+            options->non_interactive = 1;
         else
             return 0;
     }

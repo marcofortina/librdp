@@ -19,6 +19,7 @@
 
 #include "cocoa_clipboard.h"
 #include "cocoa_input.h"
+#include "cocoa_permission.h"
 #include "cocoa_server.h"
 
 #import <Cocoa/Cocoa.h>

@@ -17,8 +17,6 @@
 
 #include <stdint.h>
 
-int cocoa_server_input_permission(int prompt);
-
 #ifdef LIBRDP_COCOA_SERVER_TESTING
 int cocoa_server_input_test_scancode(uint16_t scancode,
                                      uint16_t flags,

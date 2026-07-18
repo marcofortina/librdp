@@ -15,6 +15,7 @@
 #include "cocoa_server_runtime.h"
 
 #include "cocoa_server.h"
+#include "cocoa_permission.h"
 #include "server_fuse.h"
 #include "server_host.h"
 
@@ -83,6 +84,8 @@ static const char* cocoa_server_security_name(
 int cocoa_server_run(const cocoa_server_options* options)
 {
     cocoa_server_config native_config;
+    cocoa_server_permission_policy permission_policy;
+    cocoa_server_permission_result permissions;
     server_host_config host_config;
     cocoa_server_context* native = NULL;
     server_fuse* drive = NULL;
@@ -94,15 +97,54 @@ int cocoa_server_run(const cocoa_server_options* options)
     if (!options)
         return 2;
     cocoa_server_config_init(&native_config);
+    cocoa_server_permission_policy_init(&permission_policy);
+    permission_policy.drive_mount = options->drive_mount;
+    permission_policy.interactive =
+        options->non_interactive ? 0 : 1;
+    permission_policy.request_input = options->allow_input;
+    permission_policy.request_clipboard =
+        options->allow_clipboard;
+    permission_policy.request_drive = options->allow_drive;
+    status = cocoa_server_permission_resolve(
+        &permission_policy,
+        &permissions);
+    if (status != LIBRDP_STATUS_OK || !permissions.capture)
+    {
+        fprintf(stderr,
+                "error=screen_recording_permission status=%s\n",
+                librdp_status_name(
+                    status == LIBRDP_STATUS_OK
+                        ? LIBRDP_STATUS_STATE
+                        : status));
+        return 1;
+    }
+    if (options->allow_input && !permissions.input)
+    {
+        fprintf(stderr,
+                "librdp cocoa-server provider=input state=disabled "
+                "reason=permission-denied\n");
+    }
+    if (options->allow_clipboard && !permissions.clipboard)
+    {
+        fprintf(stderr,
+                "librdp cocoa-server provider=clipboard state=disabled "
+                "reason=consent-denied\n");
+    }
+    if (options->allow_drive && !permissions.drive)
+    {
+        fprintf(stderr,
+                "librdp cocoa-server provider=drive state=disabled "
+                "reason=consent-denied\n");
+    }
     native_config.source_kind = options->source_kind;
     native_config.source_id = options->source_id;
     native_config.max_fps = options->max_fps;
     native_config.max_frame_bytes = options->max_frame_bytes;
     native_config.allow_capture = options->allow_capture;
-    native_config.allow_input = options->allow_input;
-    native_config.allow_clipboard = options->allow_clipboard;
-    native_config.allow_drive = options->allow_drive;
-    if (options->allow_drive)
+    native_config.allow_input = permissions.input;
+    native_config.allow_clipboard = permissions.clipboard;
+    native_config.allow_drive = permissions.drive;
+    if (permissions.drive)
     {
         server_fuse_config drive_config;
 
@@ -161,7 +203,7 @@ int cocoa_server_run(const cocoa_server_options* options)
     }
     host_config.max_peers = options->max_peers;
     host_config.input_policy =
-        options->allow_input
+        permissions.input
             ? SERVER_HOST_INPUT_FIRST_ACTIVE
             : SERVER_HOST_INPUT_DISABLED;
     host_config.trace_callback = cocoa_server_trace;
@@ -175,7 +217,7 @@ int cocoa_server_run(const cocoa_server_options* options)
         host_config.platform.drive.context = drive;
         status = server_platform_validate(&host_config.platform);
     }
-    host_config.drive.enabled = options->allow_drive;
+    host_config.drive.enabled = permissions.drive;
     host_config.drive.read_only = 1;
     if (status == LIBRDP_STATUS_OK)
         host = server_host_new(&host_config);

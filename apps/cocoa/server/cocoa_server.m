@@ -542,8 +542,7 @@ cocoa_server_context* cocoa_server_context_new(
         *output_status = LIBRDP_STATUS_UNSUPPORTED;
         return NULL;
     }
-    if (!CGPreflightScreenCaptureAccess() &&
-        !CGRequestScreenCaptureAccess())
+    if (!CGPreflightScreenCaptureAccess())
     {
         *output_status = LIBRDP_STATUS_STATE;
         return NULL;
@@ -573,8 +572,6 @@ cocoa_server_context* cocoa_server_context_new(
     }
     if (context->config.allow_clipboard)
         context->clipboard = cocoa_server_clipboard_new();
-    if (context->config.allow_input)
-        (void)cocoa_server_input_permission(1);
     *output_status = LIBRDP_STATUS_OK;
     return context;
 }
@@ -672,7 +669,7 @@ static librdp_status cocoa_server_permission_query(
     {
         *state =
             context->config.allow_input &&
-                    cocoa_server_input_permission(0)
+                    cocoa_server_accessibility_permission(0)
                 ? SERVER_PLATFORM_PERMISSION_GRANTED
                 : SERVER_PLATFORM_PERMISSION_DENIED;
     }
@@ -715,7 +712,7 @@ static librdp_status cocoa_server_permission_request(
     else if (kind == SERVER_PLATFORM_PERMISSION_INPUT &&
              context->config.allow_input)
     {
-        state = cocoa_server_input_permission(1)
+        state = cocoa_server_accessibility_permission(1)
                     ? SERVER_PLATFORM_PERMISSION_GRANTED
                     : SERVER_PLATFORM_PERMISSION_DENIED;
     }

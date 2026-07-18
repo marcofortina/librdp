@@ -145,23 +145,6 @@ static const cocoa_server_key_mapping cocoa_server_key_mappings[] = {
     { 0x5cu, 1u, kVK_RightCommand },
 };
 
-static int cocoa_server_accessibility_trusted(int prompt)
-{
-    NSDictionary* options = nil;
-
-    if (prompt)
-    {
-        options = [NSDictionary
-            dictionaryWithObject:@YES
-                          forKey:
-                              (NSString*)kAXTrustedCheckOptionPrompt];
-    }
-    return AXIsProcessTrustedWithOptions(
-               (CFDictionaryRef)options)
-               ? 1
-               : 0;
-}
-
 static int cocoa_server_scancode_keycode(uint16_t scancode,
                                          uint16_t flags,
                                          CGKeyCode* keycode)
@@ -727,11 +710,6 @@ const server_platform_input_vtable cocoa_server_input_vtable = {
     cocoa_server_input_inject,
     cocoa_server_input_release_all,
 };
-
-int cocoa_server_input_permission(int prompt)
-{
-    return cocoa_server_accessibility_trusted(prompt);
-}
 
 #ifdef LIBRDP_COCOA_SERVER_TESTING
 int cocoa_server_input_test_scancode(uint16_t scancode,

@@ -171,6 +171,7 @@ static int test_modes_and_provider_policy(void)
         (char*)"--allow-drive",
         (char*)"--drive-mount",
         (char*)"/tmp/client-drives",
+        (char*)"--non-interactive",
         (char*)"--tls-cert",
         (char*)"/tmp/server.crt",
         (char*)"--tls-key",
@@ -202,6 +203,7 @@ static int test_modes_and_provider_policy(void)
               drive,
               &options) == 1);
     CHECK(options.allow_drive == 1);
+    CHECK(options.non_interactive == 1);
     CHECK(strcmp(options.drive_mount,
                  "/tmp/client-drives") == 0);
     return 1;

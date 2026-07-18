@@ -43,6 +43,7 @@ typedef struct cocoa_server_options
     int allow_input;
     int allow_clipboard;
     int allow_drive;
+    int non_interactive;
     int show_help;
 } cocoa_server_options;
 
