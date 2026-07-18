@@ -1217,6 +1217,232 @@ int test_gdiplus_clip_limits_visual_output(void)
     return 0;
 }
 
+static int append_cache_bitmap_v1_payload(rdp_buffer* payload,
+                                          uint8_t width,
+                                          uint8_t height,
+                                          uint8_t bits_per_pixel,
+                                          uint16_t cache_index,
+                                          const void* data,
+                                          uint16_t data_len)
+{
+    return payload && data && data_len > 0 &&
+           rdp_buffer_append_u8(payload, 1u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, 0u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, width) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, height) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, bits_per_pixel) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, data_len) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, cache_index) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append(payload, data, data_len) == LIBRDP_STATUS_OK;
+}
+
+static int append_cache_bitmap_v3_payload(rdp_buffer* payload,
+                                          uint8_t codec_id,
+                                          uint16_t width,
+                                          uint16_t height,
+                                          uint16_t cache_index,
+                                          const void* data,
+                                          uint32_t data_len)
+{
+    return payload && data && data_len > 0 &&
+           rdp_buffer_append_u16_le(payload, cache_index) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(payload, 0x11223344u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(payload, 0x55667788u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, 32u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, 0u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, 0u) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u8(payload, codec_id) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, width) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u16_le(payload, height) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append_u32_le(payload, data_len) == LIBRDP_STATUS_OK &&
+           rdp_buffer_append(payload, data, data_len) == LIBRDP_STATUS_OK;
+}
+
+static librdp_status apply_cache_bitmap_order(librdp_session* session,
+                                              uint16_t extra_flags,
+                                              uint8_t order_type,
+                                              const rdp_buffer* payload)
+{
+    rdp_buffer encoded;
+    rdp_gdi_orders_update update;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !payload)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&encoded);
+    status = rdp_gdi_write_secondary_order(&encoded,
+                                           extra_flags,
+                                           order_type,
+                                           payload->data,
+                                           payload->length);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        memset(&update, 0, sizeof(update));
+        update.update_type = RDP_GDI_UPDATE_TYPE_ORDERS;
+        update.number_orders = 1u;
+        update.order_data = encoded.data;
+        update.order_data_len = encoded.length;
+        status = rdp_session_apply_gdi_orders_update(session, &update);
+    }
+    rdp_buffer_free(&encoded);
+    return status;
+}
+
+static rdp_session_gdi_bitmap_cache_entry* find_test_bitmap_cache_entry(librdp_session* session,
+                                                                        uint32_t cache_id,
+                                                                        uint32_t cache_index)
+{
+    size_t i = 0;
+
+    if (!session)
+        return NULL;
+    for (i = 0; i < RDP_SESSION_GDI_BITMAP_CACHE_SLOTS; i++)
+    {
+        rdp_session_gdi_bitmap_cache_entry* entry = &session->gdi_bitmap_cache[i];
+
+        if (entry->active && entry->cache_id == cache_id && entry->cache_index == cache_index)
+            return entry;
+    }
+    return NULL;
+}
+
+/*
+ * Coverage: proves raw, RLE, NSCodec, and RemoteFX cache orders are bounded
+ * before decoder allocation. Every rejected replacement targets an existing
+ * cache key so the fixture also locks transactional cache ownership.
+ */
+int test_gdi_bitmap_cache_limits(void)
+{
+    const uint8_t valid_pixel[] = {0x10u, 0x20u, 0x30u, 0xffu};
+    const uint8_t invalid_payload[] = {0x80u};
+    const uint16_t rev3_flags =
+        (uint16_t)(1u | (6u << 3u) | (RDP_GDI_CBR3_IGNORABLE_FLAG << 7u));
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_limits limits;
+    librdp_metrics metrics;
+    rdp_buffer payload;
+    rdp_session_gdi_bitmap_cache_entry* entry = NULL;
+    uint8_t* saved_pixels = NULL;
+    size_t saved_length = 0;
+    size_t saved_cache_bytes = 0;
+    uint64_t saved_clock = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_desktop_size(settings, 1u, 1u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_limits_init(&limits) == LIBRDP_STATUS_OK);
+    limits.surface_max_dimension = 1u;
+    CHECK(librdp_settings_set_limits(settings, &limits) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v1_payload(&payload,
+                                         1u,
+                                         1u,
+                                         32u,
+                                         5u,
+                                         valid_pixel,
+                                         (uint16_t)sizeof(valid_pixel)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   0u,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                   &payload) == LIBRDP_STATUS_OK);
+    entry = find_test_bitmap_cache_entry(session, 1u, 5u);
+    CHECK(entry != NULL && entry->pixels.length == sizeof(valid_pixel));
+    saved_pixels = entry->pixels.data;
+    saved_length = entry->pixels.length;
+    saved_cache_bytes = session->gdi_bitmap_cache_bytes;
+    saved_clock = session->gdi_bitmap_cache_clock;
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v1_payload(&payload,
+                                         2u,
+                                         2u,
+                                         32u,
+                                         5u,
+                                         invalid_payload,
+                                         (uint16_t)sizeof(invalid_payload)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   0u,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_UNCOMPRESSED,
+                                   &payload) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v1_payload(&payload,
+                                         2u,
+                                         2u,
+                                         32u,
+                                         5u,
+                                         invalid_payload,
+                                         (uint16_t)sizeof(invalid_payload)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   RDP_GDI_NO_BITMAP_COMPRESSION_HEADER,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED,
+                                   &payload) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v3_payload(&payload,
+                                         RDP_SURFACE_CODEC_NSCODEC,
+                                         2u,
+                                         2u,
+                                         5u,
+                                         invalid_payload,
+                                         (uint32_t)sizeof(invalid_payload)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   rev3_flags,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                   &payload) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v3_payload(&payload,
+                                         RDP_SURFACE_CODEC_REMOTEFX,
+                                         2u,
+                                         2u,
+                                         5u,
+                                         invalid_payload,
+                                         (uint32_t)sizeof(invalid_payload)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   rev3_flags,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                   &payload) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    session->limits.surface_max_dimension = RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION;
+    rdp_buffer_free(&payload);
+    rdp_buffer_init(&payload);
+    CHECK(append_cache_bitmap_v3_payload(&payload,
+                                         RDP_SURFACE_CODEC_NSCODEC,
+                                         (uint16_t)RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION,
+                                         (uint16_t)RDP_SESSION_GRAPHICS_SURFACE_MAX_DIMENSION,
+                                         5u,
+                                         invalid_payload,
+                                         (uint32_t)sizeof(invalid_payload)));
+    CHECK(apply_cache_bitmap_order(session,
+                                   rev3_flags,
+                                   RDP_GDI_SECONDARY_CACHE_BITMAP_COMPRESSED_REV3,
+                                   &payload) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+
+    entry = find_test_bitmap_cache_entry(session, 1u, 5u);
+    CHECK(entry != NULL);
+    CHECK(entry->pixels.data == saved_pixels && entry->pixels.length == saved_length);
+    CHECK(memcmp(entry->pixels.data, valid_pixel, sizeof(valid_pixel)) == 0);
+    CHECK(session->gdi_bitmap_cache_bytes == saved_cache_bytes);
+    CHECK(session->gdi_bitmap_cache_clock == saved_clock);
+    CHECK(librdp_metrics_init(&metrics) == LIBRDP_STATUS_OK);
+    CHECK(librdp_session_get_metrics(session, &metrics) == LIBRDP_STATUS_OK);
+    CHECK(metrics.limits_rejected == 5u);
+
+    rdp_buffer_free(&payload);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
+
 /*
  * Coverage: validates that complex GDI alternate secondary orders have a
  * bounded runtime path. The client parses GDI+ draw/cache chunks, rasterizes

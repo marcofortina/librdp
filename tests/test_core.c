@@ -76,6 +76,7 @@ static int run_graphics(void)
         test_gdiplus_interpolation_and_metadata_objects() != 0 ||
         test_gdiplus_antialias_affects_line_edges() != 0 ||
         test_gdiplus_clip_limits_visual_output() != 0 ||
+        test_gdi_bitmap_cache_limits() != 0 ||
         test_gdi_altsec_runtime_orders() != 0)
         return 1;
     return test_graphics_update_before_activation();
