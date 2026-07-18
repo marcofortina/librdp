@@ -92,6 +92,7 @@ int cocoa_server_run(const cocoa_server_options* options)
     native_config.max_frame_bytes = options->max_frame_bytes;
     native_config.allow_capture = options->allow_capture;
     native_config.allow_input = options->allow_input;
+    native_config.allow_clipboard = options->allow_clipboard;
     native = cocoa_server_context_new(&native_config, &status);
     if (!native)
     {

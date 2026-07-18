@@ -170,7 +170,8 @@ static int test_modes_and_provider_policy(void)
     CHECK(cocoa_server_parse_options(
               (int)(sizeof(clipboard) / sizeof(clipboard[0])),
               clipboard,
-              &options) == 0);
+              &options) == 1);
+    CHECK(options.allow_clipboard == 1);
     return 1;
 }
 

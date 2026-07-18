@@ -65,7 +65,9 @@ static int cocoa_server_config_valid(
            config->max_frame_bytes <= 512u * 1024u * 1024u &&
            config->allow_capture == 1 &&
            (config->allow_input == 0 ||
-            config->allow_input == 1);
+            config->allow_input == 1) &&
+           (config->allow_clipboard == 0 ||
+            config->allow_clipboard == 1);
 }
 
 static int cocoa_server_set_nonblocking(int descriptor)
@@ -567,6 +569,8 @@ cocoa_server_context* cocoa_server_context_new(
         cocoa_server_context_free(context);
         return NULL;
     }
+    if (context->config.allow_clipboard)
+        context->clipboard = cocoa_server_clipboard_new();
     if (context->config.allow_input)
         (void)cocoa_server_input_permission(1);
     *output_status = LIBRDP_STATUS_OK;
@@ -579,6 +583,8 @@ void cocoa_server_context_free(cocoa_server_context* context)
         return;
     if (context->config.allow_input)
         cocoa_server_input_vtable.release_all(context);
+    cocoa_server_clipboard_free(context->clipboard);
+    context->clipboard = NULL;
     cocoa_server_capture_vtable.stop(context);
     if (context->stream && context->capture_delegate)
     {
@@ -668,6 +674,14 @@ static librdp_status cocoa_server_permission_query(
                 ? SERVER_PLATFORM_PERMISSION_GRANTED
                 : SERVER_PLATFORM_PERMISSION_DENIED;
     }
+    else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD)
+    {
+        *state =
+            context->config.allow_clipboard &&
+                    context->clipboard
+                ? SERVER_PLATFORM_PERMISSION_GRANTED
+                : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
     else
         *state = SERVER_PLATFORM_PERMISSION_DENIED;
     return LIBRDP_STATUS_OK;
@@ -697,6 +711,10 @@ static librdp_status cocoa_server_permission_request(
                     ? SERVER_PLATFORM_PERMISSION_GRANTED
                     : SERVER_PLATFORM_PERMISSION_DENIED;
     }
+    else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD &&
+             context->config.allow_clipboard &&
+             context->clipboard)
+        state = SERVER_PLATFORM_PERMISSION_GRANTED;
     else
         return LIBRDP_STATUS_UNSUPPORTED;
     if (context->permission_sink.changed)
@@ -722,6 +740,8 @@ static librdp_status cocoa_server_permission_revoke(
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (kind == SERVER_PLATFORM_PERMISSION_INPUT)
         cocoa_server_input_vtable.release_all(context);
+    else if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD)
+        cocoa_server_clipboard_revoke(context->clipboard);
     if (context->permission_sink.changed)
         context->permission_sink.changed(
             kind,
@@ -755,6 +775,13 @@ librdp_status cocoa_server_context_platform(
     {
         platform->input.vtable = &cocoa_server_input_vtable;
         platform->input.context = context;
+    }
+    if (context->config.allow_clipboard &&
+        context->clipboard)
+    {
+        platform->clipboard.vtable =
+            &cocoa_server_clipboard_vtable;
+        platform->clipboard.context = context->clipboard;
     }
     platform->permission.vtable =
         &cocoa_server_permission_vtable;

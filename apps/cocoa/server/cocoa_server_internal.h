@@ -17,6 +17,7 @@
 #ifndef LIBRDP_COCOA_SERVER_INTERNAL_H
 #define LIBRDP_COCOA_SERVER_INTERNAL_H
 
+#include "cocoa_clipboard.h"
 #include "cocoa_input.h"
 #include "cocoa_server.h"
 
@@ -63,6 +64,7 @@ struct cocoa_server_context
     int wakeup_write_fd;
     server_platform_capture_sink capture_sink;
     server_platform_permission_sink permission_sink;
+    cocoa_server_clipboard* clipboard;
     cocoa_server_frame_packet pending_frame;
     librdp_status pending_lost_status;
     uint32_t width;

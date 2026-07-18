@@ -50,7 +50,7 @@ void cocoa_server_usage(FILE* stream, const char* program)
         "[--max-fps count] [--max-frame-bytes bytes] "
         "[--security tls|nla|standard] [--allow-standard-security] "
         "[--user name] [--domain name] [--password-env name] "
-        "[--allow-input]\n",
+        "[--allow-input] [--allow-clipboard]\n",
         program);
 }
 
@@ -127,10 +127,10 @@ static int cocoa_server_validate_options(const cocoa_server_options* options)
         fprintf(stderr, "--allow-capture is required\n");
         return 0;
     }
-    if (options->allow_clipboard || options->allow_drive)
+    if (options->allow_drive)
     {
         fprintf(stderr,
-                "clipboard and drive providers are not enabled "
+                "the drive provider is not enabled "
                 "in this build\n");
         return 0;
     }

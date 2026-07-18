@@ -40,6 +40,7 @@ typedef struct cocoa_server_config
     size_t max_frame_bytes;
     int allow_capture;
     int allow_input;
+    int allow_clipboard;
 } cocoa_server_config;
 
 typedef struct cocoa_server_context cocoa_server_context;
