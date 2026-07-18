@@ -84,7 +84,7 @@ Do not use trace as a substitute for explicit error handling.
 
 Keep platform-specific includes out of public headers and core protocol modules. Put native backends behind CMake feature detection and private implementation files.
 
-Core code should not assume Linux-only devices, macOS frameworks, FreeBSD-specific behavior, or Windows-native APIs.
+Core code must not assume a particular host's device APIs, UI frameworks, filesystem extensions, or vendor-native services.
 
 ## Tests and fuzzing
 

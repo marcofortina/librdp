@@ -83,6 +83,13 @@ MANPAGE_RE = re.compile(r"^docs/man/(.+)\.(\d)$")
 SEE_ALSO_RE = re.compile(r"\.BR\s+([A-Za-z0-9_.-]+)\s*\((\d)\)")
 Doxygen_SETTING_RE = re.compile(r"^([A-Z0-9_]+)\s*=\s*(.*?)\s*$", re.MULTILINE)
 DEFGROUP_RE = re.compile(r"@defgroup\s+(librdp_[A-Za-z0-9_]+)\b")
+SUPPORTED_PLATFORM_DECLARATION_RE = re.compile(
+    r"\b(?:targets?|supports?|supported\s+(?:target\s+set|platforms?|operating\s+systems?)"
+    r"|portable\s+(?:across|on)|runs?\s+on)\b",
+    re.IGNORECASE,
+)
+SUPPORTED_PLATFORMS = ("Linux", "macOS", "FreeBSD", "OpenBSD", "NetBSD")
+SUPPORTED_PLATFORM_DOCUMENTS = ("README.md", "docs/portability.md")
 DISALLOWED_PHRASES = (
     "Source complete",
     "source complete",
@@ -186,6 +193,11 @@ def read(path: str) -> str:
 
 def markdown_files() -> list[str]:
     return sorted(str(path.relative_to(ROOT)) for path in (ROOT / "docs").glob("*.md"))
+
+
+def public_documentation_files() -> list[str]:
+    manpages = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "docs/man").glob("*.[0-9]"))
+    return ["README.md", *markdown_files(), *manpages]
 
 
 def viewer_source_options() -> set[str]:
@@ -434,6 +446,42 @@ def validate_readme(errors: list[str]) -> None:
             errors.append(f"README.md should link only docs/index.md for documentation: {snippet}")
 
 
+def mentioned_supported_platforms(text: str) -> set[str]:
+    return {
+        platform
+        for platform in SUPPORTED_PLATFORMS
+        if re.search(rf"\b{re.escape(platform)}\b", text)
+    }
+
+
+def validate_supported_platforms(errors: list[str]) -> None:
+    required = set(SUPPORTED_PLATFORMS)
+    for rel in SUPPORTED_PLATFORM_DOCUMENTS:
+        missing = required - mentioned_supported_platforms(read(rel))
+        if missing:
+            errors.append(f"{rel} missing supported platforms: {', '.join(sorted(missing))}")
+
+    for rel in public_documentation_files():
+        paragraphs = re.split(r"\n\s*\n", read(rel))
+        for index, paragraph in enumerate(paragraphs, start=1):
+            mentioned = mentioned_supported_platforms(paragraph)
+            if len(mentioned) < 2 or not SUPPORTED_PLATFORM_DECLARATION_RE.search(paragraph):
+                continue
+            missing = required - mentioned
+            if missing:
+                errors.append(
+                    f"{rel} support declaration {index} missing platforms: "
+                    f"{', '.join(sorted(missing))}"
+                )
+            if re.search(r"\bSolaris\b", paragraph):
+                errors.append(f"{rel} support declaration {index} includes Solaris")
+
+    portability = read("docs/portability.md")
+    for snippet in ("Solaris is a portability guard", "not part of the supported target set"):
+        if snippet not in portability:
+            errors.append(f"docs/portability.md missing Solaris guard statement: {snippet}")
+
+
 def validate_funding(errors: list[str]) -> None:
     path = ROOT / ".github/FUNDING.yml"
     if not path.is_file():
@@ -534,6 +582,7 @@ def main() -> int:
     validate_mkdocs(errors)
     validate_pages_workflow(errors)
     validate_readme(errors)
+    validate_supported_platforms(errors)
     validate_funding(errors)
     validate_generated_api_page(errors)
     validate_cross_document_links(errors)

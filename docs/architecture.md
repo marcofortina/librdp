@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Architecture
 
-librdp separates protocol mechanics from viewer, server, and host integration code. The core library remains usable from X11, Cocoa/macOS, FreeBSD, and other frontends without linking platform UI dependencies into protocol code.
+librdp separates protocol mechanics from viewer, server, and host integration code. The core library remains independent of the frontend and host integration layer, without linking platform UI dependencies into protocol code.
 
 ## Layers
 

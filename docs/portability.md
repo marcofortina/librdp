@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Portability
 
-librdp targets Linux, macOS, and FreeBSD. The core library is designed around portable C, explicit platform abstraction, and optional host backends.
+librdp targets Linux, macOS, FreeBSD, OpenBSD, and NetBSD. The core library is designed around portable C, explicit platform abstraction, and optional host backends.
 
 ## Portability boundary
 
@@ -54,18 +54,17 @@ Linux-only backends must be compiled conditionally and must not be required for 
 
 ## Backend portability matrix
 
-| Feature | Linux provider | macOS provider expectation | FreeBSD provider expectation | Public API stability rule |
+The table describes provider boundaries, not a requirement that every optional package be present on every installation.
+
+| Platform | Window and input | Audio and camera | Devices and authentication | Print and filesystem metadata |
 | --- | --- | --- | --- | --- |
-| Window presentation | X11/Xwayland viewer | Native viewer outside core | X11 or native viewer outside core | Keep window handles out of public headers. |
-| Keyboard and pointer | X11/XKB/xkbcommon | Native input stack translated to public input structs | X11/XKB or native stack translated to public input structs | Public input structs remain platform-neutral. |
-| Audio output/input | PipeWire | Native audio backend outside core | Native or PipeWire-compatible backend outside core | Audio public API carries formats and bytes only. |
-| Camera | V4L2 | Native capture backend outside core | V4L2-compatible or native capture backend outside core | Camera device handles remain backend-owned. |
-| Clipboard | Viewer integration | Native pasteboard integration outside core | Viewer integration outside core | Clipboard APIs carry copied bytes and borrowed events. |
-| Smartcard | PC/SC | PC/SC-compatible provider outside core | PC/SC-compatible provider outside core | Card handles are never public API types. |
-| USB | libusb | libusb or native USB backend outside core | libusb backend outside core | USB selectors are settings strings or descriptors. |
-| WebAuthn | libfido2/libcbor | platform or libfido2 provider outside core | libfido2 provider outside core | Authenticator handles and assertions remain backend-private. |
-| Printer | CUPS or file path | native print backend or file path outside core | CUPS or file path outside core | Printer configuration uses portable settings strings. |
-| Filesystem metadata | POSIX, ACL, xattr, archive libs | native metadata adapter outside core | POSIX, ACL, xattr adapters outside core | Remote-visible metadata is normalized by protocol code. |
+| Linux | X11/Xwayland, XKB, xkbcommon | PipeWire, V4L2 | PC/SC, libusb, libfido2/libcbor | CUPS, POSIX ACL, xattr, libarchive |
+| macOS | Cocoa/AppKit and native input | AudioToolbox, AVFoundation | PC/SC, libusb or native providers | Native print and metadata adapters |
+| FreeBSD | X11/XKB or an application-provided native frontend | Native or packaged media providers | PC/SC, libusb, libfido2/libcbor | CUPS and POSIX metadata providers |
+| OpenBSD | X11/XKB or an application-provided native frontend | Application-selected media providers | Packaged PC/SC, libusb and FIDO2 providers when available | CUPS and POSIX metadata providers |
+| NetBSD | X11/XKB or an application-provided native frontend | Application-selected media providers | pkgsrc PC/SC, libusb and FIDO2 providers when available | CUPS and POSIX metadata providers |
+
+Native handles remain private to each provider. Public input, media, device, clipboard, print, and filesystem contracts remain identical across platforms.
 
 ## macOS
 
@@ -82,6 +81,22 @@ FreeBSD integration should use portable socket, file, USB, PC/SC, and X11 paths 
 FreeBSD-specific behavior belongs behind platform or backend boundaries, not in protocol parsers or public API types.
 
 FreeBSD backend code should avoid Linux-only device assumptions. When an optional provider differs from Linux, the backend should expose the same public behavior and trace failure stage through the same event family.
+
+## OpenBSD
+
+OpenBSD integration uses the portable core and X11 paths where their dependencies are available. CMake owns provider discovery, including the packaged OpenSSL layout, and unavailable providers remain disabled without changing the public API.
+
+Host device and filesystem behavior must remain behind backend boundaries. Code shared with other systems must not depend on OpenBSD package paths or platform headers.
+
+## NetBSD
+
+NetBSD integration uses the portable core with dependencies supplied through pkgsrc. X11 and optional device providers are selected independently, and no pkgsrc path may leak into public headers or protocol code.
+
+Backend implementations must preserve the same ownership, error, and trace contracts when a native or packaged provider differs from the Linux implementation.
+
+## Portability guard
+
+Solaris is a portability guard for the platform-neutral core, not part of the supported target set. Its build profile checks portable C, POSIX boundaries, and optional-backend isolation without assigning it the same backend contract as the supported platforms.
 
 ## Data model rules
 
