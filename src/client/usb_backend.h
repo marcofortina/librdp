@@ -19,6 +19,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #include <librdp/error.h>
 
@@ -65,6 +66,34 @@ typedef struct rdp_usb_backend_match
     uint8_t device_address;
 } rdp_usb_backend_match;
 
+/*
+ * Injectable discovery boundary used by the production libusb adapter and
+ * deterministic tests. Callbacks preserve libusb ownership rules.
+ */
+typedef struct rdp_usb_backend_open_ops
+{
+    void* user_data;
+    int (*init)(void* user_data, libusb_context** context);
+    ssize_t (*get_device_list)(void* user_data,
+                               libusb_context* context,
+                               libusb_device*** list);
+    void (*free_device_list)(void* user_data, libusb_device** list, int unref_devices);
+    int (*get_device_descriptor)(void* user_data,
+                                 libusb_device* device,
+                                 struct libusb_device_descriptor* descriptor);
+    uint8_t (*get_bus_number)(void* user_data, libusb_device* device);
+    uint8_t (*get_device_address)(void* user_data, libusb_device* device);
+    int (*get_config_descriptor)(void* user_data,
+                                 libusb_device* device,
+                                 uint8_t index,
+                                 struct libusb_config_descriptor** config);
+    void (*free_config_descriptor)(void* user_data,
+                                   struct libusb_config_descriptor* config);
+    int (*open)(void* user_data,
+                libusb_device* device,
+                libusb_device_handle** handle);
+} rdp_usb_backend_open_ops;
+
 void rdp_usb_backend_release_device(rdp_usb_backend_device* device);
 void rdp_usb_backend_release_devices(rdp_usb_backend_device* devices, size_t count);
 void rdp_usb_backend_context_exit(libusb_context** context);
@@ -72,6 +101,12 @@ librdp_status rdp_usb_backend_open_device(libusb_context** context,
                                           const rdp_usb_backend_open_request* request,
                                           rdp_usb_backend_device* out,
                                           rdp_usb_backend_match* match);
+librdp_status rdp_usb_backend_open_device_with_ops(
+    libusb_context** context,
+    const rdp_usb_backend_open_request* request,
+    rdp_usb_backend_device* out,
+    rdp_usb_backend_match* match,
+    const rdp_usb_backend_open_ops* ops);
 uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device);
 uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
                                         uint8_t endpoint,

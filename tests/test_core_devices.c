@@ -210,6 +210,253 @@ static int test_printer_backend_boundary(void)
     return 0;
 }
 
+#ifdef RDP_HAVE_LIBUSB
+typedef struct test_usb_open_mock
+{
+    int context_token;
+    int device_token;
+    int handle_token;
+    libusb_device* devices[2];
+    struct libusb_device_descriptor descriptor;
+    struct libusb_config_descriptor config;
+    struct libusb_interface interface_value;
+    struct libusb_interface_descriptor alternate;
+    int config_result;
+    int open_result;
+    unsigned config_calls;
+    unsigned config_frees;
+    unsigned open_calls;
+} test_usb_open_mock;
+
+static int test_usb_open_init(void* user_data, libusb_context** context)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (!mock || !context)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    *context = (libusb_context*)(void*)&mock->context_token;
+    return LIBUSB_SUCCESS;
+}
+
+static ssize_t test_usb_open_get_device_list(void* user_data,
+                                             libusb_context* context,
+                                             libusb_device*** list)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (!mock || !context || !list)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    *list = mock->devices;
+    return 1;
+}
+
+static void test_usb_open_free_device_list(void* user_data,
+                                           libusb_device** list,
+                                           int unref_devices)
+{
+    (void)user_data;
+    (void)list;
+    (void)unref_devices;
+}
+
+static int test_usb_open_get_device_descriptor(
+    void* user_data,
+    libusb_device* device,
+    struct libusb_device_descriptor* descriptor)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (!mock || device != mock->devices[0] || !descriptor)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    *descriptor = mock->descriptor;
+    return LIBUSB_SUCCESS;
+}
+
+static uint8_t test_usb_open_get_bus_number(void* user_data, libusb_device* device)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    return mock && device == mock->devices[0] ? 3u : 0u;
+}
+
+static uint8_t test_usb_open_get_device_address(void* user_data, libusb_device* device)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    return mock && device == mock->devices[0] ? 7u : 0u;
+}
+
+static int test_usb_open_get_config_descriptor(
+    void* user_data,
+    libusb_device* device,
+    uint8_t index,
+    struct libusb_config_descriptor** config)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (!mock || device != mock->devices[0] || !config || index != 0u)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    mock->config_calls++;
+    if (mock->config_result != LIBUSB_SUCCESS)
+        return mock->config_result;
+    *config = &mock->config;
+    return LIBUSB_SUCCESS;
+}
+
+static void test_usb_open_free_config_descriptor(
+    void* user_data,
+    struct libusb_config_descriptor* config)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (mock && config == &mock->config)
+        mock->config_frees++;
+}
+
+static int test_usb_open_device(void* user_data,
+                                libusb_device* device,
+                                libusb_device_handle** handle)
+{
+    test_usb_open_mock* mock = (test_usb_open_mock*)user_data;
+
+    if (!mock || device != mock->devices[0] || !handle)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    mock->open_calls++;
+    if (mock->open_result != LIBUSB_SUCCESS)
+        return mock->open_result;
+    *handle = (libusb_device_handle*)(void*)&mock->handle_token;
+    return LIBUSB_SUCCESS;
+}
+
+static rdp_usb_backend_open_ops test_usb_open_ops(test_usb_open_mock* mock)
+{
+    rdp_usb_backend_open_ops ops;
+
+    memset(&ops, 0, sizeof(ops));
+    ops.user_data = mock;
+    ops.init = test_usb_open_init;
+    ops.get_device_list = test_usb_open_get_device_list;
+    ops.free_device_list = test_usb_open_free_device_list;
+    ops.get_device_descriptor = test_usb_open_get_device_descriptor;
+    ops.get_bus_number = test_usb_open_get_bus_number;
+    ops.get_device_address = test_usb_open_get_device_address;
+    ops.get_config_descriptor = test_usb_open_get_config_descriptor;
+    ops.free_config_descriptor = test_usb_open_free_config_descriptor;
+    ops.open = test_usb_open_device;
+    return ops;
+}
+
+static void test_usb_open_mock_init(test_usb_open_mock* mock)
+{
+    if (!mock)
+        return;
+    memset(mock, 0, sizeof(*mock));
+    mock->devices[0] = (libusb_device*)(void*)&mock->device_token;
+    mock->descriptor.idVendor = 0x1234u;
+    mock->descriptor.idProduct = 0x5678u;
+    mock->descriptor.bDeviceClass = LIBUSB_CLASS_VENDOR_SPEC;
+    mock->descriptor.bNumConfigurations = 1u;
+    mock->config.bNumInterfaces = 1u;
+    mock->config.interface = &mock->interface_value;
+    mock->interface_value.num_altsetting = 1;
+    mock->interface_value.altsetting = &mock->alternate;
+    mock->alternate.bInterfaceClass = LIBUSB_CLASS_VENDOR_SPEC;
+    mock->config_result = LIBUSB_SUCCESS;
+    mock->open_result = LIBUSB_SUCCESS;
+}
+
+/*
+ * Coverage: runs USB discovery and authorization through an injected provider
+ * so class denial, unreadable descriptors, permission failures, and unplug
+ * races are verified without host USB devices.
+ */
+static int test_usb_open_fail_closed(void)
+{
+    test_usb_open_mock mock;
+    rdp_usb_backend_open_ops ops;
+    rdp_usb_backend_open_request request;
+    rdp_usb_backend_device device;
+    rdp_usb_backend_match match;
+    libusb_context* context = NULL;
+
+    memset(&request, 0, sizeof(request));
+    request.first = 0x1234u;
+    request.second = 0x5678u;
+    request.interface_id = 9u;
+
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    mock.descriptor.bDeviceClass = LIBUSB_CLASS_MASS_STORAGE;
+    memset(&device, 0xa5, sizeof(device));
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_STATE);
+    CHECK(!device.active && device.handle == NULL && mock.open_calls == 0u);
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    mock.alternate.bInterfaceClass = LIBUSB_CLASS_HID;
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_STATE);
+    CHECK(!device.active && device.handle == NULL);
+    CHECK(mock.config_calls == 1u && mock.config_frees == 1u && mock.open_calls == 0u);
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    mock.config_result = LIBUSB_ERROR_IO;
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_IO_ERROR);
+    CHECK(!device.active && device.handle == NULL);
+    CHECK(mock.config_calls == 1u && mock.open_calls == 0u);
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    mock.open_result = LIBUSB_ERROR_ACCESS;
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_IO_ERROR);
+    CHECK(!device.active && device.handle == NULL && mock.open_calls == 1u);
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    mock.open_result = LIBUSB_ERROR_NO_DEVICE;
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_CLOSED);
+    CHECK(!device.active && device.handle == NULL && mock.open_calls == 1u);
+
+    context = NULL;
+    test_usb_open_mock_init(&mock);
+    ops = test_usb_open_ops(&mock);
+    CHECK(rdp_usb_backend_open_device_with_ops(&context,
+                                               &request,
+                                               &device,
+                                               &match,
+                                               &ops) == LIBRDP_STATUS_OK);
+    CHECK(device.active && device.handle != NULL && mock.open_calls == 1u);
+    CHECK(device.interface_id == request.interface_id);
+    CHECK(match.vendor_id == 0x1234u && match.product_id == 0x5678u);
+    memset(&device, 0, sizeof(device));
+    return 0;
+}
+#endif
+
 static int test_usb_backend_boundary(void)
 {
 #ifdef RDP_HAVE_LIBUSB
@@ -299,6 +546,10 @@ int test_core_devices(void)
         return 1;
     if (test_printer_backend_boundary() != 0)
         return 1;
+#ifdef RDP_HAVE_LIBUSB
+    if (test_usb_open_fail_closed() != 0)
+        return 1;
+#endif
     if (test_usb_backend_boundary() != 0)
         return 1;
     return 0;

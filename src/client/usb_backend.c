@@ -128,54 +128,183 @@ void rdp_usb_backend_context_exit(libusb_context** context)
     *context = NULL;
 }
 
+static int rdp_usb_backend_default_init(void* user_data, libusb_context** context)
+{
+    (void)user_data;
+    return libusb_init(context);
+}
+
+static ssize_t rdp_usb_backend_default_get_device_list(void* user_data,
+                                                       libusb_context* context,
+                                                       libusb_device*** list)
+{
+    (void)user_data;
+    return libusb_get_device_list(context, list);
+}
+
+static void rdp_usb_backend_default_free_device_list(void* user_data,
+                                                     libusb_device** list,
+                                                     int unref_devices)
+{
+    (void)user_data;
+    libusb_free_device_list(list, unref_devices);
+}
+
+static int rdp_usb_backend_default_get_device_descriptor(
+    void* user_data,
+    libusb_device* device,
+    struct libusb_device_descriptor* descriptor)
+{
+    (void)user_data;
+    return libusb_get_device_descriptor(device, descriptor);
+}
+
+static uint8_t rdp_usb_backend_default_get_bus_number(void* user_data,
+                                                      libusb_device* device)
+{
+    (void)user_data;
+    return libusb_get_bus_number(device);
+}
+
+static uint8_t rdp_usb_backend_default_get_device_address(void* user_data,
+                                                          libusb_device* device)
+{
+    (void)user_data;
+    return libusb_get_device_address(device);
+}
+
+static int rdp_usb_backend_default_get_config_descriptor(
+    void* user_data,
+    libusb_device* device,
+    uint8_t index,
+    struct libusb_config_descriptor** config)
+{
+    (void)user_data;
+    return libusb_get_config_descriptor(device, index, config);
+}
+
+static void rdp_usb_backend_default_free_config_descriptor(
+    void* user_data,
+    struct libusb_config_descriptor* config)
+{
+    (void)user_data;
+    libusb_free_config_descriptor(config);
+}
+
+static int rdp_usb_backend_default_open(void* user_data,
+                                        libusb_device* device,
+                                        libusb_device_handle** handle)
+{
+    (void)user_data;
+    return libusb_open(device, handle);
+}
+
+static const rdp_usb_backend_open_ops RDP_USB_BACKEND_DEFAULT_OPEN_OPS = {
+    NULL,
+    rdp_usb_backend_default_init,
+    rdp_usb_backend_default_get_device_list,
+    rdp_usb_backend_default_free_device_list,
+    rdp_usb_backend_default_get_device_descriptor,
+    rdp_usb_backend_default_get_bus_number,
+    rdp_usb_backend_default_get_device_address,
+    rdp_usb_backend_default_get_config_descriptor,
+    rdp_usb_backend_default_free_config_descriptor,
+    rdp_usb_backend_default_open
+};
+
+static int rdp_usb_backend_open_ops_valid(const rdp_usb_backend_open_ops* ops)
+{
+    return ops && ops->init && ops->get_device_list && ops->free_device_list &&
+           ops->get_device_descriptor && ops->get_bus_number &&
+           ops->get_device_address && ops->get_config_descriptor &&
+           ops->free_config_descriptor && ops->open;
+}
+
+static librdp_status rdp_usb_backend_open_error(int rc)
+{
+    return rc == LIBUSB_ERROR_NO_DEVICE ? LIBRDP_STATUS_CLOSED :
+                                         LIBRDP_STATUS_IO_ERROR;
+}
+
 static void rdp_usb_backend_match_init(rdp_usb_backend_match* match,
                                        libusb_device* device,
-                                       const struct libusb_device_descriptor* descriptor)
+                                       const struct libusb_device_descriptor* descriptor,
+                                       const rdp_usb_backend_open_ops* ops)
 {
-    if (!match || !device || !descriptor)
+    if (!match || !device || !descriptor || !ops)
         return;
     memset(match, 0, sizeof(*match));
     match->vendor_id = descriptor->idVendor;
     match->product_id = descriptor->idProduct;
     match->device_class = descriptor->bDeviceClass;
-    match->bus_number = libusb_get_bus_number(device);
-    match->device_address = libusb_get_device_address(device);
+    match->bus_number = ops->get_bus_number(ops->user_data, device);
+    match->device_address = ops->get_device_address(ops->user_data, device);
 }
 
-static int rdp_usb_backend_class_denied(const rdp_usb_backend_open_request* request,
-                                        libusb_device* device,
-                                        const struct libusb_device_descriptor* descriptor)
+/*
+ * Inspect every configuration before authorization. A missing or malformed
+ * descriptor is an authorization failure because an unseen interface class
+ * cannot safely pass a default-deny policy.
+ */
+static librdp_status rdp_usb_backend_check_class_policy(
+    const rdp_usb_backend_open_request* request,
+    libusb_device* device,
+    const struct libusb_device_descriptor* descriptor,
+    const rdp_usb_backend_open_ops* ops)
 {
-    struct libusb_config_descriptor* config = NULL;
-    int denied = 0;
-    int rc = 0;
+    uint8_t config_index = 0;
 
-    if (!request || !device || !descriptor)
-        return 1;
+    if (!request || !device || !descriptor || !ops)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (descriptor->bDeviceClass == LIBUSB_CLASS_HID && !request->allow_hid)
-        return 1;
+        return LIBRDP_STATUS_STATE;
     if (descriptor->bDeviceClass == LIBUSB_CLASS_MASS_STORAGE && !request->allow_mass_storage)
-        return 1;
-    rc = libusb_get_active_config_descriptor(device, &config);
-    if (rc != LIBUSB_SUCCESS || !config)
-        return 0;
-    for (uint8_t i = 0; i < config->bNumInterfaces && !denied; i++)
+        return LIBRDP_STATUS_STATE;
+    if (descriptor->bNumConfigurations == 0)
+        return LIBRDP_STATUS_IO_ERROR;
+
+    for (config_index = 0; config_index < descriptor->bNumConfigurations; config_index++)
     {
-        const struct libusb_interface* iface = &config->interface[i];
+        struct libusb_config_descriptor* config = NULL;
+        int rc = ops->get_config_descriptor(ops->user_data,
+                                            device,
+                                            config_index,
+                                            &config);
 
-        for (int j = 0; j < iface->num_altsetting && !denied; j++)
+        if (rc != LIBUSB_SUCCESS || !config ||
+            (config->bNumInterfaces > 0 && !config->interface))
         {
-            const struct libusb_interface_descriptor* alt = &iface->altsetting[j];
-
-            if (alt->bInterfaceClass == LIBUSB_CLASS_HID && !request->allow_hid)
-                denied = 1;
-            if (alt->bInterfaceClass == LIBUSB_CLASS_MASS_STORAGE &&
-                !request->allow_mass_storage)
-                denied = 1;
+            if (config)
+                ops->free_config_descriptor(ops->user_data, config);
+            return rc == LIBUSB_SUCCESS ? LIBRDP_STATUS_IO_ERROR :
+                                         rdp_usb_backend_open_error(rc);
         }
+        for (uint8_t i = 0; i < config->bNumInterfaces; i++)
+        {
+            const struct libusb_interface* iface = &config->interface[i];
+
+            if (iface->num_altsetting < 0 ||
+                (iface->num_altsetting > 0 && !iface->altsetting))
+            {
+                ops->free_config_descriptor(ops->user_data, config);
+                return LIBRDP_STATUS_IO_ERROR;
+            }
+            for (int j = 0; j < iface->num_altsetting; j++)
+            {
+                const struct libusb_interface_descriptor* alt = &iface->altsetting[j];
+
+                if ((alt->bInterfaceClass == LIBUSB_CLASS_HID && !request->allow_hid) ||
+                    (alt->bInterfaceClass == LIBUSB_CLASS_MASS_STORAGE &&
+                     !request->allow_mass_storage))
+                {
+                    ops->free_config_descriptor(ops->user_data, config);
+                    return LIBRDP_STATUS_STATE;
+                }
+            }
+        }
+        ops->free_config_descriptor(ops->user_data, config);
     }
-    libusb_free_config_descriptor(config);
-    return denied;
+    return LIBRDP_STATUS_OK;
 }
 
 /*
@@ -188,16 +317,33 @@ librdp_status rdp_usb_backend_open_device(libusb_context** context,
                                           rdp_usb_backend_device* out,
                                           rdp_usb_backend_match* match)
 {
+    return rdp_usb_backend_open_device_with_ops(context,
+                                                request,
+                                                out,
+                                                match,
+                                                &RDP_USB_BACKEND_DEFAULT_OPEN_OPS);
+}
+
+librdp_status rdp_usb_backend_open_device_with_ops(
+    libusb_context** context,
+    const rdp_usb_backend_open_request* request,
+    rdp_usb_backend_device* out,
+    rdp_usb_backend_match* match,
+    const rdp_usb_backend_open_ops* ops)
+{
     libusb_device** list = NULL;
     ssize_t count = 0;
     librdp_status status = LIBRDP_STATUS_IO_ERROR;
 
-    if (!context || !request || !out)
+    if (!context || !request || !out || !rdp_usb_backend_open_ops_valid(ops))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
-    if (!*context && libusb_init(context) != 0)
-        return LIBRDP_STATUS_IO_ERROR;
-    count = libusb_get_device_list(*context, &list);
+    if (!*context)
+    {
+        if (ops->init(ops->user_data, context) != LIBUSB_SUCCESS || !*context)
+            return LIBRDP_STATUS_IO_ERROR;
+    }
+    count = ops->get_device_list(ops->user_data, *context, &list);
     if (count < 0)
         return LIBRDP_STATUS_IO_ERROR;
     for (ssize_t i = 0; i < count; i++)
@@ -206,12 +352,15 @@ librdp_status rdp_usb_backend_open_device(libusb_context** context,
         struct libusb_device_descriptor descriptor;
         int matched = 0;
 
-        if (libusb_get_device_descriptor(device, &descriptor) != 0)
+        libusb_device_handle* handle = NULL;
+        int open_rc = 0;
+
+        if (ops->get_device_descriptor(ops->user_data, device, &descriptor) != LIBUSB_SUCCESS)
             continue;
         if (request->bus_mode)
         {
-            matched = libusb_get_bus_number(device) == request->first &&
-                      libusb_get_device_address(device) == request->second;
+            matched = ops->get_bus_number(ops->user_data, device) == request->first &&
+                      ops->get_device_address(ops->user_data, device) == request->second;
         }
         else
         {
@@ -220,23 +369,28 @@ librdp_status rdp_usb_backend_open_device(libusb_context** context,
         }
         if (!matched)
             continue;
-        rdp_usb_backend_match_init(match, device, &descriptor);
-        if (rdp_usb_backend_class_denied(request, device, &descriptor))
+        rdp_usb_backend_match_init(match, device, &descriptor, ops);
+        status = rdp_usb_backend_check_class_policy(request, device, &descriptor, ops);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        open_rc = ops->open(ops->user_data, device, &handle);
+        if (open_rc != LIBUSB_SUCCESS || !handle)
         {
-            status = LIBRDP_STATUS_STATE;
+            status = open_rc == LIBUSB_SUCCESS ? LIBRDP_STATUS_IO_ERROR :
+                                                rdp_usb_backend_open_error(open_rc);
             break;
         }
-        out->active = 1;
+
+        out->handle = handle;
         out->interface_id = request->interface_id;
         out->descriptor = descriptor;
-        out->bus_number = libusb_get_bus_number(device);
-        out->device_address = libusb_get_device_address(device);
-        if (libusb_open(device, &out->handle) != 0)
-            out->handle = NULL;
+        out->bus_number = ops->get_bus_number(ops->user_data, device);
+        out->device_address = ops->get_device_address(ops->user_data, device);
+        out->active = 1;
         status = LIBRDP_STATUS_OK;
         break;
     }
-    libusb_free_device_list(list, 1);
+    ops->free_device_list(ops->user_data, list, 1);
     return status;
 }
 
