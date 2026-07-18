@@ -15,6 +15,7 @@
  */
 
 #include "server_cli.h"
+#include "server_clipboard_files.h"
 #include "server_x11.h"
 
 #include <X11/Xatom.h>
@@ -505,6 +506,112 @@ static int test_cli_policy(void)
 }
 
 /*
+ * File-list tests verify that local URIs become descriptor metadata only after
+ * a no-follow regular-file open and that remote range requests remain scoped
+ * to the active clipboard generation.
+ */
+static int test_clipboard_files(void)
+{
+    static const uint8_t contents[] = "bounded clipboard file";
+    x11_server_clipboard_files* files = NULL;
+    server_platform_clipboard_file_request request;
+    librdp_clipboard_file_metadata metadata;
+    char template_path[] = "/tmp/librdp-x11-clipboard-XXXXXX";
+    char uri[256];
+    char name[256];
+    uint8_t* encoded = NULL;
+    uint8_t* response = NULL;
+    size_t encoded_len = 0u;
+    size_t response_len = 0u;
+    size_t name_len = 0u;
+    uint32_t count = 0u;
+    int descriptor = -1;
+    int uri_len = 0;
+
+    descriptor = mkstemp(template_path);
+    CHECK(descriptor >= 0);
+    CHECK(write(descriptor, contents, sizeof(contents) - 1u) ==
+          (ssize_t)(sizeof(contents) - 1u));
+    CHECK(close(descriptor) == 0);
+    descriptor = -1;
+    uri_len = snprintf(uri, sizeof(uri), "file://%s\r\n", template_path);
+    CHECK(uri_len > 0 && (size_t)uri_len < sizeof(uri));
+    files = x11_server_clipboard_files_new();
+    CHECK(files != NULL);
+    CHECK(x11_server_clipboard_files_import_uri_list(
+              files,
+              (const uint8_t*)uri,
+              (size_t)uri_len,
+              19u,
+              &encoded,
+              &encoded_len) == LIBRDP_STATUS_OK);
+    CHECK(x11_server_clipboard_files_count(files) == 1u);
+    CHECK(librdp_clipboard_file_group_count(encoded,
+                                            encoded_len,
+                                            &count) ==
+          LIBRDP_STATUS_OK);
+    CHECK(count == 1u);
+    CHECK(librdp_clipboard_file_metadata_init(&metadata) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_clipboard_file_group_get(encoded,
+                                          encoded_len,
+                                          0u,
+                                          &metadata,
+                                          name,
+                                          sizeof(name),
+                                          &name_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(metadata.file_size == sizeof(contents) - 1u);
+    CHECK(name_len > 1u && strcmp(name, template_path + 5u) == 0);
+
+    memset(&request, 0, sizeof(request));
+    request.ownership_generation = 19u;
+    request.file_index = 0;
+    request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_SIZE;
+    CHECK(x11_server_clipboard_files_read(files,
+                                          &request,
+                                          &response,
+                                          &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(response_len == 8u &&
+          response[0] == sizeof(contents) - 1u);
+    free(response);
+    response = NULL;
+
+    request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+    request.position = 8u;
+    request.requested_bytes = 9u;
+    CHECK(x11_server_clipboard_files_read(files,
+                                          &request,
+                                          &response,
+                                          &response_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(response_len == 9u &&
+          memcmp(response, contents + 8u, 9u) == 0);
+    free(response);
+    response = NULL;
+
+    request.ownership_generation = 20u;
+    CHECK(x11_server_clipboard_files_read(files,
+                                          &request,
+                                          &response,
+                                          &response_len) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    CHECK(x11_server_clipboard_files_import_uri_list(
+              files,
+              (const uint8_t*)"file://remote.example/tmp/value\n",
+              sizeof("file://remote.example/tmp/value\n") - 1u,
+              20u,
+              &response,
+              &response_len) == LIBRDP_STATUS_UNSUPPORTED);
+    CHECK(x11_server_clipboard_files_count(files) == 1u);
+    free(encoded);
+    x11_server_clipboard_files_free(files);
+    CHECK(unlink(template_path) == 0);
+    return 0;
+}
+
+/*
  * The end-to-end provider fixture exercises all X11 vtables against one
  * isolated display so native event ordering and cross-provider teardown are
  * validated together.
@@ -765,6 +872,8 @@ int main(void)
     int result = 1;
 
     if (test_cli_policy() != 0)
+        return 1;
+    if (test_clipboard_files() != 0)
         return 1;
     if (!test_start_xvfb(display_name, &child))
     {

@@ -248,6 +248,12 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
     context = (x11_server_context*)calloc(1u, sizeof(*context));
     if (!context)
         return NULL;
+    context->clipboard_files = x11_server_clipboard_files_new();
+    if (!context->clipboard_files)
+    {
+        free(context);
+        return NULL;
+    }
     context->config = *config;
     context->shm.segment.shmid = -1;
     if (config->display_name)
@@ -255,6 +261,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         context->display_name = x11_server_copy_string(config->display_name);
         if (!context->display_name)
         {
+            x11_server_clipboard_files_free(context->clipboard_files);
             free(context);
             return NULL;
         }
@@ -263,6 +270,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
     context->display = XOpenDisplay(context->config.display_name);
     if (!context->display)
     {
+        x11_server_clipboard_files_free(context->clipboard_files);
         free(context->display_name);
         free(context);
         return NULL;
@@ -347,6 +355,7 @@ void x11_server_context_free(x11_server_context* context)
     free(context->pointer_pixels);
     free(context->clipboard_read.data);
     free(context->clipboard_write.data);
+    x11_server_clipboard_files_free(context->clipboard_files);
     free(context->display_name);
     free(context);
 }

@@ -368,11 +368,21 @@ static librdp_status x11_server_clipboard_convert_to_wire(
 {
     uint8_t* copy = NULL;
 
-    (void)context;
     if (format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
         return x11_server_utf8_to_utf16le(data, length, output, output_len);
     if (format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
         return x11_server_html_package(data, length, output, output_len);
+    if (format_id == LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW ||
+        format_id == LIBRDP_CLIPBOARD_FORMAT_HDROP)
+    {
+        return x11_server_clipboard_files_import_uri_list(
+            context->clipboard_files,
+            data,
+            length,
+            context->clipboard_local_generation,
+            output,
+            output_len);
+    }
     if ((!data && length > 0u) ||
         length > X11_SERVER_CLIPBOARD_MAX_BYTES)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -746,6 +756,7 @@ static void x11_server_clipboard_handle_owner(
         return;
     if (event->owner == None)
     {
+        x11_server_clipboard_files_reset(context->clipboard_files);
         context->clipboard_local_generation++;
         if (context->clipboard_sink.formats)
         {
@@ -923,6 +934,7 @@ static void x11_server_clipboard_stop(void* opaque)
     }
     x11_server_clipboard_read_clear(context);
     x11_server_clipboard_write_clear(context);
+    x11_server_clipboard_files_reset(context->clipboard_files);
     memset(&context->clipboard_sink, 0, sizeof(context->clipboard_sink));
     context->clipboard_started = 0;
     context->remote_format_count = 0u;
@@ -1002,6 +1014,9 @@ static librdp_status x11_server_clipboard_request_file(
 {
     x11_server_context* context = (x11_server_context*)opaque;
     server_platform_clipboard_data response;
+    uint8_t* payload = NULL;
+    size_t payload_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!context || !request)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -1011,11 +1026,18 @@ static librdp_status x11_server_clipboard_request_file(
     response.ownership_generation = request->ownership_generation;
     response.request_id = request->request_id;
     response.stream_id = request->stream_id;
-    response.status = LIBRDP_STATUS_UNSUPPORTED;
+    status = x11_server_clipboard_files_read(context->clipboard_files,
+                                             request,
+                                             &payload,
+                                             &payload_len);
+    response.status = status;
+    response.data = status == LIBRDP_STATUS_OK ? payload : NULL;
+    response.data_len = status == LIBRDP_STATUS_OK ? payload_len : 0u;
     response.final_chunk = 1;
     context->clipboard_sink.data(&response,
                                  context->clipboard_sink.user_data);
-    return LIBRDP_STATUS_UNSUPPORTED;
+    free(payload);
+    return status;
 }
 
 static librdp_status x11_server_clipboard_write_data(

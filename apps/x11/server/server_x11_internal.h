@@ -16,6 +16,7 @@
 #ifndef LIBRDP_X11_SERVER_X11_INTERNAL_H
 #define LIBRDP_X11_SERVER_X11_INTERNAL_H
 
+#include "server_clipboard_files.h"
 #include "server_x11.h"
 
 #include <X11/Xlib.h>
@@ -30,8 +31,6 @@
 #include <sys/shm.h>
 
 #define X11_SERVER_CLIPBOARD_MAX_FORMATS 8u
-#define X11_SERVER_CLIPBOARD_MAX_FILES 32u
-
 typedef struct x11_server_shm_image
 {
     XImage* image;
@@ -149,6 +148,7 @@ struct x11_server_context
     uint64_t clipboard_next_request_id;
     x11_server_clipboard_read clipboard_read;
     x11_server_clipboard_write clipboard_write;
+    x11_server_clipboard_files* clipboard_files;
 };
 
 uint64_t x11_server_now_ns(void);

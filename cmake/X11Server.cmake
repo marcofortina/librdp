@@ -21,6 +21,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_capture.c
         apps/x11/server/server_cli.c
         apps/x11/server/server_clipboard.c
+        apps/x11/server/server_clipboard_files.c
         apps/x11/server/server_input.c
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
@@ -68,6 +69,7 @@ if(LIBRDP_BUILD_X11_SERVER)
                 apps/x11/server/server_capture.c
                 apps/x11/server/server_cli.c
                 apps/x11/server/server_clipboard.c
+                apps/x11/server/server_clipboard_files.c
                 apps/x11/server/server_input.c
                 apps/x11/server/server_permission.c
                 apps/x11/server/server_pointer.c
