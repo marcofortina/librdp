@@ -65,6 +65,12 @@ static int run_named(const char* name)
         return test_server_graphics_focused();
     if (strcmp(name, "runtime") == 0)
         return test_server_loopback_standard_activation_sequence();
+    if (strcmp(name, "smoke-standard") == 0)
+        return test_server_loopback_standard_activation_sequence();
+    if (strcmp(name, "smoke-tls") == 0)
+        return test_server_loopback_tls_handshake();
+    if (strcmp(name, "smoke-nla") == 0)
+        return test_server_loopback_nla_handshake();
     fprintf(stderr, "unknown server test group: %s\n", name);
     return 2;
 }

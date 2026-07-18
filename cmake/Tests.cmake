@@ -206,6 +206,12 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_channels COMMAND test_server channels)
     add_test(NAME server_graphics COMMAND test_server graphics)
     add_test(NAME server_runtime COMMAND test_server runtime)
+    add_test(NAME smoke_server_standard COMMAND test_server smoke-standard)
+    add_test(NAME smoke_server_tls COMMAND test_server smoke-tls)
+    add_test(NAME smoke_server_nla COMMAND test_server smoke-nla)
+    add_test(NAME smoke_gateway COMMAND test_transport smoke-gateway)
+    add_test(NAME smoke_workspace COMMAND test_core smoke-workspace)
+    add_test(NAME smoke_admin COMMAND test_core smoke-admin)
     add_test(NAME interop_smoke COMMAND test_interop_smoke)
     add_test(NAME viewer_backends COMMAND test_viewer_backends)
     add_test(NAME viewer_cli COMMAND test_viewer_cli)
@@ -214,6 +220,9 @@ if(LIBRDP_BUILD_TESTS)
         server
         server_security
         server_runtime
+        smoke_server_standard
+        smoke_server_tls
+        smoke_server_nla
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(
@@ -247,6 +256,12 @@ if(LIBRDP_BUILD_TESTS)
         protocol_devices
         protocol_transport
         PROPERTIES TIMEOUT 30
+    )
+    set_tests_properties(
+        smoke_gateway
+        smoke_workspace
+        smoke_admin
+        PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77
     )
     set_tests_properties(viewer_backends viewer_cli PROPERTIES TIMEOUT 30)
     set_tests_properties(interop_smoke PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)

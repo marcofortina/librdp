@@ -104,6 +104,26 @@ static int run_enterprise(void)
     return 0;
 }
 
+static int run_workspace_smoke(void)
+{
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+    return test_workspace_fetch_http();
+#else
+    return 77;
+#endif
+}
+
+static int run_admin_smoke(void)
+{
+#if defined(RDP_HAVE_CURL) && defined(RDP_HAVE_LIBXML2)
+    if (test_admin_query_winrm_http() != 0)
+        return 1;
+    return test_admin_action_winrm_http();
+#else
+    return 77;
+#endif
+}
+
 int test_common(void)
 {
     if (test_trace() != 0 || test_buffer_stream() != 0 || test_charset() != 0)
@@ -129,6 +149,10 @@ int test_client_core_named(const char* name)
         return run_licensing();
     if (strcmp(name, "enterprise") == 0)
         return run_enterprise();
+    if (strcmp(name, "smoke-workspace") == 0)
+        return run_workspace_smoke();
+    if (strcmp(name, "smoke-admin") == 0)
+        return run_admin_smoke();
     fprintf(stderr, "unknown client core test group: %s\n", name);
     return 2;
 }

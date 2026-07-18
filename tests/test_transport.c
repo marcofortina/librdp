@@ -1865,8 +1865,20 @@ int test_transport(void)
 }
 
 #ifdef LIBRDP_TEST_TRANSPORT_MAIN
-int main(void)
+int main(int argc, char** argv)
 {
+    if (argc == 2)
+    {
+        if (strcmp(argv[1], "smoke-gateway") != 0)
+            return 2;
+#ifdef RDP_HAVE_CURL
+        return test_gateway_connect_transport();
+#else
+        return 77;
+#endif
+    }
+    if (argc != 1)
+        return 2;
     return test_transport();
 }
 #endif
