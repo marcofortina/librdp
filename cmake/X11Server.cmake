@@ -23,6 +23,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_clipboard.c
         apps/x11/server/server_clipboard_files.c
         apps/x11/server/server_input.c
+        apps/x11/server/server_managed_auth.c
         apps/x11/server/server_managed_ipc.c
         apps/x11/server/server_managed_registry.c
         apps/x11/server/server_permission.c
@@ -66,6 +67,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         endif()
     endif()
     librdp_apply_system_definitions(librdp-x11-server)
+    librdp_apply_x11_managed_auth(librdp-x11-server)
     librdp_apply_warning_options(librdp-x11-server)
     librdp_apply_sanitizer_compile_options(librdp-x11-server)
     librdp_apply_sanitizer_link_options(librdp-x11-server)
@@ -114,6 +116,27 @@ if(LIBRDP_BUILD_X11_SERVER)
             COMMAND test_x11_managed_registry)
         set_tests_properties(x11_managed_registry PROPERTIES TIMEOUT 15)
         add_dependencies(librdp_tests test_x11_managed_registry)
+
+        add_executable(test_x11_managed_auth
+            tests/test_x11_managed_auth.c
+            apps/x11/server/server_managed_auth.c
+        )
+        target_include_directories(test_x11_managed_auth PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_x11_managed_auth PRIVATE
+            librdp
+            OpenSSL::Crypto
+        )
+        librdp_apply_x11_managed_auth(test_x11_managed_auth)
+        librdp_apply_system_definitions(test_x11_managed_auth)
+        librdp_apply_warning_options(test_x11_managed_auth)
+        librdp_apply_sanitizer_compile_options(test_x11_managed_auth)
+        librdp_apply_sanitizer_link_options(test_x11_managed_auth)
+        add_test(NAME x11_managed_auth COMMAND test_x11_managed_auth)
+        set_tests_properties(x11_managed_auth PROPERTIES TIMEOUT 15)
+        add_dependencies(librdp_tests test_x11_managed_auth)
 
         find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
         if(LIBRDP_XVFB_EXECUTABLE)

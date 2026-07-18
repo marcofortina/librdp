@@ -33,6 +33,8 @@ set(all_backend_off_args
     -DLIBRDP_WITH_XSHM=OFF
     -DLIBRDP_WITH_XRANDR=OFF
     -DLIBRDP_WITH_FUSE3=OFF
+    -DLIBRDP_WITH_PAM=OFF
+    -DLIBRDP_WITH_BSDAUTH=OFF
 )
 
 set(common_configure_args

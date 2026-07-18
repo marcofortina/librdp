@@ -65,6 +65,11 @@ Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the 
 - `LIBRDP_WITH_XRANDR=AUTO|ON|OFF`: XRandR monitor layout bridge in the X11 viewer.
 - `LIBRDP_WITH_FUSE3=AUTO|ON|OFF`: read-only client-drive and clipboard file mounts in the X11 server.
 
+Managed-session authentication backends:
+
+- `LIBRDP_WITH_PAM=AUTO|ON|OFF`: PAM authentication for managed X11 sessions.
+- `LIBRDP_WITH_BSDAUTH=AUTO|ON|OFF`: BSD Authentication on OpenBSD for managed X11 sessions.
+
 ## Build Directories
 
 Use separate `build-*` directories for different configurations. Build output is ignored by Git and must not be used for source files.

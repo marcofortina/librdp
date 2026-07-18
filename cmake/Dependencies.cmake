@@ -81,6 +81,52 @@ librdp_pkg_dependency(LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE libpipewire-0.3)
 librdp_pkg_dependency(LIBRDP_WITH_JPEG LIBRDP_JPEG libjpeg)
 librdp_pkg_dependency(LIBRDP_WITH_FUSE3 LIBRDP_FUSE3 fuse3)
 
+set(LIBRDP_PAM_FOUND 0)
+if(NOT "${LIBRDP_WITH_PAM}" STREQUAL "OFF" AND
+   (NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR
+    "${LIBRDP_WITH_PAM}" STREQUAL "ON"))
+    find_path(LIBRDP_PAM_INCLUDE_DIR security/pam_appl.h)
+    find_library(LIBRDP_PAM_LIBRARY NAMES pam)
+    if(LIBRDP_PAM_INCLUDE_DIR AND LIBRDP_PAM_LIBRARY)
+        set(LIBRDP_PAM_FOUND 1)
+    elseif("${LIBRDP_WITH_PAM}" STREQUAL "ON")
+        message(FATAL_ERROR "LIBRDP_WITH_PAM=ON requires PAM headers and libpam")
+    endif()
+endif()
+
+set(LIBRDP_BSDAUTH_FOUND 0)
+if(NOT "${LIBRDP_WITH_BSDAUTH}" STREQUAL "OFF")
+    if(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+        find_path(LIBRDP_BSDAUTH_INCLUDE_DIR bsd_auth.h)
+        find_library(LIBRDP_BSDAUTH_LIBRARY NAMES util)
+        if(LIBRDP_BSDAUTH_INCLUDE_DIR AND LIBRDP_BSDAUTH_LIBRARY)
+            set(LIBRDP_BSDAUTH_FOUND 1)
+        elseif("${LIBRDP_WITH_BSDAUTH}" STREQUAL "ON")
+            message(FATAL_ERROR "LIBRDP_WITH_BSDAUTH=ON requires OpenBSD BSD Authentication")
+        endif()
+    elseif("${LIBRDP_WITH_BSDAUTH}" STREQUAL "ON")
+        message(FATAL_ERROR "LIBRDP_WITH_BSDAUTH=ON requires OpenBSD")
+    endif()
+endif()
+
+function(librdp_apply_x11_managed_auth target)
+    if(LIBRDP_PAM_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_PAM=1)
+        target_include_directories(${target} SYSTEM PRIVATE
+            ${LIBRDP_PAM_INCLUDE_DIR}
+        )
+        target_link_libraries(${target} PRIVATE ${LIBRDP_PAM_LIBRARY})
+    elseif(LIBRDP_BSDAUTH_FOUND)
+        target_compile_definitions(${target} PRIVATE LIBRDP_HAVE_BSDAUTH=1)
+        target_include_directories(${target} SYSTEM PRIVATE
+            ${LIBRDP_BSDAUTH_INCLUDE_DIR}
+        )
+        target_link_libraries(${target} PRIVATE
+            ${LIBRDP_BSDAUTH_LIBRARY}
+        )
+    endif()
+endfunction()
+
 set(LIBRDP_QUARTZ_FOUND 0)
 set(LIBRDP_QUARTZ_FOUND_REASON "")
 if(NOT "${LIBRDP_WITH_QUARTZ}" STREQUAL "OFF")

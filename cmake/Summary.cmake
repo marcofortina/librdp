@@ -101,4 +101,12 @@ librdp_summary_target_backend(
     fuse3-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
     LIBRDP_BUILD_X11_SERVER librdp-x11-server
 )
+librdp_summary_target_backend(
+    pam-managed-server LIBRDP_WITH_PAM LIBRDP_PAM_FOUND
+    LIBRDP_BUILD_X11_SERVER librdp-x11-session-broker
+)
+librdp_summary_target_backend(
+    bsdauth-managed-server LIBRDP_WITH_BSDAUTH LIBRDP_BSDAUTH_FOUND
+    LIBRDP_BUILD_X11_SERVER librdp-x11-session-broker
+)
 message(STATUS "librdp feature summary end")

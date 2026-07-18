@@ -71,6 +71,8 @@ execute_process(
         -DLIBRDP_WITH_XSHM=OFF
         -DLIBRDP_WITH_XRANDR=OFF
         -DLIBRDP_WITH_FUSE3=OFF
+        -DLIBRDP_WITH_PAM=OFF
+        -DLIBRDP_WITH_BSDAUTH=OFF
     RESULT_VARIABLE configure_result
 )
 if(NOT configure_result EQUAL 0)
