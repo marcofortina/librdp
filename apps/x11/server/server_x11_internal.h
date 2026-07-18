@@ -17,6 +17,7 @@
 #define LIBRDP_X11_SERVER_X11_INTERNAL_H
 
 #include "server_clipboard_files.h"
+#include "server_fuse.h"
 #include "server_x11.h"
 
 #include <X11/Xlib.h>
@@ -77,6 +78,8 @@ struct x11_server_context
     XVisualInfo visual_info;
     x11_server_config config;
     char* display_name;
+    char* drive_mount;
+    x11_server_fuse* fuse;
     int capture_x;
     int capture_y;
     int desktop_x;

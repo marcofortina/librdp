@@ -76,7 +76,10 @@ static int x11_server_config_valid(const x11_server_config* config)
            config->source_kind <= X11_SERVER_SOURCE_WINDOW &&
            config->max_frame_bytes >= 4u &&
            (config->source_kind != X11_SERVER_SOURCE_WINDOW ||
-            config->window_id != 0ul);
+            config->window_id != 0ul) &&
+           (!config->allow_drive ||
+            (config->drive_mount && config->drive_mount[0] != '\0' &&
+             x11_server_fuse_available()));
 }
 
 static void x11_server_shm_release(x11_server_context* context)
@@ -241,6 +244,7 @@ static int x11_server_select_target(x11_server_context* context)
 x11_server_context* x11_server_context_new(const x11_server_config* config)
 {
     x11_server_context* context = NULL;
+    x11_server_fuse_config fuse_config;
     XSetWindowAttributes attributes;
 
     if (!x11_server_config_valid(config))
@@ -267,10 +271,35 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         }
         context->config.display_name = context->display_name;
     }
+    if (config->allow_drive)
+    {
+        context->drive_mount = x11_server_copy_string(config->drive_mount);
+        if (!context->drive_mount)
+        {
+            x11_server_clipboard_files_free(context->clipboard_files);
+            free(context->display_name);
+            free(context);
+            return NULL;
+        }
+        context->config.drive_mount = context->drive_mount;
+        x11_server_fuse_config_init(&fuse_config);
+        fuse_config.mount_path = context->drive_mount;
+        context->fuse = x11_server_fuse_new(&fuse_config);
+        if (!context->fuse)
+        {
+            x11_server_clipboard_files_free(context->clipboard_files);
+            free(context->drive_mount);
+            free(context->display_name);
+            free(context);
+            return NULL;
+        }
+    }
     context->display = XOpenDisplay(context->config.display_name);
     if (!context->display)
     {
+        x11_server_fuse_free(context->fuse);
         x11_server_clipboard_files_free(context->clipboard_files);
+        free(context->drive_mount);
         free(context->display_name);
         free(context);
         return NULL;
@@ -355,7 +384,9 @@ void x11_server_context_free(x11_server_context* context)
     free(context->pointer_pixels);
     free(context->clipboard_read.data);
     free(context->clipboard_write.data);
+    x11_server_fuse_free(context->fuse);
     x11_server_clipboard_files_free(context->clipboard_files);
+    free(context->drive_mount);
     free(context->display_name);
     free(context);
 }
@@ -379,6 +410,11 @@ librdp_status x11_server_context_platform(x11_server_context* context,
     {
         platform->clipboard.vtable = &x11_server_clipboard_vtable;
         platform->clipboard.context = context;
+    }
+    if (context->config.allow_drive)
+    {
+        platform->drive.vtable = x11_server_fuse_vtable();
+        platform->drive.context = context->fuse;
     }
     platform->pointer.vtable = &x11_server_pointer_vtable;
     platform->pointer.context = context;

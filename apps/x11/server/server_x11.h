@@ -43,6 +43,7 @@ typedef struct x11_server_config
     uint32_t monitor_index;
     unsigned long window_id;
     size_t max_frame_bytes;
+    const char* drive_mount;
     int allow_capture;
     int allow_input;
     int allow_clipboard;

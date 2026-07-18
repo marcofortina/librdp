@@ -32,6 +32,7 @@ void x11_server_options_init(x11_server_options* options)
     options->source_kind = X11_SERVER_SOURCE_ROOT;
     options->security_mode = LIBRDP_SECURITY_TLS;
     options->max_peers = 4u;
+    options->drive_read_only = 1;
 }
 
 void x11_server_usage(FILE* stream, const char* program)

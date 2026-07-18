@@ -16,6 +16,7 @@
 
 #include "server_cli.h"
 #include "server_clipboard_files.h"
+#include "server_fuse.h"
 #include "server_x11.h"
 
 #include <X11/Xatom.h>
@@ -29,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -498,6 +500,7 @@ static int test_cli_policy(void)
               &options) == 1);
     CHECK(options.source_kind == X11_SERVER_SOURCE_MONITOR);
     CHECK(options.monitor_index == 2u);
+    CHECK(options.drive_read_only == 1);
     CHECK(x11_server_parse_options(
               (int)(sizeof(unsafe) / sizeof(unsafe[0])),
               unsafe,
@@ -608,6 +611,64 @@ static int test_clipboard_files(void)
     free(encoded);
     x11_server_clipboard_files_free(files);
     CHECK(unlink(template_path) == 0);
+    return 0;
+}
+
+/*
+ * The FUSE provider model is exercised without mounting: this covers secure
+ * mount-directory policy, bounded volume registration, duplicate rejection
+ * and peer-scoped removal on hosts where the optional backend is built.
+ */
+static int test_fuse_drive_model(void)
+{
+    char path[] = "/tmp/librdp-x11-fuse-XXXXXX";
+    x11_server_fuse_config config;
+    x11_server_fuse* provider = NULL;
+    server_platform_drive_volume volume;
+    const server_platform_drive_vtable* drive = NULL;
+
+    if (!x11_server_fuse_available())
+        return 0;
+    CHECK(mkdtemp(path) != NULL);
+    CHECK(chmod(path, 0700) == 0);
+    CHECK(x11_server_fuse_test_mount_path_secure(path));
+    CHECK(chmod(path, 0755) == 0);
+    CHECK(!x11_server_fuse_test_mount_path_secure(path));
+    CHECK(chmod(path, 0700) == 0);
+
+    x11_server_fuse_config_init(&config);
+    config.mount_path = path;
+    provider = x11_server_fuse_new(&config);
+    CHECK(provider != NULL);
+    drive = x11_server_fuse_vtable();
+    CHECK(drive != NULL);
+
+    memset(&volume, 0, sizeof(volume));
+    volume.volume_id = 17u;
+    volume.peer_id = 3u;
+    volume.generation = 5u;
+    volume.device.reconnect_generation = 5u;
+    volume.device.device_id = 9u;
+    volume.name = "documents";
+    volume.read_only = 1;
+    CHECK(x11_server_fuse_test_present(provider, &volume) == LIBRDP_STATUS_OK);
+    CHECK(x11_server_fuse_test_volume_count(provider) == 1u);
+    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    volume.volume_id = 18u;
+    volume.name = "../outside";
+    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+    volume.name = "writable";
+    volume.read_only = 0;
+    CHECK(x11_server_fuse_test_present(provider, &volume) ==
+          LIBRDP_STATUS_INVALID_ARGUMENT);
+
+    drive->remove(provider, 3u, 5u, 9u);
+    CHECK(x11_server_fuse_test_volume_count(provider) == 0u);
+    x11_server_fuse_free(provider);
+    CHECK(rmdir(path) == 0);
     return 0;
 }
 
@@ -874,6 +935,8 @@ int main(void)
     if (test_cli_policy() != 0)
         return 1;
     if (test_clipboard_files() != 0)
+        return 1;
+    if (test_fuse_drive_model() != 0)
         return 1;
     if (!test_start_xvfb(display_name, &child))
     {

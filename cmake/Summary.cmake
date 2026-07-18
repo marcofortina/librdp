@@ -97,4 +97,8 @@ librdp_summary_target_backend(
     LIBRDP_BUILD_X11_SERVER librdp-x11-server
 )
 librdp_summary_viewer_backend(xrandr LIBRDP_WITH_XRANDR LIBRDP_XRANDR_FOUND)
+librdp_summary_target_backend(
+    fuse3-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
+    LIBRDP_BUILD_X11_SERVER librdp-x11-server
+)
 message(STATUS "librdp feature summary end")

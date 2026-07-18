@@ -83,6 +83,7 @@ static int x11_server_run_shadow(const x11_server_options* options)
     native_config.allow_input = options->allow_input;
     native_config.allow_clipboard = options->allow_clipboard;
     native_config.allow_drive = options->allow_drive;
+    native_config.drive_mount = options->drive_mount;
     native = x11_server_context_new(&native_config);
     if (!native)
     {

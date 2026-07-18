@@ -201,3 +201,4 @@ librdp_feature_option(LIBRDP_WITH_PIPEWIRE "Use PipeWire audio backend in the X1
 librdp_feature_option(LIBRDP_WITH_JPEG "Use libjpeg for compressed images and camera conversion")
 librdp_feature_option(LIBRDP_WITH_XSHM "Use MIT-SHM image transfer in X11 applications")
 librdp_feature_option(LIBRDP_WITH_XRANDR "Use XRandR monitor layout bridge in the X11 viewer")
+librdp_feature_option(LIBRDP_WITH_FUSE3 "Use FUSE 3 for client-drive mounts in the X11 server")

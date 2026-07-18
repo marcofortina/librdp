@@ -32,6 +32,7 @@ set(all_backend_off_args
     -DLIBRDP_WITH_JPEG=OFF
     -DLIBRDP_WITH_XSHM=OFF
     -DLIBRDP_WITH_XRANDR=OFF
+    -DLIBRDP_WITH_FUSE3=OFF
 )
 
 set(common_configure_args

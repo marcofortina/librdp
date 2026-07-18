@@ -79,6 +79,7 @@ librdp_pkg_dependency(LIBRDP_WITH_CAIRO LIBRDP_CAIRO cairo)
 librdp_pkg_dependency(LIBRDP_WITH_PNG LIBRDP_PNG libpng)
 librdp_pkg_dependency(LIBRDP_WITH_PIPEWIRE LIBRDP_PIPEWIRE libpipewire-0.3)
 librdp_pkg_dependency(LIBRDP_WITH_JPEG LIBRDP_JPEG libjpeg)
+librdp_pkg_dependency(LIBRDP_WITH_FUSE3 LIBRDP_FUSE3 fuse3)
 
 set(LIBRDP_QUARTZ_FOUND 0)
 set(LIBRDP_QUARTZ_FOUND_REASON "")

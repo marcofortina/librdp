@@ -25,6 +25,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_input.c
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
+        apps/x11/server/server_fuse.c
         apps/x11/server/server_x11.c
     )
     target_include_directories(librdp-x11-server PRIVATE
@@ -38,6 +39,14 @@ if(LIBRDP_BUILD_X11_SERVER)
         Iconv::Iconv
         PkgConfig::LIBRDP_X11_SERVER
     )
+    if(LIBRDP_FUSE3_FOUND)
+        target_compile_definitions(librdp-x11-server PRIVATE
+            LIBRDP_HAVE_FUSE3=1
+        )
+        target_link_libraries(librdp-x11-server PRIVATE
+            PkgConfig::LIBRDP_FUSE3
+        )
+    endif()
     if(NOT "${LIBRDP_WITH_XSHM}" STREQUAL "OFF")
         pkg_check_modules(LIBRDP_X11_SERVER_XEXT QUIET IMPORTED_TARGET xext)
         if(LIBRDP_X11_SERVER_XEXT_FOUND)
@@ -73,6 +82,7 @@ if(LIBRDP_BUILD_X11_SERVER)
                 apps/x11/server/server_input.c
                 apps/x11/server/server_permission.c
                 apps/x11/server/server_pointer.c
+                apps/x11/server/server_fuse.c
                 apps/x11/server/server_x11.c
             )
             target_include_directories(test_x11_server PRIVATE
@@ -83,12 +93,21 @@ if(LIBRDP_BUILD_X11_SERVER)
             )
             target_compile_definitions(test_x11_server PRIVATE
                 LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
+                LIBRDP_X11_SERVER_TESTING=1
             )
             target_link_libraries(test_x11_server PRIVATE
                 librdp_app_common
                 Iconv::Iconv
                 PkgConfig::LIBRDP_X11_SERVER
             )
+            if(LIBRDP_FUSE3_FOUND)
+                target_compile_definitions(test_x11_server PRIVATE
+                    LIBRDP_HAVE_FUSE3=1
+                )
+                target_link_libraries(test_x11_server PRIVATE
+                    PkgConfig::LIBRDP_FUSE3
+                )
+            endif()
             if(LIBRDP_X11_SERVER_XSHM_FOUND)
                 target_compile_definitions(test_x11_server PRIVATE
                     LIBRDP_HAVE_XSHM=1
