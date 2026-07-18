@@ -157,10 +157,33 @@ server_host_peer_slot* server_host_find_peer_slot(server_host* host,
     return NULL;
 }
 
+static void server_host_release_input_owner(server_host* host)
+{
+    server_host_peer_slot* owner = NULL;
+
+    if (!host || host->input_owner_id == 0u)
+        return;
+    owner = server_host_find_peer_slot(host, host->input_owner_id);
+    if (owner)
+        owner->input_owner = 0;
+    if (host->platform.input.vtable &&
+        host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] ==
+            SERVER_HOST_PROVIDER_READY)
+    {
+        const server_platform_input_vtable* input =
+            (const server_platform_input_vtable*)host->platform.input.vtable;
+
+        input->release_all(host->platform.input.context);
+    }
+    host->input_owner_id = 0u;
+}
+
 void server_host_release_peer_slot(server_host_peer_slot* slot)
 {
     if (!slot || !slot->occupied)
         return;
+    if (slot->host && slot->host->input_owner_id == slot->id)
+        server_host_release_input_owner(slot->host);
     slot->state = SERVER_HOST_PEER_CLOSING;
     if (slot->protocol)
     {
@@ -172,6 +195,12 @@ void server_host_release_peer_slot(server_host_peer_slot* slot)
     slot->dirty = NULL;
     slot->surface_width = 0u;
     slot->surface_height = 0u;
+    slot->clipboard_generation++;
+    if (slot->clipboard_generation == 0u)
+        slot->clipboard_generation = 1u;
+    slot->drive_generation++;
+    if (slot->drive_generation == 0u)
+        slot->drive_generation = 1u;
     slot->state = SERVER_HOST_PEER_CLOSED;
     slot->occupied = 0;
     slot->input_owner = 0;
@@ -564,7 +593,12 @@ static void server_host_stop_providers(server_host* host)
     {
         const server_platform_input_vtable* input =
             (const server_platform_input_vtable*)host->platform.input.vtable;
-        input->release_all(host->platform.input.context);
+
+        if (host->input_owner_id != 0u)
+        {
+            input->release_all(host->platform.input.context);
+            host->input_owner_id = 0u;
+        }
         host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] =
             SERVER_HOST_PROVIDER_STOPPED;
     }
@@ -690,8 +724,79 @@ static void server_host_peer_input(librdp_server_peer* peer,
                                    void* user_data)
 {
     (void)peer;
-    (void)event;
-    (void)user_data;
+    (void)server_host_dispatch_peer_input(
+        (server_host_peer_slot*)user_data,
+        event);
+}
+
+static int server_host_event_is_native_input(
+    librdp_server_input_type type)
+{
+    return type == LIBRDP_SERVER_INPUT_SYNCHRONIZE ||
+           type == LIBRDP_SERVER_INPUT_SCANCODE_KEY ||
+           type == LIBRDP_SERVER_INPUT_UNICODE_KEY ||
+           type == LIBRDP_SERVER_INPUT_MOUSE ||
+           type == LIBRDP_SERVER_INPUT_EXTENDED_MOUSE;
+}
+
+librdp_status server_host_dispatch_peer_input(
+    server_host_peer_slot* slot,
+    const librdp_server_input_event* event)
+{
+    server_host* host = slot ? slot->host : NULL;
+    const server_platform_input_vtable* input = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host || !slot->occupied || !event ||
+        event->version != LIBRDP_SERVER_INPUT_EVENT_VERSION ||
+        event->size < sizeof(*event))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!server_host_event_is_native_input(event->type))
+        return LIBRDP_STATUS_UNSUPPORTED;
+    if (slot->state != SERVER_HOST_PEER_ACTIVE || !slot->input_owner ||
+        host->input_owner_id != slot->id ||
+        host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] !=
+            SERVER_HOST_PROVIDER_READY ||
+        !host->platform.input.vtable)
+        return LIBRDP_STATUS_STATE;
+    input =
+        (const server_platform_input_vtable*)host->platform.input.vtable;
+    status = input->inject(host->platform.input.context, event);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        server_host_release_input_owner(host);
+        host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] =
+            SERVER_HOST_PROVIDER_FAILED;
+    }
+    return status;
+}
+
+static librdp_status server_host_assign_input_owner(server_host* host,
+                                                    uint32_t peer_id)
+{
+    server_host_peer_slot* next = NULL;
+
+    if (!host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer_id == host->input_owner_id)
+        return LIBRDP_STATUS_OK;
+    if (peer_id != 0u)
+    {
+        next = server_host_find_peer_slot(host, peer_id);
+        if (!next || next->state == SERVER_HOST_PEER_CLOSED ||
+            next->state == SERVER_HOST_PEER_FAILED)
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (host->provider_states[SERVER_PLATFORM_PROVIDER_INPUT] !=
+            SERVER_HOST_PROVIDER_READY)
+            return LIBRDP_STATUS_STATE;
+    }
+    server_host_release_input_owner(host);
+    if (next)
+    {
+        next->input_owner = 1;
+        host->input_owner_id = next->id;
+    }
+    return LIBRDP_STATUS_OK;
 }
 
 static void server_host_peer_event(librdp_server_peer* peer,
@@ -706,11 +811,25 @@ static void server_host_peer_event(librdp_server_peer* peer,
     if (event->type == LIBRDP_SERVER_EVENT_STATE_CHANGED)
     {
         if (event->new_state == LIBRDP_SERVER_PEER_ACTIVE)
+        {
             slot->state = SERVER_HOST_PEER_ACTIVE;
+            if (slot->host->input_policy ==
+                    SERVER_HOST_INPUT_FIRST_ACTIVE &&
+                slot->host->input_owner_id == 0u)
+                (void)server_host_assign_input_owner(slot->host, slot->id);
+        }
         else if (event->new_state == LIBRDP_SERVER_PEER_CLOSED)
+        {
             slot->state = SERVER_HOST_PEER_CLOSED;
+            if (slot->host->input_owner_id == slot->id)
+                server_host_release_input_owner(slot->host);
+        }
         else if (event->new_state == LIBRDP_SERVER_PEER_FAILED)
+        {
             slot->state = SERVER_HOST_PEER_FAILED;
+            if (slot->host->input_owner_id == slot->id)
+                server_host_release_input_owner(slot->host);
+        }
         else
             slot->state = SERVER_HOST_PEER_NEGOTIATING;
     }
@@ -727,20 +846,41 @@ static librdp_status server_host_prepare_peer_slot(
 {
     librdp_status status = LIBRDP_STATUS_OK;
     uint32_t generation = 0;
+    uint32_t clipboard_generation = 0;
+    uint32_t drive_generation = 0;
+    uint32_t candidate_id = 0;
+    size_t attempts = 0;
 
     generation = slot->generation + 1u;
     if (generation == 0u)
         generation = 1u;
+    clipboard_generation = slot->clipboard_generation;
+    if (clipboard_generation == 0u)
+        clipboard_generation = 1u;
+    drive_generation = slot->drive_generation;
+    if (drive_generation == 0u)
+        drive_generation = 1u;
+    do
+    {
+        candidate_id = host->next_peer_id++;
+        if (candidate_id == 0u)
+            continue;
+        attempts++;
+    } while (server_host_find_peer_slot(host, candidate_id) &&
+             attempts <= host->peer_capacity);
+    if (candidate_id == 0u ||
+        server_host_find_peer_slot(host, candidate_id))
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
     memset(slot, 0, sizeof(*slot));
     slot->host = host;
     slot->protocol = peer;
     slot->dirty = server_dirty_scheduler_new(&host->dirty_config);
     if (!slot->dirty)
         return LIBRDP_STATUS_NO_MEMORY;
-    slot->id = host->next_peer_id++;
-    if (slot->id == 0u)
-        slot->id = host->next_peer_id++;
+    slot->id = candidate_id;
     slot->generation = generation;
+    slot->clipboard_generation = clipboard_generation;
+    slot->drive_generation = drive_generation;
     slot->surface_width = librdp_server_peer_desktop_width(peer);
     slot->surface_height = librdp_server_peer_desktop_height(peer);
     status = server_dirty_scheduler_resize(slot->dirty,
@@ -862,4 +1002,21 @@ librdp_status server_host_close_peer(server_host* host, uint32_t peer_id)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     server_host_release_peer_slot(slot);
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status server_host_set_input_owner(server_host* host,
+                                          uint32_t peer_id)
+{
+    if (!host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (host->input_policy == SERVER_HOST_INPUT_DISABLED)
+        return peer_id == 0u ? LIBRDP_STATUS_OK : LIBRDP_STATUS_STATE;
+    if (host->input_policy != SERVER_HOST_INPUT_EXPLICIT)
+        return LIBRDP_STATUS_STATE;
+    return server_host_assign_input_owner(host, peer_id);
+}
+
+uint32_t server_host_input_owner(const server_host* host)
+{
+    return host ? host->input_owner_id : 0u;
 }

@@ -30,6 +30,8 @@ typedef struct server_host_peer_slot
     uint32_t generation;
     uint32_t surface_width;
     uint32_t surface_height;
+    uint32_t clipboard_generation;
+    uint32_t drive_generation;
     server_host_peer_state state;
     int occupied;
     int input_owner;
@@ -46,6 +48,7 @@ struct server_host
     uint32_t next_peer_id;
     unsigned int max_work_per_iteration;
     server_host_input_policy input_policy;
+    uint32_t input_owner_id;
     server_host_state state;
     server_host_provider_state provider_states[SERVER_PLATFORM_PROVIDER_COUNT];
     struct pollfd* pollfds;
@@ -58,5 +61,8 @@ struct server_host
 server_host_peer_slot* server_host_find_peer_slot(server_host* host,
                                                   uint32_t peer_id);
 void server_host_release_peer_slot(server_host_peer_slot* slot);
+librdp_status server_host_dispatch_peer_input(
+    server_host_peer_slot* slot,
+    const librdp_server_input_event* event);
 
 #endif

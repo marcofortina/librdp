@@ -107,6 +107,9 @@ librdp_status server_host_accept_pending(server_host* host);
 librdp_status server_host_run_once(server_host* host, int timeout_ms);
 librdp_status server_host_wakeup(server_host* host);
 librdp_status server_host_cancel(server_host* host);
+librdp_status server_host_set_input_owner(server_host* host,
+                                          uint32_t peer_id);
+uint32_t server_host_input_owner(const server_host* host);
 size_t server_host_peer_count(const server_host* host);
 librdp_status server_host_peer_at(const server_host* host,
                                   size_t index,

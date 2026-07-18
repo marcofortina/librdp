@@ -11,7 +11,7 @@
  */
 
 #include "server_dirty.h"
-#include "server_host.h"
+#include "server_host_internal.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
@@ -38,6 +38,7 @@ typedef struct mock_platform_context
     unsigned int stops;
     unsigned int frame_requests;
     unsigned int releases;
+    unsigned int injections;
     unsigned int dispatches;
     int event_read_fd;
     int event_write_fd;
@@ -178,8 +179,12 @@ static librdp_status mock_pointer_start(void* context,
 static librdp_status mock_inject(void* context,
                                  const librdp_server_input_event* event)
 {
-    (void)context;
-    return event ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock || !event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->injections++;
+    return LIBRDP_STATUS_OK;
 }
 
 static void mock_release_all(void* context)
@@ -578,7 +583,7 @@ static int test_host_lifecycle(void)
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
     CHECK(server_host_peer_count(host) == 0u);
-    CHECK(mock.releases == 1u);
+    CHECK(mock.releases == 0u);
     CHECK(mock.stops == 5u);
     server_host_free(host);
     close(clients[0]);
@@ -594,6 +599,81 @@ static int test_host_lifecycle(void)
     CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
     CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
     CHECK(mock.stops == 1u);
+    server_host_free(host);
+    return 0;
+}
+
+/*
+ * Assign and transfer input ownership between isolated peer generations.
+ * Non-owner and inactive peers must never reach the native input provider,
+ * while ownership loss releases all pressed platform state exactly once.
+ */
+static int test_host_input_ownership(void)
+{
+    server_host_config config;
+    server_host_peer_info first;
+    server_host_peer_info second;
+    server_host_peer_slot* first_slot = NULL;
+    server_host_peer_slot* second_slot = NULL;
+    librdp_server_input_event event;
+    server_host* host = NULL;
+    mock_platform_context mock;
+    int clients[2] = {-1, -1};
+
+    server_host_config_init(&config);
+    config.max_peers = 2u;
+    config.input_policy = SERVER_HOST_INPUT_EXPLICIT;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    clients[0] = connect_loopback(server_host_local_port(host));
+    clients[1] = connect_loopback(server_host_local_port(host));
+    CHECK(clients[0] >= 0 && clients[1] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&first);
+    server_host_peer_info_init(&second);
+    CHECK(server_host_peer_at(host, 0u, &first) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_at(host, 1u, &second) == LIBRDP_STATUS_OK);
+    first_slot = server_host_find_peer_slot(host, first.id);
+    second_slot = server_host_find_peer_slot(host, second.id);
+    CHECK(first_slot != NULL && second_slot != NULL);
+    CHECK(server_host_set_input_owner(host, first.id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_input_owner(host) == first.id);
+    first_slot->state = SERVER_HOST_PEER_ACTIVE;
+    second_slot->state = SERVER_HOST_PEER_ACTIVE;
+    CHECK(librdp_server_input_event_init(&event) == LIBRDP_STATUS_OK);
+    event.type = LIBRDP_SERVER_INPUT_SCANCODE_KEY;
+    event.param1 = 0x1eu;
+    CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(mock.injections == 1u);
+    CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(server_host_set_input_owner(host, second.id) == LIBRDP_STATUS_OK);
+    CHECK(mock.releases == 1u);
+    CHECK(server_host_dispatch_peer_input(first_slot, &event) ==
+          LIBRDP_STATUS_STATE);
+    CHECK(server_host_dispatch_peer_input(second_slot, &event) ==
+          LIBRDP_STATUS_OK);
+    CHECK(mock.injections == 2u);
+    CHECK(server_host_close_peer(host, second.id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_input_owner(host) == 0u);
+    CHECK(mock.releases == 2u);
+    CHECK(server_host_set_input_owner(host, 0u) == LIBRDP_STATUS_OK);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.releases == 2u);
+    server_host_free(host);
+    close(clients[0]);
+    close(clients[1]);
+
+    server_host_config_init(&config);
+    config.input_policy = SERVER_HOST_INPUT_DISABLED;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_set_input_owner(host, 1u) == LIBRDP_STATUS_STATE);
     server_host_free(host);
     return 0;
 }
@@ -772,6 +852,8 @@ int main(void)
     if (test_host_lifecycle() != 0)
         return 1;
     if (test_host_poll_loop() != 0)
+        return 1;
+    if (test_host_input_ownership() != 0)
         return 1;
     puts("app server tests passed");
     return 0;
