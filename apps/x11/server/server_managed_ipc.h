@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define X11_MANAGED_IPC_VERSION 3u
+#define X11_MANAGED_IPC_VERSION 4u
 #define X11_MANAGED_IPC_MAX_FRAME_BYTES 32768u
 #define X11_MANAGED_IPC_USERNAME_BYTES 256u
 #define X11_MANAGED_IPC_DOMAIN_BYTES 256u
@@ -60,6 +60,16 @@ typedef enum x11_managed_ipc_flag
     X11_MANAGED_IPC_ALLOW_CAPTURE = 1u << 7
 } x11_managed_ipc_flag;
 
+typedef enum x11_managed_session_state
+{
+    X11_MANAGED_SESSION_RESERVED = 1,
+    X11_MANAGED_SESSION_STARTING = 2,
+    X11_MANAGED_SESSION_ACTIVE = 3,
+    X11_MANAGED_SESSION_DETACHED = 4,
+    X11_MANAGED_SESSION_TERMINATING = 5,
+    X11_MANAGED_SESSION_FAILED = 6
+} x11_managed_session_state;
+
 typedef struct x11_managed_ipc_identity
 {
     uid_t uid;
@@ -90,6 +100,8 @@ typedef struct x11_managed_ipc_message
     uint32_t security_mode;
     uint32_t max_peers;
     uint32_t auth_outcome;
+    uint32_t session_state;
+    uint32_t attachment_count;
     librdp_status status;
     char username[X11_MANAGED_IPC_USERNAME_BYTES];
     char domain[X11_MANAGED_IPC_DOMAIN_BYTES];

@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,6 +240,8 @@ static void x11_managed_registry_remove_tree(
         (void)unlink(entry->agent_socket_path);
     if (entry->authority_path[0] != '\0')
         (void)unlink(entry->authority_path);
+    if (entry->drive_mount[0] != '\0')
+        (void)rmdir(entry->drive_mount);
     if (entry->runtime_directory[0] != '\0')
         (void)rmdir(entry->runtime_directory);
 }
@@ -373,6 +376,22 @@ size_t x11_managed_registry_count(
     return count;
 }
 
+size_t x11_managed_registry_capacity(
+    const x11_managed_registry* registry)
+{
+    return registry ? registry->config.max_sessions : 0u;
+}
+
+const x11_managed_session_entry* x11_managed_registry_entry_at(
+    const x11_managed_registry* registry,
+    size_t index)
+{
+    if (!registry || index >= registry->config.max_sessions ||
+        !registry->slots[index].occupied)
+        return NULL;
+    return &registry->slots[index].entry;
+}
+
 static librdp_status x11_managed_registry_prepare_entry(
     x11_managed_registry* registry,
     x11_managed_registry_slot* slot,
@@ -432,12 +451,28 @@ static librdp_status x11_managed_registry_prepare_entry(
             registry->runtime_root,
             "%s/session-%016llx.sock",
             (unsigned long long)slot->entry.session_id) ||
+        !x11_managed_registry_join(
+            slot->entry.drive_mount,
+            sizeof(slot->entry.drive_mount),
+            slot->entry.runtime_directory,
+            "client-drive") ||
         mkdir(slot->entry.runtime_directory, 0700) != 0)
         return LIBRDP_STATUS_IO_ERROR;
     slot->runtime_created = 1;
     if (chown(slot->entry.runtime_directory, uid, gid) != 0 &&
         (uid != geteuid() || gid != getegid()))
         return LIBRDP_STATUS_IO_ERROR;
+    if ((request->flags & X11_MANAGED_IPC_ALLOW_DRIVE) != 0u)
+    {
+        if (mkdir(slot->entry.drive_mount, 0700) != 0 ||
+            (chown(slot->entry.drive_mount, uid, gid) != 0 &&
+             (uid != geteuid() || gid != getegid())))
+            return LIBRDP_STATUS_IO_ERROR;
+    }
+    else
+    {
+        slot->entry.drive_mount[0] = '\0';
+    }
     slot->entry.uid = uid;
     slot->entry.gid = gid;
     slot->entry.created_ns = now_ns;
@@ -523,6 +558,16 @@ x11_managed_session_entry* x11_managed_registry_find(
     return &slot->entry;
 }
 
+x11_managed_session_entry* x11_managed_registry_find_any(
+    x11_managed_registry* registry,
+    uint64_t session_id)
+{
+    x11_managed_registry_slot* slot =
+        x11_managed_registry_slot_by_id(registry, session_id);
+
+    return slot ? &slot->entry : NULL;
+}
+
 x11_managed_session_entry* x11_managed_registry_find_token(
     x11_managed_registry* registry,
     const char* token,
@@ -542,6 +587,194 @@ x11_managed_session_entry* x11_managed_registry_find_token(
             return &slot->entry;
     }
     return NULL;
+}
+
+static int x11_managed_registry_process_alive(uint64_t process)
+{
+    pid_t pid = 0;
+
+    if (process == 0u || process > (uint64_t)INT_MAX)
+        return 0;
+    pid = (pid_t)process;
+    return kill(pid, 0) == 0 || errno == EPERM;
+}
+
+/*
+ * Reconstruct an entry only from a kernel-authenticated supervisor response.
+ * Every path is regenerated from the registry root and session ID so a stale
+ * or compromised socket cannot make the broker adopt unrelated files.
+ */
+librdp_status x11_managed_registry_adopt(
+    x11_managed_registry* registry,
+    const x11_managed_ipc_message* state,
+    uint64_t now_ns,
+    x11_managed_session_entry** output)
+{
+    x11_managed_registry_slot* slot = NULL;
+    x11_managed_session_entry entry;
+    char expected_runtime[X11_MANAGED_IPC_PATH_BYTES];
+    char expected_socket[X11_MANAGED_IPC_PATH_BYTES];
+    char expected_lock[X11_MANAGED_IPC_PATH_BYTES];
+    char* display_end = NULL;
+    unsigned long display = 0ul;
+    struct stat info;
+    size_t index = 0u;
+    int lock_fd = -1;
+
+    if (!registry || !state || !output || now_ns == 0u ||
+        state->type != X11_MANAGED_IPC_READY ||
+        x11_managed_ipc_message_validate(state) != LIBRDP_STATUS_OK ||
+        state->created_ns == 0u || state->created_ns > now_ns ||
+        (state->session_state != X11_MANAGED_SESSION_ACTIVE &&
+         state->session_state != X11_MANAGED_SESSION_DETACHED) ||
+        state->attachment_count > 1u ||
+        !x11_managed_registry_safe_username(state->username) ||
+        !x11_managed_registry_process_alive(state->supervisor_pid) ||
+        !x11_managed_registry_process_alive(state->agent_pid) ||
+        !x11_managed_registry_process_alive(state->xserver_pid) ||
+        !x11_managed_registry_process_alive(state->desktop_pid))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *output = NULL;
+    errno = 0;
+    display = strtoul(state->display_name + 1u, &display_end, 10);
+    if (state->display_name[0] != ':' || errno != 0 ||
+        !display_end || *display_end != '\0' ||
+        display < registry->config.first_display ||
+        display > registry->config.last_display)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!x11_managed_registry_path(
+            expected_runtime,
+            sizeof(expected_runtime),
+            registry->runtime_root,
+            "%s/session-%016llx",
+            (unsigned long long)state->session_id) ||
+        !x11_managed_registry_path(
+            expected_socket,
+            sizeof(expected_socket),
+            registry->runtime_root,
+            "%s/session-%016llx.sock",
+            (unsigned long long)state->session_id) ||
+        !x11_managed_registry_path(
+            expected_lock,
+            sizeof(expected_lock),
+            registry->runtime_root,
+            "%s/display-%llu.lock",
+            (unsigned long long)display) ||
+        strcmp(expected_runtime, state->runtime_directory) != 0 ||
+        strcmp(expected_socket, state->control_socket) != 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (lstat(expected_runtime, &info) != 0 ||
+        !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode) ||
+        info.st_uid != (uid_t)state->uid ||
+        lstat(expected_socket, &info) != 0 ||
+        !S_ISSOCK(info.st_mode) || S_ISLNK(info.st_mode) ||
+        (info.st_uid != 0u && info.st_uid != geteuid()))
+        return LIBRDP_STATUS_STATE;
+    if (x11_managed_registry_count(registry) >=
+            registry->config.max_sessions ||
+        x11_managed_registry_user_count(
+            registry, (uid_t)state->uid) >=
+            registry->config.max_sessions_per_user)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    for (index = 0u; index < registry->config.max_sessions; index++)
+    {
+        if (registry->slots[index].occupied)
+        {
+            if (registry->slots[index].entry.session_id ==
+                    state->session_id ||
+                registry->slots[index].entry.display_number ==
+                    (uint32_t)display ||
+                x11_managed_ipc_token_equal(
+                    registry->slots[index].entry.reconnect_token,
+                    state->reconnect_token))
+                return LIBRDP_STATUS_STATE;
+        }
+        else if (!slot)
+        {
+            slot = &registry->slots[index];
+        }
+    }
+    if (!slot)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    lock_fd = open(expected_lock,
+                   O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    if (lock_fd < 0 || fstat(lock_fd, &info) != 0 ||
+        !S_ISREG(info.st_mode) ||
+        (info.st_uid != 0u && info.st_uid != geteuid()))
+    {
+        if (lock_fd >= 0)
+            close(lock_fd);
+        return LIBRDP_STATUS_STATE;
+    }
+    memset(&entry, 0, sizeof(entry));
+    entry.session_id = state->session_id;
+    entry.created_ns = state->created_ns;
+    entry.last_activity_ns = now_ns;
+    entry.idle_timeout_ns = state->idle_timeout_ns;
+    entry.max_duration_ns = state->max_duration_ns;
+    entry.uid = (uid_t)state->uid;
+    entry.gid = (gid_t)state->gid;
+    entry.supervisor_pid = (pid_t)state->supervisor_pid;
+    entry.agent_pid = (pid_t)state->agent_pid;
+    entry.xserver_pid = (pid_t)state->xserver_pid;
+    entry.desktop_pid = (pid_t)state->desktop_pid;
+    entry.display_number = (uint32_t)display;
+    entry.width = state->width;
+    entry.height = state->height;
+    entry.port = state->port;
+    entry.attachment_count = state->attachment_count;
+    entry.flags = state->flags;
+    entry.state = (x11_managed_session_state)state->session_state;
+    if (!x11_managed_registry_copy_string(
+            entry.username,
+            sizeof(entry.username),
+            state->username) ||
+        !x11_managed_registry_copy_string(
+            entry.reconnect_token,
+            sizeof(entry.reconnect_token),
+            state->reconnect_token) ||
+        !x11_managed_registry_copy_string(
+            entry.display_name,
+            sizeof(entry.display_name),
+            state->display_name) ||
+        !x11_managed_registry_copy_string(
+            entry.runtime_directory,
+            sizeof(entry.runtime_directory),
+            expected_runtime) ||
+        !x11_managed_registry_copy_string(
+            entry.agent_socket_path,
+            sizeof(entry.agent_socket_path),
+            expected_socket) ||
+        !x11_managed_registry_join(
+            entry.authority_path,
+            sizeof(entry.authority_path),
+            expected_runtime,
+            "Xauthority"))
+    {
+        close(lock_fd);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    if ((entry.flags & X11_MANAGED_IPC_ALLOW_DRIVE) != 0u)
+    {
+        if (!x11_managed_registry_join(
+                entry.drive_mount,
+                sizeof(entry.drive_mount),
+                expected_runtime,
+                "client-drive") ||
+            lstat(entry.drive_mount, &info) != 0 ||
+            !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode) ||
+            info.st_uid != entry.uid)
+        {
+            close(lock_fd);
+            return LIBRDP_STATUS_STATE;
+        }
+    }
+    slot->entry = entry;
+    slot->display_lock_fd = lock_fd;
+    slot->runtime_created = 1;
+    slot->occupied = 1;
+    *output = &slot->entry;
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status x11_managed_registry_mark_starting(

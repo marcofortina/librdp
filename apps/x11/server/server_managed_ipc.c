@@ -366,6 +366,7 @@ librdp_status x11_managed_ipc_message_validate(
         message->status < LIBRDP_STATUS_CANCELLED ||
         message->port > UINT16_MAX ||
         message->auth_outcome > 5u ||
+        message->session_state > X11_MANAGED_SESSION_FAILED ||
         message->width > X11_MANAGED_IPC_MAX_DIMENSION ||
         message->height > X11_MANAGED_IPC_MAX_DIMENSION ||
         !x11_managed_ipc_string_terminated(
@@ -471,6 +472,9 @@ static librdp_status x11_managed_ipc_encode(
         !x11_managed_ipc_put_u32(&cursor, message->security_mode) ||
         !x11_managed_ipc_put_u32(&cursor, message->max_peers) ||
         !x11_managed_ipc_put_u32(&cursor, message->auth_outcome) ||
+        !x11_managed_ipc_put_u32(&cursor, message->session_state) ||
+        !x11_managed_ipc_put_u32(
+            &cursor, message->attachment_count) ||
         !x11_managed_ipc_put_u32(&cursor, (uint32_t)message->status) ||
         !x11_managed_ipc_put_string(
             &cursor, message->username, sizeof(message->username)) ||
@@ -551,6 +555,9 @@ static librdp_status x11_managed_ipc_decode(
         !x11_managed_ipc_get_u32(&cursor, &message->security_mode) ||
         !x11_managed_ipc_get_u32(&cursor, &message->max_peers) ||
         !x11_managed_ipc_get_u32(&cursor, &message->auth_outcome) ||
+        !x11_managed_ipc_get_u32(&cursor, &message->session_state) ||
+        !x11_managed_ipc_get_u32(
+            &cursor, &message->attachment_count) ||
         !x11_managed_ipc_get_u32(&cursor, &status_value) ||
         !x11_managed_ipc_get_string(
             &cursor, message->username, sizeof(message->username)) ||

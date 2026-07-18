@@ -14,10 +14,13 @@
 
 #include "server_managed_registry.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #define CHECK(condition)                                                        \
@@ -199,11 +202,127 @@ static int test_invalid_requests(void)
     return 0;
 }
 
+/*
+ * Model a broker restart by constructing the filesystem objects left by a
+ * live supervisor. Adoption must rebuild the in-memory entry without replacing
+ * its lock, token or user-owned runtime directory, then release every object.
+ */
+static int test_registry_recovery(void)
+{
+    char root[] = "/tmp/librdp-managed-recovery-XXXXXX";
+    char runtime[4096];
+    char control[4096];
+    char lock_path[4096];
+    struct sockaddr_un address;
+    struct stat info;
+    x11_managed_registry_config config;
+    x11_managed_registry* registry = NULL;
+    x11_managed_session_entry* entry = NULL;
+    x11_managed_ipc_message state;
+    const uint64_t session_id = 0x1234u;
+    int listener = -1;
+    int lock_fd = -1;
+    int length = 0;
+
+    CHECK(mkdtemp(root) != NULL);
+    length = snprintf(runtime,
+                      sizeof(runtime),
+                      "%s/session-%016llx",
+                      root,
+                      (unsigned long long)session_id);
+    CHECK(length > 0 && (size_t)length < sizeof(runtime));
+    CHECK(mkdir(runtime, 0700) == 0);
+    length = snprintf(control,
+                      sizeof(control),
+                      "%s/session-%016llx.sock",
+                      root,
+                      (unsigned long long)session_id);
+    CHECK(length > 0 && (size_t)length < sizeof(control));
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(listener >= 0 && strlen(control) < sizeof(address.sun_path));
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path, control, strlen(control) + 1u);
+    CHECK(bind(listener,
+               (const struct sockaddr*)&address,
+               sizeof(address)) == 0);
+    CHECK(listen(listener, 1) == 0);
+    length = snprintf(lock_path,
+                      sizeof(lock_path),
+                      "%s/display-640.lock",
+                      root);
+    CHECK(length > 0 && (size_t)length < sizeof(lock_path));
+    lock_fd = open(lock_path, O_RDWR | O_CREAT | O_EXCL, 0600);
+    CHECK(lock_fd >= 0);
+    x11_managed_registry_config_init(&config);
+    config.runtime_root = root;
+    config.max_sessions = 1u;
+    config.max_sessions_per_user = 1u;
+    config.first_display = 640u;
+    config.last_display = 640u;
+    registry = x11_managed_registry_new(&config);
+    CHECK(registry != NULL);
+    x11_managed_ipc_message_init(&state);
+    state.type = X11_MANAGED_IPC_READY;
+    state.request_id = 1u;
+    state.session_id = session_id;
+    state.created_ns = 1000u;
+    state.supervisor_pid = (uint64_t)getpid();
+    state.agent_pid = (uint64_t)getpid();
+    state.xserver_pid = (uint64_t)getpid();
+    state.desktop_pid = (uint64_t)getpid();
+    state.uid = (uint32_t)geteuid();
+    state.gid = (uint32_t)getegid();
+    state.width = 1280u;
+    state.height = 720u;
+    state.port = 33992u;
+    state.session_state = X11_MANAGED_SESSION_ACTIVE;
+    state.attachment_count = 1u;
+    memcpy(state.username,
+           "recovery-user",
+           sizeof("recovery-user"));
+    memcpy(state.reconnect_token,
+           "abcdef0123456789abcdef0123456789"
+           "abcdef0123456789abcdef0123456789",
+           X11_MANAGED_IPC_TOKEN_BYTES);
+    memcpy(state.display_name, ":640", sizeof(":640"));
+    memcpy(state.runtime_directory,
+           runtime,
+           strlen(runtime) + 1u);
+    memcpy(state.control_socket,
+           control,
+           strlen(control) + 1u);
+    CHECK(x11_managed_registry_adopt(registry,
+                                     &state,
+                                     2000u,
+                                     &entry) == LIBRDP_STATUS_OK);
+    CHECK(entry != NULL &&
+          entry->session_id == session_id &&
+          entry->supervisor_pid == getpid());
+    CHECK(x11_managed_registry_capacity(registry) == 1u);
+    CHECK(x11_managed_registry_entry_at(registry, 0u) == entry);
+    CHECK(x11_managed_registry_find_any(registry,
+                                        session_id) == entry);
+    CHECK(x11_managed_registry_release(registry,
+                                       session_id) == LIBRDP_STATUS_OK);
+    CHECK(lstat(control, &info) != 0 &&
+          lstat(runtime, &info) != 0 &&
+          lstat(lock_path, &info) != 0);
+    x11_managed_registry_free(registry);
+    close(lock_fd);
+    close(listener);
+    CHECK(rmdir(root) == 0);
+    x11_managed_ipc_message_clear(&state);
+    return 0;
+}
+
 int main(void)
 {
     if (test_registry_lifecycle() != 0)
         return 1;
     if (test_invalid_requests() != 0)
+        return 1;
+    if (test_registry_recovery() != 0)
         return 1;
     return 0;
 }

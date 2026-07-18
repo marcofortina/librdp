@@ -29,16 +29,6 @@
 #define X11_MANAGED_REGISTRY_MIN_DISPLAY 20u
 #define X11_MANAGED_REGISTRY_MAX_DISPLAY 999u
 
-typedef enum x11_managed_session_state
-{
-    X11_MANAGED_SESSION_RESERVED = 1,
-    X11_MANAGED_SESSION_STARTING = 2,
-    X11_MANAGED_SESSION_ACTIVE = 3,
-    X11_MANAGED_SESSION_DETACHED = 4,
-    X11_MANAGED_SESSION_TERMINATING = 5,
-    X11_MANAGED_SESSION_FAILED = 6
-} x11_managed_session_state;
-
 typedef struct x11_managed_registry_config
 {
     uint32_t version;
@@ -79,6 +69,7 @@ typedef struct x11_managed_session_entry
     char runtime_directory[X11_MANAGED_IPC_PATH_BYTES];
     char authority_path[X11_MANAGED_IPC_PATH_BYTES];
     char agent_socket_path[X11_MANAGED_IPC_PATH_BYTES];
+    char drive_mount[X11_MANAGED_IPC_PATH_BYTES];
 } x11_managed_session_entry;
 
 typedef struct x11_managed_registry x11_managed_registry;
@@ -90,6 +81,11 @@ x11_managed_registry* x11_managed_registry_new(
 void x11_managed_registry_free(x11_managed_registry* registry);
 size_t x11_managed_registry_count(
     const x11_managed_registry* registry);
+size_t x11_managed_registry_capacity(
+    const x11_managed_registry* registry);
+const x11_managed_session_entry* x11_managed_registry_entry_at(
+    const x11_managed_registry* registry,
+    size_t index);
 librdp_status x11_managed_registry_reserve(
     x11_managed_registry* registry,
     const x11_managed_ipc_message* request,
@@ -101,10 +97,18 @@ x11_managed_session_entry* x11_managed_registry_find(
     x11_managed_registry* registry,
     uint64_t session_id,
     uid_t uid);
+x11_managed_session_entry* x11_managed_registry_find_any(
+    x11_managed_registry* registry,
+    uint64_t session_id);
 x11_managed_session_entry* x11_managed_registry_find_token(
     x11_managed_registry* registry,
     const char* token,
     uid_t uid);
+librdp_status x11_managed_registry_adopt(
+    x11_managed_registry* registry,
+    const x11_managed_ipc_message* state,
+    uint64_t now_ns,
+    x11_managed_session_entry** entry);
 librdp_status x11_managed_registry_mark_starting(
     x11_managed_registry* registry,
     uint64_t session_id,

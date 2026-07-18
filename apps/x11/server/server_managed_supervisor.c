@@ -477,6 +477,9 @@ static void x11_managed_supervisor_ready(
     response->port = supervisor->session.port;
     response->security_mode = supervisor->session.security_mode;
     response->max_peers = supervisor->session.max_peers;
+    response->session_state = supervisor->session.session_state;
+    response->attachment_count =
+        supervisor->session.attachment_count;
     (void)x11_managed_supervisor_copy(
         response->username,
         sizeof(response->username),
@@ -605,10 +608,16 @@ static librdp_status x11_managed_supervisor_handle_command(
             else if (command.type == X11_MANAGED_IPC_DETACH)
             {
                 supervisor->detached = 1;
+                supervisor->session.session_state =
+                    X11_MANAGED_SESSION_DETACHED;
+                supervisor->session.attachment_count = 0u;
             }
             else if (command.type == X11_MANAGED_IPC_ATTACH)
             {
                 supervisor->detached = 0;
+                supervisor->session.session_state =
+                    X11_MANAGED_SESSION_ACTIVE;
+                supervisor->session.attachment_count = 1u;
             }
             else if (command.type == X11_MANAGED_IPC_STOP ||
                      command.type == X11_MANAGED_IPC_TERMINATE)
@@ -959,6 +968,9 @@ librdp_status x11_managed_supervisor_run(
         supervisor.session = request;
         x11_managed_ipc_message_init(&request);
         supervisor.session.port = agent_ready.port;
+        supervisor.session.session_state =
+            X11_MANAGED_SESSION_ACTIVE;
+        supervisor.session.attachment_count = 1u;
         supervisor.session.agent_pid =
             (uint64_t)supervisor.agent_pid;
         supervisor.session.xserver_pid =
