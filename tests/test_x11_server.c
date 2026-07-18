@@ -800,7 +800,7 @@ static int test_cli_policy(void)
 static int test_clipboard_files(void)
 {
     static const uint8_t contents[] = "bounded clipboard file";
-    x11_server_clipboard_files* files = NULL;
+    server_clipboard_files* files = NULL;
     server_platform_clipboard_file_request request;
     librdp_clipboard_file_metadata metadata;
     char template_path[] = "/tmp/librdp-x11-clipboard-XXXXXX";
@@ -823,16 +823,16 @@ static int test_clipboard_files(void)
     descriptor = -1;
     uri_len = snprintf(uri, sizeof(uri), "file://%s\r\n", template_path);
     CHECK(uri_len > 0 && (size_t)uri_len < sizeof(uri));
-    files = x11_server_clipboard_files_new();
+    files = server_clipboard_files_new();
     CHECK(files != NULL);
-    CHECK(x11_server_clipboard_files_import_uri_list(
+    CHECK(server_clipboard_files_import_uri_list(
               files,
               (const uint8_t*)uri,
               (size_t)uri_len,
               19u,
               &encoded,
               &encoded_len) == LIBRDP_STATUS_OK);
-    CHECK(x11_server_clipboard_files_count(files) == 1u);
+    CHECK(server_clipboard_files_count(files) == 1u);
     CHECK(librdp_clipboard_file_group_count(encoded,
                                             encoded_len,
                                             &count) ==
@@ -855,7 +855,7 @@ static int test_clipboard_files(void)
     request.ownership_generation = 19u;
     request.file_index = 0;
     request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_SIZE;
-    CHECK(x11_server_clipboard_files_read(files,
+    CHECK(server_clipboard_files_read(files,
                                           &request,
                                           &response,
                                           &response_len) ==
@@ -868,7 +868,7 @@ static int test_clipboard_files(void)
     request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
     request.position = 8u;
     request.requested_bytes = 9u;
-    CHECK(x11_server_clipboard_files_read(files,
+    CHECK(server_clipboard_files_read(files,
                                           &request,
                                           &response,
                                           &response_len) ==
@@ -879,21 +879,21 @@ static int test_clipboard_files(void)
     response = NULL;
 
     request.ownership_generation = 20u;
-    CHECK(x11_server_clipboard_files_read(files,
+    CHECK(server_clipboard_files_read(files,
                                           &request,
                                           &response,
                                           &response_len) ==
           LIBRDP_STATUS_INVALID_ARGUMENT);
-    CHECK(x11_server_clipboard_files_import_uri_list(
+    CHECK(server_clipboard_files_import_uri_list(
               files,
               (const uint8_t*)"file://remote.example/tmp/value\n",
               sizeof("file://remote.example/tmp/value\n") - 1u,
               20u,
               &response,
               &response_len) == LIBRDP_STATUS_UNSUPPORTED);
-    CHECK(x11_server_clipboard_files_count(files) == 1u);
+    CHECK(server_clipboard_files_count(files) == 1u);
     free(encoded);
-    x11_server_clipboard_files_free(files);
+    server_clipboard_files_free(files);
     CHECK(unlink(template_path) == 0);
     return 0;
 }

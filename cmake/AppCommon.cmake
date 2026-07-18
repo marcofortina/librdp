@@ -24,6 +24,7 @@ if(LIBRDP_APP_COMMON_REQUIRED)
         apps/common/client_runtime.c
         apps/common/client_tls.c
         apps/common/server_clipboard.c
+        apps/common/server_clipboard_files.c
         apps/common/server_dirty.c
         apps/common/server_drive.c
         apps/common/server_host.c

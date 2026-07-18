@@ -4,14 +4,14 @@
  */
 /*
  * Module: bounded URI-list decoder and descriptor-backed clipboard file
- * source for the X11 desktop server.
+ * source for desktop-server platform adapters.
  * Invariants: imported state is committed only after every descriptor and the
  * complete wire metadata payload are valid; reads never exceed the negotiated
  * range cap or the retained regular-file size.
  * Ownership: each committed entry owns an open descriptor and UTF-8 basename;
  * temporary import state is released on every failure.
- * Threading: the source is confined to the X11 server host thread.
- * Trust boundary: X11 selection bytes and filesystem metadata are untrusted;
+ * Threading: the source is confined to the desktop-server host thread.
+ * Trust boundary: native clipboard bytes and filesystem metadata are untrusted;
  * URI authorities, escapes, file types, offsets and lengths are validated.
  */
 
@@ -32,24 +32,24 @@
 #define O_NOFOLLOW 0
 #endif
 
-#define X11_SERVER_CLIPBOARD_URI_LIMIT (16u * 1024u * 1024u)
+#define SERVER_CLIPBOARD_URI_LIMIT (16u * 1024u * 1024u)
 
-typedef struct x11_server_clipboard_file_entry
+typedef struct server_clipboard_file_entry
 {
     int descriptor;
     char* name;
     uint64_t size;
-} x11_server_clipboard_file_entry;
+} server_clipboard_file_entry;
 
-struct x11_server_clipboard_files
+struct server_clipboard_files
 {
-    x11_server_clipboard_file_entry entries[X11_SERVER_CLIPBOARD_FILE_LIMIT];
+    server_clipboard_file_entry entries[SERVER_CLIPBOARD_FILE_LIMIT];
     size_t count;
     uint64_t ownership_generation;
 };
 
-static void x11_server_clipboard_file_entries_clear(
-    x11_server_clipboard_file_entry* entries,
+static void server_clipboard_file_entries_clear(
+    server_clipboard_file_entry* entries,
     size_t count)
 {
     size_t index = 0u;
@@ -67,37 +67,37 @@ static void x11_server_clipboard_file_entries_clear(
     }
 }
 
-x11_server_clipboard_files* x11_server_clipboard_files_new(void)
+server_clipboard_files* server_clipboard_files_new(void)
 {
-    x11_server_clipboard_files* files =
-        (x11_server_clipboard_files*)calloc(1u, sizeof(*files));
+    server_clipboard_files* files =
+        (server_clipboard_files*)calloc(1u, sizeof(*files));
     size_t index = 0u;
 
     if (!files)
         return NULL;
-    for (index = 0u; index < X11_SERVER_CLIPBOARD_FILE_LIMIT; index++)
+    for (index = 0u; index < SERVER_CLIPBOARD_FILE_LIMIT; index++)
         files->entries[index].descriptor = -1;
     return files;
 }
 
-void x11_server_clipboard_files_reset(x11_server_clipboard_files* files)
+void server_clipboard_files_reset(server_clipboard_files* files)
 {
     if (!files)
         return;
-    x11_server_clipboard_file_entries_clear(files->entries, files->count);
+    server_clipboard_file_entries_clear(files->entries, files->count);
     files->count = 0u;
     files->ownership_generation = 0u;
 }
 
-void x11_server_clipboard_files_free(x11_server_clipboard_files* files)
+void server_clipboard_files_free(server_clipboard_files* files)
 {
     if (!files)
         return;
-    x11_server_clipboard_files_reset(files);
+    server_clipboard_files_reset(files);
     free(files);
 }
 
-static int x11_server_clipboard_hex_value(uint8_t value)
+static int server_clipboard_hex_value(uint8_t value)
 {
     if (value >= (uint8_t)'0' && value <= (uint8_t)'9')
         return (int)(value - (uint8_t)'0');
@@ -113,9 +113,9 @@ static int x11_server_clipboard_hex_value(uint8_t value)
  * exactly localhost, preventing a selection owner from turning file transfer
  * into implicit network access.
  */
-static librdp_status x11_server_clipboard_decode_uri(const uint8_t* line,
-                                                     size_t line_len,
-                                                     char** path)
+static librdp_status server_clipboard_decode_uri(const uint8_t* line,
+                                                  size_t line_len,
+                                                  char** path)
 {
     static const uint8_t prefix[] = "file://";
     static const uint8_t localhost[] = "localhost";
@@ -163,8 +163,8 @@ static librdp_status x11_server_clipboard_decode_uri(const uint8_t* line,
                 free(decoded);
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             }
-            high = x11_server_clipboard_hex_value(encoded[input]);
-            low = x11_server_clipboard_hex_value(encoded[input + 1u]);
+            high = server_clipboard_hex_value(encoded[input]);
+            low = server_clipboard_hex_value(encoded[input + 1u]);
             if (high < 0 || low < 0)
             {
                 free(decoded);
@@ -186,7 +186,7 @@ static librdp_status x11_server_clipboard_decode_uri(const uint8_t* line,
     return LIBRDP_STATUS_OK;
 }
 
-static const char* x11_server_clipboard_basename(const char* path)
+static const char* server_clipboard_basename(const char* path)
 {
     const char* slash = path ? strrchr(path, '/') : NULL;
 
@@ -197,10 +197,10 @@ static const char* x11_server_clipboard_basename(const char* path)
     return slash[1] != '\0' ? slash + 1u : NULL;
 }
 
-static librdp_status x11_server_clipboard_import_file(
+static librdp_status server_clipboard_import_file(
     const uint8_t* line,
     size_t line_len,
-    x11_server_clipboard_file_entry* entry)
+    server_clipboard_file_entry* entry)
 {
     struct stat metadata;
     const char* basename = NULL;
@@ -208,11 +208,11 @@ static librdp_status x11_server_clipboard_import_file(
     int descriptor = -1;
     size_t name_len = 0u;
     librdp_status status =
-        x11_server_clipboard_decode_uri(line, line_len, &path);
+        server_clipboard_decode_uri(line, line_len, &path);
 
     if (status != LIBRDP_STATUS_OK)
         return status;
-    basename = x11_server_clipboard_basename(path);
+    basename = server_clipboard_basename(path);
     if (!basename)
     {
         free(path);
@@ -251,20 +251,20 @@ static librdp_status x11_server_clipboard_import_file(
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status x11_server_clipboard_encode_entries(
-    const x11_server_clipboard_file_entry* entries,
+static librdp_status server_clipboard_encode_entries(
+    const server_clipboard_file_entry* entries,
     size_t count,
     uint8_t** encoded,
     size_t* encoded_len)
 {
     librdp_clipboard_file_metadata
-        metadata[X11_SERVER_CLIPBOARD_FILE_LIMIT];
+        metadata[SERVER_CLIPBOARD_FILE_LIMIT];
     size_t required = 0u;
     size_t index = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!entries || count == 0u ||
-        count > X11_SERVER_CLIPBOARD_FILE_LIMIT || !encoded || !encoded_len)
+        count > SERVER_CLIPBOARD_FILE_LIMIT || !encoded || !encoded_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *encoded = NULL;
     *encoded_len = 0u;
@@ -307,27 +307,27 @@ static librdp_status x11_server_clipboard_encode_entries(
  * Parse into temporary entries so an invalid selection cannot discard a
  * previously usable clipboard generation or leak partially opened files.
  */
-librdp_status x11_server_clipboard_files_import_uri_list(
-    x11_server_clipboard_files* files,
+librdp_status server_clipboard_files_import_uri_list(
+    server_clipboard_files* files,
     const uint8_t* data,
     size_t data_len,
     uint64_t ownership_generation,
     uint8_t** encoded,
     size_t* encoded_len)
 {
-    x11_server_clipboard_file_entry
-        pending[X11_SERVER_CLIPBOARD_FILE_LIMIT];
+    server_clipboard_file_entry
+        pending[SERVER_CLIPBOARD_FILE_LIMIT];
     size_t offset = 0u;
     size_t count = 0u;
     size_t index = 0u;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!files || (!data && data_len > 0u) || data_len == 0u ||
-        data_len > X11_SERVER_CLIPBOARD_URI_LIMIT ||
+        data_len > SERVER_CLIPBOARD_URI_LIMIT ||
         ownership_generation == 0u || !encoded || !encoded_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     memset(pending, 0, sizeof(pending));
-    for (index = 0u; index < X11_SERVER_CLIPBOARD_FILE_LIMIT; index++)
+    for (index = 0u; index < SERVER_CLIPBOARD_FILE_LIMIT; index++)
         pending[index].descriptor = -1;
     while (offset < data_len)
     {
@@ -343,14 +343,14 @@ librdp_status x11_server_clipboard_files_import_uri_list(
             end--;
         if (end == start || data[start] == (uint8_t)'#')
             continue;
-        if (count >= X11_SERVER_CLIPBOARD_FILE_LIMIT)
+        if (count >= SERVER_CLIPBOARD_FILE_LIMIT)
         {
             status = LIBRDP_STATUS_LIMIT_EXCEEDED;
             break;
         }
-        status = x11_server_clipboard_import_file(data + start,
-                                                  end - start,
-                                                  &pending[count]);
+        status = server_clipboard_import_file(data + start,
+                                              end - start,
+                                              &pending[count]);
         if (status != LIBRDP_STATUS_OK)
             break;
         count++;
@@ -359,25 +359,25 @@ librdp_status x11_server_clipboard_files_import_uri_list(
         status = LIBRDP_STATUS_UNSUPPORTED;
     if (status == LIBRDP_STATUS_OK)
     {
-        status = x11_server_clipboard_encode_entries(pending,
-                                                     count,
-                                                     encoded,
-                                                     encoded_len);
+        status = server_clipboard_encode_entries(pending,
+                                                 count,
+                                                 encoded,
+                                                 encoded_len);
     }
     if (status != LIBRDP_STATUS_OK)
     {
-        x11_server_clipboard_file_entries_clear(pending, count);
+        server_clipboard_file_entries_clear(pending, count);
         return status;
     }
-    x11_server_clipboard_files_reset(files);
+    server_clipboard_files_reset(files);
     memcpy(files->entries, pending, sizeof(pending));
     files->count = count;
     files->ownership_generation = ownership_generation;
     return LIBRDP_STATUS_OK;
 }
 
-static void x11_server_clipboard_write_u64_le(uint8_t output[8],
-                                              uint64_t value)
+static void server_clipboard_write_u64_le(uint8_t output[8],
+                                          uint64_t value)
 {
     size_t index = 0u;
 
@@ -385,13 +385,13 @@ static void x11_server_clipboard_write_u64_le(uint8_t output[8],
         output[index] = (uint8_t)(value >> (index * 8u));
 }
 
-librdp_status x11_server_clipboard_files_read(
-    x11_server_clipboard_files* files,
+librdp_status server_clipboard_files_read(
+    server_clipboard_files* files,
     const server_platform_clipboard_file_request* request,
     uint8_t** data,
     size_t* data_len)
 {
-    x11_server_clipboard_file_entry* entry = NULL;
+    server_clipboard_file_entry* entry = NULL;
     uint8_t* buffer = NULL;
     size_t requested = 0u;
     ssize_t received = 0;
@@ -412,12 +412,12 @@ librdp_status x11_server_clipboard_files_read(
         buffer = (uint8_t*)malloc(8u);
         if (!buffer)
             return LIBRDP_STATUS_NO_MEMORY;
-        x11_server_clipboard_write_u64_le(buffer, entry->size);
+        server_clipboard_write_u64_le(buffer, entry->size);
         *data = buffer;
         *data_len = 8u;
         return LIBRDP_STATUS_OK;
     }
-    if (request->requested_bytes > X11_SERVER_CLIPBOARD_FILE_RANGE_LIMIT)
+    if (request->requested_bytes > SERVER_CLIPBOARD_FILE_RANGE_LIMIT)
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
     if (request->position >= entry->size ||
         request->requested_bytes == 0u)
@@ -453,8 +453,8 @@ librdp_status x11_server_clipboard_files_read(
     return LIBRDP_STATUS_OK;
 }
 
-size_t x11_server_clipboard_files_count(
-    const x11_server_clipboard_files* files)
+size_t server_clipboard_files_count(
+    const server_clipboard_files* files)
 {
     return files ? files->count : 0u;
 }

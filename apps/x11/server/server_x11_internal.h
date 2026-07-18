@@ -156,7 +156,7 @@ struct x11_server_context
     uint64_t clipboard_next_request_id;
     x11_server_clipboard_read clipboard_read;
     x11_server_clipboard_write clipboard_write;
-    x11_server_clipboard_files* clipboard_files;
+    server_clipboard_files* clipboard_files;
 };
 
 uint64_t x11_server_now_ns(void);

@@ -423,7 +423,7 @@ static librdp_status x11_server_clipboard_convert_to_wire(
     if (format_id == LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW ||
         format_id == LIBRDP_CLIPBOARD_FORMAT_HDROP)
     {
-        return x11_server_clipboard_files_import_uri_list(
+        return server_clipboard_files_import_uri_list(
             context->clipboard_files,
             data,
             length,
@@ -854,7 +854,7 @@ static void x11_server_clipboard_handle_owner(
         {
             x11_server_clipboard_read_clear(context);
         }
-        x11_server_clipboard_files_reset(context->clipboard_files);
+        server_clipboard_files_reset(context->clipboard_files);
         context->clipboard_local_generation++;
         if (context->clipboard_sink.formats)
         {
@@ -1181,7 +1181,7 @@ static void x11_server_clipboard_stop(void* opaque)
                                                  NULL,
                                                  NULL);
     }
-    x11_server_clipboard_files_reset(context->clipboard_files);
+    server_clipboard_files_reset(context->clipboard_files);
     memset(&context->clipboard_sink, 0, sizeof(context->clipboard_sink));
     context->clipboard_started = 0;
     context->clipboard_remote_peer_id = 0u;
@@ -1294,7 +1294,7 @@ static librdp_status x11_server_clipboard_request_file(
     response.ownership_generation = request->ownership_generation;
     response.request_id = request->request_id;
     response.stream_id = request->stream_id;
-    status = x11_server_clipboard_files_read(context->clipboard_files,
+    status = server_clipboard_files_read(context->clipboard_files,
                                              request,
                                              &payload,
                                              &payload_len);

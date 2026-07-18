@@ -252,7 +252,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
     context = (x11_server_context*)calloc(1u, sizeof(*context));
     if (!context)
         return NULL;
-    context->clipboard_files = x11_server_clipboard_files_new();
+    context->clipboard_files = server_clipboard_files_new();
     if (!context->clipboard_files)
     {
         free(context);
@@ -265,7 +265,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         context->display_name = x11_server_copy_string(config->display_name);
         if (!context->display_name)
         {
-            x11_server_clipboard_files_free(context->clipboard_files);
+            server_clipboard_files_free(context->clipboard_files);
             free(context);
             return NULL;
         }
@@ -276,7 +276,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         context->drive_mount = x11_server_copy_string(config->drive_mount);
         if (!context->drive_mount)
         {
-            x11_server_clipboard_files_free(context->clipboard_files);
+            server_clipboard_files_free(context->clipboard_files);
             free(context->display_name);
             free(context);
             return NULL;
@@ -287,7 +287,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
         context->fuse = x11_server_fuse_new(&fuse_config);
         if (!context->fuse)
         {
-            x11_server_clipboard_files_free(context->clipboard_files);
+            server_clipboard_files_free(context->clipboard_files);
             free(context->drive_mount);
             free(context->display_name);
             free(context);
@@ -298,7 +298,7 @@ x11_server_context* x11_server_context_new(const x11_server_config* config)
     if (!context->display)
     {
         x11_server_fuse_free(context->fuse);
-        x11_server_clipboard_files_free(context->clipboard_files);
+        server_clipboard_files_free(context->clipboard_files);
         free(context->drive_mount);
         free(context->display_name);
         free(context);
@@ -385,7 +385,7 @@ void x11_server_context_free(x11_server_context* context)
     free(context->clipboard_read.data);
     free(context->clipboard_write.data);
     x11_server_fuse_free(context->fuse);
-    x11_server_clipboard_files_free(context->clipboard_files);
+    server_clipboard_files_free(context->clipboard_files);
     free(context->drive_mount);
     free(context->display_name);
     free(context);
