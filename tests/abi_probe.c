@@ -134,6 +134,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_video_capture_media", librdp_video_capture_media, ",");
     ABI_TYPE_ENTRY("librdp_clipboard_format", librdp_clipboard_format, ",");
     ABI_TYPE_ENTRY("librdp_clipboard_file", librdp_clipboard_file, ",");
+    ABI_TYPE_ENTRY("librdp_clipboard_file_metadata", librdp_clipboard_file_metadata, ",");
     ABI_TYPE_ENTRY("librdp_key_state", librdp_key_state, ",");
     ABI_TYPE_ENTRY("librdp_mouse_button", librdp_mouse_button, ",");
     ABI_TYPE_ENTRY("librdp_mouse_state", librdp_mouse_state, ",");

@@ -13,6 +13,7 @@
 #include "common/buffer.h"
 #include "protocol/mcs.h"
 
+#include <librdp/clipboard.h>
 #include <librdp/session.h>
 
 #include <stdio.h>
@@ -313,6 +314,105 @@ int test_protocol_clipboard_vectors(void)
         dyn_response.length = 0;
         PCHECK(rdp_clipboard_write_hdrop(&dyn_response, &file_desc, 1) ==
                LIBRDP_STATUS_INVALID_ARGUMENT);
+    }
+    {
+        librdp_clipboard_file_metadata files[2];
+        librdp_clipboard_file_metadata decoded;
+        uint8_t encoded[4u + 2u * RDP_CLIPBOARD_FILE_DESCRIPTORW_SIZE];
+        uint8_t unchanged[sizeof(encoded)];
+        char name[64];
+        size_t encoded_len = 0u;
+        size_t name_len = 0u;
+        uint32_t file_count = 0u;
+
+        memset(encoded, 0xa5, sizeof(encoded));
+        memcpy(unchanged, encoded, sizeof(encoded));
+        PCHECK(librdp_clipboard_file_metadata_init(NULL) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(librdp_clipboard_file_metadata_init(&files[0]) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(librdp_clipboard_file_metadata_init(&files[1]) ==
+               LIBRDP_STATUS_OK);
+        files[0].name = "alpha.txt";
+        files[0].file_size = 0x0000000212345678ull;
+        files[1].name = "caf\xc3\xa9.png";
+        files[1].file_size = 7u;
+        files[1].attributes =
+            LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_READONLY |
+            LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_ARCHIVE;
+        PCHECK(librdp_clipboard_file_group_encode(
+                   files,
+                   2u,
+                   NULL,
+                   0u,
+                   &encoded_len) == LIBRDP_STATUS_OK);
+        PCHECK(encoded_len == sizeof(encoded));
+        PCHECK(librdp_clipboard_file_group_encode(
+                   files,
+                   2u,
+                   encoded,
+                   sizeof(encoded) - 1u,
+                   &encoded_len) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+        PCHECK(memcmp(encoded, unchanged, sizeof(encoded)) == 0);
+        PCHECK(librdp_clipboard_file_group_encode(
+                   files,
+                   2u,
+                   encoded,
+                   sizeof(encoded),
+                   &encoded_len) == LIBRDP_STATUS_OK);
+        PCHECK(librdp_clipboard_file_group_count(
+                   encoded,
+                   encoded_len,
+                   &file_count) == LIBRDP_STATUS_OK);
+        PCHECK(file_count == 2u);
+        PCHECK(librdp_clipboard_file_metadata_init(&decoded) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(librdp_clipboard_file_group_get(
+                   encoded,
+                   encoded_len,
+                   0u,
+                   &decoded,
+                   NULL,
+                   0u,
+                   &name_len) == LIBRDP_STATUS_OK);
+        PCHECK(name_len == sizeof("alpha.txt") && decoded.name == NULL);
+        PCHECK(decoded.file_size == files[0].file_size);
+        PCHECK(librdp_clipboard_file_group_get(
+                   encoded,
+                   encoded_len,
+                   1u,
+                   &decoded,
+                   name,
+                   sizeof(name),
+                   &name_len) == LIBRDP_STATUS_OK);
+        PCHECK(strcmp(name, files[1].name) == 0 &&
+               decoded.name == name &&
+               decoded.file_size == files[1].file_size &&
+               decoded.attributes == files[1].attributes);
+        PCHECK(librdp_clipboard_file_group_get(
+                   encoded,
+                   encoded_len,
+                   2u,
+                   &decoded,
+                   name,
+                   sizeof(name),
+                   &name_len) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+        PCHECK(librdp_clipboard_file_group_count(
+                   encoded,
+                   encoded_len - 1u,
+                   &file_count) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        encoded[4u] |= 0x80u;
+        PCHECK(librdp_clipboard_file_group_count(
+                   encoded,
+                   encoded_len,
+                   &file_count) == LIBRDP_STATUS_PROTOCOL_ERROR);
+        files[0].name = "../escape";
+        PCHECK(librdp_clipboard_file_group_encode(
+                   files,
+                   2u,
+                   NULL,
+                   0u,
+                   &encoded_len) == LIBRDP_STATUS_INVALID_ARGUMENT);
     }
     dyn_response.length = 0;
     PCHECK(rdp_clipboard_write_lock(&dyn_response, 0x99887766u) == LIBRDP_STATUS_OK);

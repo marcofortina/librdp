@@ -190,6 +190,10 @@ LIBRDP_0.1 {
         librdp_session_clipboard_set_named_data;
         librdp_session_clipboard_set_files;
         librdp_session_clipboard_clear;
+        librdp_clipboard_file_metadata_init;
+        librdp_clipboard_file_group_encode;
+        librdp_clipboard_file_group_count;
+        librdp_clipboard_file_group_get;
         librdp_session_clipboard_request_data;
         librdp_session_clipboard_request_file_size;
         librdp_session_clipboard_request_file_range;

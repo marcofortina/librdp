@@ -16,6 +16,8 @@
 
 #include "clipboard/clipboard.h"
 
+#include <librdp/clipboard.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -36,15 +38,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     rdp_clipboard_file_contents_request file_request;
     rdp_clipboard_file_contents_response file_response;
     rdp_clipboard_file_descriptor file_desc;
+    librdp_clipboard_file_metadata metadata;
     rdp_clipboard_lock lock;
     rdp_buffer out;
     const uint8_t file_name[] = {'a', 0};
     uint32_t count = 0;
+    size_t name_len = 0u;
 
     file_desc.name_utf16 = file_name;
     file_desc.name_utf16_len = sizeof(file_name);
     file_desc.size = size;
     file_desc.attributes = RDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+    (void)librdp_clipboard_file_metadata_init(&metadata);
     rdp_buffer_init(&out);
     if (rdp_clipboard_parse_packet(data, size, &packet) == LIBRDP_STATUS_OK)
     {
@@ -62,6 +67,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         (void)rdp_clipboard_parse_file_contents_response(&packet, &file_response);
         (void)rdp_clipboard_parse_lock(&packet, &lock);
         (void)rdp_clipboard_parse_unlock(&packet, &lock);
+    }
+    if (librdp_clipboard_file_group_count(data, size, &count) ==
+            LIBRDP_STATUS_OK &&
+        count > 0u)
+    {
+        (void)librdp_clipboard_file_group_get(data,
+                                              size,
+                                              count - 1u,
+                                              &metadata,
+                                              NULL,
+                                              0u,
+                                              &name_len);
     }
     (void)rdp_clipboard_write_monitor_ready(&out);
     out.length = 0;

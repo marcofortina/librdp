@@ -50,6 +50,12 @@ typedef struct librdp_session librdp_session;
 #define LIBRDP_CLIPBOARD_CAP_HUGE_FILE_SUPPORT 0x00000020u /**< Negotiate 64-bit file offsets. */
 #define LIBRDP_CLIPBOARD_FILECONTENTS_SIZE 0x00000001u /**< Request file size metadata. */
 #define LIBRDP_CLIPBOARD_FILECONTENTS_RANGE 0x00000002u /**< Request one file byte range. */
+#define LIBRDP_CLIPBOARD_FILE_METADATA_VERSION 1u /**< Current librdp_clipboard_file_metadata version. */
+#define LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_READONLY 0x00000001u /**< Read-only file attribute. */
+#define LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_HIDDEN 0x00000002u /**< Hidden file attribute. */
+#define LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_DIRECTORY 0x00000010u /**< Directory file attribute. */
+#define LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_ARCHIVE 0x00000020u /**< Archive file attribute. */
+#define LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL 0x00000080u /**< Normal file attribute. */
 
 /**
  * @brief Clipboard format descriptor delivered by format-list events.
@@ -79,6 +85,133 @@ typedef struct librdp_clipboard_file
     const char* path; /**< Host filesystem path; must not be NULL when submitted. */
     const char* name; /**< Advertised file name; must not be NULL when submitted. */
 } librdp_clipboard_file;
+
+/**
+ * @brief One normalized file-list entry used at platform clipboard boundaries.
+ *
+ * name is UTF-8. Encoders borrow it only for the duration of the call. Decoders
+ * point it at the caller-provided name buffer, which remains caller-owned.
+ * Names are individual file names and must not contain path separators.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_clipboard_file_metadata
+{
+    uint32_t version; /**< Must be LIBRDP_CLIPBOARD_FILE_METADATA_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    const char* name; /**< Borrowed UTF-8 file name, or NULL after a size query. */
+    uint64_t file_size; /**< File size in bytes. */
+    uint32_t attributes; /**< LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_* bitmask. */
+} librdp_clipboard_file_metadata;
+
+/**
+ * @brief Initialize normalized clipboard file metadata.
+ *
+ * @param[out] metadata Caller-owned metadata object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * metadata is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_clipboard_file_metadata_init(
+    librdp_clipboard_file_metadata* metadata);
+
+/**
+ * @brief Encode normalized file metadata as a clipboard file-group payload.
+ *
+ * Every entry must be initialized, contain a non-empty UTF-8 name without path
+ * separators, and fit the protocol filename field. The function validates all
+ * entries before changing output. Pass output as NULL with output_capacity 0
+ * to query the required byte count.
+ *
+ * @param[in] files Initialized metadata array; must not be NULL.
+ * @param[in] count Number of entries; must be non-zero.
+ * @param[out] output Caller-owned destination bytes, or NULL for a size query.
+ * @param[in] output_capacity Bytes available at output; must be zero when
+ * output is NULL.
+ * @param[out] output_length Required and, on success, written byte count; must
+ * not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or a valid size query;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for malformed arguments, metadata, or names;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when output is too small or the encoded payload
+ * cannot be represented; LIBRDP_STATUS_NO_MEMORY on allocation failure;
+ * LIBRDP_STATUS_UNSUPPORTED when host character conversion is unavailable.
+ *
+ * @note Thread-safety: this function uses no shared mutable state.
+ * @warning File names can contain sensitive user information. The function
+ * does not emit names or payload bytes to trace.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_clipboard_file_group_encode(
+    const librdp_clipboard_file_metadata* files,
+    uint32_t count,
+    void* output,
+    size_t output_capacity,
+    size_t* output_length);
+
+/**
+ * @brief Validate a clipboard file-group payload and return its entry count.
+ *
+ * @param[in] data File-group payload bytes; must not be NULL.
+ * @param[in] data_len Number of bytes available at data.
+ * @param[out] count Validated entry count; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for NULL
+ * arguments; LIBRDP_STATUS_PROTOCOL_ERROR for malformed length, count, flags,
+ * or unterminated names; LIBRDP_STATUS_LIMIT_EXCEEDED when the entry count
+ * cannot be represented safely.
+ *
+ * @note Thread-safety: this function reads only caller-owned storage.
+ * @warning File metadata can contain sensitive user information. The function
+ * does not emit names or payload bytes to trace.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_clipboard_file_group_count(
+    const void* data,
+    size_t data_len,
+    uint32_t* count);
+
+/**
+ * @brief Decode one entry from a validated clipboard file-group payload.
+ *
+ * metadata must be initialized before the call. Pass name as NULL with
+ * name_capacity 0 to query the UTF-8 byte count, including its trailing NUL.
+ * On a successful decode metadata->name points to name. No input pointer is
+ * retained.
+ *
+ * @param[in] data File-group payload bytes; must not be NULL.
+ * @param[in] data_len Number of bytes available at data.
+ * @param[in] index Zero-based entry index.
+ * @param[in,out] metadata Initialized caller-owned result; must not be NULL.
+ * @param[out] name Caller-owned UTF-8 destination, or NULL for a size query.
+ * @param[in] name_capacity Bytes available at name; must be zero when name is
+ * NULL.
+ * @param[out] name_length Required byte count including the NUL terminator;
+ * must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success or a valid size query;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for invalid arguments or descriptor metadata;
+ * LIBRDP_STATUS_PROTOCOL_ERROR for malformed input;
+ * LIBRDP_STATUS_LIMIT_EXCEEDED when index is out of range or name is too small;
+ * LIBRDP_STATUS_NO_MEMORY on conversion allocation failure;
+ * LIBRDP_STATUS_UNSUPPORTED when host character conversion is unavailable.
+ *
+ * @note Thread-safety: this function uses no shared mutable state.
+ * @warning Decoded names can contain sensitive user information. The function
+ * does not emit them to trace.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_clipboard_file_group_get(
+    const void* data,
+    size_t data_len,
+    uint32_t index,
+    librdp_clipboard_file_metadata* metadata,
+    char* name,
+    size_t name_capacity,
+    size_t* name_length);
 
 /**
  * @brief Advertise one local clipboard data format and payload.

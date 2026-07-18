@@ -12,7 +12,17 @@ int main(void)
     librdp_server_drive_request drive_request;
     librdp_server_drive_request_id drive_request_id = 0u;
     librdp_server_pointer_update pointer_update;
+    librdp_clipboard_file_metadata clipboard_file;
     librdp_settings* settings = librdp_settings_new();
+
+    if (librdp_clipboard_file_metadata_init(&clipboard_file) !=
+            LIBRDP_STATUS_OK ||
+        clipboard_file.version !=
+            LIBRDP_CLIPBOARD_FILE_METADATA_VERSION ||
+        clipboard_file.size != sizeof(clipboard_file))
+    {
+        return 8;
+    }
 
     if (librdp_server_pointer_update_init(&pointer_update) !=
             LIBRDP_STATUS_OK ||

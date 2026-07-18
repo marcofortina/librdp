@@ -17,12 +17,41 @@
 
 #include "clipboard/clipboard.h"
 
+#include "common/charset.h"
 #include "common/stream.h"
 
+#include <librdp/clipboard.h>
+
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define RDP_CLIPBOARD_SHORT_FORMAT_NAME_LEN 36u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE 592u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_OFFSET 72u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_BYTES 520u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_ATTRIBUTES_OFFSET 36u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE_HIGH_OFFSET 64u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE_LOW_OFFSET 68u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_CLSID 0x00000001u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_SIZEPOINT 0x00000002u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_CREATETIME 0x00000008u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_ACCESSTIME 0x00000010u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_WRITESTIME 0x00000020u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_PROGRESSUI 0x00004000u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_LINKUI 0x00008000u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_UNICODE 0x80000000u
+#define RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAGS_KNOWN \
+    (RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_CLSID | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_SIZEPOINT | \
+     RDP_CLIPBOARD_FD_ATTRIBUTES | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_CREATETIME | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_ACCESSTIME | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_WRITESTIME | \
+     RDP_CLIPBOARD_FD_FILESIZE | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_PROGRESSUI | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_LINKUI | \
+     RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAG_UNICODE)
 
 static int rdp_clipboard_response_flag(uint16_t flags)
 {
@@ -74,6 +103,279 @@ static librdp_status rdp_clipboard_append_zero(rdp_buffer* buffer, size_t length
         length -= chunk;
     }
     return status;
+}
+
+static uint32_t rdp_clipboard_read_u32_le_at(const uint8_t* data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8u) |
+           ((uint32_t)data[2] << 16u) |
+           ((uint32_t)data[3] << 24u);
+}
+
+static int rdp_clipboard_public_file_name_valid(const char* name)
+{
+    return name && name[0] != '\0' && strcmp(name, ".") != 0 &&
+           strcmp(name, "..") != 0 && strchr(name, '/') == NULL &&
+           strchr(name, '\\') == NULL;
+}
+
+static int rdp_clipboard_file_group_size(uint32_t count, size_t* required)
+{
+    size_t entries = (size_t)count;
+
+    if (!required || count == 0u ||
+        (entries != 0u &&
+         RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE >
+             (SIZE_MAX - sizeof(uint32_t)) / entries))
+        return 0;
+    *required = sizeof(uint32_t) +
+                entries * RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE;
+    return 1;
+}
+
+librdp_status librdp_clipboard_file_metadata_init(
+    librdp_clipboard_file_metadata* metadata)
+{
+    if (!metadata)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->version = LIBRDP_CLIPBOARD_FILE_METADATA_VERSION;
+    metadata->size = sizeof(*metadata);
+    metadata->attributes = LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Convert every UTF-8 name before building the fixed-size wire records so a
+ * malformed late entry cannot partially modify the caller's destination.
+ */
+librdp_status librdp_clipboard_file_group_encode(
+    const librdp_clipboard_file_metadata* files,
+    uint32_t count,
+    void* output,
+    size_t output_capacity,
+    size_t* output_length)
+{
+    rdp_clipboard_file_descriptor* descriptors = NULL;
+    uint8_t** names = NULL;
+    rdp_buffer encoded;
+    librdp_status status = LIBRDP_STATUS_OK;
+    uint32_t index = 0u;
+
+    if (!files || (!output && output_capacity != 0u) || !output_length ||
+        !rdp_clipboard_file_group_size(count, output_length))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    descriptors = (rdp_clipboard_file_descriptor*)calloc(
+        count,
+        sizeof(*descriptors));
+    names = (uint8_t**)calloc(count, sizeof(*names));
+    if (!descriptors || !names)
+    {
+        free(descriptors);
+        free(names);
+        return LIBRDP_STATUS_NO_MEMORY;
+    }
+    rdp_buffer_init(&encoded);
+    for (index = 0u; index < count; index++)
+    {
+        size_t name_len = 0u;
+
+        if (files[index].version !=
+                LIBRDP_CLIPBOARD_FILE_METADATA_VERSION ||
+            files[index].size < sizeof(files[index]) ||
+            !rdp_clipboard_public_file_name_valid(files[index].name))
+        {
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        }
+        status = rdp_charset_utf8_bytes_to_utf16le_alloc(
+            (const uint8_t*)files[index].name,
+            strlen(files[index].name),
+            0,
+            &names[index],
+            &name_len);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        if (name_len == 0u ||
+            name_len > RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_BYTES - 2u)
+        {
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+            break;
+        }
+        descriptors[index].name_utf16 = names[index];
+        descriptors[index].name_utf16_len = name_len;
+        descriptors[index].size = files[index].file_size;
+        descriptors[index].attributes =
+            files[index].attributes != 0u
+                ? files[index].attributes
+                : LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+    }
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_clipboard_write_file_group_descriptor_w(
+            &encoded,
+            descriptors,
+            count);
+    if (status == LIBRDP_STATUS_OK &&
+        encoded.length != *output_length)
+        status = LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (status == LIBRDP_STATUS_OK && output)
+    {
+        if (output_capacity < encoded.length)
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        else
+            memcpy(output, encoded.data, encoded.length);
+    }
+    for (index = 0u; index < count; index++)
+        free(names[index]);
+    rdp_buffer_free(&encoded);
+    free(names);
+    free(descriptors);
+    return status;
+}
+
+librdp_status librdp_clipboard_file_group_count(const void* data,
+                                                size_t data_len,
+                                                uint32_t* count)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    uint32_t parsed = 0u;
+    size_t required = 0u;
+    uint32_t index = 0u;
+
+    if (!data || !count)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *count = 0u;
+    if (data_len < sizeof(uint32_t))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    parsed = rdp_clipboard_read_u32_le_at(bytes);
+    if (!rdp_clipboard_file_group_size(parsed, &required))
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    if (required != data_len)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (index = 0u; index < parsed; index++)
+    {
+        const uint8_t* descriptor =
+            bytes + sizeof(uint32_t) +
+            (size_t)index * RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE;
+        uint32_t flags = rdp_clipboard_read_u32_le_at(descriptor);
+        size_t cursor = 0u;
+        int terminated = 0;
+
+        if ((flags & ~RDP_CLIPBOARD_FILE_DESCRIPTOR_FLAGS_KNOWN) != 0u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        for (cursor = 0u;
+             cursor + 1u < RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_BYTES;
+             cursor += 2u)
+        {
+            const uint8_t* unit =
+                descriptor +
+                RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_OFFSET + cursor;
+
+            if (unit[0] == 0u && unit[1] == 0u)
+            {
+                terminated = cursor > 0u;
+                break;
+            }
+        }
+        if (!terminated)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    *count = parsed;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Decode through a temporary UTF-8 allocation and commit metadata only after
+ * the complete payload, index, name policy and destination capacity pass.
+ */
+librdp_status librdp_clipboard_file_group_get(
+    const void* data,
+    size_t data_len,
+    uint32_t index,
+    librdp_clipboard_file_metadata* metadata,
+    char* name,
+    size_t name_capacity,
+    size_t* name_length)
+{
+    const uint8_t* bytes = (const uint8_t*)data;
+    const uint8_t* descriptor = NULL;
+    const uint8_t* encoded_name = NULL;
+    uint32_t flags = 0u;
+    uint32_t count = 0u;
+    size_t encoded_name_len = 0u;
+    char* converted = NULL;
+    size_t converted_len = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || !metadata || !name_length ||
+        (!name && name_capacity != 0u) ||
+        metadata->version != LIBRDP_CLIPBOARD_FILE_METADATA_VERSION ||
+        metadata->size < sizeof(*metadata))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *name_length = 0u;
+    status = librdp_clipboard_file_group_count(data, data_len, &count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (index >= count)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    descriptor = bytes + sizeof(uint32_t) +
+                 (size_t)index * RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE;
+    flags = rdp_clipboard_read_u32_le_at(descriptor);
+    encoded_name =
+        descriptor + RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_OFFSET;
+    while (encoded_name_len + 1u <
+               RDP_CLIPBOARD_FILE_DESCRIPTOR_NAME_BYTES &&
+           (encoded_name[encoded_name_len] != 0u ||
+            encoded_name[encoded_name_len + 1u] != 0u))
+        encoded_name_len += 2u;
+    status = rdp_charset_utf16le_to_utf8_alloc(
+        encoded_name,
+        encoded_name_len,
+        0,
+        &converted,
+        &converted_len);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (!rdp_clipboard_public_file_name_valid(converted) ||
+        converted_len == SIZE_MAX)
+    {
+        free(converted);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    *name_length = converted_len + 1u;
+    if (name && name_capacity < *name_length)
+    {
+        free(converted);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    metadata->name = NULL;
+    metadata->file_size = 0u;
+    if ((flags & RDP_CLIPBOARD_FD_FILESIZE) != 0u)
+    {
+        metadata->file_size =
+            ((uint64_t)rdp_clipboard_read_u32_le_at(
+                 descriptor +
+                 RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE_HIGH_OFFSET)
+             << 32u) |
+            rdp_clipboard_read_u32_le_at(
+                descriptor +
+                RDP_CLIPBOARD_FILE_DESCRIPTOR_SIZE_LOW_OFFSET);
+    }
+    metadata->attributes = LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_NORMAL;
+    if ((flags & RDP_CLIPBOARD_FD_ATTRIBUTES) != 0u)
+    {
+        metadata->attributes = rdp_clipboard_read_u32_le_at(
+            descriptor +
+            RDP_CLIPBOARD_FILE_DESCRIPTOR_ATTRIBUTES_OFFSET);
+    }
+    if (name)
+    {
+        memcpy(name, converted, *name_length);
+        metadata->name = name;
+    }
+    free(converted);
+    return LIBRDP_STATUS_OK;
 }
 
 librdp_status rdp_clipboard_parse_packet(const void* data, size_t length, rdp_clipboard_packet* packet)
