@@ -329,6 +329,20 @@ librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_peer_set_clipboard_callback(
+    librdp_server_peer* peer,
+    librdp_server_clipboard_callback callback,
+    void* user_data)
+{
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
+        return LIBRDP_STATUS_STATE;
+    peer->clipboard_callback = callback;
+    peer->clipboard_callback_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_peer_set_extension_family_callback(
     librdp_server_peer* peer,
     librdp_server_extension_family family,

@@ -7,7 +7,18 @@
 
 int main(void)
 {
+    librdp_server_clipboard_event clipboard_event;
     librdp_settings* settings = librdp_settings_new();
+
+    if (librdp_server_clipboard_event_init(&clipboard_event) !=
+            LIBRDP_STATUS_OK ||
+        clipboard_event.version != LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION ||
+        clipboard_event.size != sizeof(clipboard_event) ||
+        librdp_server_peer_set_clipboard_callback(NULL, NULL, NULL) !=
+            LIBRDP_STATUS_INVALID_ARGUMENT)
+    {
+        return 5;
+    }
     if (!settings)
         return 1;
 

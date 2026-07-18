@@ -35,6 +35,7 @@ extern "C" {
 #define LIBRDP_SERVER_STATUS_VERSION 1u /**< Current librdp_server_status version. */
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_CLIPBOARD_STATE_VERSION 1u /**< Current librdp_server_clipboard_state version. */
+#define LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION 1u /**< Current librdp_server_clipboard_event version. */
 #define LIBRDP_SERVER_EXTENSION_STATE_VERSION 1u /**< Current librdp_server_extension_state version. */
 #define LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION 1u /**< Current librdp_server_credentials_request version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
@@ -275,6 +276,70 @@ typedef struct librdp_server_clipboard_format
     const void* name;   /**< Borrowed format-name bytes, or NULL for unnamed formats. */
     size_t name_len;    /**< Number of bytes available at name. */
 } librdp_server_clipboard_format;
+
+/**
+ * @brief Normalized client-originated clipboard event kind.
+ *
+ * Values identify validated clipboard protocol operations without exposing
+ * packet framing to the application.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_clipboard_event_type
+{
+    LIBRDP_SERVER_CLIPBOARD_MONITOR_READY = 1, /**< Client clipboard runtime became ready. */
+    LIBRDP_SERVER_CLIPBOARD_CAPABILITIES = 2, /**< Client clipboard capabilities were received. */
+    LIBRDP_SERVER_CLIPBOARD_FORMAT_LIST = 3, /**< Client advertised available formats. */
+    LIBRDP_SERVER_CLIPBOARD_FORMAT_LIST_RESPONSE = 4, /**< Client acknowledged a server format list. */
+    LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_REQUEST = 5, /**< Client requested one server format. */
+    LIBRDP_SERVER_CLIPBOARD_FORMAT_DATA_RESPONSE = 6, /**< Client completed a server format request. */
+    LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_REQUEST = 7, /**< Client requested a server clipboard file range. */
+    LIBRDP_SERVER_CLIPBOARD_FILE_CONTENTS_RESPONSE = 8, /**< Client completed a file-range request. */
+    LIBRDP_SERVER_CLIPBOARD_LOCK = 9, /**< Client locked one clipboard generation. */
+    LIBRDP_SERVER_CLIPBOARD_UNLOCK = 10, /**< Client unlocked one clipboard generation. */
+    LIBRDP_SERVER_CLIPBOARD_CANCELLED = 11 /**< Pending clipboard work was cancelled locally. */
+} librdp_server_clipboard_event_type;
+
+/**
+ * @brief Validated server-side clipboard event.
+ *
+ * The event object, format array, format names, and data bytes are borrowed
+ * from the peer dispatch stack and remain valid only until the callback
+ * returns. The application must copy any value retained after the callback.
+ * No pointer may be freed by the callback.
+ *
+ * Fields not applicable to type are zero. related_type identifies the request
+ * kind for a cancellation event. success reflects clipboard response flags.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_clipboard_event
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    librdp_server_clipboard_event_type type; /**< Normalized operation kind. */
+    librdp_server_clipboard_event_type related_type; /**< Cancelled request kind, otherwise zero. */
+    librdp_status status; /**< Validation or cancellation status. */
+    uint16_t channel_id; /**< Joined clipboard static-channel identifier. */
+    uint16_t flags; /**< Validated clipboard response or capability flags. */
+    uint32_t reconnect_generation; /**< Peer clipboard generation for stale-event rejection. */
+    uint32_t capability_count; /**< Number of capability sets received. */
+    uint32_t general_flags; /**< General clipboard capability flags when present. */
+    const librdp_server_clipboard_format* formats; /**< Borrowed format array, or NULL. */
+    uint32_t format_count; /**< Number of entries in formats. */
+    uint8_t long_format_names; /**< Non-zero when format names use UTF-16LE. */
+    uint8_t success; /**< Non-zero for a successful response. */
+    uint32_t format_id; /**< Requested or completed clipboard format id. */
+    uint32_t stream_id; /**< File-content request correlation id. */
+    int32_t file_index; /**< File-list index for file-content requests. */
+    uint32_t file_flags; /**< File-content request flags. */
+    uint64_t position; /**< Requested file byte offset. */
+    uint32_t requested_bytes; /**< Requested file byte count. */
+    uint8_t has_clip_data_id; /**< Non-zero when clip_data_id is present. */
+    uint32_t clip_data_id; /**< Clipboard lock identifier. */
+    const uint8_t* data; /**< Borrowed response bytes, or NULL for no data. */
+    size_t data_len; /**< Number of bytes available at data. */
+} librdp_server_clipboard_event;
 
 /**
  * @brief Snapshot of server-side clipboard runtime state.
@@ -601,6 +666,27 @@ typedef void (*librdp_server_extension_callback)(librdp_server_peer* peer,
                                                  void* user_data);
 
 /**
+ * @brief Server-side normalized clipboard callback.
+ *
+ * Called synchronously from librdp_server_peer_run_once() on the serialized
+ * peer owner thread after packet validation and request-correlation checks.
+ * The event and all referenced buffers are valid only until the callback
+ * returns. The callback must not free or drive peer reentrantly.
+ *
+ * @param[in,out] peer Peer receiving the clipboard operation; never NULL.
+ * @param[in] event Borrowed normalized event; never NULL.
+ * @param[in] user_data Opaque pointer supplied at registration; may be NULL.
+ *
+ * @warning Clipboard names, text, images, and file data can contain sensitive
+ * user content. Do not log event payloads without an explicit unsafe policy.
+ * @since 0.1.0
+ */
+typedef void (*librdp_server_clipboard_callback)(
+    librdp_server_peer* peer,
+    const librdp_server_clipboard_event* event,
+    void* user_data);
+
+/**
  * @brief Server-side runtime event callback.
  *
  * Called synchronously from public server functions on the same serialized
@@ -742,6 +828,21 @@ LIBRDP_API librdp_status librdp_server_dynamic_channel_info_init(librdp_server_d
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_extension_event_init(librdp_server_extension_event* event);
+
+/**
+ * @brief Initialize a normalized server clipboard event.
+ *
+ * @param[out] event Caller-owned event object; must not be NULL. The function
+ * clears all fields and initializes size, version, and status.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * event is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_clipboard_event_init(
+    librdp_server_clipboard_event* event);
 
 /**
  * @brief Initialize a server runtime event value.
@@ -1275,6 +1376,29 @@ LIBRDP_API librdp_status librdp_server_peer_set_dynamic_channel_accept_callback(
 LIBRDP_API librdp_status librdp_server_peer_set_extension_callback(librdp_server_peer* peer,
                                                                    librdp_server_extension_callback callback,
                                                                    void* user_data);
+
+/**
+ * @brief Register or clear the normalized clipboard callback for one peer.
+ *
+ * The callback and user_data are borrowed until replaced, cleared, or the peer
+ * is freed. Passing NULL for callback disables typed clipboard delivery while
+ * leaving the generic channel and extension callbacks unchanged.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE when peer is closed.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. Callback
+ * invocation occurs from librdp_server_peer_run_once().
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_clipboard_callback(
+    librdp_server_peer* peer,
+    librdp_server_clipboard_callback callback,
+    void* user_data);
 
 /**
  * @brief Register the callback for one normalized extension family.

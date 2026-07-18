@@ -189,6 +189,8 @@ struct librdp_server_peer
     void* dynamic_channel_accept_user_data;
     librdp_server_extension_callback extension_callback;
     void* extension_callback_user_data;
+    librdp_server_clipboard_callback clipboard_callback;
+    void* clipboard_callback_user_data;
     librdp_server_extension_callback extension_family_callbacks[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     void* extension_family_user_data[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     librdp_server_event_callback event_callback;

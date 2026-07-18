@@ -183,6 +183,18 @@ librdp_status librdp_server_extension_event_init(librdp_server_extension_event* 
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_clipboard_event_init(
+    librdp_server_clipboard_event* event)
+{
+    if (!event)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(event, 0, sizeof(*event));
+    event->version = LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION;
+    event->size = (uint32_t)sizeof(*event);
+    event->status = LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_event_init(librdp_server_event* event)
 {
     if (!event)

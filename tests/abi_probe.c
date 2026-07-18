@@ -49,6 +49,8 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_static_channel_info", librdp_server_static_channel_info, ",");
     ABI_TYPE_ENTRY("librdp_server_dynamic_channel_info", librdp_server_dynamic_channel_info, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_event", librdp_server_channel_event, ",");
+    ABI_TYPE_ENTRY("librdp_server_clipboard_event_type", librdp_server_clipboard_event_type, ",");
+    ABI_TYPE_ENTRY("librdp_server_clipboard_event", librdp_server_clipboard_event, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_family", librdp_server_extension_family, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_event", librdp_server_extension_event, ",");
     ABI_TYPE_ENTRY("librdp_server_event_type", librdp_server_event_type, ",");
@@ -58,6 +60,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_metrics", librdp_server_metrics, ",");
     ABI_TYPE_ENTRY("librdp_server_input_callback", librdp_server_input_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_callback", librdp_server_channel_callback, ",");
+    ABI_TYPE_ENTRY("librdp_server_clipboard_callback", librdp_server_clipboard_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_callback", librdp_server_extension_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_event_callback", librdp_server_event_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_credentials_provider", librdp_server_credentials_provider, ",");
