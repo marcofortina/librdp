@@ -131,7 +131,7 @@ static int test_nla_policy(void)
     return 1;
 }
 
-static int test_rejects_unavailable_modes(void)
+static int test_modes_and_provider_policy(void)
 {
     char* managed[] = {
         (char*)"server",
@@ -147,6 +147,15 @@ static int test_rejects_unavailable_modes(void)
         (char*)"--tls-key",
         (char*)"/tmp/server.key",
     };
+    char* clipboard[] = {
+        (char*)"server",
+        (char*)"--allow-capture",
+        (char*)"--allow-clipboard",
+        (char*)"--tls-cert",
+        (char*)"/tmp/server.crt",
+        (char*)"--tls-key",
+        (char*)"/tmp/server.key",
+    };
     cocoa_server_options options;
 
     CHECK(cocoa_server_parse_options(
@@ -156,6 +165,11 @@ static int test_rejects_unavailable_modes(void)
     CHECK(cocoa_server_parse_options(
               (int)(sizeof(input) / sizeof(input[0])),
               input,
+              &options) == 1);
+    CHECK(options.allow_input == 1);
+    CHECK(cocoa_server_parse_options(
+              (int)(sizeof(clipboard) / sizeof(clipboard[0])),
+              clipboard,
               &options) == 0);
     return 1;
 }
@@ -202,7 +216,7 @@ int main(void)
     ok &= test_secure_tls_options();
     ok &= test_standard_requires_explicit_policy();
     ok &= test_nla_policy();
-    ok &= test_rejects_unavailable_modes();
+    ok &= test_modes_and_provider_policy();
     ok &= test_bounds_and_help();
     return ok ? 0 : 1;
 }

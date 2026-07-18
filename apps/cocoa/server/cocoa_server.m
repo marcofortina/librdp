@@ -63,7 +63,9 @@ static int cocoa_server_config_valid(
            config->max_fps > 0u && config->max_fps <= 60u &&
            config->max_frame_bytes >= 4u &&
            config->max_frame_bytes <= 512u * 1024u * 1024u &&
-           config->allow_capture == 1;
+           config->allow_capture == 1 &&
+           (config->allow_input == 0 ||
+            config->allow_input == 1);
 }
 
 static int cocoa_server_set_nonblocking(int descriptor)
@@ -202,10 +204,12 @@ static SCContentFilter* cocoa_server_select_stable_filter(
     return nil;
 }
 
-static int cocoa_server_filter_dimensions(
+static int cocoa_server_filter_geometry(
     SCContentFilter* filter,
     uint32_t* width,
-    uint32_t* height)
+    uint32_t* height,
+    CGRect* source_rect,
+    double* source_scale)
 {
     CGRect content_rect = [filter contentRect];
     double scale = 1.0;
@@ -216,12 +220,20 @@ static int cocoa_server_filter_dimensions(
         scale = (double)[filter pointPixelScale];
     pixel_width = ceil(content_rect.size.width * scale);
     pixel_height = ceil(content_rect.size.height * scale);
-    if (!isfinite(pixel_width) || !isfinite(pixel_height) ||
+    if (!width || !height || !source_rect || !source_scale ||
+        !isfinite(content_rect.origin.x) ||
+        !isfinite(content_rect.origin.y) ||
+        !isfinite(content_rect.size.width) ||
+        !isfinite(content_rect.size.height) ||
+        !isfinite(scale) || scale <= 0.0 ||
+        !isfinite(pixel_width) || !isfinite(pixel_height) ||
         pixel_width < 1.0 || pixel_height < 1.0 ||
         pixel_width > 16384.0 || pixel_height > 16384.0)
         return 0;
     *width = (uint32_t)pixel_width;
     *height = (uint32_t)pixel_height;
+    *source_rect = content_rect;
+    *source_scale = scale;
     return 1;
 }
 
@@ -239,9 +251,11 @@ static int cocoa_server_prepare_stream(
         cocoa_server_select_initial_filter(context, content);
     [content release];
     if (!context->filter ||
-        !cocoa_server_filter_dimensions(context->filter,
-                                        &context->width,
-                                        &context->height))
+        !cocoa_server_filter_geometry(context->filter,
+                                      &context->width,
+                                      &context->height,
+                                      &context->source_rect,
+                                      &context->source_scale))
     {
         *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
         return 0;
@@ -425,6 +439,8 @@ librdp_status cocoa_server_refresh_topology(
     SCStreamConfiguration* configuration = nil;
     uint32_t width = 0u;
     uint32_t height = 0u;
+    CGRect source_rect = CGRectZero;
+    double source_scale = 0.0;
     librdp_status status = LIBRDP_STATUS_OK;
     int changed = 0;
 
@@ -437,7 +453,11 @@ librdp_status cocoa_server_refresh_topology(
     filter = cocoa_server_select_stable_filter(context, content);
     [content release];
     if (!filter ||
-        !cocoa_server_filter_dimensions(filter, &width, &height))
+        !cocoa_server_filter_geometry(filter,
+                                      &width,
+                                      &height,
+                                      &source_rect,
+                                      &source_scale))
     {
         [filter release];
         return LIBRDP_STATUS_CLOSED;
@@ -451,7 +471,10 @@ librdp_status cocoa_server_refresh_topology(
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
     }
     changed = width != context->width ||
-              height != context->height;
+              height != context->height ||
+              !CGRectEqualToRect(source_rect,
+                                 context->source_rect) ||
+              source_scale != context->source_scale;
     if (!changed && !restart_stream)
     {
         [filter release];
@@ -481,6 +504,8 @@ librdp_status cocoa_server_refresh_topology(
                sizeof(context->pending_frame));
         context->width = width;
         context->height = height;
+        context->source_rect = source_rect;
+        context->source_scale = source_scale;
         context->force_full_frame = 1;
         pthread_mutex_unlock(&context->lock);
         [context->filter release];
@@ -542,6 +567,8 @@ cocoa_server_context* cocoa_server_context_new(
         cocoa_server_context_free(context);
         return NULL;
     }
+    if (context->config.allow_input)
+        (void)cocoa_server_input_permission(1);
     *output_status = LIBRDP_STATUS_OK;
     return context;
 }
@@ -550,6 +577,8 @@ void cocoa_server_context_free(cocoa_server_context* context)
 {
     if (!context)
         return;
+    if (context->config.allow_input)
+        cocoa_server_input_vtable.release_all(context);
     cocoa_server_capture_vtable.stop(context);
     if (context->stream && context->capture_delegate)
     {
@@ -623,12 +652,24 @@ static librdp_status cocoa_server_permission_query(
         kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    *state =
-        kind == SERVER_PLATFORM_PERMISSION_CAPTURE &&
-                context->config.allow_capture &&
-                CGPreflightScreenCaptureAccess()
-            ? SERVER_PLATFORM_PERMISSION_GRANTED
-            : SERVER_PLATFORM_PERMISSION_DENIED;
+    if (kind == SERVER_PLATFORM_PERMISSION_CAPTURE)
+    {
+        *state =
+            context->config.allow_capture &&
+                    CGPreflightScreenCaptureAccess()
+                ? SERVER_PLATFORM_PERMISSION_GRANTED
+                : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
+    else if (kind == SERVER_PLATFORM_PERMISSION_INPUT)
+    {
+        *state =
+            context->config.allow_input &&
+                    cocoa_server_input_permission(0)
+                ? SERVER_PLATFORM_PERMISSION_GRANTED
+                : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
+    else
+        *state = SERVER_PLATFORM_PERMISSION_DENIED;
     return LIBRDP_STATUS_OK;
 }
 
@@ -641,11 +682,23 @@ static librdp_status cocoa_server_permission_request(
     server_platform_permission_state state =
         SERVER_PLATFORM_PERMISSION_DENIED;
 
-    if (!context || kind != SERVER_PLATFORM_PERMISSION_CAPTURE)
+    if (!context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (kind == SERVER_PLATFORM_PERMISSION_CAPTURE)
+    {
+        state = CGRequestScreenCaptureAccess()
+                    ? SERVER_PLATFORM_PERMISSION_GRANTED
+                    : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
+    else if (kind == SERVER_PLATFORM_PERMISSION_INPUT &&
+             context->config.allow_input)
+    {
+        state = cocoa_server_input_permission(1)
+                    ? SERVER_PLATFORM_PERMISSION_GRANTED
+                    : SERVER_PLATFORM_PERMISSION_DENIED;
+    }
+    else
         return LIBRDP_STATUS_UNSUPPORTED;
-    state = CGRequestScreenCaptureAccess()
-                ? SERVER_PLATFORM_PERMISSION_GRANTED
-                : SERVER_PLATFORM_PERMISSION_DENIED;
     if (context->permission_sink.changed)
         context->permission_sink.changed(
             kind,
@@ -667,6 +720,8 @@ static librdp_status cocoa_server_permission_revoke(
         kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
         kind > SERVER_PLATFORM_PERMISSION_DRIVE)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (kind == SERVER_PLATFORM_PERMISSION_INPUT)
+        cocoa_server_input_vtable.release_all(context);
     if (context->permission_sink.changed)
         context->permission_sink.changed(
             kind,
@@ -696,6 +751,11 @@ librdp_status cocoa_server_context_platform(
     server_platform_init(platform);
     platform->capture.vtable = &cocoa_server_capture_vtable;
     platform->capture.context = context;
+    if (context->config.allow_input)
+    {
+        platform->input.vtable = &cocoa_server_input_vtable;
+        platform->input.context = context;
+    }
     platform->permission.vtable =
         &cocoa_server_permission_vtable;
     platform->permission.context = context;

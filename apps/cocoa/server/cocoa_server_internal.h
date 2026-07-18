@@ -17,12 +17,15 @@
 #ifndef LIBRDP_COCOA_SERVER_INTERNAL_H
 #define LIBRDP_COCOA_SERVER_INTERNAL_H
 
+#include "cocoa_input.h"
 #include "cocoa_server.h"
 
 #import <Cocoa/Cocoa.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
 #include <pthread.h>
+
+#define COCOA_SERVER_KEY_CAPACITY 128u
 
 typedef struct cocoa_server_frame_packet
 {
@@ -65,7 +68,12 @@ struct cocoa_server_context
     uint32_t width;
     uint32_t height;
     uint32_t stable_source_id;
+    CGRect source_rect;
+    double source_scale;
     uint64_t next_sequence;
+    uint8_t pressed_keys[COCOA_SERVER_KEY_CAPACITY];
+    uint16_t pressed_buttons;
+    uint16_t pending_high_surrogate;
     int capture_started;
     int permission_started;
     int capture_lost;
@@ -84,6 +92,7 @@ librdp_status cocoa_server_refresh_topology(
     cocoa_server_context* context,
     int restart_stream);
 extern const server_platform_capture_vtable cocoa_server_capture_vtable;
+extern const server_platform_input_vtable cocoa_server_input_vtable;
 extern const server_platform_permission_vtable cocoa_server_permission_vtable;
 
 #endif

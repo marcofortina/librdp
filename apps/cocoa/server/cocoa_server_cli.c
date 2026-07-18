@@ -49,7 +49,8 @@ void cocoa_server_usage(FILE* stream, const char* program)
         "[--bind address] [--port port] [--max-peers count] "
         "[--max-fps count] [--max-frame-bytes bytes] "
         "[--security tls|nla|standard] [--allow-standard-security] "
-        "[--user name] [--domain name] [--password-env name]\n",
+        "[--user name] [--domain name] [--password-env name] "
+        "[--allow-input]\n",
         program);
 }
 
@@ -126,11 +127,10 @@ static int cocoa_server_validate_options(const cocoa_server_options* options)
         fprintf(stderr, "--allow-capture is required\n");
         return 0;
     }
-    if (options->allow_input || options->allow_clipboard ||
-        options->allow_drive)
+    if (options->allow_clipboard || options->allow_drive)
     {
         fprintf(stderr,
-                "input, clipboard and drive providers are not enabled "
+                "clipboard and drive providers are not enabled "
                 "in this build\n");
         return 0;
     }

@@ -91,6 +91,7 @@ int cocoa_server_run(const cocoa_server_options* options)
     native_config.max_fps = options->max_fps;
     native_config.max_frame_bytes = options->max_frame_bytes;
     native_config.allow_capture = options->allow_capture;
+    native_config.allow_input = options->allow_input;
     native = cocoa_server_context_new(&native_config, &status);
     if (!native)
     {
@@ -127,7 +128,10 @@ int cocoa_server_run(const cocoa_server_options* options)
         host_config.server.nla_password = password;
     }
     host_config.max_peers = options->max_peers;
-    host_config.input_policy = SERVER_HOST_INPUT_DISABLED;
+    host_config.input_policy =
+        options->allow_input
+            ? SERVER_HOST_INPUT_FIRST_ACTIVE
+            : SERVER_HOST_INPUT_DISABLED;
     host_config.trace_callback = cocoa_server_trace;
     host_config.trace_user_data = stderr;
     status = cocoa_server_context_platform(

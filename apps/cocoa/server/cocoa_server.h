@@ -39,6 +39,7 @@ typedef struct cocoa_server_config
     uint32_t max_fps;
     size_t max_frame_bytes;
     int allow_capture;
+    int allow_input;
 } cocoa_server_config;
 
 typedef struct cocoa_server_context cocoa_server_context;
