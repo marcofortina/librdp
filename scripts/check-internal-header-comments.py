@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKED_ROOTS = (
+    Path("apps/common"),
     Path("src"),
     Path("apps/x11/viewer"),
 )

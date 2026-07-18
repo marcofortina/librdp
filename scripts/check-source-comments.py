@@ -15,6 +15,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 CHECKED_ROOTS = (
     Path("src"),
+    Path("apps/common"),
     Path("apps/cocoa"),
     Path("apps/x11/admin"),
     Path("apps/x11/viewer"),

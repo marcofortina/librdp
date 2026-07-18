@@ -75,6 +75,10 @@ DOC_OPTION_RE = re.compile(r"--[a-z0-9-]+")
 NON_VIEWER_OPTIONS = {
     "--build",
 }
+COCOA_ONLY_VIEWER_OPTIONS = {
+    "--accept-tls-certificate",
+    "--help",
+}
 CMAKE_OPTION_RE = re.compile(r"(?:option|librdp_feature_option)\((LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+)\b")
 DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+")
 FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c)\)")
@@ -201,8 +205,14 @@ def public_documentation_files() -> list[str]:
 
 
 def viewer_source_options() -> set[str]:
-    source = read("apps/x11/viewer/main.c") + "\n" + read("apps/x11/viewer/viewer_cli.c")
-    return set(VIEWER_OPTION_RE.findall(source))
+    source = "\n".join(
+        (
+            read("apps/common/client_options.c"),
+            read("apps/x11/viewer/main.c"),
+            read("apps/x11/viewer/viewer_cli.c"),
+        )
+    )
+    return set(VIEWER_OPTION_RE.findall(source)) - COCOA_ONLY_VIEWER_OPTIONS
 
 
 def admin_source_options() -> set[str]:

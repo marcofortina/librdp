@@ -1,0 +1,31 @@
+# Copyright (C) 2026 Marco Fortina
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+set(LIBRDP_APP_COMMON_REQUIRED 0)
+if(LIBRDP_BUILD_TESTS OR
+   LIBRDP_BUILD_X11_VIEWER OR
+   LIBRDP_BUILD_COCOA_VIEWER OR
+   LIBRDP_BUILD_X11_ADMIN OR
+   LIBRDP_BUILD_COCOA_ADMIN OR
+   LIBRDP_BUILD_X11_WORKSPACE OR
+   LIBRDP_BUILD_COCOA_WORKSPACE)
+    set(LIBRDP_APP_COMMON_REQUIRED 1)
+endif()
+
+if(LIBRDP_APP_COMMON_REQUIRED)
+    add_library(librdp_app_common STATIC
+        apps/common/client_options.c
+        apps/common/client_tls.c
+    )
+    target_include_directories(librdp_app_common
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(librdp_app_common PUBLIC librdp)
+    librdp_apply_system_definitions(librdp_app_common)
+    librdp_apply_warning_options(librdp_app_common)
+    librdp_apply_sanitizer_compile_options(librdp_app_common)
+    librdp_apply_sanitizer_link_options(librdp_app_common)
+endif()

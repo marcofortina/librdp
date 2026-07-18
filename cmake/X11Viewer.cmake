@@ -38,13 +38,14 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11/viewer/viewer_window.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
     target_link_libraries(librdp-x11-viewer PRIVATE
-        librdp
+        librdp_app_common
         Iconv::Iconv
         ${X11_LIBRARIES}
         X11::Xcursor

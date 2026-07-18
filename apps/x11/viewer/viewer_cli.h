@@ -15,14 +15,11 @@
 #ifndef LIBRDP_X11_VIEWER_CLI_H
 #define LIBRDP_X11_VIEWER_CLI_H
 
+#include "client_options.h"
+
 #include <librdp/librdp.h>
 
-typedef struct x11_cli_options
-{
-    char* clipboard_file_path;
-    int tls_prompt_cert;
-    int tls_accept_any_cert;
-} x11_cli_options;
+typedef client_options x11_cli_options;
 
 const char* x11_cli_usage(void);
 void x11_cli_options_free(x11_cli_options* options);
