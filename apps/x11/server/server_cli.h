@@ -37,6 +37,7 @@ typedef struct x11_server_options
     const char* tls_private_key;
     const char* nla_username;
     const char* nla_domain;
+    const char* nla_password;
     const char* password_environment;
     const char* drive_mount;
     x11_server_session_mode session_mode;

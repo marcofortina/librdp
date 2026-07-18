@@ -353,7 +353,8 @@ librdp_status x11_managed_ipc_message_validate(
         X11_MANAGED_IPC_DRIVE_READ_ONLY |
         X11_MANAGED_IPC_TEST_XVFB |
         X11_MANAGED_IPC_PERSISTENT |
-        X11_MANAGED_IPC_RECONNECT;
+        X11_MANAGED_IPC_RECONNECT |
+        X11_MANAGED_IPC_ALLOW_CAPTURE;
 
     if (!message || message->version != X11_MANAGED_IPC_VERSION ||
         message->size < sizeof(*message) ||
@@ -444,6 +445,10 @@ static librdp_status x11_managed_ipc_encode(
         !x11_managed_ipc_put_u64(&cursor, message->created_ns) ||
         !x11_managed_ipc_put_u64(&cursor, message->idle_timeout_ns) ||
         !x11_managed_ipc_put_u64(&cursor, message->max_duration_ns) ||
+        !x11_managed_ipc_put_u64(&cursor, message->supervisor_pid) ||
+        !x11_managed_ipc_put_u64(&cursor, message->agent_pid) ||
+        !x11_managed_ipc_put_u64(&cursor, message->xserver_pid) ||
+        !x11_managed_ipc_put_u64(&cursor, message->desktop_pid) ||
         !x11_managed_ipc_put_u32(&cursor, message->flags) ||
         !x11_managed_ipc_put_u32(&cursor, message->uid) ||
         !x11_managed_ipc_put_u32(&cursor, message->gid) ||
@@ -515,6 +520,10 @@ static librdp_status x11_managed_ipc_decode(
         !x11_managed_ipc_get_u64(&cursor, &message->created_ns) ||
         !x11_managed_ipc_get_u64(&cursor, &message->idle_timeout_ns) ||
         !x11_managed_ipc_get_u64(&cursor, &message->max_duration_ns) ||
+        !x11_managed_ipc_get_u64(&cursor, &message->supervisor_pid) ||
+        !x11_managed_ipc_get_u64(&cursor, &message->agent_pid) ||
+        !x11_managed_ipc_get_u64(&cursor, &message->xserver_pid) ||
+        !x11_managed_ipc_get_u64(&cursor, &message->desktop_pid) ||
         !x11_managed_ipc_get_u32(&cursor, &message->flags) ||
         !x11_managed_ipc_get_u32(&cursor, &message->uid) ||
         !x11_managed_ipc_get_u32(&cursor, &message->gid) ||

@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define X11_MANAGED_IPC_VERSION 1u
+#define X11_MANAGED_IPC_VERSION 2u
 #define X11_MANAGED_IPC_MAX_FRAME_BYTES 32768u
 #define X11_MANAGED_IPC_USERNAME_BYTES 256u
 #define X11_MANAGED_IPC_DOMAIN_BYTES 256u
@@ -55,7 +55,8 @@ typedef enum x11_managed_ipc_flag
     X11_MANAGED_IPC_DRIVE_READ_ONLY = 1u << 3,
     X11_MANAGED_IPC_TEST_XVFB = 1u << 4,
     X11_MANAGED_IPC_PERSISTENT = 1u << 5,
-    X11_MANAGED_IPC_RECONNECT = 1u << 6
+    X11_MANAGED_IPC_RECONNECT = 1u << 6,
+    X11_MANAGED_IPC_ALLOW_CAPTURE = 1u << 7
 } x11_managed_ipc_flag;
 
 typedef struct x11_managed_ipc_identity
@@ -75,6 +76,10 @@ typedef struct x11_managed_ipc_message
     uint64_t created_ns;
     uint64_t idle_timeout_ns;
     uint64_t max_duration_ns;
+    uint64_t supervisor_pid;
+    uint64_t agent_pid;
+    uint64_t xserver_pid;
+    uint64_t desktop_pid;
     uint32_t flags;
     uint32_t uid;
     uint32_t gid;

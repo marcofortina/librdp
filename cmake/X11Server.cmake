@@ -16,64 +16,85 @@ if(LIBRDP_BUILD_X11_SERVER)
         xkbcommon
         xau
     )
-    add_executable(librdp-x11-server
-        apps/x11/x11_keymap.c
-        apps/x11/server/main.c
-        apps/x11/server/server_capture.c
-        apps/x11/server/server_cli.c
-        apps/x11/server/server_clipboard.c
-        apps/x11/server/server_clipboard_files.c
-        apps/x11/server/server_input.c
-        apps/x11/server/server_managed_auth.c
-        apps/x11/server/server_managed_ipc.c
-        apps/x11/server/server_managed_process.c
-        apps/x11/server/server_managed_registry.c
-        apps/x11/server/server_permission.c
-        apps/x11/server/server_pointer.c
-        apps/x11/server/server_fuse.c
-        apps/x11/server/server_runtime.c
-        apps/x11/server/server_x11.c
-    )
-    target_include_directories(librdp-x11-server PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    )
-    target_link_libraries(librdp-x11-server PRIVATE
-        librdp_app_common
-        Iconv::Iconv
-        PkgConfig::LIBRDP_X11_SERVER
-    )
-    if(LIBRDP_FUSE3_FOUND)
-        target_compile_definitions(librdp-x11-server PRIVATE
-            LIBRDP_HAVE_FUSE3=1
-        )
-        target_link_libraries(librdp-x11-server PRIVATE
-            PkgConfig::LIBRDP_FUSE3
-        )
-    endif()
     if(NOT "${LIBRDP_WITH_XSHM}" STREQUAL "OFF")
         pkg_check_modules(LIBRDP_X11_SERVER_XEXT QUIET IMPORTED_TARGET xext)
         if(LIBRDP_X11_SERVER_XEXT_FOUND)
-            target_compile_definitions(librdp-x11-server PRIVATE
-                LIBRDP_HAVE_XSHM=1
-            )
-            target_link_libraries(librdp-x11-server PRIVATE
-                PkgConfig::LIBRDP_X11_SERVER_XEXT
-            )
             set(LIBRDP_X11_SERVER_XSHM_FOUND 1 CACHE INTERNAL
                 "MIT-SHM support found for the X11 server" FORCE)
         elseif("${LIBRDP_WITH_XSHM}" STREQUAL "ON")
             message(FATAL_ERROR "LIBRDP_WITH_XSHM=ON requires Xext")
         endif()
     endif()
-    librdp_apply_system_definitions(librdp-x11-server)
-    librdp_apply_x11_managed_auth(librdp-x11-server)
-    librdp_apply_warning_options(librdp-x11-server)
-    librdp_apply_sanitizer_compile_options(librdp-x11-server)
-    librdp_apply_sanitizer_link_options(librdp-x11-server)
-    install(TARGETS librdp-x11-server
+
+    set(LIBRDP_X11_SERVER_PLATFORM_SOURCES
+        apps/x11/x11_keymap.c
+        apps/x11/server/server_capture.c
+        apps/x11/server/server_clipboard.c
+        apps/x11/server/server_clipboard_files.c
+        apps/x11/server/server_input.c
+        apps/x11/server/server_permission.c
+        apps/x11/server/server_pointer.c
+        apps/x11/server/server_fuse.c
+        apps/x11/server/server_runtime.c
+        apps/x11/server/server_x11.c
+    )
+
+    function(librdp_configure_x11_server_target target)
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(${target} PRIVATE
+            librdp_app_common
+            Iconv::Iconv
+            OpenSSL::Crypto
+            PkgConfig::LIBRDP_X11_SERVER
+            Threads::Threads
+        )
+        if(LIBRDP_FUSE3_FOUND)
+            target_compile_definitions(${target} PRIVATE
+                LIBRDP_HAVE_FUSE3=1
+            )
+            target_link_libraries(${target} PRIVATE
+                PkgConfig::LIBRDP_FUSE3
+            )
+        endif()
+        if(LIBRDP_X11_SERVER_XSHM_FOUND)
+            target_compile_definitions(${target} PRIVATE
+                LIBRDP_HAVE_XSHM=1
+            )
+            target_link_libraries(${target} PRIVATE
+                PkgConfig::LIBRDP_X11_SERVER_XEXT
+            )
+        endif()
+        librdp_apply_system_definitions(${target})
+        librdp_apply_warning_options(${target})
+        librdp_apply_sanitizer_compile_options(${target})
+        librdp_apply_sanitizer_link_options(${target})
+    endfunction()
+
+    add_executable(librdp-x11-server
+        apps/x11/server/main.c
+        apps/x11/server/server_cli.c
+        apps/x11/server/server_managed_ipc.c
+        ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
+    )
+    librdp_configure_x11_server_target(librdp-x11-server)
+
+    add_executable(librdp-x11-session-agent
+        apps/x11/server/session_agent.c
+        apps/x11/server/server_cli.c
+        apps/x11/server/server_managed_ipc.c
+        apps/x11/server/server_managed_process.c
+        ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
+    )
+    librdp_configure_x11_server_target(librdp-x11-session-agent)
+
+    install(TARGETS
+        librdp-x11-server
+        librdp-x11-session-agent
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)

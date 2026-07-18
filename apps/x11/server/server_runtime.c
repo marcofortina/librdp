@@ -125,7 +125,9 @@ x11_server_runtime* x11_server_runtime_new(
     host_config.server.nla_domain = options->nla_domain;
     if (options->security_mode == LIBRDP_SECURITY_NLA)
     {
-        password = getenv(options->password_environment);
+        password = options->nla_password
+                       ? options->nla_password
+                       : getenv(options->password_environment);
         if (!password || password[0] == '\0')
         {
             *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;

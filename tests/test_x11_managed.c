@@ -41,6 +41,9 @@ static void test_message_start(x11_managed_ipc_message* message)
     message->request_id = 7u;
     message->width = 1280u;
     message->height = 720u;
+    message->supervisor_pid = 101u;
+    message->xserver_pid = 102u;
+    message->desktop_pid = 103u;
     message->flags = X11_MANAGED_IPC_ALLOW_INPUT |
                      X11_MANAGED_IPC_ALLOW_CLIPBOARD |
                      X11_MANAGED_IPC_DRIVE_READ_ONLY;
@@ -73,6 +76,9 @@ static int test_roundtrip(void)
     CHECK(received.width == sent.width &&
           received.height == sent.height);
     CHECK(received.flags == sent.flags);
+    CHECK(received.supervisor_pid == sent.supervisor_pid);
+    CHECK(received.xserver_pid == sent.xserver_pid);
+    CHECK(received.desktop_pid == sent.desktop_pid);
     CHECK(strcmp(received.username, sent.username) == 0);
     CHECK(strcmp(received.domain, sent.domain) == 0);
     CHECK(strcmp(received.password, sent.password) == 0);
