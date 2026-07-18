@@ -27,6 +27,7 @@ extern "C" {
 
 #define LIBRDP_SERVER_CONFIG_VERSION 1u /**< Current librdp_server_config version. */
 #define LIBRDP_SERVER_INPUT_EVENT_VERSION 1u /**< Current librdp_server_input_event version. */
+#define LIBRDP_SERVER_POINTER_UPDATE_VERSION 1u /**< Current librdp_server_pointer_update version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_static_channel_info version. */
 #define LIBRDP_SERVER_DYNAMIC_CHANNEL_INFO_VERSION 1u /**< Current librdp_server_dynamic_channel_info version. */
 #define LIBRDP_SERVER_CHANNEL_EVENT_VERSION 1u /**< Current librdp_server_channel_event version. */
@@ -166,6 +167,55 @@ typedef struct librdp_server_input_event
     uint16_t height;              /**< Rectangle height when applicable. */
     uint16_t control_action;      /**< Control action for LIBRDP_SERVER_INPUT_CONTROL. */
 } librdp_server_input_event;
+
+/**
+ * @brief Normalized server pointer update kind.
+ *
+ * Values describe application cursor state without exposing slow-path or
+ * Mouse Cursor virtual-channel message identifiers.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_pointer_update_type
+{
+    LIBRDP_SERVER_POINTER_HIDDEN = 1, /**< Hide the remote pointer. */
+    LIBRDP_SERVER_POINTER_DEFAULT = 2, /**< Restore the client's default pointer. */
+    LIBRDP_SERVER_POINTER_POSITION = 3, /**< Move the current pointer. */
+    LIBRDP_SERVER_POINTER_SHAPE = 4, /**< Install and select a BGRA32 pointer shape. */
+    LIBRDP_SERVER_POINTER_CACHED = 5 /**< Select a previously installed cache entry. */
+} librdp_server_pointer_update_type;
+
+/**
+ * @brief Platform-neutral pointer update sent by a server application.
+ *
+ * Initialize with librdp_server_pointer_update_init(). POSITION uses x and y.
+ * SHAPE uses cache_index, hotspot, dimensions, stride, pixels, and pixels_len;
+ * pixels contain top-down, straight-alpha BGRA32 rows. CACHED uses
+ * cache_index. HIDDEN and DEFAULT ignore all payload fields.
+ *
+ * pixels is borrowed only for the duration of
+ * librdp_server_peer_send_pointer_update() and may be released when that call
+ * returns. The library converts shape pixels to bounded RDP mask storage and
+ * does not retain application memory.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_pointer_update
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_POINTER_UPDATE_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    librdp_server_pointer_update_type type; /**< Pointer operation. */
+    uint16_t cache_index; /**< Cache slot for SHAPE or CACHED. */
+    uint16_t x; /**< Desktop X coordinate for POSITION. */
+    uint16_t y; /**< Desktop Y coordinate for POSITION. */
+    uint16_t hotspot_x; /**< Horizontal SHAPE hotspot within width. */
+    uint16_t hotspot_y; /**< Vertical SHAPE hotspot within height. */
+    uint16_t width; /**< SHAPE width in pixels. */
+    uint16_t height; /**< SHAPE height in pixels. */
+    size_t stride; /**< SHAPE source bytes per row. */
+    const uint8_t* pixels; /**< Borrowed top-down BGRA32 pixels for SHAPE, otherwise NULL. */
+    size_t pixels_len; /**< Number of bytes available at pixels. */
+} librdp_server_pointer_update;
 
 /**
  * @brief Static virtual-channel metadata exposed by a server-side peer.
@@ -996,6 +1046,20 @@ LIBRDP_API librdp_status librdp_server_config_init(librdp_server_config* config)
  * @since 0.1.0
  */
 LIBRDP_API librdp_status librdp_server_input_event_init(librdp_server_input_event* event);
+
+/**
+ * @brief Initialize a normalized server pointer update.
+ *
+ * @param[out] update Caller-owned update object; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * update is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_pointer_update_init(
+    librdp_server_pointer_update* update);
 
 /**
  * @brief Initialize server static-channel metadata.
@@ -3474,6 +3538,34 @@ LIBRDP_API librdp_status librdp_server_peer_send_touch_ready(librdp_server_peer*
  */
 LIBRDP_API librdp_status librdp_server_peer_send_mouse_cursor_caps(librdp_server_peer* peer,
                                                                    uint32_t dynamic_channel_id);
+
+/**
+ * @brief Send one normalized pointer update through the best negotiated path.
+ *
+ * When the Mouse Cursor virtual channel is open, the update is sent there.
+ * Otherwise the function uses the base slow-path pointer update supported by
+ * every active RDP peer. BGRA32 shape pixels are converted internally to a
+ * 32-bit XOR plane and one-bit transparency mask; applications never construct
+ * protocol masks or PDUs.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] update Initialized borrowed update; must not be NULL. SHAPE
+ * pixels remain owned by the caller and need only remain valid until return.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT for
+ * incompatible metadata, dimensions, hotspot, stride, or pixel storage;
+ * LIBRDP_STATUS_STATE when peer is not active; LIBRDP_STATUS_LIMIT_EXCEEDED
+ * when checked shape arithmetic or wire bounds are exceeded; allocation or
+ * transport errors from the selected send path.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @warning Pointer pixels can reveal local UI state. Default trace policy logs
+ * metadata only and never logs shape payload bytes.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_send_pointer_update(
+    librdp_server_peer* peer,
+    const librdp_server_pointer_update* update);
 
 /**
  * @brief Send one Mouse Cursor virtual-channel pointer update.

@@ -290,6 +290,140 @@ librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_po
 }
 
 /*
+ * Serialize one normalized pointer update without the enclosing Update Data
+ * PDU. Attribute lengths select the standard or large pointer message, and a
+ * failed append restores the caller's original buffer length.
+ */
+librdp_status rdp_pointer_write_slowpath(
+    rdp_buffer* buffer,
+    const rdp_pointer_update* update)
+{
+    size_t original_length = 0u;
+    uint16_t message_type = 0u;
+    int large_lengths = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!buffer || !update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    original_length = buffer->length;
+    switch (update->kind)
+    {
+        case RDP_POINTER_UPDATE_KIND_NULL:
+        case RDP_POINTER_UPDATE_KIND_DEFAULT:
+            status = rdp_buffer_append_u16_le(
+                buffer,
+                RDP_POINTER_MESSAGE_TYPE_SYSTEM);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_buffer_append_u32_le(
+                    buffer,
+                    update->kind == RDP_POINTER_UPDATE_KIND_NULL
+                        ? RDP_POINTER_SYSTEM_NULL
+                        : RDP_POINTER_SYSTEM_DEFAULT);
+            }
+            break;
+        case RDP_POINTER_UPDATE_KIND_POSITION:
+            status = rdp_buffer_append_u16_le(
+                buffer,
+                RDP_POINTER_MESSAGE_TYPE_POSITION);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->x);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->y);
+            break;
+        case RDP_POINTER_UPDATE_KIND_CACHED:
+            status = rdp_buffer_append_u16_le(
+                buffer,
+                RDP_POINTER_MESSAGE_TYPE_CACHED);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer,
+                                                  update->cache_index);
+            break;
+        case RDP_POINTER_UPDATE_KIND_SHAPE:
+            if (update->width == 0u || update->height == 0u ||
+                update->width > RDP_POINTER_MAX_DIMENSION ||
+                update->height > RDP_POINTER_MAX_DIMENSION ||
+                update->hot_x >= update->width ||
+                update->hot_y >= update->height ||
+                (update->xor_bpp != 1u && update->xor_bpp != 15u &&
+                 update->xor_bpp != 16u && update->xor_bpp != 24u &&
+                 update->xor_bpp != 32u) ||
+                (!update->xor_mask && update->xor_mask_len > 0u) ||
+                (!update->and_mask && update->and_mask_len > 0u) ||
+                update->xor_mask_len > UINT32_MAX ||
+                update->and_mask_len > UINT32_MAX)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            large_lengths = update->xor_mask_len > UINT16_MAX ||
+                            update->and_mask_len > UINT16_MAX;
+            message_type = large_lengths
+                               ? RDP_POINTER_MESSAGE_TYPE_LARGE
+                               : RDP_POINTER_MESSAGE_TYPE_POINTER;
+            status = rdp_buffer_append_u16_le(buffer, message_type);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->xor_bpp);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer,
+                                                  update->cache_index);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->hot_x);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->hot_y);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->width);
+            if (status == LIBRDP_STATUS_OK)
+                status = rdp_buffer_append_u16_le(buffer, update->height);
+            if (large_lengths)
+            {
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    status = rdp_buffer_append_u32_le(
+                        buffer,
+                        (uint32_t)update->and_mask_len);
+                }
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    status = rdp_buffer_append_u32_le(
+                        buffer,
+                        (uint32_t)update->xor_mask_len);
+                }
+            }
+            else
+            {
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    status = rdp_buffer_append_u16_le(
+                        buffer,
+                        (uint16_t)update->and_mask_len);
+                }
+                if (status == LIBRDP_STATUS_OK)
+                {
+                    status = rdp_buffer_append_u16_le(
+                        buffer,
+                        (uint16_t)update->xor_mask_len);
+                }
+            }
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_buffer_append(buffer,
+                                           update->xor_mask,
+                                           update->xor_mask_len);
+            }
+            if (status == LIBRDP_STATUS_OK)
+            {
+                status = rdp_buffer_append(buffer,
+                                           update->and_mask,
+                                           update->and_mask_len);
+            }
+            break;
+        default:
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    if (status != LIBRDP_STATUS_OK)
+        buffer->length = original_length;
+    return status;
+}
+
+/*
  * Decode a pointer shape into BGRA pixels using the supplied color and mask
  * planes. All stride and mask offsets are checked before composing pixels so
  * malformed cursors cannot corrupt caller output.

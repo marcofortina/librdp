@@ -107,6 +107,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_composited_window_node_create cr2_window_node;
     rdp_auth_redirection_response auth_response;
     rdp_pointer_update pointer_update;
+    librdp_server_pointer_update normalized_pointer;
     rdp_desktop_composition_toggle composition_toggle;
     rdp_desktop_composition_lsurface composition_lsurface;
     rdp_gdi_altsec_order_header altsec_order;
@@ -140,6 +141,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer udp2_payload;
     rdp_buffer udp2_wire;
     rdp_buffer udp2_unwrapped;
+    rdp_buffer pointer_pixels;
     rdp_slowpath_demand_active demand;
     rdp_slowpath_data_pdu data_pdu;
     rdp_bitmap_update bitmap_update;
@@ -160,6 +162,7 @@ int test_server_loopback_standard_activation_sequence(void)
     size_t udp_response_len = 0;
     size_t udp2_response_len = 0;
     size_t dynamic_fragmented_len = 0;
+    size_t pointer_stride = 0u;
     int client_fd = -1;
     int response_len = 0;
     int extension_enabled = 0;
@@ -254,6 +257,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_init(&udp2_payload);
     rdp_buffer_init(&udp2_wire);
     rdp_buffer_init(&udp2_unwrapped);
+    rdp_buffer_init(&pointer_pixels);
     memset(&runtime_context, 0, sizeof(runtime_context));
     memset(&device_family_context, 0, sizeof(device_family_context));
     memset(clipboard_formats, 0, sizeof(clipboard_formats));
@@ -876,6 +880,79 @@ int test_server_loopback_standard_activation_sequence(void)
     SCHECK(test_server_read_encrypted_slowpath_data_pdu(client_fd, response, sizeof(response), &client_security, &slowpath_plaintext, &data_pdu));
     SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_FONT_MAP &&
            data_pdu.payload_len == 8);
+    SCHECK(librdp_server_pointer_update_init(&normalized_pointer) ==
+           LIBRDP_STATUS_OK);
+    normalized_pointer.type = LIBRDP_SERVER_POINTER_POSITION;
+    normalized_pointer.x = 321u;
+    normalized_pointer.y = 241u;
+    SCHECK(librdp_server_peer_send_pointer_update(peer,
+                                                  &normalized_pointer) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(test_server_read_encrypted_slowpath_data_pdu(
+        client_fd,
+        response,
+        sizeof(response),
+        &client_security,
+        &slowpath_plaintext,
+        &data_pdu));
+    SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE &&
+           data_pdu.payload_len >= 2u &&
+           data_pdu.payload[0] == RDP_UPDATE_TYPE_POINTER &&
+           data_pdu.payload[1] == 0u);
+    SCHECK(rdp_pointer_parse_slowpath(data_pdu.payload + 2u,
+                                     data_pdu.payload_len - 2u,
+                                     &pointer_update) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_POSITION &&
+           pointer_update.x == normalized_pointer.x &&
+           pointer_update.y == normalized_pointer.y);
+    {
+        static const uint8_t pointer_shape[] = {
+            0x10, 0x20, 0x30, 0xff, 0x40, 0x50, 0x60, 0x00,
+            0x70, 0x80, 0x90, 0xff, 0xa0, 0xb0, 0xc0, 0xff
+        };
+
+        SCHECK(librdp_server_pointer_update_init(&normalized_pointer) ==
+               LIBRDP_STATUS_OK);
+        normalized_pointer.type = LIBRDP_SERVER_POINTER_SHAPE;
+        normalized_pointer.cache_index = 3u;
+        normalized_pointer.hotspot_x = 1u;
+        normalized_pointer.hotspot_y = 1u;
+        normalized_pointer.width = 2u;
+        normalized_pointer.height = 2u;
+        normalized_pointer.stride = 8u;
+        normalized_pointer.pixels = pointer_shape;
+        normalized_pointer.pixels_len = sizeof(pointer_shape);
+        SCHECK(librdp_server_peer_send_pointer_update(
+                   peer,
+                   &normalized_pointer) == LIBRDP_STATUS_OK);
+        SCHECK(test_server_read_encrypted_slowpath_data_pdu(
+            client_fd,
+            response,
+            sizeof(response),
+            &client_security,
+            &slowpath_plaintext,
+            &data_pdu));
+        SCHECK(data_pdu.pdu_type2 == RDP_SLOWPATH_DATA_PDU_UPDATE &&
+               data_pdu.payload_len >= 2u &&
+               data_pdu.payload[0] == RDP_UPDATE_TYPE_POINTER &&
+               data_pdu.payload[1] == 0u);
+        SCHECK(rdp_pointer_parse_slowpath(data_pdu.payload + 2u,
+                                         data_pdu.payload_len - 2u,
+                                         &pointer_update) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(pointer_update.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+               pointer_update.cache_index == normalized_pointer.cache_index);
+        SCHECK(rdp_pointer_decode_bgra32(&pointer_update,
+                                         &pointer_pixels,
+                                         &pointer_stride) ==
+               LIBRDP_STATUS_OK);
+        SCHECK(pointer_stride == 8u &&
+               pointer_pixels.length == sizeof(pointer_shape) &&
+               memcmp(pointer_pixels.data,
+                      pointer_shape,
+                      sizeof(pointer_shape)) == 0);
+    }
     SCHECK(librdp_server_peer_get_feature_status(peer,
                                                  LIBRDP_FEATURE_DESKTOP_COMPOSITION,
                                                  &feature_status) == LIBRDP_STATUS_OK);
@@ -3478,6 +3555,7 @@ int test_server_loopback_standard_activation_sequence(void)
     rdp_buffer_free(&demand_plaintext);
     rdp_buffer_free(&slowpath_plaintext);
     rdp_buffer_free(&channel_plaintext);
+    rdp_buffer_free(&pointer_pixels);
     rdp_buffer_free(&geometry_rect_payload);
     rdp_buffer_free(&geometry_payload);
     rdp_buffer_free(&graphics_payload);

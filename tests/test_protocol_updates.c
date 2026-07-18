@@ -757,6 +757,47 @@ int test_protocol_update_vectors(void)
            pointer_update.width == 2 &&
            pointer_update.height == 2 &&
            pointer_update.xor_bpp == 32);
+    rdp_buffer_free(&dyn_response);
+    rdp_buffer_init(&dyn_response);
+    {
+        rdp_pointer_update written = pointer_update;
+        rdp_pointer_update parsed;
+
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response, &written) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_pointer_parse_slowpath(dyn_response.data,
+                                          dyn_response.length,
+                                          &parsed) == LIBRDP_STATUS_OK);
+        PCHECK(parsed.kind == RDP_POINTER_UPDATE_KIND_SHAPE &&
+               parsed.cache_index == written.cache_index &&
+               parsed.width == written.width &&
+               parsed.height == written.height &&
+               parsed.xor_mask_len == written.xor_mask_len &&
+               parsed.and_mask_len == written.and_mask_len &&
+               memcmp(parsed.xor_mask,
+                      written.xor_mask,
+                      written.xor_mask_len) == 0 &&
+               memcmp(parsed.and_mask,
+                      written.and_mask,
+                      written.and_mask_len) == 0);
+        dyn_response.length = 0u;
+        memset(&written, 0, sizeof(written));
+        written.kind = RDP_POINTER_UPDATE_KIND_POSITION;
+        written.x = 0x1234u;
+        written.y = 0x5678u;
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response, &written) ==
+               LIBRDP_STATUS_OK);
+        PCHECK(rdp_pointer_parse_slowpath(dyn_response.data,
+                                          dyn_response.length,
+                                          &parsed) == LIBRDP_STATUS_OK);
+        PCHECK(parsed.kind == RDP_POINTER_UPDATE_KIND_POSITION &&
+               parsed.x == written.x && parsed.y == written.y);
+        written.kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+        written.width = 0u;
+        PCHECK(rdp_pointer_write_slowpath(&dyn_response, &written) ==
+               LIBRDP_STATUS_INVALID_ARGUMENT);
+        PCHECK(dyn_response.length == 6u);
+    }
     {
         const rdp_pointer_update valid_pointer_update = pointer_update;
 

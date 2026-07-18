@@ -152,6 +152,17 @@ librdp_status librdp_server_input_event_init(librdp_server_input_event* event)
     return LIBRDP_STATUS_OK;
 }
 
+librdp_status librdp_server_pointer_update_init(
+    librdp_server_pointer_update* update)
+{
+    if (!update)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    memset(update, 0, sizeof(*update));
+    update->version = LIBRDP_SERVER_POINTER_UPDATE_VERSION;
+    update->size = (uint32_t)sizeof(*update);
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status librdp_server_static_channel_info_init(librdp_server_static_channel_info* info)
 {
     if (!info)

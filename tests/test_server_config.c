@@ -16,6 +16,7 @@ int test_server_config_defaults(void)
 {
     librdp_server_config config;
     librdp_server_input_event input_event;
+    librdp_server_pointer_update pointer_update;
     librdp_server_static_channel_info channel_info;
     librdp_server_extension_event extension_event;
     librdp_server_event server_event;
@@ -45,6 +46,14 @@ int test_server_config_defaults(void)
     SCHECK(librdp_server_input_event_init(&input_event) == LIBRDP_STATUS_OK);
     SCHECK(input_event.version == LIBRDP_SERVER_INPUT_EVENT_VERSION);
     SCHECK(input_event.size == sizeof(input_event));
+    SCHECK(librdp_server_pointer_update_init(NULL) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    SCHECK(librdp_server_pointer_update_init(&pointer_update) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(pointer_update.version == LIBRDP_SERVER_POINTER_UPDATE_VERSION);
+    SCHECK(pointer_update.size == sizeof(pointer_update));
+    SCHECK(librdp_server_peer_send_pointer_update(NULL, &pointer_update) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_static_channel_info_init(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
     SCHECK(librdp_server_static_channel_info_init(&channel_info) == LIBRDP_STATUS_OK);
     SCHECK(channel_info.version == LIBRDP_SERVER_STATIC_CHANNEL_INFO_VERSION);

@@ -67,6 +67,8 @@ librdp_status rdp_pointer_parse_fastpath(uint8_t update_code,
                                          size_t length,
                                          rdp_pointer_update* update);
 librdp_status rdp_pointer_parse_slowpath(const void* data, size_t length, rdp_pointer_update* update);
+librdp_status rdp_pointer_write_slowpath(rdp_buffer* buffer,
+                                         const rdp_pointer_update* update);
 librdp_status rdp_pointer_decode_bgra32(const rdp_pointer_update* update, rdp_buffer* output, size_t* stride);
 
 #endif

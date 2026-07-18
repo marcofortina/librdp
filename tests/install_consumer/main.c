@@ -11,8 +11,18 @@ int main(void)
     librdp_server_drive_event drive_event;
     librdp_server_drive_request drive_request;
     librdp_server_drive_request_id drive_request_id = 0u;
+    librdp_server_pointer_update pointer_update;
     librdp_settings* settings = librdp_settings_new();
 
+    if (librdp_server_pointer_update_init(&pointer_update) !=
+            LIBRDP_STATUS_OK ||
+        pointer_update.version != LIBRDP_SERVER_POINTER_UPDATE_VERSION ||
+        pointer_update.size != sizeof(pointer_update) ||
+        librdp_server_peer_send_pointer_update(NULL, &pointer_update) !=
+            LIBRDP_STATUS_INVALID_ARGUMENT)
+    {
+        return 7;
+    }
     if (librdp_server_clipboard_event_init(&clipboard_event) !=
             LIBRDP_STATUS_OK ||
         clipboard_event.version != LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION ||

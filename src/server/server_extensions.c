@@ -19,6 +19,7 @@
 #include "server/server_listener.h"
 #include "server/server_peer.h"
 #include "server/server_protocol.h"
+#include "server/server_security.h"
 
 #include "common/buffer.h"
 #include "common/charset.h"
@@ -789,6 +790,222 @@ static librdp_status rdp_server_video_capture_media_list_from_public(
     for (uint8_t i = 0; i < media_count; i++)
         rdp_server_video_capture_media_from_public(&media[i], &converted[i]);
     return LIBRDP_STATUS_OK;
+}
+
+static rdp_server_dynamic_channel* rdp_server_find_dynamic_channel_named(
+    librdp_server_peer* peer,
+    const char* name)
+{
+    if (!peer || !name)
+        return NULL;
+    for (uint32_t index = 0; index < RDP_SERVER_MAX_DYNAMIC_CHANNELS;
+         index++)
+    {
+        rdp_server_dynamic_channel* channel = &peer->dynamic_channels[index];
+
+        if (channel->open && strcmp(channel->name, name) == 0)
+            return channel;
+    }
+    return NULL;
+}
+
+/*
+ * Convert borrowed top-down BGRA32 pixels into bottom-up 32-bpp XOR and
+ * one-bit AND planes. Checked row arithmetic and complete source bounds are
+ * validated before either destination buffer becomes observable.
+ */
+static librdp_status rdp_server_pointer_convert_shape(
+    const librdp_server_pointer_update* source,
+    rdp_buffer* xor_mask,
+    rdp_buffer* and_mask,
+    rdp_pointer_update* wire)
+{
+    size_t source_row_bytes = 0u;
+    size_t source_required = 0u;
+    size_t xor_stride = 0u;
+    size_t xor_bytes = 0u;
+    size_t and_stride = 0u;
+    size_t and_bytes = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!source || !xor_mask || !and_mask || !wire ||
+        source->width == 0u || source->height == 0u ||
+        source->width > RDP_POINTER_MAX_DIMENSION ||
+        source->height > RDP_POINTER_MAX_DIMENSION ||
+        source->hotspot_x >= source->width ||
+        source->hotspot_y >= source->height || !source->pixels)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    source_row_bytes = (size_t)source->width * 4u;
+    if (source->stride < source_row_bytes ||
+        (size_t)(source->height - 1u) >
+            (SIZE_MAX - source_row_bytes) / source->stride)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    source_required =
+        (size_t)(source->height - 1u) * source->stride + source_row_bytes;
+    if (source->pixels_len < source_required)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    xor_stride = source_row_bytes;
+    and_stride = (((size_t)source->width + 15u) / 16u) * 2u;
+    if ((size_t)source->height > SIZE_MAX / xor_stride ||
+        (size_t)source->height > SIZE_MAX / and_stride)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    xor_bytes = xor_stride * source->height;
+    and_bytes = and_stride * source->height;
+    status = rdp_buffer_reserve(xor_mask, xor_bytes);
+    if (status == LIBRDP_STATUS_OK)
+        status = rdp_buffer_reserve(and_mask, and_bytes);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    xor_mask->length = xor_bytes;
+    and_mask->length = and_bytes;
+    memset(and_mask->data, 0, and_bytes);
+    for (uint16_t y = 0u; y < source->height; y++)
+    {
+        const uint8_t* source_row =
+            source->pixels + (size_t)y * source->stride;
+        size_t destination_row = (size_t)(source->height - 1u - y);
+        uint8_t* xor_row =
+            xor_mask->data + destination_row * xor_stride;
+        uint8_t* and_row =
+            and_mask->data + destination_row * and_stride;
+
+        memcpy(xor_row, source_row, source_row_bytes);
+        for (uint16_t x = 0u; x < source->width; x++)
+        {
+            if (source_row[(size_t)x * 4u + 3u] == 0u)
+                and_row[(size_t)x / 8u] |=
+                    (uint8_t)(0x80u >> (x % 8u));
+        }
+    }
+    memset(wire, 0, sizeof(*wire));
+    wire->kind = RDP_POINTER_UPDATE_KIND_SHAPE;
+    wire->cache_index = source->cache_index;
+    wire->hot_x = source->hotspot_x;
+    wire->hot_y = source->hotspot_y;
+    wire->width = source->width;
+    wire->height = source->height;
+    wire->xor_bpp = 32u;
+    wire->xor_mask = xor_mask->data;
+    wire->xor_mask_len = xor_mask->length;
+    wire->and_mask = and_mask->data;
+    wire->and_mask_len = and_mask->length;
+    return LIBRDP_STATUS_OK;
+}
+
+/*
+ * Select the negotiated cursor DVC only when its provider and channel are
+ * active; otherwise emit the equivalent base pointer update. Shape conversion
+ * remains local to the call, and no wire output is attempted after validation
+ * or allocation failure.
+ */
+librdp_status librdp_server_peer_send_pointer_update(
+    librdp_server_peer* peer,
+    const librdp_server_pointer_update* update)
+{
+    rdp_server_dynamic_channel* mouse_channel = NULL;
+    rdp_pointer_update wire;
+    rdp_buffer xor_mask;
+    rdp_buffer and_mask;
+    rdp_buffer update_payload;
+    rdp_buffer slowpath;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !update ||
+        update->version != LIBRDP_SERVER_POINTER_UPDATE_VERSION ||
+        update->size < sizeof(*update))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    memset(&wire, 0, sizeof(wire));
+    switch (update->type)
+    {
+        case LIBRDP_SERVER_POINTER_HIDDEN:
+            wire.kind = RDP_POINTER_UPDATE_KIND_NULL;
+            break;
+        case LIBRDP_SERVER_POINTER_DEFAULT:
+            wire.kind = RDP_POINTER_UPDATE_KIND_DEFAULT;
+            break;
+        case LIBRDP_SERVER_POINTER_POSITION:
+            wire.kind = RDP_POINTER_UPDATE_KIND_POSITION;
+            wire.x = update->x;
+            wire.y = update->y;
+            break;
+        case LIBRDP_SERVER_POINTER_CACHED:
+            if (update->cache_index >= 128u)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            wire.kind = RDP_POINTER_UPDATE_KIND_CACHED;
+            wire.cache_index = update->cache_index;
+            break;
+        case LIBRDP_SERVER_POINTER_SHAPE:
+            if (update->cache_index >= 128u)
+                return LIBRDP_STATUS_INVALID_ARGUMENT;
+            break;
+        default:
+            return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    rdp_buffer_init(&xor_mask);
+    rdp_buffer_init(&and_mask);
+    rdp_buffer_init(&update_payload);
+    rdp_buffer_init(&slowpath);
+    if (update->type == LIBRDP_SERVER_POINTER_SHAPE)
+    {
+        status = rdp_server_pointer_convert_shape(update,
+                                                  &xor_mask,
+                                                  &and_mask,
+                                                  &wire);
+    }
+    if (status == LIBRDP_STATUS_OK &&
+        rdp_server_extension_provider_ready(
+            peer->backend_extension_families,
+            LIBRDP_SERVER_EXTENSION_MOUSE_CURSOR))
+    {
+        mouse_channel = rdp_server_find_dynamic_channel_named(
+            peer,
+            RDP_MOUSE_CURSOR_CHANNEL_NAME);
+    }
+    if (status == LIBRDP_STATUS_OK && mouse_channel)
+    {
+        status = librdp_server_peer_send_mouse_cursor_update(
+            peer,
+            mouse_channel->channel_id,
+            (uint32_t)wire.kind,
+            wire.cache_index,
+            wire.x,
+            wire.y,
+            wire.hot_x,
+            wire.hot_y,
+            wire.width,
+            wire.height,
+            wire.xor_bpp,
+            wire.xor_mask,
+            wire.xor_mask_len,
+            wire.and_mask,
+            wire.and_mask_len);
+    }
+    else if (status == LIBRDP_STATUS_OK)
+    {
+        status = rdp_buffer_append_u16_le(&update_payload,
+                                          RDP_UPDATE_TYPE_POINTER);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_pointer_write_slowpath(&update_payload, &wire);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = rdp_slowpath_write_data_pdu(
+                &slowpath,
+                peer->share_id,
+                (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+                RDP_SLOWPATH_DATA_PDU_UPDATE,
+                update_payload.data,
+                update_payload.length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_server_send_slowpath(peer, &slowpath);
+    }
+    rdp_buffer_free(&slowpath);
+    rdp_buffer_free(&update_payload);
+    rdp_buffer_free(&and_mask);
+    rdp_buffer_free(&xor_mask);
+    return status;
 }
 
 librdp_status librdp_server_peer_send_mouse_cursor_update(librdp_server_peer* peer,
