@@ -29,6 +29,7 @@ librdp uses CMake to build the C library, unit tests, examples, optional fuzz ta
 - `LIBRDP_BUILD_TESTS=ON|OFF`: build unit tests and repository guardrails.
 - `LIBRDP_BUILD_FUZZ=ON|OFF`: build fuzz targets.
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
+- `LIBRDP_BUILD_X11_SERVER=ON|OFF`: build the X11 desktop server.
 - `LIBRDP_BUILD_COCOA_VIEWER=ON|OFF`: build the native Cocoa viewer.
 - `LIBRDP_BUILD_X11_ADMIN=ON|OFF`: build the X11 administration inventory tool.
 - `LIBRDP_BUILD_X11_WORKSPACE=ON|OFF`: build the X11 workspace feed launcher.
@@ -60,7 +61,7 @@ Optional dependency selectors accept `AUTO`, `ON`, or `OFF`. `AUTO` detects the 
 - `LIBRDP_WITH_PNG=AUTO|ON|OFF`: PNG decoding for compressed GDI+ images.
 - `LIBRDP_WITH_PIPEWIRE=AUTO|ON|OFF`: PipeWire audio backend in the X11 viewer.
 - `LIBRDP_WITH_JPEG=AUTO|ON|OFF`: JPEG decoding for GDI+ images and X11 camera conversion.
-- `LIBRDP_WITH_XSHM=AUTO|ON|OFF`: MIT-SHM presentation path in the X11 viewer.
+- `LIBRDP_WITH_XSHM=AUTO|ON|OFF`: MIT-SHM image transfer in X11 applications.
 - `LIBRDP_WITH_XRANDR=AUTO|ON|OFF`: XRandR monitor layout bridge in the X11 viewer.
 
 ## Build Directories

@@ -19,6 +19,7 @@
 
 #include "viewer_trace.h"
 #include "viewer_window.h"
+#include "x11_keymap.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -27,37 +28,6 @@
 
 #include <stdint.h>
 #include <string.h>
-
-typedef struct x11_scancode_map
-{
-    const char* name;
-    uint32_t scancode;
-    uint32_t flags;
-} x11_scancode_map;
-
-static int xkb_name_equals(const char name[4], const char* text)
-{
-    size_t i = 0;
-    size_t length = 0;
-
-    if (!name || !text)
-        return 0;
-
-    length = strlen(text);
-    if (length > 4)
-        return 0;
-    for (i = 0; i < length; i++)
-    {
-        if (name[i] != text[i])
-            return 0;
-    }
-    for (; i < 4; i++)
-    {
-        if (name[i] != ' ' && name[i] != '\0')
-            return 0;
-    }
-    return 1;
-}
 
 /*
  * Validate canonical XKB key names at the local input boundary and translate
@@ -68,128 +38,7 @@ static int xkb_name_equals(const char name[4], const char* text)
  */
 int x11_keyboard_map_xkb_name(const char name[4], uint32_t* scancode, uint32_t* flags)
 {
-    static const x11_scancode_map map[] = {
-        {"ESC", 0x01, 0},
-        {"AE01", 0x02, 0},
-        {"AE02", 0x03, 0},
-        {"AE03", 0x04, 0},
-        {"AE04", 0x05, 0},
-        {"AE05", 0x06, 0},
-        {"AE06", 0x07, 0},
-        {"AE07", 0x08, 0},
-        {"AE08", 0x09, 0},
-        {"AE09", 0x0a, 0},
-        {"AE10", 0x0b, 0},
-        {"AE11", 0x0c, 0},
-        {"AE12", 0x0d, 0},
-        {"BKSP", 0x0e, 0},
-        {"TAB", 0x0f, 0},
-        {"AD01", 0x10, 0},
-        {"AD02", 0x11, 0},
-        {"AD03", 0x12, 0},
-        {"AD04", 0x13, 0},
-        {"AD05", 0x14, 0},
-        {"AD06", 0x15, 0},
-        {"AD07", 0x16, 0},
-        {"AD08", 0x17, 0},
-        {"AD09", 0x18, 0},
-        {"AD10", 0x19, 0},
-        {"AD11", 0x1a, 0},
-        {"AD12", 0x1b, 0},
-        {"RTRN", 0x1c, 0},
-        {"LCTL", 0x1d, 0},
-        {"AC01", 0x1e, 0},
-        {"AC02", 0x1f, 0},
-        {"AC03", 0x20, 0},
-        {"AC04", 0x21, 0},
-        {"AC05", 0x22, 0},
-        {"AC06", 0x23, 0},
-        {"AC07", 0x24, 0},
-        {"AC08", 0x25, 0},
-        {"AC09", 0x26, 0},
-        {"AC10", 0x27, 0},
-        {"AC11", 0x28, 0},
-        {"TLDE", 0x29, 0},
-        {"LFSH", 0x2a, 0},
-        {"BKSL", 0x2b, 0},
-        {"AB01", 0x2c, 0},
-        {"AB02", 0x2d, 0},
-        {"AB03", 0x2e, 0},
-        {"AB04", 0x2f, 0},
-        {"AB05", 0x30, 0},
-        {"AB06", 0x31, 0},
-        {"AB07", 0x32, 0},
-        {"AB08", 0x33, 0},
-        {"AB09", 0x34, 0},
-        {"AB10", 0x35, 0},
-        {"RTSH", 0x36, 0},
-        {"KPMU", 0x37, 0},
-        {"LALT", 0x38, 0},
-        {"SPCE", 0x39, 0},
-        {"CAPS", 0x3a, 0},
-        {"FK01", 0x3b, 0},
-        {"FK02", 0x3c, 0},
-        {"FK03", 0x3d, 0},
-        {"FK04", 0x3e, 0},
-        {"FK05", 0x3f, 0},
-        {"FK06", 0x40, 0},
-        {"FK07", 0x41, 0},
-        {"FK08", 0x42, 0},
-        {"FK09", 0x43, 0},
-        {"FK10", 0x44, 0},
-        {"NMLK", 0x45, 0},
-        {"SCLK", 0x46, 0},
-        {"KP7", 0x47, 0},
-        {"KP8", 0x48, 0},
-        {"KP9", 0x49, 0},
-        {"KPSU", 0x4a, 0},
-        {"KP4", 0x4b, 0},
-        {"KP5", 0x4c, 0},
-        {"KP6", 0x4d, 0},
-        {"KPAD", 0x4e, 0},
-        {"KP1", 0x4f, 0},
-        {"KP2", 0x50, 0},
-        {"KP3", 0x51, 0},
-        {"KP0", 0x52, 0},
-        {"KPDL", 0x53, 0},
-        {"LSGT", 0x56, 0},
-        {"FK11", 0x57, 0},
-        {"FK12", 0x58, 0},
-        {"KPEN", 0x1c, LIBRDP_KEY_FLAG_EXTENDED},
-        {"RCTL", 0x1d, LIBRDP_KEY_FLAG_EXTENDED},
-        {"KPDV", 0x35, LIBRDP_KEY_FLAG_EXTENDED},
-        {"PRSC", 0x37, LIBRDP_KEY_FLAG_EXTENDED},
-        {"RALT", 0x38, LIBRDP_KEY_FLAG_EXTENDED},
-        {"HOME", 0x47, LIBRDP_KEY_FLAG_EXTENDED},
-        {"UP", 0x48, LIBRDP_KEY_FLAG_EXTENDED},
-        {"PGUP", 0x49, LIBRDP_KEY_FLAG_EXTENDED},
-        {"LEFT", 0x4b, LIBRDP_KEY_FLAG_EXTENDED},
-        {"RGHT", 0x4d, LIBRDP_KEY_FLAG_EXTENDED},
-        {"END", 0x4f, LIBRDP_KEY_FLAG_EXTENDED},
-        {"DOWN", 0x50, LIBRDP_KEY_FLAG_EXTENDED},
-        {"PGDN", 0x51, LIBRDP_KEY_FLAG_EXTENDED},
-        {"INS", 0x52, LIBRDP_KEY_FLAG_EXTENDED},
-        {"DELE", 0x53, LIBRDP_KEY_FLAG_EXTENDED},
-        {"LWIN", 0x5b, LIBRDP_KEY_FLAG_EXTENDED},
-        {"RWIN", 0x5c, LIBRDP_KEY_FLAG_EXTENDED},
-        {"MENU", 0x5d, LIBRDP_KEY_FLAG_EXTENDED},
-        {"PAUS", 0x45, LIBRDP_KEY_FLAG_EXTENDED1},
-    };
-    size_t i = 0;
-
-    if (!name || !scancode || !flags)
-        return 0;
-
-    for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
-    {
-        if (xkb_name_equals(name, map[i].name))
-        {
-            *scancode = map[i].scancode;
-            *flags = map[i].flags;
-            return 1;
-        }
-    }
-    return 0;
+    return x11_keymap_xkb_name_to_rdp(name, scancode, flags);
 }
 
 static int xkb_to_rdp_scancode(const x11_app* app, KeyCode keycode, uint32_t* scancode, uint32_t* flags)
@@ -212,106 +61,7 @@ static int xkb_to_rdp_scancode(const x11_app* app, KeyCode keycode, uint32_t* sc
  */
 int x11_keyboard_map_evdev(unsigned int evdev, uint32_t* scancode, uint32_t* flags)
 {
-    if (!scancode || !flags)
-        return 0;
-
-    *flags = 0;
-    if (evdev >= 1 && evdev <= 83)
-    {
-        *scancode = evdev;
-        return 1;
-    }
-
-    switch (evdev)
-    {
-        case 86:
-            *scancode = 0x56;
-            return 1;
-        case 87:
-            *scancode = 0x57;
-            return 1;
-        case 88:
-            *scancode = 0x58;
-            return 1;
-        case 96:
-            *scancode = 0x1c;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 97:
-            *scancode = 0x1d;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 98:
-            *scancode = 0x35;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 99:
-            *scancode = 0x37;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 100:
-            *scancode = 0x38;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 102:
-            *scancode = 0x47;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 103:
-            *scancode = 0x48;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 104:
-            *scancode = 0x49;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 105:
-            *scancode = 0x4b;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 106:
-            *scancode = 0x4d;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 107:
-            *scancode = 0x4f;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 108:
-            *scancode = 0x50;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 109:
-            *scancode = 0x51;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 110:
-            *scancode = 0x52;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 111:
-            *scancode = 0x53;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 119:
-            *scancode = 0x45;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED1;
-            return 1;
-        case 125:
-            *scancode = 0x5b;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 126:
-            *scancode = 0x5c;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        case 127:
-            *scancode = 0x5d;
-            *flags = LIBRDP_KEY_FLAG_EXTENDED;
-            return 1;
-        default:
-            return 0;
-    }
+    return x11_keymap_evdev_to_rdp(evdev, scancode, flags);
 }
 
 static int translate_key_event(const x11_app* app, const XKeyEvent* key, librdp_key_event* event, librdp_key_state state)

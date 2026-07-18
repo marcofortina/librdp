@@ -36,9 +36,11 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11/viewer/viewer_render.c
         apps/x11/viewer/viewer_trace.c
         apps/x11/viewer/viewer_window.c
+        apps/x11/x11_keymap.c
     )
     target_include_directories(librdp-x11-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
@@ -161,11 +163,13 @@ if(LIBRDP_BUILD_X11_VIEWER)
         set_tests_properties(viewer_camera PROPERTIES TIMEOUT 30)
         add_executable(test_viewer_keyboard
             tests/test_viewer_keyboard.c
+            apps/x11/x11_keymap.c
             apps/x11/viewer/viewer_keyboard.c
             apps/x11/viewer/viewer_trace.c
             apps/x11/viewer/viewer_window.c
         )
         target_include_directories(test_viewer_keyboard PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${X11_INCLUDE_DIR}
