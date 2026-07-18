@@ -359,6 +359,8 @@ static int test_drive_runtime(void)
     uint64_t first_volume = 0u;
     uint64_t second_volume = 0u;
     uint64_t protocol_id = 0u;
+    uint64_t first_protocol_id = 0u;
+    uint64_t second_protocol_id = 0u;
     unsigned int completions = 0u;
 
     memset(&fixture, 0, sizeof(fixture));
@@ -393,8 +395,12 @@ static int test_drive_runtime(void)
                                         fixture.generation,
                                         &drive_test_protocol,
                                         &fixture) == LIBRDP_STATUS_OK);
+    CHECK(drive_test_add_volume(&fixture, 8u, NULL, 1u) != 0);
+    CHECK(drive_test_add_volume(&fixture, 8u, "", 1u) != 0);
+    CHECK(drive_test_add_volume(&fixture, 8u, "bad/name", 1u) != 0);
+    CHECK(drive_test_add_volume(&fixture, 8u, "bad:name", 1u) != 0);
     CHECK(drive_test_add_volume(&fixture, 10u, "shared", 1u) == 0);
-    CHECK(fixture.presents == 1u && fixture.device_replies == 1u);
+    CHECK(fixture.presents == 1u && fixture.device_replies == 5u);
     CHECK(fixture.last_device_status == 0u);
     server_drive_volume_info_init(&volume);
     CHECK(server_drive_runtime_volume_at(runtime, 0u, &volume) ==
@@ -423,6 +429,31 @@ static int test_drive_runtime(void)
     first_file.reconnect_generation = 1u;
     first_file.device_id = 10u;
     first_file.file_id = 50u;
+    {
+        librdp_server_drive_event malformed;
+
+        CHECK(librdp_server_drive_event_init(&malformed) ==
+              LIBRDP_STATUS_OK);
+        malformed.type = LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED;
+        malformed.status = LIBRDP_STATUS_OK;
+        malformed.request_id = protocol_id;
+        malformed.operation = LIBRDP_SERVER_DRIVE_CREATE;
+        malformed.device.reconnect_generation = 1u;
+        malformed.device.device_id = 11u;
+        malformed.file = first_file;
+        CHECK(server_drive_runtime_protocol_event(runtime,
+                                                  fixture.peer_id,
+                                                  fixture.generation,
+                                                  &malformed) ==
+              LIBRDP_STATUS_PROTOCOL_ERROR);
+        malformed.device.device_id = 10u;
+        malformed.operation = LIBRDP_SERVER_DRIVE_READ;
+        CHECK(server_drive_runtime_protocol_event(runtime,
+                                                  fixture.peer_id,
+                                                  fixture.generation,
+                                                  &malformed) ==
+              LIBRDP_STATUS_PROTOCOL_ERROR);
+    }
     CHECK(drive_test_complete_request(&fixture,
                                       protocol_id,
                                       first_file,
@@ -586,6 +617,7 @@ static int test_drive_runtime(void)
     request.operation.file = first_file;
     CHECK(server_drive_runtime_platform_request(runtime, &request, 1000u) ==
           LIBRDP_STATUS_OK);
+    first_protocol_id = fixture.next_protocol_id;
     drive_test_request_init(&request,
                             &fixture,
                             11u,
@@ -594,7 +626,15 @@ static int test_drive_runtime(void)
     request.operation.file = second_file;
     CHECK(server_drive_runtime_platform_request(runtime, &request, 1000u) ==
           LIBRDP_STATUS_OK);
-    protocol_id = fixture.next_protocol_id;
+    second_protocol_id = fixture.next_protocol_id;
+    CHECK(first_protocol_id != second_protocol_id);
+    CHECK(drive_test_complete_request(&fixture,
+                                      second_protocol_id,
+                                      second_file,
+                                      0u,
+                                      NULL,
+                                      0u) == LIBRDP_STATUS_OK);
+    CHECK(fixture.last_completion.request_id == 11u);
     {
         librdp_server_drive_event removed;
 
@@ -612,12 +652,11 @@ static int test_drive_runtime(void)
     CHECK(fixture.last_completion.status == LIBRDP_STATUS_CANCELLED);
     CHECK(server_drive_runtime_volume_count(runtime) == 1u);
     CHECK(drive_test_complete_request(&fixture,
-                                      protocol_id,
-                                      second_file,
+                                      first_protocol_id,
+                                      first_file,
                                       0u,
                                       NULL,
-                                      0u) == LIBRDP_STATUS_OK);
-    CHECK(fixture.last_completion.request_id == 11u);
+                                      0u) == LIBRDP_STATUS_STATE);
 
     server_drive_runtime_remove_peer(runtime,
                                      fixture.peer_id,
