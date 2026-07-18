@@ -1140,6 +1140,31 @@ static void rdp_rfx_refresh_progressive_signs(rdp_rfx_progressive_component_stat
 }
 
 /*
+ * Emit one stable failure record for progressive component decoding. Callers
+ * return the original status after preserving the exact failed stage.
+ */
+static librdp_status rdp_rfx_progressive_component_failed(const char* component_name,
+                                                           const char* stage,
+                                                           librdp_status status,
+                                                           size_t length,
+                                                           size_t written,
+                                                           int difference,
+                                                           int extrapolate)
+{
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.graphics.rfx.progressive_component.failed",
+                    "component=%s stage=%s status=%d length=%u written=%u difference=%u extrapolate=%u",
+                    component_name,
+                    stage,
+                    (int)status,
+                    (unsigned)length,
+                    (unsigned)written,
+                    (unsigned)difference,
+                    (unsigned)extrapolate);
+    return status;
+}
+
+/*
  * Decode progressive component state for one RemoteFX tile. Quantization and
  * coefficient history are validated before they replace cached component data.
  */
@@ -1169,7 +1194,13 @@ static librdp_status rdp_rfx_decode_progressive_component_state(
     memset(decoded, 0, sizeof(decoded));
     status = rdp_rfx_add_component_quant(quant, delta, &bit_pos);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
     stage = "rlgr";
     status = rdp_rfx_rlgr_decode_core(RDP_RFX_RLGR1,
                                       data,
@@ -1179,23 +1210,44 @@ static librdp_status rdp_rfx_decode_progressive_component_state(
                                       &written,
                                       1);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
     stage = "rlgr.count";
     if (written != RDP_RFX_TILE_COEFFICIENTS)
-    {
-        status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        goto failed;
-    }
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    LIBRDP_STATUS_PROTOCOL_ERROR,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
 
     stage = "differential";
     status = extrapolate ? rdp_rfx_differential_decode(decoded + 4015u, 81u)
                          : rdp_rfx_differential_decode(decoded + 4032u, 64u);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
     stage = "shift";
     status = rdp_rfx_shift_progressive_coefficients(decoded, &bit_pos, extrapolate);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
 
     if (difference)
     {
@@ -1214,21 +1266,14 @@ static librdp_status rdp_rfx_decode_progressive_component_state(
     stage = "render";
     status = rdp_rfx_render_progressive_component(component, extrapolate, coefficients);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_progressive_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    length,
+                                                    written,
+                                                    difference,
+                                                    extrapolate);
     return LIBRDP_STATUS_OK;
-
-failed:
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.rfx.progressive_component.failed",
-                    "component=%s stage=%s status=%d length=%u written=%u difference=%u extrapolate=%u",
-                    component_name,
-                    stage,
-                    (int)status,
-                    (unsigned)length,
-                    (unsigned)written,
-                    (unsigned)difference,
-                    (unsigned)extrapolate);
-    return status;
 }
 
 librdp_status rdp_rfx_decode_progressive_tile_state(const void* y_data,
@@ -1455,6 +1500,31 @@ static librdp_status rdp_rfx_upgrade_block(rdp_rfx_upgrade_reader* reader,
 }
 
 /*
+ * Emit one stable failure record for progressive component upgrades. The band
+ * index identifies the subband that rejected the untrusted refinement stream.
+ */
+static librdp_status rdp_rfx_upgrade_component_failed(const char* component_name,
+                                                       const char* stage,
+                                                       librdp_status status,
+                                                       size_t srl_len,
+                                                       size_t raw_len,
+                                                       size_t band,
+                                                       int extrapolate)
+{
+    rdp_trace_event(RDP_TRACE_CLIENT,
+                    "client.graphics.rfx.progressive_upgrade_component.failed",
+                    "component=%s stage=%s status=%d srl_len=%u raw_len=%u band=%u extrapolate=%u",
+                    component_name,
+                    stage,
+                    (int)status,
+                    (unsigned)srl_len,
+                    (unsigned)raw_len,
+                    (unsigned)band,
+                    (unsigned)extrapolate);
+    return status;
+}
+
+/*
  * Apply a RemoteFX progressive upgrade to cached component state. The merge
  * keeps previous coefficients available until the incoming upgrade has passed
  * all bounds checks.
@@ -1488,32 +1558,63 @@ static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
     stage = "bit_pos";
     status = rdp_rfx_add_component_quant(quant, delta, &bit_pos);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     stage = "num_bits";
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_sub_component_quant(&component->bit_pos, &bit_pos, &num_bits);
+    status = rdp_rfx_sub_component_quant(&component->bit_pos, &bit_pos, &num_bits);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     stage = "bit_pos_values";
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_component_quant_values_checked(&bit_pos, 15, bit_pos_values);
+    status = rdp_rfx_component_quant_values_checked(&bit_pos, 15, bit_pos_values);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     stage = "num_bit_values";
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_component_quant_values_checked(&num_bits, 15, num_bit_values);
+    status = rdp_rfx_component_quant_values_checked(&num_bits, 15, num_bit_values);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     stage = "srl";
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_bit_reader_attach(&reader.srl, srl_data, srl_len);
+    status = rdp_rfx_bit_reader_attach(&reader.srl, srl_data, srl_len);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     stage = "raw";
-    if (status == LIBRDP_STATUS_OK)
-        status = rdp_rfx_bit_reader_attach(&reader.raw, raw_data, raw_len);
+    status = rdp_rfx_bit_reader_attach(&reader.raw, raw_data, raw_len);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
 
     reader.kp = 8;
     reader.nz = 0;
@@ -1533,7 +1634,13 @@ static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
                                        num_bit_values[band->quant_index],
                                        band->non_ll != 0);
         if (status != LIBRDP_STATUS_OK)
-            goto failed;
+            return rdp_rfx_upgrade_component_failed(component_name,
+                                                    stage,
+                                                    status,
+                                                    srl_len,
+                                                    raw_len,
+                                                    i,
+                                                    extrapolate);
     }
 
     component->bit_pos = bit_pos;
@@ -1543,21 +1650,14 @@ static librdp_status rdp_rfx_upgrade_component_state(const void* srl_data,
     stage = "render";
     status = rdp_rfx_render_progressive_component(component, extrapolate, coefficients);
     if (status != LIBRDP_STATUS_OK)
-        goto failed;
+        return rdp_rfx_upgrade_component_failed(component_name,
+                                                stage,
+                                                status,
+                                                srl_len,
+                                                raw_len,
+                                                i,
+                                                extrapolate);
     return LIBRDP_STATUS_OK;
-
-failed:
-    rdp_trace_event(RDP_TRACE_CLIENT,
-                    "client.graphics.rfx.progressive_upgrade_component.failed",
-                    "component=%s stage=%s status=%d srl_len=%u raw_len=%u band=%u extrapolate=%u",
-                    component_name,
-                    stage,
-                    (int)status,
-                    (unsigned)srl_len,
-                    (unsigned)raw_len,
-                    (unsigned)i,
-                    (unsigned)extrapolate);
-    return status;
 }
 
 /*

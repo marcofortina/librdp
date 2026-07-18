@@ -96,6 +96,13 @@ DISALLOWED_PHRASES = (
     "Smoke test",
     "smoke tests",
     "Smoke tests",
+    "work in progress",
+    "Work in progress",
+    "parser-only",
+    "pending implementation",
+    "Pending implementation",
+    "to be implemented",
+    "To be implemented",
 )
 PROTOCOLS = (
     "MS-RDPBCGR",

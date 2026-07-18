@@ -4360,6 +4360,7 @@ librdp_status librdp_session_reconnect(librdp_session* session, const librdp_rec
     rdp_trace_session_scope trace_scope;
     uint32_t attempt = 0;
     uint32_t delay_ms = 0;
+    int attempts_exhausted = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!session)
@@ -4395,42 +4396,43 @@ librdp_status librdp_session_reconnect(librdp_session* session, const librdp_rec
 
     if (session->state == LIBRDP_SESSION_CONNECTED || session->state == LIBRDP_SESSION_ACTIVE ||
         session->state == LIBRDP_SESSION_FAILED)
-    {
         status = rdp_session_disconnect_inner(session);
-        if (status != LIBRDP_STATUS_OK)
-            goto done;
-    }
 
-    delay_ms = effective.initial_delay_ms;
-    for (attempt = 1; attempt <= effective.max_attempts; attempt++)
+    if (status == LIBRDP_STATUS_OK)
     {
-        rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_RECONNECTING);
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.reconnect.attempt",
-                        "attempt=%u max_attempts=%u",
-                        attempt,
-                        effective.max_attempts);
-        status = librdp_session_connect(session);
-        if (status == LIBRDP_STATUS_OK)
+        delay_ms = effective.initial_delay_ms;
+        for (attempt = 1; attempt <= effective.max_attempts; attempt++)
         {
-            rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.done", "attempt=%u", attempt);
-            goto done;
+            rdp_session_set_lifecycle(session, LIBRDP_LIFECYCLE_RECONNECTING);
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.reconnect.attempt",
+                            "attempt=%u max_attempts=%u",
+                            attempt,
+                            effective.max_attempts);
+            status = librdp_session_connect(session);
+            if (status == LIBRDP_STATUS_OK)
+            {
+                rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.done", "attempt=%u", attempt);
+                break;
+            }
+            rdp_trace_event(RDP_TRACE_CLIENT,
+                            "client.reconnect.attempt.failed",
+                            "attempt=%u status=%s",
+                            attempt,
+                            librdp_status_string(status));
+            if (attempt == effective.max_attempts)
+            {
+                attempts_exhausted = 1;
+                break;
+            }
+            status = rdp_session_reconnect_wait(session, delay_ms);
+            if (status != LIBRDP_STATUS_OK)
+                break;
+            delay_ms = rdp_session_reconnect_next_delay(delay_ms, effective.max_delay_ms);
         }
-        rdp_trace_event(RDP_TRACE_CLIENT,
-                        "client.reconnect.attempt.failed",
-                        "attempt=%u status=%s",
-                        attempt,
-                        librdp_status_string(status));
-        if (attempt == effective.max_attempts)
-            break;
-        status = rdp_session_reconnect_wait(session, delay_ms);
-        if (status != LIBRDP_STATUS_OK)
-            goto done;
-        delay_ms = rdp_session_reconnect_next_delay(delay_ms, effective.max_delay_ms);
     }
-    rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.failed", "status=%s", librdp_status_string(status));
-
-done:
+    if (attempts_exhausted)
+        rdp_trace_event(RDP_TRACE_CLIENT, "client.reconnect.failed", "status=%s", librdp_status_string(status));
     rdp_session_trace_scope_end(session);
     return status;
 }
