@@ -28,6 +28,7 @@
 typedef struct x11_camera_capture x11_camera_capture;
 typedef struct x11_pipewire_audio x11_pipewire_audio;
 typedef struct x11_render_state x11_render_state;
+typedef struct client_runtime client_runtime;
 
 typedef struct x11_pressed_key
 {
@@ -59,6 +60,7 @@ typedef struct x11_app
     int hidden_cursor_locally_visible;
     int suppress_motion;
     librdp_session* session;
+    client_runtime* runtime;
     int running;
     int dirty;
     uint64_t event_serial;

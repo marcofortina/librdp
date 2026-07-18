@@ -33,6 +33,8 @@ typedef struct client_runtime
     int connected;
 } client_runtime;
 
+client_runtime* client_runtime_new(librdp_session* session);
+void client_runtime_free(client_runtime* runtime);
 void client_runtime_init(client_runtime* runtime, librdp_session* session);
 void client_runtime_clear(client_runtime* runtime);
 librdp_status client_runtime_connect(client_runtime* runtime);

@@ -20,6 +20,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+client_runtime* client_runtime_new(librdp_session* session)
+{
+    client_runtime* runtime = NULL;
+
+    if (!session)
+        return NULL;
+    runtime = (client_runtime*)calloc(1u, sizeof(*runtime));
+    if (!runtime)
+        return NULL;
+    client_runtime_init(runtime, session);
+    return runtime;
+}
+
+void client_runtime_free(client_runtime* runtime)
+{
+    if (!runtime)
+        return;
+    client_runtime_clear(runtime);
+    free(runtime);
+}
+
 void client_runtime_init(client_runtime* runtime, librdp_session* session)
 {
     if (!runtime)

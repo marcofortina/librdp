@@ -20,6 +20,8 @@
 
 #include "audio_pipewire.h"
 #include "camera_v4l2.h"
+#include "client_callbacks.h"
+#include "client_runtime.h"
 #include "device_backends.h"
 #include "viewer_app.h"
 #include "viewer_clipboard.h"
@@ -619,48 +621,11 @@ static int x11_handle_session_status(x11_app* app, librdp_status status)
     return 0;
 }
 
-static int x11_dispatch_session_ready(x11_app* app,
-                                      struct pollfd* session_fds,
-                                      size_t session_capacity,
-                                      size_t session_count)
-{
-    librdp_status status = LIBRDP_STATUS_OK;
-    unsigned int i = 0;
-
-    if (!app || !app->session || !app->running || !session_fds || session_count == 0)
-        return 1;
-    status = librdp_session_notify_poll(app->session, session_fds, session_count);
-    if (!x11_handle_session_status(app, status))
-        return 0;
-    for (i = 0; app->running && i < X11_MAX_NETWORK_PUMP; i++)
-    {
-        uint64_t before = app->event_serial;
-        size_t count = 0;
-
-        status = librdp_session_dispatch_pending(app->session);
-        if (!x11_handle_session_status(app, status))
-            return 0;
-        if (!app->dirty && app->event_serial == before)
-            break;
-        if (librdp_session_get_pollfds(app->session, session_fds, session_capacity, &count) != LIBRDP_STATUS_OK ||
-            count == 0)
-            break;
-        if (poll(session_fds, (nfds_t)count, 0) <= 0)
-            break;
-        session_count = count;
-        status = librdp_session_notify_poll(app->session, session_fds, session_count);
-        if (!x11_handle_session_status(app, status))
-            return 0;
-    }
-    return 1;
-}
-
 static int x11_wait_for_events(x11_app* app)
 {
+    struct pollfd native_fd;
     struct pollfd* poll_fds = NULL;
-    struct pollfd* session_fds = NULL;
-    size_t session_count = 0;
-    size_t session_capacity = 0;
+    size_t poll_count = 0;
     int timeout_ms = -1;
     int clipboard_timeout_ms = -1;
     int rc = 0;
@@ -669,38 +634,9 @@ static int x11_wait_for_events(x11_app* app)
     if (!app || !app->display || !app->session || !app->running)
         return 0;
 
-    status = librdp_session_get_pollfds(app->session, NULL, 0, &session_capacity);
-    if (!x11_handle_session_status(app, status))
-        return 0;
-    if (session_capacity > (((size_t)-1) / sizeof(*poll_fds)) - 1u)
-    {
-        fprintf(stderr, "error=pollfds_overflow\n");
-        app->running = 0;
-        return 0;
-    }
-    poll_fds = (struct pollfd*)calloc(session_capacity + 1u, sizeof(*poll_fds));
-    if (!poll_fds)
-    {
-        fprintf(stderr, "error=no_memory\n");
-        app->running = 0;
-        return 0;
-    }
-    session_fds = &poll_fds[1];
-    poll_fds[0].fd = ConnectionNumber(app->display);
-    poll_fds[0].events = POLLIN;
-
-    status = librdp_session_get_pollfds(app->session, session_fds, session_capacity, &session_count);
-    if (!x11_handle_session_status(app, status))
-    {
-        free(poll_fds);
-        return 0;
-    }
-    status = librdp_session_get_next_timeout(app->session, &timeout_ms);
-    if (!x11_handle_session_status(app, status))
-    {
-        free(poll_fds);
-        return 0;
-    }
+    memset(&native_fd, 0, sizeof(native_fd));
+    native_fd.fd = ConnectionNumber(app->display);
+    native_fd.events = POLLIN;
     if (XPending(app->display) > 0)
         timeout_ms = 0;
     else if (app->audio_input_active && (timeout_ms < 0 || timeout_ms > 10))
@@ -708,41 +644,35 @@ static int x11_wait_for_events(x11_app* app)
     if (x11_clipboard_next_timeout_ms(app, &clipboard_timeout_ms) &&
         (timeout_ms < 0 || clipboard_timeout_ms < timeout_ms))
         timeout_ms = clipboard_timeout_ms;
+    status = client_runtime_prepare_poll(app->runtime,
+                                         &native_fd,
+                                         1u,
+                                         timeout_ms,
+                                         &poll_fds,
+                                         &poll_count,
+                                         &timeout_ms);
+    if (!x11_handle_session_status(app, status))
+        return 0;
 
     do
     {
-        rc = poll(poll_fds, (nfds_t)(1u + session_count), timeout_ms);
+        rc = poll(poll_fds, (nfds_t)poll_count, timeout_ms);
     } while (rc < 0 && errno == EINTR);
     if (rc < 0)
     {
         fprintf(stderr, "error=poll errno=%d\n", errno);
         app->running = 0;
-        free(poll_fds);
         return 0;
     }
     if ((poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
     {
         app->running = 0;
-        free(poll_fds);
         return 0;
     }
     if (rc == 0)
-    {
-        int ok = 0;
-
         x11_clipboard_check_timeouts(app);
-        ok = x11_handle_session_status(app, librdp_session_dispatch_pending(app->session));
-        free(poll_fds);
-        return ok;
-    }
-    if (session_count > 0 &&
-        x11_dispatch_session_ready(app, session_fds, session_capacity, session_count) == 0)
-    {
-        free(poll_fds);
-        return 0;
-    }
-    free(poll_fds);
-    return 1;
+    status = client_runtime_dispatch_poll(app->runtime, X11_MAX_NETWORK_PUMP);
+    return x11_handle_session_status(app, status);
 }
 
 /*
@@ -754,6 +684,7 @@ static int x11_wait_for_events(x11_app* app)
 int x11_viewer_run(int argc, char** argv)
 {
     librdp_settings* settings = NULL;
+    client_callbacks callbacks;
     x11_cli_options cli_options;
     x11_app app;
     XEvent event;
@@ -917,8 +848,54 @@ int x11_viewer_run(int argc, char** argv)
         XCloseDisplay(app.display);
         return 1;
     }
+    app.runtime = client_runtime_new(app.session);
+    if (!app.runtime)
+    {
+        librdp_session_free(app.session);
+        x11_cli_options_free(&cli_options);
+        x11_runtime_features_free(&app);
+        x11_audio_free(&app);
+        if (app.xkb)
+            XkbFreeKeyboard(app.xkb, 0, True);
+        if (app.ic)
+            XDestroyIC(app.ic);
+        if (app.im)
+            XCloseIM(app.im);
+        x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
+        x11_input_clear_cursor(&app);
+        XFreeGC(app.display, app.gc);
+        XDestroyWindow(app.display, app.window);
+        XCloseDisplay(app.display);
+        return 1;
+    }
 
-    librdp_session_set_event_callback(app.session, app_event, &app);
+    client_callbacks_init(&callbacks);
+    callbacks.event = app_event;
+    callbacks.event_user_data = &app;
+    status = client_callbacks_apply(app.session, &callbacks);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        fprintf(stderr, "error=callback_registration status=%s\n", librdp_status_string(status));
+        client_runtime_free(app.runtime);
+        librdp_session_free(app.session);
+        x11_cli_options_free(&cli_options);
+        x11_runtime_features_free(&app);
+        x11_audio_free(&app);
+        if (app.xkb)
+            XkbFreeKeyboard(app.xkb, 0, True);
+        if (app.ic)
+            XDestroyIC(app.ic);
+        if (app.im)
+            XCloseIM(app.im);
+        x11_clipboard_free(&app);
+        x11_render_shutdown(&app);
+        x11_input_clear_cursor(&app);
+        XFreeGC(app.display, app.gc);
+        XDestroyWindow(app.display, app.window);
+        XCloseDisplay(app.display);
+        return 1;
+    }
     if (app.clipboard_file_path)
     {
         librdp_clipboard_file file;
@@ -929,6 +906,7 @@ int x11_viewer_run(int argc, char** argv)
         if (status != LIBRDP_STATUS_OK)
         {
             fprintf(stderr, "error=clipboard_file status=%s\n", librdp_status_string(status));
+            client_runtime_free(app.runtime);
             librdp_session_free(app.session);
             x11_cli_options_free(&cli_options);
             x11_runtime_features_free(&app);
@@ -949,10 +927,11 @@ int x11_viewer_run(int argc, char** argv)
         }
         x11_trace_event(X11_TRACE_CLIENT, "x11.clipboard.local_file", "configured=1");
     }
-    status = librdp_session_connect(app.session);
+    status = client_runtime_connect(app.runtime);
     if (status != LIBRDP_STATUS_OK)
     {
         fprintf(stderr, "error=%s\n", librdp_status_string(status));
+        client_runtime_free(app.runtime);
         librdp_session_free(app.session);
         x11_cli_options_free(&cli_options);
         x11_runtime_features_free(&app);
@@ -1119,7 +1098,8 @@ int x11_viewer_run(int argc, char** argv)
 
     x11_keyboard_release_all_remote_keys(&app);
     x11_keyboard_ungrab(&app, CurrentTime, 1);
-    (void)librdp_session_disconnect(app.session);
+    (void)client_runtime_disconnect(app.runtime);
+    client_runtime_free(app.runtime);
     librdp_session_free(app.session);
     x11_cli_options_free(&cli_options);
     x11_runtime_features_free(&app);
