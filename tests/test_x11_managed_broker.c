@@ -218,15 +218,36 @@ static int test_fake_supervisor(int descriptor)
           LIBRDP_STATUS_OK);
     CHECK(initial.type == X11_MANAGED_IPC_START);
     CHECK(strcmp(initial.password, "transient-broker-secret") == 0);
+    if (strcmp(initial.domain, "deny") == 0)
+    {
+        x11_managed_ipc_message_init(&response);
+        response.type = X11_MANAGED_IPC_ERROR;
+        response.request_id = initial.request_id;
+        response.status = LIBRDP_STATUS_STATE;
+        response.auth_outcome = 2u;
+        CHECK(x11_managed_ipc_send(
+                  descriptor, &response, 5000) ==
+              LIBRDP_STATUS_OK);
+        x11_managed_ipc_message_clear(&response);
+        x11_managed_ipc_message_clear(&initial);
+        close(descriptor);
+        return 0;
+    }
     x11_managed_ipc_message_init(&authenticated);
     authenticated.type = X11_MANAGED_IPC_AUTHENTICATED;
     authenticated.request_id = initial.request_id;
-    authenticated.uid = (uint32_t)account->pw_uid;
+    authenticated.uid =
+        strcmp(initial.username, "different-account") == 0
+            ? (uint32_t)account->pw_uid + 1u
+            : (uint32_t)account->pw_uid;
     authenticated.gid = (uint32_t)account->pw_gid;
     authenticated.auth_outcome = 1u;
-    CHECK(test_copy(authenticated.username,
-                    sizeof(authenticated.username),
-                    account->pw_name));
+    CHECK(test_copy(
+        authenticated.username,
+        sizeof(authenticated.username),
+        strcmp(initial.username, "different-account") == 0
+            ? "different-account"
+            : account->pw_name));
     CHECK(x11_managed_ipc_send(
               descriptor, &authenticated, 5000) ==
           LIBRDP_STATUS_OK);
@@ -248,6 +269,17 @@ static int test_fake_supervisor(int descriptor)
     close(descriptor);
     x11_managed_ipc_message_clear(&response);
     OPENSSL_cleanse(initial.password, sizeof(initial.password));
+    if (strcmp(initial.domain, "logout") == 0)
+    {
+        close(listener);
+        unlink(session.control_socket);
+        x11_managed_ipc_message_clear(&initial);
+        x11_managed_ipc_message_clear(&authenticated);
+        x11_managed_ipc_message_clear(&session);
+        return 0;
+    }
+    if (strcmp(initial.domain, "crash") == 0)
+        _exit(3);
     while (!done)
     {
         int control = accept(listener, NULL, NULL);
@@ -361,6 +393,58 @@ static int test_request(const char* socket_path,
            response->type == X11_MANAGED_IPC_READY;
 }
 
+static int test_request_error(
+    const char* socket_path,
+    x11_managed_ipc_message* request,
+    librdp_status expected)
+{
+    x11_managed_ipc_message response;
+    int descriptor = test_connect(socket_path);
+    librdp_status status = LIBRDP_STATUS_OK;
+    int result = 0;
+
+    if (descriptor < 0)
+        return 0;
+    x11_managed_ipc_message_init(&response);
+    status = x11_managed_ipc_send(descriptor, request, 5000);
+    if (status == LIBRDP_STATUS_OK)
+        status = x11_managed_ipc_receive(
+            descriptor, &response, 10000);
+    result = status == LIBRDP_STATUS_OK &&
+             response.type == X11_MANAGED_IPC_ERROR &&
+             response.status == expected;
+    close(descriptor);
+    x11_managed_ipc_message_clear(&response);
+    return result;
+}
+
+static void test_start_request(
+    x11_managed_ipc_message* request,
+    uint64_t request_id,
+    const char* username,
+    const char* domain)
+{
+    x11_managed_ipc_message_init(request);
+    request->type = X11_MANAGED_IPC_START;
+    request->request_id = request_id;
+    request->width = 800u;
+    request->height = 600u;
+    request->flags = X11_MANAGED_IPC_ALLOW_CAPTURE |
+                     X11_MANAGED_IPC_ALLOW_INPUT |
+                     X11_MANAGED_IPC_ALLOW_CLIPBOARD |
+                     X11_MANAGED_IPC_ALLOW_DRIVE |
+                     X11_MANAGED_IPC_PERSISTENT |
+                     X11_MANAGED_IPC_RECONNECT;
+    (void)test_copy(
+        request->username, sizeof(request->username), username);
+    (void)test_copy(
+        request->domain, sizeof(request->domain), domain);
+    (void)test_copy(
+        request->password,
+        sizeof(request->password),
+        "transient-broker-secret");
+}
+
 /*
  * Start one persistent session, exercise its control lifecycle, replace the
  * broker process view, recover from the supervisor socket and terminate it.
@@ -423,23 +507,8 @@ static int test_broker_lifecycle(void)
     CHECK(x11_managed_policy_valid(&policy));
     CHECK(test_start_broker(
         &policy, &first, &first_thread));
-    x11_managed_ipc_message_init(&request);
-    request.type = X11_MANAGED_IPC_START;
-    request.request_id = 100u;
-    request.width = 800u;
-    request.height = 600u;
-    request.flags = X11_MANAGED_IPC_ALLOW_CAPTURE |
-                    X11_MANAGED_IPC_ALLOW_INPUT |
-                    X11_MANAGED_IPC_ALLOW_CLIPBOARD |
-                    X11_MANAGED_IPC_ALLOW_DRIVE |
-                    X11_MANAGED_IPC_PERSISTENT |
-                    X11_MANAGED_IPC_RECONNECT;
-    CHECK(test_copy(request.username,
-                    sizeof(request.username),
-                    account->pw_name));
-    CHECK(test_copy(request.password,
-                    sizeof(request.password),
-                    "transient-broker-secret"));
+    test_start_request(
+        &request, 100u, account->pw_name, "");
     x11_managed_ipc_message_init(&response);
     CHECK(test_request(socket_path, &request, &response));
     CHECK(response.session_id != 0u &&
@@ -455,6 +524,21 @@ static int test_broker_lifecycle(void)
                       runtime_root,
                       (unsigned long long)session_id);
     CHECK(length > 0 && (size_t)length < sizeof(runtime_path));
+    x11_managed_ipc_message_clear(&request);
+    test_start_request(
+        &request, 106u, account->pw_name, "deny");
+    CHECK(test_request_error(
+        socket_path, &request, LIBRDP_STATUS_STATE));
+    x11_managed_ipc_message_clear(&request);
+    test_start_request(
+        &request, 107u, "different-account", "");
+    CHECK(test_request_error(
+        socket_path, &request, LIBRDP_STATUS_STATE));
+    x11_managed_ipc_message_clear(&request);
+    test_start_request(
+        &request, 108u, account->pw_name, "");
+    CHECK(test_request_error(
+        socket_path, &request, LIBRDP_STATUS_LIMIT_EXCEEDED));
     x11_managed_ipc_message_clear(&request);
     x11_managed_ipc_message_init(&request);
     request.type = X11_MANAGED_IPC_DETACH;
@@ -507,6 +591,30 @@ static int test_broker_lifecycle(void)
     memcpy(request.reconnect_token, token, sizeof(token));
     x11_managed_ipc_message_clear(&response);
     CHECK(test_request(socket_path, &request, &response));
+    CHECK(test_wait_path(runtime_path, 0, 4000));
+    x11_managed_ipc_message_clear(&request);
+    test_start_request(
+        &request, 109u, account->pw_name, "logout");
+    x11_managed_ipc_message_clear(&response);
+    CHECK(test_request(socket_path, &request, &response));
+    length = snprintf(runtime_path,
+                      sizeof(runtime_path),
+                      "%s/session-%016llx",
+                      runtime_root,
+                      (unsigned long long)response.session_id);
+    CHECK(length > 0 && (size_t)length < sizeof(runtime_path));
+    CHECK(test_wait_path(runtime_path, 0, 4000));
+    x11_managed_ipc_message_clear(&request);
+    test_start_request(
+        &request, 110u, account->pw_name, "crash");
+    x11_managed_ipc_message_clear(&response);
+    CHECK(test_request(socket_path, &request, &response));
+    length = snprintf(runtime_path,
+                      sizeof(runtime_path),
+                      "%s/session-%016llx",
+                      runtime_root,
+                      (unsigned long long)response.session_id);
+    CHECK(length > 0 && (size_t)length < sizeof(runtime_path));
     CHECK(test_wait_path(runtime_path, 0, 4000));
     CHECK(test_stop_broker(&second, second_thread));
     CHECK(rmdir(runtime_root) == 0);
