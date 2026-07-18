@@ -8,8 +8,8 @@
  * transfers and are bounded by a caller-supplied timeout.
  * Ownership: callers own device handles and data buffers; the backend owns
  * temporary transfer buffers until completion or cancellation.
- * Threading: functions are synchronous to the session thread but drive libusb
- * asynchronous transfers internally so timeout cancellation is deterministic.
+ * Threading: transfer calls are synchronous to their caller and are normally
+ * driven by the managed session USB worker, never the session dispatch thread.
  * Trust boundary: transfer parameters originate from validated URBDRC payloads
  * and are clamped before entering the backend.
  */
@@ -19,6 +19,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/time.h>
 #include <sys/types.h>
 
 #include <librdp/error.h>
@@ -95,6 +96,31 @@ typedef struct rdp_usb_backend_open_ops
                 libusb_device_handle** handle);
 } rdp_usb_backend_open_ops;
 
+typedef struct rdp_usb_backend_wait_control
+{
+    void* user_data;
+    int (*is_cancelled)(void* user_data);
+} rdp_usb_backend_wait_control;
+
+typedef struct rdp_usb_backend_wait_state
+{
+    int completed;
+    enum libusb_transfer_status transfer_status;
+    int actual_length;
+} rdp_usb_backend_wait_state;
+
+typedef struct rdp_usb_backend_transfer_ops
+{
+    void* user_data;
+    int (*submit)(void* user_data, struct libusb_transfer* transfer);
+    int (*cancel)(void* user_data, struct libusb_transfer* transfer);
+    int (*handle_events)(void* user_data,
+                         libusb_context* context,
+                         struct timeval* timeout,
+                         int* completed);
+    uint64_t (*now_ms)(void* user_data);
+} rdp_usb_backend_transfer_ops;
+
 void rdp_usb_backend_release_device(rdp_usb_backend_device* device);
 void rdp_usb_backend_release_devices(rdp_usb_backend_device* devices, size_t count);
 void rdp_usb_backend_context_exit(libusb_context** context);
@@ -108,6 +134,13 @@ librdp_status rdp_usb_backend_open_device_with_ops(
     rdp_usb_backend_device* out,
     rdp_usb_backend_match* match,
     const rdp_usb_backend_open_ops* ops);
+uint32_t rdp_usb_backend_wait_transfer_with_ops(
+    libusb_context* context,
+    struct libusb_transfer* transfer,
+    rdp_usb_backend_wait_state* state,
+    uint32_t timeout_ms,
+    const rdp_usb_backend_wait_control* control,
+    const rdp_usb_backend_transfer_ops* ops);
 uint32_t rdp_usb_backend_reset_device(rdp_usb_backend_device* device);
 uint32_t rdp_usb_backend_claim_endpoint(rdp_usb_backend_device* device,
                                         uint8_t endpoint,
@@ -124,6 +157,7 @@ uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
                                           uint8_t* data,
                                           uint32_t length,
                                           uint32_t timeout_ms,
+                                          const rdp_usb_backend_wait_control* control,
                                           uint32_t* actual_length);
 uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                                     libusb_device_handle* handle,
@@ -132,6 +166,7 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                                     uint8_t* data,
                                                     uint32_t length,
                                                     uint32_t timeout_ms,
+                                                    const rdp_usb_backend_wait_control* control,
                                                     uint32_t* actual_length);
 uint32_t rdp_usb_backend_validate_iso_layout(
     uint32_t length,
@@ -145,6 +180,7 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
                                       rdp_usb_backend_iso_packet* packets,
                                       uint32_t packet_count,
                                       uint32_t timeout_ms,
+                                      const rdp_usb_backend_wait_control* control,
                                       uint32_t* actual_length);
 #endif
 

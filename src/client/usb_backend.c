@@ -8,7 +8,7 @@
  * libusb asynchronous APIs and cancelled when the configured timeout expires.
  * Ownership: temporary buffers are released on every return path, and caller
  * output buffers are written only after successful completion.
- * Threading: libusb events are pumped by the calling session thread; no global
+ * Threading: libusb events are pumped by the calling USB worker; no global
  * backend state is retained.
  * Trust boundary: backend functions receive already-parsed packet fields and
  * return protocol-neutral URBDRC status values.
@@ -26,13 +26,6 @@
 #include <sys/time.h>
 #include <time.h>
 
-typedef struct rdp_usb_backend_async_state
-{
-    int completed;
-    enum libusb_transfer_status transfer_status;
-    int actual_length;
-} rdp_usb_backend_async_state;
-
 static uint64_t rdp_usb_backend_now_ms(void)
 {
     struct timespec now;
@@ -43,8 +36,8 @@ static uint64_t rdp_usb_backend_now_ms(void)
 
 static void LIBUSB_CALL rdp_usb_backend_transfer_callback(struct libusb_transfer* transfer)
 {
-    rdp_usb_backend_async_state* state =
-        transfer ? (rdp_usb_backend_async_state*)transfer->user_data : NULL;
+    rdp_usb_backend_wait_state* state =
+        transfer ? (rdp_usb_backend_wait_state*)transfer->user_data : NULL;
 
     if (!state)
         return;
@@ -52,6 +45,43 @@ static void LIBUSB_CALL rdp_usb_backend_transfer_callback(struct libusb_transfer
     state->actual_length = transfer->actual_length;
     state->completed = 1;
 }
+
+static int rdp_usb_backend_default_submit(void* user_data,
+                                          struct libusb_transfer* transfer)
+{
+    (void)user_data;
+    return libusb_submit_transfer(transfer);
+}
+
+static int rdp_usb_backend_default_cancel(void* user_data,
+                                          struct libusb_transfer* transfer)
+{
+    (void)user_data;
+    return libusb_cancel_transfer(transfer);
+}
+
+static int rdp_usb_backend_default_handle_events(void* user_data,
+                                                 libusb_context* context,
+                                                 struct timeval* timeout,
+                                                 int* completed)
+{
+    (void)user_data;
+    return libusb_handle_events_timeout_completed(context, timeout, completed);
+}
+
+static uint64_t rdp_usb_backend_default_now_ms(void* user_data)
+{
+    (void)user_data;
+    return rdp_usb_backend_now_ms();
+}
+
+static const rdp_usb_backend_transfer_ops RDP_USB_BACKEND_DEFAULT_TRANSFER_OPS = {
+    NULL,
+    rdp_usb_backend_default_submit,
+    rdp_usb_backend_default_cancel,
+    rdp_usb_backend_default_handle_events,
+    rdp_usb_backend_default_now_ms
+};
 
 uint32_t rdp_usb_backend_libusb_status(int rc)
 {
@@ -484,50 +514,69 @@ uint32_t rdp_usb_backend_select_interface(rdp_usb_backend_device* device,
                                   rdp_usb_backend_libusb_status(rc);
 }
 
+static int rdp_usb_backend_transfer_ops_valid(const rdp_usb_backend_transfer_ops* ops)
+{
+    return ops && ops->submit && ops->cancel && ops->handle_events && ops->now_ms;
+}
+
 /*
- * Pump a submitted libusb transfer until callback completion or timeout.
- * Timeout cancellation is followed by event handling until libusb reports the
- * cancellation, so transfer storage can be freed deterministically.
+ * Own one transfer from submission through callback completion. Once submit
+ * succeeds, timeout, cancellation, and event-pump failures all request
+ * cancellation and continue pumping until libusb invokes the terminal
+ * callback. Callers may therefore release transfer storage only after this
+ * function returns.
  */
-static uint32_t rdp_usb_backend_wait_transfer(libusb_context* context,
-                                              struct libusb_transfer* transfer,
-                                              rdp_usb_backend_async_state* state,
-                                              uint32_t timeout_ms)
+uint32_t rdp_usb_backend_wait_transfer_with_ops(
+    libusb_context* context,
+    struct libusb_transfer* transfer,
+    rdp_usb_backend_wait_state* state,
+    uint32_t timeout_ms,
+    const rdp_usb_backend_wait_control* control,
+    const rdp_usb_backend_transfer_ops* ops)
 {
     uint64_t start_ms = 0;
+    uint32_t terminal_status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
+    int cancel_requested = 0;
     int rc = 0;
 
-    if (!context || !transfer || !state)
+    if (!context || !transfer || !state || !rdp_usb_backend_transfer_ops_valid(ops))
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-    start_ms = rdp_usb_backend_now_ms();
-    rc = libusb_submit_transfer(transfer);
+    start_ms = ops->now_ms(ops->user_data);
+    rc = ops->submit(ops->user_data, transfer);
     if (rc != LIBUSB_SUCCESS)
         return rdp_usb_backend_libusb_status(rc);
     while (!state->completed)
     {
         struct timeval tv;
-        uint64_t now_ms = rdp_usb_backend_now_ms();
+        uint64_t now_ms = ops->now_ms(ops->user_data);
+        int caller_cancelled =
+            control && control->is_cancelled &&
+            control->is_cancelled(control->user_data);
 
-        if (timeout_ms > 0 && now_ms - start_ms >= timeout_ms)
+        if (!cancel_requested &&
+            (caller_cancelled || (timeout_ms > 0 && now_ms - start_ms >= timeout_ms)))
         {
-            (void)libusb_cancel_transfer(transfer);
-            while (!state->completed)
-            {
-                tv.tv_sec = 0;
-                tv.tv_usec = 10000;
-                rc = libusb_handle_events_timeout_completed(context, &tv, &state->completed);
-                if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_INTERRUPTED)
-                    return rdp_usb_backend_libusb_status(rc);
-            }
-            return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
+            terminal_status = RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
+            rc = ops->cancel(ops->user_data, transfer);
+            if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_NOT_FOUND)
+                terminal_status = rdp_usb_backend_libusb_status(rc);
+            cancel_requested = 1;
         }
         tv.tv_sec = 0;
         tv.tv_usec = 10000;
-        rc = libusb_handle_events_timeout_completed(context, &tv, &state->completed);
+        rc = ops->handle_events(ops->user_data, context, &tv, &state->completed);
         if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_INTERRUPTED)
-            return rdp_usb_backend_libusb_status(rc);
+        {
+            if (!cancel_requested)
+            {
+                terminal_status = rdp_usb_backend_libusb_status(rc);
+                (void)ops->cancel(ops->user_data, transfer);
+                cancel_requested = 1;
+            }
+        }
     }
-    return rdp_usb_backend_transfer_status(state->transfer_status);
+    return cancel_requested ? terminal_status :
+                              rdp_usb_backend_transfer_status(state->transfer_status);
 }
 
 uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
@@ -539,10 +588,11 @@ uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
                                           uint8_t* data,
                                           uint32_t length,
                                           uint32_t timeout_ms,
+                                          const rdp_usb_backend_wait_control* control,
                                           uint32_t* actual_length)
 {
     struct libusb_transfer* transfer = NULL;
-    rdp_usb_backend_async_state state;
+    rdp_usb_backend_wait_state state;
     uint8_t* buffer = NULL;
     uint32_t status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
     size_t total = 0;
@@ -570,7 +620,12 @@ uint32_t rdp_usb_backend_control_transfer(libusb_context* context,
                                  rdp_usb_backend_transfer_callback,
                                  &state,
                                  timeout_ms);
-    status = rdp_usb_backend_wait_transfer(context, transfer, &state, timeout_ms);
+    status = rdp_usb_backend_wait_transfer_with_ops(context,
+                                                    transfer,
+                                                    &state,
+                                                    timeout_ms,
+                                                    control,
+                                                    &RDP_USB_BACKEND_DEFAULT_TRANSFER_OPS);
     if (status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
     {
         if (state.actual_length > 0 && (request_type & LIBUSB_ENDPOINT_IN) != 0)
@@ -599,10 +654,11 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                                     uint8_t* data,
                                                     uint32_t length,
                                                     uint32_t timeout_ms,
+                                                    const rdp_usb_backend_wait_control* control,
                                                     uint32_t* actual_length)
 {
     struct libusb_transfer* transfer = NULL;
-    rdp_usb_backend_async_state state;
+    rdp_usb_backend_wait_state state;
     uint32_t status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
 
     if (!context || !handle || (!data && length > 0) || !actual_length || length > INT32_MAX)
@@ -630,7 +686,12 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                   rdp_usb_backend_transfer_callback,
                                   &state,
                                   timeout_ms);
-    status = rdp_usb_backend_wait_transfer(context, transfer, &state, timeout_ms);
+    status = rdp_usb_backend_wait_transfer_with_ops(context,
+                                                    transfer,
+                                                    &state,
+                                                    timeout_ms,
+                                                    control,
+                                                    &RDP_USB_BACKEND_DEFAULT_TRANSFER_OPS);
     if (status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS && state.actual_length >= 0)
         *actual_length = (uint32_t)state.actual_length;
     libusb_free_transfer(transfer);
@@ -672,10 +733,11 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
                                       rdp_usb_backend_iso_packet* packets,
                                       uint32_t packet_count,
                                       uint32_t timeout_ms,
+                                      const rdp_usb_backend_wait_control* control,
                                       uint32_t* actual_length)
 {
     struct libusb_transfer* transfer = NULL;
-    rdp_usb_backend_async_state state;
+    rdp_usb_backend_wait_state state;
     uint32_t status = RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS;
     uint32_t actual_total = 0;
 
@@ -706,7 +768,12 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
         transfer->iso_packet_desc[i].length = (unsigned int)packets[i].length;
         transfer->iso_packet_desc[i].actual_length = 0;
     }
-    status = rdp_usb_backend_wait_transfer(context, transfer, &state, timeout_ms);
+    status = rdp_usb_backend_wait_transfer_with_ops(context,
+                                                    transfer,
+                                                    &state,
+                                                    timeout_ms,
+                                                    control,
+                                                    &RDP_USB_BACKEND_DEFAULT_TRANSFER_OPS);
     if (status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
     {
         actual_total = 0;

@@ -24,5 +24,7 @@ librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session
                                                          const uint8_t* data,
                                                          size_t data_len);
 void rdp_session_usb_redirection_reset(librdp_session* session);
+librdp_status rdp_session_usb_dispatch_completions(librdp_session* session);
+size_t rdp_session_usb_outstanding_requests(librdp_session* session);
 
 #endif

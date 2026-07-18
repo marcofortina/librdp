@@ -6,7 +6,7 @@
  * Module: client USB redirection session domain.
  * Invariants: URBDRC packets are header-validated before backend execution and interface IDs remain session-owned.
  * Ownership: the session owns announced USB backend handles, transfer buffers, and DVC completion routing state.
- * Threading: called on the session owner thread; backend calls must not publish raw payloads through trace.
+ * Threading: parsing and completion dispatch run on the owner thread; bounded backend waits run on the managed USB worker.
  * Trust boundary: server-supplied URBs are untrusted and all lengths, offsets, pipe handles, and descriptor requests are bounded.
  */
 
@@ -22,6 +22,42 @@
 
 #ifdef RDP_HAVE_LIBUSB
 #include <libusb.h>
+
+typedef struct rdp_session_usb_job rdp_session_usb_job;
+
+struct rdp_session_usb_worker
+{
+    librdp_session* session;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    pthread_t thread;
+    rdp_session_usb_job* pending_head;
+    rdp_session_usb_job* pending_tail;
+    rdp_session_usb_job* completed_head;
+    rdp_session_usb_job* completed_tail;
+    rdp_session_usb_job* active;
+    size_t outstanding;
+    uint8_t stopping;
+    atomic_uint cancel_active;
+    rdp_usb_backend_wait_control wait_control;
+};
+
+static void rdp_session_usb_worker_stop(librdp_session* session);
+
+static int rdp_session_usb_worker_cancelled(void* user_data)
+{
+    const rdp_session_usb_worker* worker =
+        (const rdp_session_usb_worker*)user_data;
+
+    return worker &&
+           atomic_load_explicit(&worker->cancel_active, memory_order_acquire) != 0u;
+}
+
+static const rdp_usb_backend_wait_control* rdp_session_usb_wait_control(
+    const librdp_session* session)
+{
+    return session && session->usb_worker ? &session->usb_worker->wait_control : NULL;
+}
 #endif
 
 void rdp_session_usb_redirection_reset(librdp_session* session)
@@ -29,6 +65,7 @@ void rdp_session_usb_redirection_reset(librdp_session* session)
     if (!session)
         return;
 #ifdef RDP_HAVE_LIBUSB
+    rdp_session_usb_worker_stop(session);
     rdp_usb_backend_release_devices(session->usb_devices, LIBRDP_SETTINGS_MAX_USB_DEVICES);
     rdp_usb_backend_context_exit(&session->usb_libusb);
 #endif
@@ -1141,6 +1178,7 @@ static uint32_t rdp_session_usb_control_request(librdp_session* session,
                                                                buffer,
                                                                output_buffer_size,
                                                                capped_timeout,
+                                                               rdp_session_usb_wait_control(session),
                                                                &actual);
 
         if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
@@ -1641,6 +1679,7 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
                                                packets,
                                                parsed.packet_count,
                                                timeout,
+                                               rdp_session_usb_wait_control(session),
                                                &actual_total);
     if (rdp_buffer_append_u32_le(result_payload, parsed.start_frame) != LIBRDP_STATUS_OK ||
         rdp_buffer_append_u32_le(result_payload,
@@ -1743,6 +1782,7 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
                                                    ms_string,
                                                    (uint32_t)sizeof(ms_string),
                                                    rdp_session_usb_transfer_timeout(session, 1000u),
+                                                   rdp_session_usb_wait_control(session),
                                                    &actual);
     if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
         return usbd_status;
@@ -1771,6 +1811,7 @@ static uint32_t rdp_session_usb_complete_os_feature_descriptor_request(
                                                    buffer,
                                                    request.output_buffer_size,
                                                    rdp_session_usb_transfer_timeout(session, 1000u),
+                                                   rdp_session_usb_wait_control(session),
                                                    &actual);
     if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
     {
@@ -1897,6 +1938,7 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                                                    output,
                                                                    control.output_buffer_size,
                                                                    timeout,
+                                                                   rdp_session_usb_wait_control(session),
                                                                    &actual);
                     if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS &&
                         (control.request_type & LIBUSB_ENDPOINT_IN) != 0)
@@ -1931,6 +1973,7 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                                                NULL,
                                                                0,
                                                                timeout,
+                                                               rdp_session_usb_wait_control(session),
                                                                &actual);
             }
         }
@@ -2147,6 +2190,7 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                                 output,
                                 pipe.output_buffer_size,
                                 timeout,
+                                rdp_session_usb_wait_control(session),
                                 &actual);
                             if (usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
                                 output_len = actual;
@@ -2162,6 +2206,7 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
                             (uint8_t*)pipe.data,
                             pipe.data_len,
                             timeout,
+                            rdp_session_usb_wait_control(session),
                             &actual);
                     }
                     rdp_trace_event(RDP_TRACE_CLIENT,
@@ -2217,8 +2262,10 @@ static librdp_status rdp_session_usb_execute_transfer(librdp_session* session,
     return LIBRDP_STATUS_OK;
 }
 
-static librdp_status rdp_session_usb_complete_transfer(librdp_session* session,
-                                                       const rdp_usb_redirection_transfer* transfer)
+#ifndef RDP_HAVE_LIBUSB
+static librdp_status rdp_session_usb_complete_transfer(
+    librdp_session* session,
+    const rdp_usb_redirection_transfer* transfer)
 {
     rdp_session_usb_transfer_result result;
     librdp_status status = LIBRDP_STATUS_OK;
@@ -2231,12 +2278,17 @@ static librdp_status rdp_session_usb_complete_transfer(librdp_session* session,
             result.usbd_status,
             result.result_payload.data,
             (uint32_t)result.result_payload.length,
-            result.usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ? result.output : NULL,
-            result.usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ? result.output_len : 0,
+            result.usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
+                result.output :
+                NULL,
+            result.usbd_status == RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
+                result.output_len :
+                0,
             "client.urbdrc.urb.completion");
     rdp_session_usb_transfer_result_free(&result);
     return status;
 }
+#endif
 
 /*
  * Classify a submitted USB URB as an IN or OUT transfer using the URB function
@@ -2385,6 +2437,496 @@ static librdp_status rdp_session_usb_complete_submit_urb_control(
                         (unsigned)output->length);
     rdp_session_usb_transfer_result_free(&result);
     return status;
+}
+
+#ifdef RDP_HAVE_LIBUSB
+typedef enum rdp_session_usb_job_kind
+{
+    RDP_SESSION_USB_JOB_TRANSFER = 0,
+    RDP_SESSION_USB_JOB_SUBMIT_URB = 1
+} rdp_session_usb_job_kind;
+
+struct rdp_session_usb_job
+{
+    rdp_session_usb_job* next;
+    rdp_session_usb_job_kind kind;
+    uint8_t* packet;
+    size_t packet_len;
+    uint32_t interface_id;
+    uint32_t request_id;
+    librdp_status status;
+    rdp_usb_redirection_transfer transfer;
+    rdp_usb_redirection_io_control control;
+    rdp_session_usb_transfer_result transfer_result;
+    rdp_buffer io_output;
+    uint32_t io_usbd_status;
+    uint32_t io_hresult;
+};
+
+static void rdp_session_usb_job_free(rdp_session_usb_job* job)
+{
+    if (!job)
+        return;
+    rdp_session_usb_transfer_result_free(&job->transfer_result);
+    rdp_buffer_free(&job->io_output);
+    free(job->packet);
+    free(job);
+}
+
+static rdp_session_usb_job* rdp_session_usb_job_new(
+    rdp_session_usb_job_kind kind,
+    const uint8_t* data,
+    size_t data_len,
+    uint32_t expected_function_id)
+{
+    rdp_session_usb_job* job = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || data_len == 0)
+        return NULL;
+    job = (rdp_session_usb_job*)calloc(1, sizeof(*job));
+    if (!job)
+        return NULL;
+    job->packet = (uint8_t*)malloc(data_len);
+    if (!job->packet)
+    {
+        free(job);
+        return NULL;
+    }
+    memcpy(job->packet, data, data_len);
+    job->packet_len = data_len;
+    job->kind = kind;
+    rdp_buffer_init(&job->io_output);
+    if (kind == RDP_SESSION_USB_JOB_TRANSFER)
+    {
+        status = rdp_usb_redirection_parse_transfer(job->packet,
+                                                    job->packet_len,
+                                                    expected_function_id,
+                                                    &job->transfer);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            job->interface_id = job->transfer.header.interface_id;
+            job->request_id = job->transfer.urb.request_id;
+        }
+    }
+    else
+    {
+        status = rdp_usb_redirection_parse_io_control(job->packet,
+                                                      job->packet_len,
+                                                      expected_function_id,
+                                                      &job->control);
+        if (status == LIBRDP_STATUS_OK &&
+            job->control.io_control_code != RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_URB)
+            status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        if (status == LIBRDP_STATUS_OK)
+        {
+            job->interface_id = job->control.header.interface_id;
+            job->request_id = job->control.request_id;
+        }
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        rdp_session_usb_job_free(job);
+        return NULL;
+    }
+    return job;
+}
+
+static void rdp_session_usb_worker_append_completed(
+    rdp_session_usb_worker* worker,
+    rdp_session_usb_job* job)
+{
+    if (!worker || !job)
+        return;
+    job->next = NULL;
+    if (worker->completed_tail)
+        worker->completed_tail->next = job;
+    else
+        worker->completed_head = job;
+    worker->completed_tail = job;
+}
+
+static uint32_t rdp_session_usb_status_to_usbd(librdp_status status)
+{
+    if (status == LIBRDP_STATUS_NO_MEMORY)
+        return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
+    if (status == LIBRDP_STATUS_TIMEOUT || status == LIBRDP_STATUS_CANCELLED)
+        return RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
+    if (status == LIBRDP_STATUS_PROTOCOL_ERROR ||
+        status == LIBRDP_STATUS_INVALID_ARGUMENT ||
+        status == LIBRDP_STATUS_LIMIT_EXCEEDED)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    return RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
+}
+
+/*
+ * Execute queued URBs away from the session dispatch thread. Exactly one job
+ * owns the backend at a time; terminal results move to the completion queue
+ * under the worker mutex and wake the owner thread. Shutdown cancels the active
+ * transfer, discards queued work, and joins this thread before device teardown.
+ */
+static void* rdp_session_usb_worker_main(void* user_data)
+{
+    rdp_session_usb_worker* worker = (rdp_session_usb_worker*)user_data;
+
+    if (!worker)
+        return NULL;
+    for (;;)
+    {
+        rdp_session_usb_job* job = NULL;
+        int stopping = 0;
+
+        pthread_mutex_lock(&worker->mutex);
+        while (!worker->stopping && !worker->pending_head)
+            pthread_cond_wait(&worker->condition, &worker->mutex);
+        if (worker->stopping)
+        {
+            pthread_mutex_unlock(&worker->mutex);
+            break;
+        }
+        job = worker->pending_head;
+        worker->pending_head = job->next;
+        if (!worker->pending_head)
+            worker->pending_tail = NULL;
+        job->next = NULL;
+        worker->active = job;
+        atomic_store_explicit(&worker->cancel_active, 0u, memory_order_release);
+        pthread_mutex_unlock(&worker->mutex);
+
+        if (job->kind == RDP_SESSION_USB_JOB_TRANSFER)
+        {
+            job->status = rdp_session_usb_execute_transfer(worker->session,
+                                                           &job->transfer,
+                                                           &job->transfer_result);
+            if (job->status != LIBRDP_STATUS_OK)
+            {
+                job->transfer_result.usbd_status =
+                    rdp_session_usb_status_to_usbd(job->status);
+                rdp_buffer_init(&job->transfer_result.result_payload);
+                job->status = LIBRDP_STATUS_OK;
+            }
+        }
+        else
+        {
+            job->status = rdp_session_usb_complete_submit_urb_control(
+                worker->session,
+                &job->control,
+                &job->io_output,
+                &job->io_usbd_status);
+            job->io_hresult = RDP_SESSION_HRESULT_OK;
+            if (job->io_output.length > job->control.output_buffer_size)
+            {
+                job->io_output.length = 0;
+                job->io_usbd_status =
+                    RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+                job->io_hresult = RDP_SESSION_HRESULT_FAIL;
+                job->status = rdp_session_usb_make_urb_result(
+                    job->io_usbd_status,
+                    &job->io_output);
+            }
+            else if (job->status != LIBRDP_STATUS_OK)
+            {
+                job->io_output.length = 0;
+                job->io_usbd_status =
+                    rdp_session_usb_status_to_usbd(job->status);
+                job->status = rdp_session_usb_make_urb_result(job->io_usbd_status,
+                                                              &job->io_output);
+            }
+        }
+
+        pthread_mutex_lock(&worker->mutex);
+        worker->active = NULL;
+        stopping = worker->stopping;
+        if (!stopping)
+            rdp_session_usb_worker_append_completed(worker, job);
+        else if (worker->outstanding > 0)
+            worker->outstanding--;
+        pthread_mutex_unlock(&worker->mutex);
+        if (stopping)
+            rdp_session_usb_job_free(job);
+        else
+            (void)rdp_session_wakeup_signal(worker->session);
+    }
+    return NULL;
+}
+
+static librdp_status rdp_session_usb_worker_start(librdp_session* session)
+{
+    rdp_session_usb_worker* worker = NULL;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (session->usb_worker)
+        return LIBRDP_STATUS_OK;
+    worker = (rdp_session_usb_worker*)calloc(1, sizeof(*worker));
+    if (!worker)
+        return LIBRDP_STATUS_NO_MEMORY;
+    worker->session = session;
+    atomic_init(&worker->cancel_active, 0u);
+    worker->wait_control.user_data = worker;
+    worker->wait_control.is_cancelled = rdp_session_usb_worker_cancelled;
+    if (pthread_mutex_init(&worker->mutex, NULL) != 0)
+    {
+        free(worker);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (pthread_cond_init(&worker->condition, NULL) != 0)
+    {
+        pthread_mutex_destroy(&worker->mutex);
+        free(worker);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    if (pthread_create(&worker->thread, NULL, rdp_session_usb_worker_main, worker) != 0)
+    {
+        pthread_cond_destroy(&worker->condition);
+        pthread_mutex_destroy(&worker->mutex);
+        free(worker);
+        return LIBRDP_STATUS_IO_ERROR;
+    }
+    session->usb_worker = worker;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_session_usb_worker_enqueue(
+    librdp_session* session,
+    rdp_session_usb_job* job)
+{
+    rdp_session_usb_worker* worker = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !job)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_session_usb_worker_start(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    worker = session->usb_worker;
+    pthread_mutex_lock(&worker->mutex);
+    if (worker->stopping)
+        status = LIBRDP_STATUS_CLOSED;
+    else if (worker->outstanding >= session->limits.pending_requests)
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    else
+    {
+        job->next = NULL;
+        if (worker->pending_tail)
+            worker->pending_tail->next = job;
+        else
+            worker->pending_head = job;
+        worker->pending_tail = job;
+        worker->outstanding++;
+        pthread_cond_signal(&worker->condition);
+    }
+    pthread_mutex_unlock(&worker->mutex);
+    return status;
+}
+
+static librdp_status rdp_session_usb_queue_job(
+    librdp_session* session,
+    rdp_session_usb_job_kind kind,
+    const uint8_t* data,
+    size_t data_len,
+    uint32_t expected_function_id)
+{
+    rdp_session_usb_job* job = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!session || !data || data_len == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data_len > session->limits.device_io_bytes)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    job = rdp_session_usb_job_new(kind, data, data_len, expected_function_id);
+    if (!job)
+        return LIBRDP_STATUS_NO_MEMORY;
+    status = rdp_session_usb_worker_enqueue(session, job);
+    if (status != LIBRDP_STATUS_OK)
+        rdp_session_usb_job_free(job);
+    return status;
+}
+
+static void rdp_session_usb_worker_cancel_request(librdp_session* session,
+                                                  uint32_t interface_id,
+                                                  uint32_t request_id)
+{
+    rdp_session_usb_worker* worker = session ? session->usb_worker : NULL;
+    rdp_session_usb_job* previous = NULL;
+    rdp_session_usb_job* current = NULL;
+
+    if (!worker)
+        return;
+    pthread_mutex_lock(&worker->mutex);
+    if (worker->active &&
+        worker->active->interface_id == interface_id &&
+        worker->active->request_id == request_id)
+    {
+        atomic_store_explicit(&worker->cancel_active, 1u, memory_order_release);
+        pthread_mutex_unlock(&worker->mutex);
+        return;
+    }
+    current = worker->pending_head;
+    while (current &&
+           (current->interface_id != interface_id ||
+            current->request_id != request_id))
+    {
+        previous = current;
+        current = current->next;
+    }
+    if (!current)
+    {
+        pthread_mutex_unlock(&worker->mutex);
+        return;
+    }
+    if (previous)
+        previous->next = current->next;
+    else
+        worker->pending_head = current->next;
+    if (worker->pending_tail == current)
+        worker->pending_tail = previous;
+    current->next = NULL;
+    if (current->kind == RDP_SESSION_USB_JOB_TRANSFER)
+    {
+        current->transfer_result.usbd_status =
+            RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
+        rdp_buffer_init(&current->transfer_result.result_payload);
+        current->status = LIBRDP_STATUS_OK;
+    }
+    else
+    {
+        current->io_usbd_status = RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT;
+        current->io_hresult = RDP_SESSION_HRESULT_OK;
+        current->status = rdp_session_usb_make_urb_result(
+            current->io_usbd_status,
+            &current->io_output);
+    }
+    rdp_session_usb_worker_append_completed(worker, current);
+    pthread_mutex_unlock(&worker->mutex);
+    (void)rdp_session_wakeup_signal(session);
+}
+
+static void rdp_session_usb_worker_stop(librdp_session* session)
+{
+    rdp_session_usb_worker* worker = session ? session->usb_worker : NULL;
+    rdp_session_usb_job* job = NULL;
+
+    if (!worker)
+        return;
+    pthread_mutex_lock(&worker->mutex);
+    worker->stopping = 1;
+    atomic_store_explicit(&worker->cancel_active, 1u, memory_order_release);
+    pthread_cond_signal(&worker->condition);
+    pthread_mutex_unlock(&worker->mutex);
+    pthread_join(worker->thread, NULL);
+
+    job = worker->pending_head;
+    while (job)
+    {
+        rdp_session_usb_job* next = job->next;
+
+        rdp_session_usb_job_free(job);
+        job = next;
+    }
+    job = worker->completed_head;
+    while (job)
+    {
+        rdp_session_usb_job* next = job->next;
+
+        rdp_session_usb_job_free(job);
+        job = next;
+    }
+    pthread_cond_destroy(&worker->condition);
+    pthread_mutex_destroy(&worker->mutex);
+    free(worker);
+    session->usb_worker = NULL;
+}
+#endif
+
+librdp_status rdp_session_usb_dispatch_completions(librdp_session* session)
+{
+#ifdef RDP_HAVE_LIBUSB
+    rdp_session_usb_worker* worker = session ? session->usb_worker : NULL;
+    librdp_status first_error = LIBRDP_STATUS_OK;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!worker)
+        return LIBRDP_STATUS_OK;
+    for (;;)
+    {
+        rdp_session_usb_job* job = NULL;
+        librdp_status status = LIBRDP_STATUS_OK;
+
+        pthread_mutex_lock(&worker->mutex);
+        job = worker->completed_head;
+        if (job)
+        {
+            worker->completed_head = job->next;
+            if (!worker->completed_head)
+                worker->completed_tail = NULL;
+            if (worker->outstanding > 0)
+                worker->outstanding--;
+            job->next = NULL;
+        }
+        pthread_mutex_unlock(&worker->mutex);
+        if (!job)
+            break;
+        if (job->status != LIBRDP_STATUS_OK)
+        {
+            status = job->status;
+        }
+        else if (job->kind == RDP_SESSION_USB_JOB_TRANSFER)
+        {
+            status = rdp_session_usb_send_urb_completion_payload(
+                session,
+                &job->transfer,
+                job->transfer_result.usbd_status,
+                job->transfer_result.result_payload.data,
+                (uint32_t)job->transfer_result.result_payload.length,
+                job->transfer_result.usbd_status ==
+                        RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
+                    job->transfer_result.output :
+                    NULL,
+                job->transfer_result.usbd_status ==
+                        RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS ?
+                    job->transfer_result.output_len :
+                    0,
+                "client.urbdrc.urb.completion");
+        }
+        else
+        {
+            status = rdp_session_usb_send_io_completion(
+                session,
+                job->control.request_id,
+                job->io_hresult,
+                (uint32_t)job->io_output.length,
+                job->io_output.data,
+                (uint32_t)job->io_output.length,
+                "client.urbdrc.io_control.completion");
+        }
+        if (first_error == LIBRDP_STATUS_OK && status != LIBRDP_STATUS_OK)
+            first_error = status;
+        rdp_session_usb_job_free(job);
+    }
+    return first_error;
+#else
+    return session ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
+#endif
+}
+
+size_t rdp_session_usb_outstanding_requests(librdp_session* session)
+{
+#ifdef RDP_HAVE_LIBUSB
+    rdp_session_usb_worker* worker = session ? session->usb_worker : NULL;
+    size_t outstanding = 0;
+
+    if (!worker)
+        return 0;
+    pthread_mutex_lock(&worker->mutex);
+    outstanding = worker->outstanding;
+    pthread_mutex_unlock(&worker->mutex);
+    return outstanding;
+#else
+    (void)session;
+    return 0;
+#endif
 }
 
 /*
@@ -2593,11 +3135,27 @@ librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session
             }
             else if (control.io_control_code == RDP_USB_REDIRECTION_IOCTL_INTERNAL_USB_SUBMIT_URB)
             {
+#ifdef RDP_HAVE_LIBUSB
+                rdp_buffer_free(&output);
+                rdp_trace_event(RDP_TRACE_CLIENT,
+                                "client.urbdrc.submit_urb.queued",
+                                "interface_id=%u request_id=%u input_len=%u output_size=%u",
+                                control.header.interface_id,
+                                control.request_id,
+                                control.input_buffer_len,
+                                control.output_buffer_size);
+                return rdp_session_usb_queue_job(session,
+                                                 RDP_SESSION_USB_JOB_SUBMIT_URB,
+                                                 data,
+                                                 data_len,
+                                                 header.function_id);
+#else
                 status = rdp_session_usb_complete_submit_urb_control(session,
                                                                      &control,
                                                                      &output,
                                                                      &usbd_status);
                 result = RDP_SESSION_HRESULT_OK;
+#endif
             }
         }
         else if (control.io_control_code == RDP_USB_REDIRECTION_IOCTL_QUERY_BUS_TIME)
@@ -2656,7 +3214,15 @@ librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session
                         transfer.output_buffer_size,
                         transfer.output_buffer_len,
                         transfer.urb.no_ack);
+#ifdef RDP_HAVE_LIBUSB
+        return rdp_session_usb_queue_job(session,
+                                         RDP_SESSION_USB_JOB_TRANSFER,
+                                         data,
+                                         data_len,
+                                         header.function_id);
+#else
         return rdp_session_usb_complete_transfer(session, &transfer);
+#endif
     }
     if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&
         header.function_id == RDP_USB_REDIRECTION_FN_CANCEL_REQUEST)
@@ -2672,6 +3238,11 @@ librdp_status rdp_session_handle_usb_redirection_message(librdp_session* session
                         session->usb_redirection_channel_id,
                         cancel.header.interface_id,
                         cancel.request_id);
+#ifdef RDP_HAVE_LIBUSB
+        rdp_session_usb_worker_cancel_request(session,
+                                              cancel.header.interface_id,
+                                              cancel.request_id);
+#endif
         return LIBRDP_STATUS_OK;
     }
     if (header.mask == RDP_USB_REDIRECTION_MASK_PROXY &&

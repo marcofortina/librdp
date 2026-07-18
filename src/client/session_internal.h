@@ -84,6 +84,7 @@
 #endif
 #ifdef RDP_HAVE_LIBUSB
 #include <libusb.h>
+typedef struct rdp_session_usb_worker rdp_session_usb_worker;
 #endif
 
 #define RDP_SESSION_MAX_DYNAMIC_CHANNELS 64u
@@ -833,6 +834,7 @@ struct librdp_session
 #ifdef RDP_HAVE_LIBUSB
     libusb_context* usb_libusb;
     rdp_usb_backend_device usb_devices[LIBRDP_SETTINGS_MAX_USB_DEVICES];
+    rdp_session_usb_worker* usb_worker;
 #endif
     uint32_t next_redirected_file_id;
 #ifdef RDP_HAVE_PCSC

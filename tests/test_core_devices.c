@@ -14,6 +14,7 @@
 
 #include "channels/usb_redirection.h"
 #include "client/printer_backend.h"
+#include "client/session_internal.h"
 #include "client/smartcard_backend.h"
 #include "client/usb_backend.h"
 
@@ -515,6 +516,210 @@ static int test_usb_iso_layout(void)
           RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
     return 0;
 }
+
+typedef enum test_usb_wait_scenario
+{
+    TEST_USB_WAIT_EVENT_ERROR = 0,
+    TEST_USB_WAIT_TIMEOUT = 1,
+    TEST_USB_WAIT_CANCEL = 2,
+    TEST_USB_WAIT_UNPLUG = 3
+} test_usb_wait_scenario;
+
+typedef struct test_usb_wait_mock
+{
+    test_usb_wait_scenario scenario;
+    struct libusb_transfer* transfer;
+    uint64_t now_ms;
+    unsigned submit_calls;
+    unsigned cancel_calls;
+    unsigned event_calls;
+    int in_flight;
+} test_usb_wait_mock;
+
+static void LIBUSB_CALL test_usb_wait_callback(struct libusb_transfer* transfer)
+{
+    rdp_usb_backend_wait_state* state =
+        transfer ? (rdp_usb_backend_wait_state*)transfer->user_data : NULL;
+
+    if (!state)
+        return;
+    state->transfer_status = transfer->status;
+    state->actual_length = transfer->actual_length;
+    state->completed = 1;
+}
+
+static int test_usb_wait_submit(void* user_data, struct libusb_transfer* transfer)
+{
+    test_usb_wait_mock* mock = (test_usb_wait_mock*)user_data;
+
+    if (!mock || !transfer)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    mock->submit_calls++;
+    mock->transfer = transfer;
+    mock->in_flight = 1;
+    return LIBUSB_SUCCESS;
+}
+
+static int test_usb_wait_cancel(void* user_data, struct libusb_transfer* transfer)
+{
+    test_usb_wait_mock* mock = (test_usb_wait_mock*)user_data;
+
+    if (!mock || transfer != mock->transfer || !mock->in_flight)
+        return LIBUSB_ERROR_NOT_FOUND;
+    mock->cancel_calls++;
+    return LIBUSB_SUCCESS;
+}
+
+static int test_usb_wait_handle_events(void* user_data,
+                                       libusb_context* context,
+                                       struct timeval* timeout,
+                                       int* completed)
+{
+    test_usb_wait_mock* mock = (test_usb_wait_mock*)user_data;
+
+    (void)context;
+    (void)timeout;
+    if (!mock || !mock->transfer || !completed)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    mock->event_calls++;
+    if (mock->scenario == TEST_USB_WAIT_EVENT_ERROR && mock->event_calls == 1u)
+        return LIBUSB_ERROR_IO;
+    if (mock->scenario == TEST_USB_WAIT_UNPLUG)
+        mock->transfer->status = LIBUSB_TRANSFER_NO_DEVICE;
+    else
+        mock->transfer->status = LIBUSB_TRANSFER_CANCELLED;
+    mock->transfer->actual_length = 0;
+    mock->in_flight = 0;
+    mock->transfer->callback(mock->transfer);
+    *completed = 1;
+    return LIBUSB_SUCCESS;
+}
+
+static uint64_t test_usb_wait_now_ms(void* user_data)
+{
+    test_usb_wait_mock* mock = (test_usb_wait_mock*)user_data;
+    uint64_t now = 0;
+
+    if (!mock)
+        return 0;
+    now = mock->now_ms;
+    mock->now_ms += 20u;
+    return now;
+}
+
+static int test_usb_wait_is_cancelled(void* user_data)
+{
+    const test_usb_wait_mock* mock = (const test_usb_wait_mock*)user_data;
+
+    return mock && mock->scenario == TEST_USB_WAIT_CANCEL;
+}
+
+static uint32_t test_usb_wait_run(test_usb_wait_scenario scenario,
+                                  test_usb_wait_mock* mock)
+{
+    rdp_usb_backend_transfer_ops ops;
+    rdp_usb_backend_wait_control control;
+    rdp_usb_backend_wait_state state;
+    libusb_context* context = (libusb_context*)(void*)mock;
+    struct libusb_transfer* transfer = NULL;
+    uint32_t status = 0;
+
+    if (!mock)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    memset(mock, 0, sizeof(*mock));
+    mock->scenario = scenario;
+    memset(&ops, 0, sizeof(ops));
+    ops.user_data = mock;
+    ops.submit = test_usb_wait_submit;
+    ops.cancel = test_usb_wait_cancel;
+    ops.handle_events = test_usb_wait_handle_events;
+    ops.now_ms = test_usb_wait_now_ms;
+    memset(&control, 0, sizeof(control));
+    control.user_data = mock;
+    control.is_cancelled = test_usb_wait_is_cancelled;
+    memset(&state, 0, sizeof(state));
+    transfer = libusb_alloc_transfer(0);
+    if (!transfer)
+        return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
+    transfer->callback = test_usb_wait_callback;
+    transfer->user_data = &state;
+    status = rdp_usb_backend_wait_transfer_with_ops(context,
+                                                    transfer,
+                                                    &state,
+                                                    scenario == TEST_USB_WAIT_TIMEOUT ? 10u : 100u,
+                                                    &control,
+                                                    &ops);
+    CHECK(!mock->in_flight && state.completed);
+    libusb_free_transfer(transfer);
+    return status;
+}
+
+/*
+ * Coverage: models timeout, explicit cancellation, one event-loop failure,
+ * and device unplug. Every submitted transfer reaches its callback before the
+ * test releases storage, including the event-error path.
+ */
+static int test_usb_transfer_terminal_lifecycle(void)
+{
+    test_usb_wait_mock mock;
+
+    CHECK(test_usb_wait_run(TEST_USB_WAIT_EVENT_ERROR, &mock) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING);
+    CHECK(mock.submit_calls == 1u && mock.cancel_calls == 1u &&
+          mock.event_calls == 2u);
+    CHECK(test_usb_wait_run(TEST_USB_WAIT_TIMEOUT, &mock) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT);
+    CHECK(mock.submit_calls == 1u && mock.cancel_calls == 1u);
+    CHECK(test_usb_wait_run(TEST_USB_WAIT_CANCEL, &mock) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_TIMEOUT);
+    CHECK(mock.submit_calls == 1u && mock.cancel_calls == 1u);
+    CHECK(test_usb_wait_run(TEST_USB_WAIT_UNPLUG, &mock) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_DEVICE_GONE);
+    CHECK(mock.submit_calls == 1u && mock.cancel_calls == 0u);
+    return 0;
+}
+
+/*
+ * Coverage: queues a wire-valid URB through the session boundary and verifies
+ * that completion is collected through the owner-thread dispatcher. No USB
+ * device is required; the worker reports the absent interface asynchronously.
+ */
+static int test_usb_session_worker(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    rdp_buffer packet;
+    uint32_t waited_ms = 0;
+
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    rdp_buffer_init(&packet);
+    CHECK(rdp_usb_redirection_write_transfer_in_request(
+              &packet,
+              9u,
+              1u,
+              RDP_USB_REDIRECTION_URB_GET_CURRENT_FRAME_NUMBER,
+              77u,
+              0u,
+              4u) == LIBRDP_STATUS_OK);
+    CHECK(rdp_session_handle_usb_redirection_message(session,
+                                                     packet.data,
+                                                     packet.length) ==
+          LIBRDP_STATUS_OK);
+    while (rdp_session_usb_outstanding_requests(session) > 0 && waited_ms < 1000u)
+    {
+        test_backend_sleep_ms(5u);
+        CHECK(rdp_session_usb_dispatch_completions(session) == LIBRDP_STATUS_OK);
+        waited_ms += 5u;
+    }
+    CHECK(rdp_session_usb_outstanding_requests(session) == 0);
+    rdp_buffer_free(&packet);
+    librdp_session_free(session);
+    librdp_settings_free(settings);
+    return 0;
+}
 #endif
 
 static int test_usb_backend_boundary(void)
@@ -575,6 +780,7 @@ static int test_usb_backend_boundary(void)
                                            NULL,
                                            0,
                                            1,
+                                           NULL,
                                            &actual) ==
           RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
     CHECK(rdp_usb_backend_bulk_or_interrupt_transfer(NULL,
@@ -584,6 +790,7 @@ static int test_usb_backend_boundary(void)
                                                      NULL,
                                                      0,
                                                      1,
+                                                     NULL,
                                                      &actual) ==
           RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
     CHECK(rdp_usb_backend_iso_transfer(NULL,
@@ -594,6 +801,7 @@ static int test_usb_backend_boundary(void)
                                        &packet,
                                        1,
                                        1,
+                                       NULL,
                                        &actual) ==
           RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
 #endif
@@ -610,6 +818,10 @@ int test_core_devices(void)
     if (test_usb_open_fail_closed() != 0)
         return 1;
     if (test_usb_iso_layout() != 0)
+        return 1;
+    if (test_usb_transfer_terminal_lifecycle() != 0)
+        return 1;
+    if (test_usb_session_worker() != 0)
         return 1;
 #endif
     if (test_usb_backend_boundary() != 0)

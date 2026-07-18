@@ -4517,6 +4517,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
         return status;
     if (atomic_load_explicit(&session->cancel_requested, memory_order_acquire) != 0u)
         return rdp_session_finish_cancel(session);
+    status = rdp_session_usb_dispatch_completions(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (!rdp_session_transport_input_ready_now(session))
         rdp_session_echo_check_timeout(session);
     {
@@ -4557,6 +4560,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                 rdp_buffer_free(&packet);
                 return rdp_session_finish_cancel(session);
             }
+            status = rdp_session_usb_dispatch_completions(session);
         }
         if ((wakeup_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
             status = LIBRDP_STATUS_IO_ERROR;
@@ -4618,6 +4622,7 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
                     rdp_buffer_free(&packet);
                     return rdp_session_finish_cancel(session);
                 }
+                status = rdp_session_usb_dispatch_completions(session);
             }
             if ((wakeup_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
                 status = LIBRDP_STATUS_IO_ERROR;
