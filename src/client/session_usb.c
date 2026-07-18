@@ -1602,6 +1602,18 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
         endpoint |= LIBUSB_ENDPOINT_IN;
     else
         endpoint &= (uint8_t)~LIBUSB_ENDPOINT_IN;
+    for (uint32_t i = 0; i < parsed.packet_count; i++)
+    {
+        packets[i].offset = parsed.packets[i].offset;
+        packets[i].length = parsed.packets[i].length;
+        packets[i].actual_length = 0;
+        packets[i].status = RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
+    }
+    usbd_status = rdp_usb_backend_validate_iso_layout(parsed.output_buffer_size,
+                                                      packets,
+                                                      parsed.packet_count);
+    if (usbd_status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
+        return usbd_status;
     {
         uint8_t transfer_type = LIBUSB_TRANSFER_TYPE_ISOCHRONOUS;
 
@@ -1619,12 +1631,6 @@ static uint32_t rdp_session_usb_complete_iso_transfer(librdp_session* session,
             return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
         if (transfer->header.function_id == RDP_USB_REDIRECTION_FN_TRANSFER_OUT_REQUEST)
             memcpy(buffer, parsed.data, parsed.data_len);
-    }
-    for (uint32_t i = 0; i < parsed.packet_count; i++)
-    {
-        packets[i].length = parsed.packets[i].length;
-        packets[i].actual_length = 0;
-        packets[i].status = RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
     }
     timeout = rdp_session_usb_transfer_timeout(session, timeout);
     usbd_status = rdp_usb_backend_iso_transfer(session->usb_libusb,

@@ -637,6 +637,33 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
     return status;
 }
 
+/*
+ * libusb lays isochronous packets out consecutively according to each packet
+ * length. Requiring the wire offsets to describe that same canonical layout
+ * prevents gaps, overlap, and aggregate lengths that escape the transfer
+ * buffer even when every packet length is individually in range.
+ */
+uint32_t rdp_usb_backend_validate_iso_layout(
+    uint32_t length,
+    const rdp_usb_backend_iso_packet* packets,
+    uint32_t packet_count)
+{
+    uint32_t expected_offset = 0;
+
+    if (!packets || packet_count == 0 || packet_count > (uint32_t)INT_MAX ||
+        length > (uint32_t)INT_MAX)
+        return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+    for (uint32_t i = 0; i < packet_count; i++)
+    {
+        if (packets[i].offset != expected_offset ||
+            packets[i].length > length - expected_offset)
+            return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+        expected_offset += packets[i].length;
+    }
+    return expected_offset == length ? RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS :
+                                       RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
+}
+
 uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
                                       libusb_device_handle* handle,
                                       uint8_t endpoint,
@@ -656,6 +683,9 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
         packet_count > (uint32_t)INT_MAX || length > (uint32_t)INT_MAX || !actual_length)
         return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
     *actual_length = 0;
+    status = rdp_usb_backend_validate_iso_layout(length, packets, packet_count);
+    if (status != RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS)
+        return status;
     transfer = libusb_alloc_transfer((int)packet_count);
     if (!transfer)
         return RDP_USB_REDIRECTION_USBD_STATUS_NO_MEMORY;
@@ -671,11 +701,6 @@ uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
                              timeout_ms);
     for (uint32_t i = 0; i < packet_count; i++)
     {
-        if (packets[i].length > length)
-        {
-            libusb_free_transfer(transfer);
-            return RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER;
-        }
         packets[i].actual_length = 0;
         packets[i].status = RDP_USB_REDIRECTION_USBD_STATUS_DEV_NOT_RESPONDING;
         transfer->iso_packet_desc[i].length = (unsigned int)packets[i].length;

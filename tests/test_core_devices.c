@@ -455,6 +455,66 @@ static int test_usb_open_fail_closed(void)
     memset(&device, 0, sizeof(device));
     return 0;
 }
+
+/*
+ * Coverage: verifies the canonical packet layout required by libusb and
+ * catches aggregate overflow, overlap, gaps, and trailing unassigned bytes
+ * before any transfer can be allocated or submitted.
+ */
+static int test_usb_iso_layout(void)
+{
+    rdp_usb_backend_iso_packet packets[2];
+    uint32_t original_actual = 0;
+    uint32_t original_status = 0;
+
+    memset(packets, 0, sizeof(packets));
+    packets[0].offset = 0u;
+    packets[0].length = 6u;
+    packets[0].actual_length = 11u;
+    packets[0].status = 12u;
+    packets[1].offset = 6u;
+    packets[1].length = 4u;
+    packets[1].actual_length = 13u;
+    packets[1].status = 14u;
+    CHECK(rdp_usb_backend_validate_iso_layout(10u, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_SUCCESS);
+
+    original_actual = packets[1].actual_length;
+    original_status = packets[1].status;
+    packets[1].length = 6u;
+    CHECK(rdp_usb_backend_validate_iso_layout(10u, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    CHECK(packets[1].actual_length == original_actual &&
+          packets[1].status == original_status);
+
+    packets[0].length = 4u;
+    packets[1].offset = 5u;
+    packets[1].length = 5u;
+    CHECK(rdp_usb_backend_validate_iso_layout(10u, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+
+    packets[0].length = 6u;
+    packets[1].offset = 5u;
+    packets[1].length = 5u;
+    CHECK(rdp_usb_backend_validate_iso_layout(10u, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+
+    packets[0].length = 4u;
+    packets[1].offset = 4u;
+    packets[1].length = 4u;
+    CHECK(rdp_usb_backend_validate_iso_layout(10u, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+
+    packets[0].offset = 0u;
+    packets[0].length = UINT32_MAX;
+    packets[1].offset = UINT32_MAX;
+    packets[1].length = 1u;
+    CHECK(rdp_usb_backend_validate_iso_layout(UINT32_MAX, packets, 2u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    CHECK(rdp_usb_backend_validate_iso_layout(0u, NULL, 0u) ==
+          RDP_USB_REDIRECTION_USBD_STATUS_INVALID_PARAMETER);
+    return 0;
+}
 #endif
 
 static int test_usb_backend_boundary(void)
@@ -548,6 +608,8 @@ int test_core_devices(void)
         return 1;
 #ifdef RDP_HAVE_LIBUSB
     if (test_usb_open_fail_closed() != 0)
+        return 1;
+    if (test_usb_iso_layout() != 0)
         return 1;
 #endif
     if (test_usb_backend_boundary() != 0)

@@ -42,6 +42,7 @@ typedef struct rdp_usb_backend_device
 
 typedef struct rdp_usb_backend_iso_packet
 {
+    uint32_t offset;
     uint32_t length;
     uint32_t actual_length;
     uint32_t status;
@@ -132,6 +133,10 @@ uint32_t rdp_usb_backend_bulk_or_interrupt_transfer(libusb_context* context,
                                                     uint32_t length,
                                                     uint32_t timeout_ms,
                                                     uint32_t* actual_length);
+uint32_t rdp_usb_backend_validate_iso_layout(
+    uint32_t length,
+    const rdp_usb_backend_iso_packet* packets,
+    uint32_t packet_count);
 uint32_t rdp_usb_backend_iso_transfer(libusb_context* context,
                                       libusb_device_handle* handle,
                                       uint8_t endpoint,
