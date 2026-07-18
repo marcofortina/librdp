@@ -211,12 +211,52 @@ static int rdp_server_tls_error_stack_has_key_mismatch(void)
     return mismatch;
 }
 
+static librdp_status rdp_server_validate_tls_identity(
+    SSL_CTX* tls_context,
+    const char** failure_message)
+{
+    X509* certificate = NULL;
+    EVP_PKEY* public_key = NULL;
+    int not_before = 0;
+    int not_after = 0;
+
+    if (!tls_context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    certificate = SSL_CTX_get0_certificate(tls_context);
+    public_key = SSL_CTX_get0_privatekey(tls_context);
+    if (!certificate || !public_key)
+    {
+        if (failure_message)
+            *failure_message = "server TLS identity is incomplete";
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    not_before = X509_cmp_current_time(X509_get0_notBefore(certificate));
+    not_after = X509_cmp_current_time(X509_get0_notAfter(certificate));
+    if (not_before == 0 || not_after == 0 ||
+        not_before > 0 || not_after < 0)
+    {
+        if (failure_message)
+            *failure_message =
+                "server TLS certificate is outside its validity period";
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    if (EVP_PKEY_get_security_bits(public_key) < 112)
+    {
+        if (failure_message)
+            *failure_message =
+                "server TLS private key is below the minimum security strength";
+        return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    return LIBRDP_STATUS_OK;
+}
+
 librdp_status rdp_server_create_tls_context(const char* certificate_path,
                                                    const char* private_key_path,
                                                    SSL_CTX** context,
                                                    const char** failure_message)
 {
     SSL_CTX* tls_context = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (failure_message)
         *failure_message = "server TLS handshake failed";
@@ -233,6 +273,16 @@ librdp_status rdp_server_create_tls_context(const char* certificate_path,
     tls_context = SSL_CTX_new(TLS_server_method());
     if (!tls_context)
         return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    if (SSL_CTX_set_min_proto_version(tls_context, TLS1_2_VERSION) != 1)
+    {
+        SSL_CTX_free(tls_context);
+        ERR_clear_error();
+        if (failure_message)
+            *failure_message =
+                "server TLS minimum protocol configuration failed";
+        return LIBRDP_STATUS_TLS_HANDSHAKE_FAILED;
+    }
+    (void)SSL_CTX_set_options(tls_context, SSL_OP_NO_COMPRESSION);
     if (SSL_CTX_use_certificate_file(tls_context, certificate_path, SSL_FILETYPE_PEM) != 1)
     {
         SSL_CTX_free(tls_context);
@@ -260,6 +310,12 @@ librdp_status rdp_server_create_tls_context(const char* certificate_path,
         if (failure_message)
             *failure_message = "server TLS certificate and private key do not match";
         return LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED;
+    }
+    status = rdp_server_validate_tls_identity(tls_context, failure_message);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        SSL_CTX_free(tls_context);
+        return status;
     }
     *context = tls_context;
     return LIBRDP_STATUS_OK;

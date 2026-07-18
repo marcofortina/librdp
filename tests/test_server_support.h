@@ -148,6 +148,14 @@ int test_server_make_tls_files(char* cert_path,
                                       char* key_path,
                                       size_t key_path_len);
 
+int test_server_make_tls_files_with_policy(char* cert_path,
+                                           size_t cert_path_len,
+                                           char* key_path,
+                                           size_t key_path_len,
+                                           unsigned int key_bits,
+                                           long not_before_offset,
+                                           long not_after_offset);
+
 int test_server_read_response(int fd, uint8_t* response, size_t response_len);
 
 int test_server_send_all(int fd, const uint8_t* data, size_t length);

@@ -105,6 +105,10 @@ int test_server_new_validates_metadata(void)
     char key_path[128];
     char cert_path_b[128];
     char key_path_b[128];
+    char expired_cert_path[128];
+    char expired_key_path[128];
+    char weak_cert_path[128];
+    char weak_key_path[128];
     char nla_password[32];
     char nla_username[32];
 
@@ -112,6 +116,10 @@ int test_server_new_validates_metadata(void)
     memset(key_path, 0, sizeof(key_path));
     memset(cert_path_b, 0, sizeof(cert_path_b));
     memset(key_path_b, 0, sizeof(key_path_b));
+    memset(expired_cert_path, 0, sizeof(expired_cert_path));
+    memset(expired_key_path, 0, sizeof(expired_key_path));
+    memset(weak_cert_path, 0, sizeof(weak_cert_path));
+    memset(weak_key_path, 0, sizeof(weak_key_path));
     test_server_fill_secret(nla_password, sizeof(nla_password), 307u);
     test_server_fill_secret(nla_username, sizeof(nla_username), 311u);
 
@@ -149,6 +157,20 @@ int test_server_new_validates_metadata(void)
     SCHECK(librdp_server_new(&config) == NULL);
     SCHECK(test_server_make_tls_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)));
     SCHECK(test_server_make_tls_files(cert_path_b, sizeof(cert_path_b), key_path_b, sizeof(key_path_b)));
+    SCHECK(test_server_make_tls_files_with_policy(expired_cert_path,
+                                                  sizeof(expired_cert_path),
+                                                  expired_key_path,
+                                                  sizeof(expired_key_path),
+                                                  2048u,
+                                                  -7200,
+                                                  -3600));
+    SCHECK(test_server_make_tls_files_with_policy(weak_cert_path,
+                                                  sizeof(weak_cert_path),
+                                                  weak_key_path,
+                                                  sizeof(weak_key_path),
+                                                  1024u,
+                                                  0,
+                                                  3600));
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     config.security_mode = LIBRDP_SECURITY_TLS;
     config.tls_certificate_path = cert_path;
@@ -159,6 +181,12 @@ int test_server_new_validates_metadata(void)
     SCHECK(server != NULL);
     librdp_server_free(server);
     server = NULL;
+    config.tls_certificate_path = expired_cert_path;
+    config.tls_private_key_path = expired_key_path;
+    SCHECK(librdp_server_new(&config) == NULL);
+    config.tls_certificate_path = weak_cert_path;
+    config.tls_private_key_path = weak_key_path;
+    SCHECK(librdp_server_new(&config) == NULL);
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     config.security_mode = LIBRDP_SECURITY_NLA;
     config.tls_certificate_path = cert_path;
@@ -178,6 +206,10 @@ int test_server_new_validates_metadata(void)
     unlink(key_path);
     unlink(cert_path_b);
     unlink(key_path_b);
+    unlink(expired_cert_path);
+    unlink(expired_key_path);
+    unlink(weak_cert_path);
+    unlink(weak_key_path);
     SCHECK(librdp_server_config_init(&config) == LIBRDP_STATUS_OK);
     server = librdp_server_new(&config);
     SCHECK(server != NULL);

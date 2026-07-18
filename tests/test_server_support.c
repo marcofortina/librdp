@@ -125,10 +125,13 @@ int test_server_copy_file(const char* source_path, const char* target_path)
     return ok;
 }
 
-int test_server_make_tls_files(char* cert_path,
-                                      size_t cert_path_len,
-                                      char* key_path,
-                                      size_t key_path_len)
+int test_server_make_tls_files_with_policy(char* cert_path,
+                                           size_t cert_path_len,
+                                           char* key_path,
+                                           size_t key_path_len,
+                                           unsigned int key_bits,
+                                           long not_before_offset,
+                                           long not_after_offset)
 {
     EVP_PKEY* key = NULL;
     X509* cert = NULL;
@@ -144,15 +147,17 @@ int test_server_make_tls_files(char* cert_path,
         key_fd = test_server_write_temp_path(key_path, key_path_len, "key");
         if (cert_fd < 0 || key_fd < 0)
             break;
-        key = EVP_RSA_gen(2048);
+        key = EVP_RSA_gen(key_bits);
         cert = X509_new();
         if (!key || !cert)
             break;
         if (ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1 ||
             X509_set_version(cert, 2) != 1 ||
             X509_set_pubkey(cert, key) != 1 ||
-            !X509_gmtime_adj(X509_get_notBefore(cert), 0) ||
-            !X509_gmtime_adj(X509_get_notAfter(cert), 3600))
+            !X509_gmtime_adj(X509_get_notBefore(cert),
+                             not_before_offset) ||
+            !X509_gmtime_adj(X509_get_notAfter(cert),
+                             not_after_offset))
             break;
         name = X509_get_subject_name(cert);
         if (!name ||
@@ -205,6 +210,20 @@ int test_server_make_tls_files(char* cert_path,
         ERR_clear_error();
     }
     return ok;
+}
+
+int test_server_make_tls_files(char* cert_path,
+                               size_t cert_path_len,
+                               char* key_path,
+                               size_t key_path_len)
+{
+    return test_server_make_tls_files_with_policy(cert_path,
+                                                  cert_path_len,
+                                                  key_path,
+                                                  key_path_len,
+                                                  2048u,
+                                                  0,
+                                                  3600);
 }
 
 int test_server_read_response(int fd, uint8_t* response, size_t response_len)
