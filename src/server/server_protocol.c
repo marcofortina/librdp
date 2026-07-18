@@ -15,6 +15,7 @@
 #include "server/server_protocol.h"
 
 #include "server/server_channels.h"
+#include "server/server_drive.h"
 #include "server/server_features.h"
 #include "server/server_graphics.h"
 #include "server/server_peer.h"
@@ -121,6 +122,7 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         int reconnect = peer->advertised_channel_count > 0 ? 1 : 0;
 
         rdp_server_clipboard_state_reset(peer, peer->advertised_channel_count > 0 ? 1 : 0);
+        rdp_server_drive_state_reset(peer, reconnect);
         rdp_server_extension_states_reset(peer, reconnect);
         peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
         peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;

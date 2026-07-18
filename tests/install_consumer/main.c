@@ -8,6 +8,9 @@
 int main(void)
 {
     librdp_server_clipboard_event clipboard_event;
+    librdp_server_drive_event drive_event;
+    librdp_server_drive_request drive_request;
+    librdp_server_drive_request_id drive_request_id = 0u;
     librdp_settings* settings = librdp_settings_new();
 
     if (librdp_server_clipboard_event_init(&clipboard_event) !=
@@ -18,6 +21,23 @@ int main(void)
             LIBRDP_STATUS_INVALID_ARGUMENT)
     {
         return 5;
+    }
+    if (librdp_server_drive_event_init(&drive_event) !=
+            LIBRDP_STATUS_OK ||
+        librdp_server_drive_request_init(&drive_request) !=
+            LIBRDP_STATUS_OK ||
+        drive_event.version != LIBRDP_SERVER_DRIVE_EVENT_VERSION ||
+        drive_request.version != LIBRDP_SERVER_DRIVE_REQUEST_VERSION ||
+        librdp_server_peer_set_drive_callback(NULL, NULL, NULL) !=
+            LIBRDP_STATUS_INVALID_ARGUMENT ||
+        librdp_server_peer_submit_drive_request(
+            NULL,
+            &drive_request,
+            &drive_request_id) != LIBRDP_STATUS_INVALID_ARGUMENT ||
+        librdp_server_peer_cancel_drive_request(NULL, 1u) !=
+            LIBRDP_STATUS_INVALID_ARGUMENT)
+    {
+        return 6;
     }
     if (!settings)
         return 1;

@@ -51,6 +51,15 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_channel_event", librdp_server_channel_event, ",");
     ABI_TYPE_ENTRY("librdp_server_clipboard_event_type", librdp_server_clipboard_event_type, ",");
     ABI_TYPE_ENTRY("librdp_server_clipboard_event", librdp_server_clipboard_event, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_device_handle", librdp_server_drive_device_handle, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_file_handle", librdp_server_drive_file_handle, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_request_id", librdp_server_drive_request_id, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_lock_range", librdp_server_drive_lock_range, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_lock_operation", librdp_server_drive_lock_operation, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_operation", librdp_server_drive_operation, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_request", librdp_server_drive_request, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_event_type", librdp_server_drive_event_type, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_event", librdp_server_drive_event, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_family", librdp_server_extension_family, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_event", librdp_server_extension_event, ",");
     ABI_TYPE_ENTRY("librdp_server_event_type", librdp_server_event_type, ",");
@@ -61,6 +70,7 @@ int main(void)
     ABI_TYPE_ENTRY("librdp_server_input_callback", librdp_server_input_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_channel_callback", librdp_server_channel_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_clipboard_callback", librdp_server_clipboard_callback, ",");
+    ABI_TYPE_ENTRY("librdp_server_drive_callback", librdp_server_drive_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_extension_callback", librdp_server_extension_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_event_callback", librdp_server_event_callback, ",");
     ABI_TYPE_ENTRY("librdp_server_credentials_provider", librdp_server_credentials_provider, ",");

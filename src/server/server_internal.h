@@ -29,6 +29,8 @@
 #define RDP_SERVER_MAX_DYNAMIC_CHANNELS 64u
 #define RDP_SERVER_DYNAMIC_CHANNEL_NAME_CAPACITY 64u
 #define RDP_SERVER_MAX_REDIRECTED_DEVICES 64u
+#define RDP_SERVER_MAX_DRIVE_FILES 256u
+#define RDP_SERVER_MAX_DRIVE_REQUESTS 256u
 #define RDP_SERVER_EXTENSION_FAMILY_COUNT ((size_t)LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING + 1u)
 
 typedef struct rdp_server_dynamic_channel
@@ -49,7 +51,31 @@ typedef struct rdp_server_redirected_device
     uint8_t present;
     uint32_t device_id;
     uint32_t device_type;
+    uint32_t reconnect_generation;
+    uint16_t channel_id;
+    char preferred_name[9];
+    char* name;
 } rdp_server_redirected_device;
+
+typedef struct rdp_server_drive_file
+{
+    uint8_t present;
+    uint32_t reconnect_generation;
+    uint32_t device_id;
+    uint32_t file_id;
+} rdp_server_drive_file;
+
+typedef struct rdp_server_drive_pending
+{
+    uint8_t present;
+    uint8_t cancelled;
+    uint32_t reconnect_generation;
+    uint32_t completion_id;
+    uint32_t device_id;
+    uint32_t file_id;
+    librdp_server_drive_request_id request_id;
+    librdp_server_drive_operation operation;
+} rdp_server_drive_pending;
 
 struct librdp_server
 {
@@ -155,6 +181,12 @@ struct librdp_server_peer
     rdp_server_dynamic_channel dynamic_channels[RDP_SERVER_MAX_DYNAMIC_CHANNELS];
     uint32_t redirected_device_count;
     rdp_server_redirected_device redirected_devices[RDP_SERVER_MAX_REDIRECTED_DEVICES];
+    uint32_t drive_reconnect_generation;
+    uint32_t drive_next_completion_id;
+    uint32_t drive_file_count;
+    rdp_server_drive_file drive_files[RDP_SERVER_MAX_DRIVE_FILES];
+    uint32_t drive_pending_count;
+    rdp_server_drive_pending drive_pending[RDP_SERVER_MAX_DRIVE_REQUESTS];
     uint8_t confirm_active_seen;
     uint8_t licensing_done;
     uint8_t client_info_seen;
@@ -191,6 +223,8 @@ struct librdp_server_peer
     void* extension_callback_user_data;
     librdp_server_clipboard_callback clipboard_callback;
     void* clipboard_callback_user_data;
+    librdp_server_drive_callback drive_callback;
+    void* drive_callback_user_data;
     librdp_server_extension_callback extension_family_callbacks[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     void* extension_family_user_data[RDP_SERVER_EXTENSION_FAMILY_COUNT];
     librdp_server_event_callback event_callback;

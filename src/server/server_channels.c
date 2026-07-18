@@ -14,6 +14,7 @@
 
 #include "server/server_channels.h"
 
+#include "server/server_drive.h"
 #include "server/server_features.h"
 #include "server/server_graphics.h"
 #include "server/server_listener.h"
@@ -379,73 +380,6 @@ librdp_server_extension_family rdp_server_redirected_device_family(uint32_t devi
     }
 }
 
-static rdp_server_redirected_device* rdp_server_find_redirected_device(librdp_server_peer* peer,
-                                                                       uint32_t device_id)
-{
-    if (!peer)
-        return NULL;
-    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
-    {
-        if (peer->redirected_devices[i].present && peer->redirected_devices[i].device_id == device_id)
-            return &peer->redirected_devices[i];
-    }
-    return NULL;
-}
-
-const rdp_server_redirected_device* rdp_server_find_redirected_device_const(
-    const librdp_server_peer* peer,
-    uint32_t device_id)
-{
-    if (!peer)
-        return NULL;
-    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
-    {
-        if (peer->redirected_devices[i].present && peer->redirected_devices[i].device_id == device_id)
-            return &peer->redirected_devices[i];
-    }
-    return NULL;
-}
-
-static librdp_status rdp_server_store_redirected_device(librdp_server_peer* peer,
-                                                        uint32_t device_id,
-                                                        uint32_t device_type)
-{
-    rdp_server_redirected_device* slot = rdp_server_find_redirected_device(peer, device_id);
-
-    if (!peer)
-        return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (slot)
-    {
-        slot->device_type = device_type;
-        return LIBRDP_STATUS_OK;
-    }
-    if (peer->redirected_device_count >= RDP_SERVER_MAX_REDIRECTED_DEVICES)
-        return LIBRDP_STATUS_LIMIT_EXCEEDED;
-    for (uint32_t i = 0; i < RDP_SERVER_MAX_REDIRECTED_DEVICES; i++)
-    {
-        if (!peer->redirected_devices[i].present)
-        {
-            peer->redirected_devices[i].present = 1;
-            peer->redirected_devices[i].device_id = device_id;
-            peer->redirected_devices[i].device_type = device_type;
-            peer->redirected_device_count++;
-            return LIBRDP_STATUS_OK;
-        }
-    }
-    return LIBRDP_STATUS_LIMIT_EXCEEDED;
-}
-
-static void rdp_server_remove_redirected_device(librdp_server_peer* peer, uint32_t device_id)
-{
-    rdp_server_redirected_device* slot = rdp_server_find_redirected_device(peer, device_id);
-
-    if (!peer || !slot)
-        return;
-    memset(slot, 0, sizeof(*slot));
-    if (peer->redirected_device_count > 0)
-        peer->redirected_device_count--;
-}
-
 static void rdp_server_classify_device_payload(const librdp_server_peer* peer,
                                                const uint8_t* data,
                                                size_t data_len,
@@ -526,9 +460,10 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
             librdp_feature device_feature = (librdp_feature)0;
             librdp_server_extension_family device_family =
                 rdp_server_redirected_device_family(list.devices[i].device_type, &device_feature);
-            librdp_status status = rdp_server_store_redirected_device(peer,
-                                                                      list.devices[i].device_id,
-                                                                      list.devices[i].device_type);
+            librdp_status status = rdp_server_redirected_device_store(
+                peer,
+                event->channel_id,
+                &list.devices[i]);
 
             if (status != LIBRDP_STATUS_OK)
                 return status;
@@ -556,8 +491,16 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
 
                 rdp_server_extension_state_mark_close(peer, device_family);
             }
-            rdp_server_remove_redirected_device(peer, remove.device_ids[i]);
+            rdp_server_redirected_device_remove(peer,
+                                                remove.device_ids[i]);
         }
+    }
+    else if (header.packet_id ==
+             RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION)
+    {
+        return rdp_server_drive_handle_completion(peer,
+                                                  event->payload,
+                                                  event->payload_len);
     }
     return LIBRDP_STATUS_OK;
 }

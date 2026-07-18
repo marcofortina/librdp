@@ -15,6 +15,7 @@
 #include "server/server_peer.h"
 
 #include "server/server_channels.h"
+#include "server/server_drive.h"
 #include "server/server_features.h"
 #include "server/server_protocol.h"
 #include "server/server_security.h"
@@ -216,6 +217,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     accepted->credentials_provider_user_data = server->credentials_provider_user_data;
     accepted->security_mode = server->security_mode;
     accepted->pending_revents = 0;
+    rdp_server_drive_state_reset(accepted, 0);
     rdp_server_extension_states_reset(accepted, 0);
     rdp_server_dynamic_channels_reset(accepted, 0);
     if (server->server_name)
@@ -586,6 +588,7 @@ librdp_status librdp_server_peer_close(librdp_server_peer* peer)
     if (!peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_server_dynamic_channels_reset(peer, 1);
+    rdp_server_drive_state_reset(peer, 1);
     rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
     return LIBRDP_STATUS_OK;
 }
@@ -605,6 +608,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     EVP_PKEY_free(peer->standard_private_key);
     rdp_security_standard_clear(&peer->standard_security);
     rdp_server_dynamic_channels_reset(peer, 0);
+    rdp_server_drive_state_reset(peer, 0);
     if (peer->credssp_security_ready)
     {
         OPENSSL_cleanse(&peer->credssp_security, sizeof(peer->credssp_security));

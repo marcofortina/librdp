@@ -36,6 +36,8 @@ extern "C" {
 #define LIBRDP_SERVER_METRICS_VERSION 1u /**< Current librdp_server_metrics version. */
 #define LIBRDP_SERVER_CLIPBOARD_STATE_VERSION 1u /**< Current librdp_server_clipboard_state version. */
 #define LIBRDP_SERVER_CLIPBOARD_EVENT_VERSION 1u /**< Current librdp_server_clipboard_event version. */
+#define LIBRDP_SERVER_DRIVE_REQUEST_VERSION 1u /**< Current librdp_server_drive_request version. */
+#define LIBRDP_SERVER_DRIVE_EVENT_VERSION 1u /**< Current librdp_server_drive_event version. */
 #define LIBRDP_SERVER_EXTENSION_STATE_VERSION 1u /**< Current librdp_server_extension_state version. */
 #define LIBRDP_SERVER_CREDENTIALS_REQUEST_VERSION 1u /**< Current librdp_server_credentials_request version. */
 #define LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY 9u /**< Static-channel name storage including NUL. */
@@ -340,6 +342,192 @@ typedef struct librdp_server_clipboard_event
     const uint8_t* data; /**< Borrowed response bytes, or NULL for no data. */
     size_t data_len; /**< Number of bytes available at data. */
 } librdp_server_clipboard_event;
+
+/**
+ * @brief Stable client-drive device token scoped to one peer generation.
+ *
+ * Applications must treat both fields as an indivisible token. A token from a
+ * disconnected peer, a prior reconnect generation, or another peer is invalid.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_device_handle
+{
+    uint32_t reconnect_generation; /**< Generation in which the device was announced. */
+    uint32_t device_id; /**< Client-assigned identifier, valid only with reconnect_generation. */
+} librdp_server_drive_device_handle;
+
+/**
+ * @brief Stable client-drive file token scoped to one peer generation.
+ *
+ * Tokens are returned only by successful create completions. The application
+ * must not construct or alter them.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_file_handle
+{
+    uint32_t reconnect_generation; /**< Generation in which the file was opened. */
+    uint32_t device_id; /**< Owning client-drive identifier. */
+    uint32_t file_id; /**< Client-assigned file identifier. */
+    uint32_t reserved; /**< Reserved; must remain zero. */
+} librdp_server_drive_file_handle;
+
+/**
+ * @brief Correlation identifier for one asynchronous client-drive request.
+ *
+ * The value is opaque, non-zero, and valid only with the peer that returned it
+ * and until its completion, cancellation, disconnect, or reconnect.
+ *
+ * @since 0.1.0
+ */
+typedef uint64_t librdp_server_drive_request_id;
+
+/**
+ * @brief Byte range used by a client-drive lock request.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_lock_range
+{
+    uint64_t offset; /**< First byte in the range. */
+    uint64_t length; /**< Number of bytes; must be non-zero. */
+} librdp_server_drive_lock_range;
+
+/**
+ * @brief Normalized client-drive byte-range lock operation.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_drive_lock_operation
+{
+    LIBRDP_SERVER_DRIVE_LOCK_SHARED = 1, /**< Acquire shared locks. */
+    LIBRDP_SERVER_DRIVE_LOCK_EXCLUSIVE = 2, /**< Acquire exclusive locks. */
+    LIBRDP_SERVER_DRIVE_UNLOCK = 3, /**< Unlock one range. */
+    LIBRDP_SERVER_DRIVE_UNLOCK_MULTIPLE = 4 /**< Unlock multiple ranges. */
+} librdp_server_drive_lock_operation;
+
+/**
+ * @brief Normalized client-drive operation.
+ *
+ * Every operation maps to a validated filesystem-redirection request. Values
+ * do not expose wire-level major or minor function identifiers.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_drive_operation
+{
+    LIBRDP_SERVER_DRIVE_CREATE = 1, /**< Open or create a path. */
+    LIBRDP_SERVER_DRIVE_CLOSE = 2, /**< Close a file handle. */
+    LIBRDP_SERVER_DRIVE_READ = 3, /**< Read a byte range. */
+    LIBRDP_SERVER_DRIVE_WRITE = 4, /**< Write a byte range. */
+    LIBRDP_SERVER_DRIVE_QUERY_INFORMATION = 5, /**< Query file information. */
+    LIBRDP_SERVER_DRIVE_SET_INFORMATION = 6, /**< Set file information. */
+    LIBRDP_SERVER_DRIVE_FLUSH = 7, /**< Flush buffered file data. */
+    LIBRDP_SERVER_DRIVE_QUERY_VOLUME = 8, /**< Query volume information. */
+    LIBRDP_SERVER_DRIVE_SET_VOLUME = 9, /**< Set volume information. */
+    LIBRDP_SERVER_DRIVE_QUERY_DIRECTORY = 10, /**< Enumerate a directory. */
+    LIBRDP_SERVER_DRIVE_NOTIFY_DIRECTORY = 11, /**< Wait for directory changes. */
+    LIBRDP_SERVER_DRIVE_CONTROL = 12, /**< Issue a filesystem control operation. */
+    LIBRDP_SERVER_DRIVE_LOCK = 13, /**< Lock or unlock byte ranges. */
+    LIBRDP_SERVER_DRIVE_QUERY_SECURITY = 14, /**< Query file security information. */
+    LIBRDP_SERVER_DRIVE_SET_SECURITY = 15, /**< Set file security information. */
+    LIBRDP_SERVER_DRIVE_CLEANUP = 16, /**< Release per-open transient state. */
+    LIBRDP_SERVER_DRIVE_SHUTDOWN = 17 /**< Flush device-wide state before teardown. */
+} librdp_server_drive_operation;
+
+/**
+ * @brief Typed asynchronous request for a client-announced drive.
+ *
+ * Call librdp_server_drive_request_init() first, set operation, then populate
+ * only the fields documented for that operation. Pointers are borrowed for the
+ * duration of submit and may be released when it returns.
+ *
+ * CREATE uses device, path, desired_access, allocation_size, file_attributes,
+ * shared_access, create_disposition and create_options. SHUTDOWN also uses
+ * device. All other operations use file. READ uses offset and length; WRITE
+ * uses offset and data.
+ * QUERY/SET operations use information_class and optional data. Directory
+ * query uses information_class, initial_query and optional path. Directory
+ * notify uses watch_tree and completion_filter. CONTROL uses control_code,
+ * output_buffer_length and optional data. LOCK uses lock_operation, lock_flags,
+ * locks and lock_count. Security operations use security_information and
+ * optional data.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_request
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_DRIVE_REQUEST_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    librdp_server_drive_operation operation; /**< Requested operation. */
+    librdp_server_drive_device_handle device; /**< Device token used by CREATE. */
+    librdp_server_drive_file_handle file; /**< File token used by other operations. */
+    const char* path; /**< Borrowed UTF-8 path, or NULL when the operation permits no path. */
+    uint32_t desired_access; /**< CREATE access mask. */
+    uint64_t allocation_size; /**< CREATE initial allocation size. */
+    uint32_t file_attributes; /**< CREATE file attributes. */
+    uint32_t shared_access; /**< CREATE sharing mask. */
+    uint32_t create_disposition; /**< CREATE disposition. */
+    uint32_t create_options; /**< CREATE options. */
+    uint64_t offset; /**< READ or WRITE byte offset. */
+    uint32_t length; /**< READ byte count. */
+    uint32_t information_class; /**< File, volume, or directory information class. */
+    uint32_t output_buffer_length; /**< Maximum CONTROL response bytes. */
+    uint32_t control_code; /**< Filesystem control code. */
+    uint8_t initial_query; /**< Non-zero for the first directory query. */
+    uint8_t watch_tree; /**< Non-zero to watch a complete directory subtree. */
+    uint32_t completion_filter; /**< Directory notification filter. */
+    librdp_server_drive_lock_operation lock_operation; /**< Shared, exclusive, or unlock operation. */
+    uint32_t lock_flags; /**< Lock operation flags. */
+    const librdp_server_drive_lock_range* locks; /**< Borrowed lock ranges, or NULL. */
+    uint32_t lock_count; /**< Number of entries in locks. */
+    uint32_t security_information; /**< Security-information mask. */
+    const uint8_t* data; /**< Borrowed WRITE, SET, CONTROL, or security bytes. */
+    size_t data_len; /**< Number of bytes available at data. */
+} librdp_server_drive_request;
+
+/**
+ * @brief Normalized server-side client-drive event kind.
+ *
+ * @since 0.1.0
+ */
+typedef enum librdp_server_drive_event_type
+{
+    LIBRDP_SERVER_DRIVE_DEVICE_ADDED = 1, /**< A client drive was announced. */
+    LIBRDP_SERVER_DRIVE_DEVICE_REMOVED = 2, /**< A client drive was removed. */
+    LIBRDP_SERVER_DRIVE_REQUEST_COMPLETED = 3, /**< A submitted request completed. */
+    LIBRDP_SERVER_DRIVE_REQUEST_CANCELLED = 4 /**< A submitted request was cancelled locally. */
+} librdp_server_drive_event_type;
+
+/**
+ * @brief Validated client-drive announcement or request result.
+ *
+ * event, name, and data are borrowed from the peer dispatch context and remain
+ * valid only until the callback returns. The callback must copy retained data.
+ * For CREATE success file contains the newly registered file token. For other
+ * completions file identifies the submitted file token.
+ *
+ * @since 0.1.0
+ */
+typedef struct librdp_server_drive_event
+{
+    uint32_t version; /**< Must be LIBRDP_SERVER_DRIVE_EVENT_VERSION. */
+    uint32_t size; /**< Size of this structure as seen by the caller. */
+    librdp_server_drive_event_type type; /**< Event kind. */
+    librdp_status status; /**< Local validation, completion, or cancellation status. */
+    librdp_server_drive_device_handle device; /**< Announced or affected drive. */
+    librdp_server_drive_file_handle file; /**< Affected file token, or all-zero. */
+    librdp_server_drive_request_id request_id; /**< Request correlation id, or zero for device events. */
+    librdp_server_drive_operation operation; /**< Completed or cancelled operation, or zero. */
+    uint32_t io_status; /**< Client-returned filesystem status for a completion. */
+    uint32_t information; /**< CREATE result information or operation-specific count. */
+    uint64_t transferred; /**< Bytes read, written, or returned when applicable. */
+    char preferred_name[9]; /**< NUL-terminated client drive name for device events. */
+    const char* name; /**< Borrowed normalized UTF-8 drive name, or NULL. */
+    const uint8_t* data; /**< Borrowed completion bytes, or NULL. */
+    size_t data_len; /**< Number of bytes available at data. */
+} librdp_server_drive_event;
 
 /**
  * @brief Snapshot of server-side clipboard runtime state.
@@ -687,6 +875,25 @@ typedef void (*librdp_server_clipboard_callback)(
     void* user_data);
 
 /**
+ * @brief Server-side callback for client-drive announcements and completions.
+ *
+ * Called synchronously from librdp_server_peer_run_once() on the serialized
+ * peer owner thread. The callback must not re-enter peer dispatch or free peer.
+ *
+ * @param[in,out] peer Peer that owns the event; never NULL.
+ * @param[in] event Borrowed normalized event; never NULL.
+ * @param[in] user_data Opaque pointer supplied at registration; may be NULL.
+ *
+ * @warning File names, metadata, and data are sensitive user content and must
+ * remain redacted unless an explicit unsafe trace policy is active.
+ * @since 0.1.0
+ */
+typedef void (*librdp_server_drive_callback)(
+    librdp_server_peer* peer,
+    const librdp_server_drive_event* event,
+    void* user_data);
+
+/**
  * @brief Server-side runtime event callback.
  *
  * Called synchronously from public server functions on the same serialized
@@ -843,6 +1050,34 @@ LIBRDP_API librdp_status librdp_server_extension_event_init(librdp_server_extens
  */
 LIBRDP_API librdp_status librdp_server_clipboard_event_init(
     librdp_server_clipboard_event* event);
+
+/**
+ * @brief Initialize a typed client-drive request.
+ *
+ * @param[out] request Caller-owned request; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * request is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_drive_request_init(
+    librdp_server_drive_request* request);
+
+/**
+ * @brief Initialize a normalized client-drive event.
+ *
+ * @param[out] event Caller-owned event; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * event is NULL.
+ *
+ * @note Thread-safety: this function writes only caller-owned storage.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_drive_event_init(
+    librdp_server_drive_event* event);
 
 /**
  * @brief Initialize a server runtime event value.
@@ -1398,6 +1633,29 @@ LIBRDP_API librdp_status librdp_server_peer_set_extension_callback(librdp_server
 LIBRDP_API librdp_status librdp_server_peer_set_clipboard_callback(
     librdp_server_peer* peer,
     librdp_server_clipboard_callback callback,
+    void* user_data);
+
+/**
+ * @brief Register or clear client-drive event delivery for one peer.
+ *
+ * callback and user_data are borrowed until replaced, cleared, or peer is
+ * freed. Passing NULL disables typed drive events and prevents new typed drive
+ * requests from being submitted.
+ *
+ * @param[in,out] peer Peer to configure; must not be NULL.
+ * @param[in] callback Callback to install, or NULL to clear it.
+ * @param[in] user_data Opaque pointer passed to callback; may be NULL.
+ *
+ * @return LIBRDP_STATUS_OK on success; LIBRDP_STATUS_INVALID_ARGUMENT when
+ * peer is NULL; LIBRDP_STATUS_STATE when peer is closed or drive requests are
+ * still pending while clearing the callback.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_set_drive_callback(
+    librdp_server_peer* peer,
+    librdp_server_drive_callback callback,
     void* user_data);
 
 /**
@@ -2186,6 +2444,57 @@ LIBRDP_API librdp_status librdp_server_peer_send_device_io_completion(
     uint32_t io_status,
     const void* payload,
     size_t payload_len);
+
+/**
+ * @brief Submit one asynchronous operation to a client-announced drive.
+ *
+ * request is validated against the peer, reconnect generation, device registry,
+ * file registry, and operation-specific bounds before any packet is sent. On
+ * success exactly one completed or cancelled event is delivered for the
+ * returned request id unless the peer is freed without dispatch.
+ *
+ * @param[in,out] peer Active peer; must not be NULL.
+ * @param[in] request Initialized caller-owned request; must not be NULL.
+ * @param[out] request_id Receives the new correlation id; must not be NULL.
+ *
+ * @return LIBRDP_STATUS_OK when queued; LIBRDP_STATUS_INVALID_ARGUMENT for an
+ * invalid request or foreign handle; LIBRDP_STATUS_STATE when the peer, drive
+ * callback, channel, device, or file is unavailable; LIBRDP_STATUS_LIMIT_EXCEEDED
+ * when the pending-request table is full; conversion, allocation, or transport
+ * errors from request serialization and transmission.
+ *
+ * @note Thread-safety: call from the serialized peer owner context. Pointer
+ * fields in request are borrowed only until this function returns.
+ * @warning WRITE, SET, CONTROL, and security payloads can contain sensitive
+ * user data and remain redacted by the default trace policy.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_submit_drive_request(
+    librdp_server_peer* peer,
+    const librdp_server_drive_request* request,
+    librdp_server_drive_request_id* request_id);
+
+/**
+ * @brief Cancel one pending client-drive request locally.
+ *
+ * Cancellation delivers one REQUEST_CANCELLED event and suppresses a later
+ * wire completion for the same request. Most filesystem operations have no
+ * protocol cancellation primitive, so cancellation does not revoke work
+ * already executing in the client.
+ *
+ * @param[in,out] peer Peer that owns request_id; must not be NULL.
+ * @param[in] request_id Correlation id returned by submit; must be non-zero.
+ *
+ * @return LIBRDP_STATUS_OK when cancellation is recorded;
+ * LIBRDP_STATUS_INVALID_ARGUMENT for a NULL peer or zero id;
+ * LIBRDP_STATUS_STATE for a stale, foreign, completed, or already-cancelled id.
+ *
+ * @note Thread-safety: call from the serialized peer owner context.
+ * @since 0.1.0
+ */
+LIBRDP_API librdp_status librdp_server_peer_cancel_drive_request(
+    librdp_server_peer* peer,
+    librdp_server_drive_request_id request_id);
 
 /**
  * @brief Send a USB redirection capability response.

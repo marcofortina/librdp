@@ -129,6 +129,7 @@ set(LIBRDP_TRANSPORT_SOURCES
 set(LIBRDP_SERVER_SOURCES
     src/server/server.c
     src/server/server_channels.c
+    src/server/server_drive.c
     src/server/server_extensions.c
     src/server/server_features.c
     src/server/server_graphics.c
