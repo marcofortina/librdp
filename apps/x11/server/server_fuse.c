@@ -38,6 +38,7 @@
 
 #define X11_SERVER_FUSE_MAX_NAME_BYTES 255u
 #define X11_SERVER_FUSE_MAX_PATH_BYTES 4096u
+#define X11_SERVER_FUSE_MAX_CLIPBOARD_URI_BYTES (16u * 1024u * 1024u)
 #define X11_SERVER_FUSE_MAX_REPLY_BYTES X11_SERVER_FUSE_DEFAULT_MAX_READ_BYTES
 #define X11_SERVER_FUSE_FILE_GENERIC_READ 0x00120089u
 #define X11_SERVER_FUSE_FILE_SHARE_ALL 0x00000007u
@@ -53,7 +54,9 @@ typedef enum x11_server_fuse_node_kind
     X11_SERVER_FUSE_NODE_ROOT = 1,
     X11_SERVER_FUSE_NODE_PEER = 2,
     X11_SERVER_FUSE_NODE_VOLUME = 3,
-    X11_SERVER_FUSE_NODE_REMOTE = 4
+    X11_SERVER_FUSE_NODE_REMOTE = 4,
+    X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY = 5,
+    X11_SERVER_FUSE_NODE_CLIPBOARD_FILE = 6
 } x11_server_fuse_node_kind;
 
 typedef enum x11_server_fuse_pending_kind
@@ -64,7 +67,8 @@ typedef enum x11_server_fuse_pending_kind
     X11_SERVER_FUSE_PENDING_READ = 4,
     X11_SERVER_FUSE_PENDING_RELEASE = 5,
     X11_SERVER_FUSE_PENDING_RELEASEDIR = 6,
-    X11_SERVER_FUSE_PENDING_READDIR = 7
+    X11_SERVER_FUSE_PENDING_READDIR = 7,
+    X11_SERVER_FUSE_PENDING_CLIPBOARD_READ = 8
 } x11_server_fuse_pending_kind;
 
 typedef enum x11_server_fuse_pending_stage
@@ -85,6 +89,8 @@ typedef struct x11_server_fuse_node
     uint32_t generation;
     librdp_server_drive_device_handle device;
     librdp_server_drive_metadata metadata;
+    uint64_t clipboard_generation;
+    int32_t clipboard_file_index;
     char* name;
     char* path;
     x11_server_fuse_node_kind kind;
@@ -118,6 +124,7 @@ typedef struct x11_server_fuse_pending
     struct fuse_file_info file_info;
     size_t requested_size;
     off_t requested_offset;
+    uint32_t stream_id;
     int terminal_error;
     char name[X11_SERVER_FUSE_MAX_NAME_BYTES + 1u];
     x11_server_fuse_pending_kind kind;
@@ -125,18 +132,30 @@ typedef struct x11_server_fuse_pending
     int occupied;
 } x11_server_fuse_pending;
 
+typedef struct x11_server_fuse_clipboard_entry
+{
+    librdp_clipboard_file_metadata metadata;
+    char name[X11_SERVER_FUSE_MAX_NAME_BYTES + 1u];
+} x11_server_fuse_clipboard_entry;
+
 struct x11_server_fuse
 {
     x11_server_fuse_config config;
     char* mount_path;
     struct fuse_session* session;
     server_platform_drive_sink sink;
+    server_platform_clipboard_file_request_callback clipboard_request;
+    server_platform_clipboard_cancel_callback clipboard_cancel;
+    void* clipboard_user_data;
     x11_server_fuse_node* nodes;
     x11_server_fuse_handle* handles;
     x11_server_fuse_pending* pending;
     uint64_t next_inode;
     uint64_t next_handle_id;
     uint64_t next_request_id;
+    uint32_t clipboard_peer_id;
+    uint32_t clipboard_peer_generation;
+    uint64_t clipboard_generation;
     int descriptor_ready;
     int descriptor_failed;
     int started;
@@ -203,7 +222,9 @@ static int x11_server_fuse_config_valid(const x11_server_fuse_config* config)
 {
     return config && config->version == X11_SERVER_FUSE_CONFIG_VERSION &&
            config->size >= sizeof(*config) && config->mount_path &&
-           config->mount_path[0] != '\0' && config->max_nodes >= 4u &&
+           config->mount_path[0] != '\0' &&
+           strlen(config->mount_path) <= X11_SERVER_FUSE_MAX_PATH_BYTES &&
+           config->max_nodes >= 4u &&
            config->max_handles > 0u && config->max_pending > 0u &&
            config->max_directory_entries > 0u &&
            config->max_directory_entries <= config->max_nodes &&
@@ -401,7 +422,7 @@ static x11_server_fuse_node* x11_server_fuse_allocate_node(
     x11_server_fuse_node* node = NULL;
 
     if (!provider || kind < X11_SERVER_FUSE_NODE_PEER ||
-        kind > X11_SERVER_FUSE_NODE_REMOTE ||
+        kind > X11_SERVER_FUSE_NODE_CLIPBOARD_FILE ||
         !x11_server_fuse_name_valid(name) || !path ||
         strlen(path) > X11_SERVER_FUSE_MAX_PATH_BYTES)
         return NULL;
@@ -465,7 +486,9 @@ static void x11_server_fuse_node_stat(const x11_server_fuse_node* node,
     memset(status, 0, sizeof(*status));
     if (!node)
         return;
-    if (node->kind == X11_SERVER_FUSE_NODE_REMOTE && node->metadata_valid)
+    if ((node->kind == X11_SERVER_FUSE_NODE_REMOTE ||
+         node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE) &&
+        node->metadata_valid)
         directory = node->metadata.directory != 0u;
     status->st_ino = node->inode;
     status->st_uid = geteuid();
@@ -489,6 +512,17 @@ static void x11_server_fuse_node_stat(const x11_server_fuse_node* node,
         status->st_ctime =
             seconds > (uint64_t)INT64_MAX ? (time_t)INT64_MAX : (time_t)seconds;
     }
+}
+
+static int x11_server_fuse_node_is_directory(
+    const x11_server_fuse_node* node)
+{
+    if (!node)
+        return 0;
+    if (node->kind == X11_SERVER_FUSE_NODE_REMOTE ||
+        node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE)
+        return node->metadata_valid && node->metadata.directory != 0u;
+    return 1;
 }
 
 static void x11_server_fuse_reply_entry(fuse_req_t request,
@@ -522,6 +556,8 @@ static int x11_server_fuse_status_errno(librdp_status status)
         return ENOSPC;
     case LIBRDP_STATUS_TIMEOUT:
         return ETIMEDOUT;
+    case LIBRDP_STATUS_AGAIN:
+        return EBUSY;
     case LIBRDP_STATUS_CANCELLED:
         return ECANCELED;
     case LIBRDP_STATUS_STATE:
@@ -690,6 +726,393 @@ static void x11_server_fuse_reply_pending_error(
         return;
     (void)fuse_reply_err(pending->request, error != 0 ? error : EIO);
     x11_server_fuse_clear_pending(pending);
+}
+
+static int x11_server_fuse_clipboard_node_matches(
+    const x11_server_fuse_node* node,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation)
+{
+    return node &&
+           (node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY ||
+            node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE) &&
+           node->peer_id == peer_id && node->generation == generation &&
+           node->clipboard_generation == ownership_generation;
+}
+
+/*
+ * Revoke clipboard-backed kernel state before dropping its inodes. Each
+ * outstanding range receives one terminal FUSE error and one correlated
+ * protocol cancellation; handles are invalidated before inode reuse.
+ */
+static void x11_server_fuse_clipboard_clear_internal(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation)
+{
+    uint32_t index = 0u;
+
+    if (!provider || peer_id == 0u || generation == 0u ||
+        ownership_generation == 0u)
+        return;
+    for (index = 0u; index < provider->config.max_pending; index++)
+    {
+        x11_server_fuse_pending* pending = &provider->pending[index];
+        x11_server_fuse_node* node = NULL;
+
+        if (!pending->occupied ||
+            pending->kind != X11_SERVER_FUSE_PENDING_CLIPBOARD_READ)
+            continue;
+        node = x11_server_fuse_find_node(provider, pending->inode);
+        if (!x11_server_fuse_clipboard_node_matches(
+                node, peer_id, generation, ownership_generation))
+            continue;
+        if (provider->clipboard_cancel)
+        {
+            (void)provider->clipboard_cancel(
+                peer_id,
+                generation,
+                ownership_generation,
+                pending->request_id,
+                provider->clipboard_user_data);
+        }
+        if (pending->occupied)
+            x11_server_fuse_reply_pending_error(pending, ESTALE);
+    }
+    for (index = 0u; index < provider->config.max_handles; index++)
+    {
+        x11_server_fuse_handle* handle = &provider->handles[index];
+        x11_server_fuse_node* node =
+            handle->occupied
+                ? x11_server_fuse_find_node(provider, handle->inode)
+                : NULL;
+
+        if (x11_server_fuse_clipboard_node_matches(
+                node, peer_id, generation, ownership_generation))
+            x11_server_fuse_clear_handle(handle);
+    }
+    for (index = 0u; index < provider->config.max_nodes; index++)
+    {
+        x11_server_fuse_node* node = &provider->nodes[index];
+
+        if (node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE &&
+            x11_server_fuse_clipboard_node_matches(
+                node, peer_id, generation, ownership_generation))
+            x11_server_fuse_invalidate_node(provider, node);
+    }
+    for (index = 0u; index < provider->config.max_nodes; index++)
+    {
+        x11_server_fuse_node* node = &provider->nodes[index];
+
+        if (node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY &&
+            x11_server_fuse_clipboard_node_matches(
+                node, peer_id, generation, ownership_generation))
+            x11_server_fuse_invalidate_node(provider, node);
+    }
+    if (provider->clipboard_peer_id == peer_id &&
+        provider->clipboard_peer_generation == generation &&
+        provider->clipboard_generation == ownership_generation)
+    {
+        provider->clipboard_peer_id = 0u;
+        provider->clipboard_peer_generation = 0u;
+        provider->clipboard_generation = 0u;
+    }
+    if (provider->mounted)
+    {
+        (void)fuse_lowlevel_notify_inval_inode(provider->session,
+                                               FUSE_ROOT_ID,
+                                               0,
+                                               0);
+    }
+}
+
+static int x11_server_fuse_uri_byte_safe(uint8_t value)
+{
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') ||
+           (value >= '0' && value <= '9') || value == '/' || value == '-' ||
+           value == '_' || value == '.' || value == '~';
+}
+
+static librdp_status x11_server_fuse_append_file_uri(
+    uint8_t** output,
+    size_t* length,
+    const char* path)
+{
+    static const char prefix[] = "file://";
+    static const char hex[] = "0123456789ABCDEF";
+    const size_t overhead = sizeof(prefix) - 1u + 2u;
+    size_t path_len = path ? strlen(path) : 0u;
+    size_t encoded_len = 0u;
+    size_t required = 0u;
+    size_t index = 0u;
+    size_t cursor = 0u;
+    uint8_t* resized = NULL;
+
+    if (!output || !length || !path || path[0] != '/')
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    for (index = 0u; index < path_len; index++)
+    {
+        size_t bytes =
+            x11_server_fuse_uri_byte_safe((uint8_t)path[index]) ? 1u : 3u;
+
+        if (encoded_len > SIZE_MAX - bytes)
+            return LIBRDP_STATUS_LIMIT_EXCEEDED;
+        encoded_len += bytes;
+    }
+    if (*length > X11_SERVER_FUSE_MAX_CLIPBOARD_URI_BYTES ||
+        overhead > X11_SERVER_FUSE_MAX_CLIPBOARD_URI_BYTES - *length ||
+        encoded_len >
+            X11_SERVER_FUSE_MAX_CLIPBOARD_URI_BYTES - *length - overhead)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    required = *length + sizeof(prefix) - 1u + encoded_len + 2u;
+    resized = (uint8_t*)realloc(*output, required + 1u);
+    if (!resized)
+        return LIBRDP_STATUS_NO_MEMORY;
+    *output = resized;
+    cursor = *length;
+    memcpy(resized + cursor, prefix, sizeof(prefix) - 1u);
+    cursor += sizeof(prefix) - 1u;
+    for (index = 0u; index < path_len; index++)
+    {
+        uint8_t value = (uint8_t)path[index];
+
+        if (x11_server_fuse_uri_byte_safe(value))
+            resized[cursor++] = value;
+        else
+        {
+            resized[cursor++] = '%';
+            resized[cursor++] = (uint8_t)hex[value >> 4u];
+            resized[cursor++] = (uint8_t)hex[value & 0x0fu];
+        }
+    }
+    resized[cursor++] = '\r';
+    resized[cursor++] = '\n';
+    resized[cursor] = 0u;
+    *length = cursor;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status x11_server_fuse_clipboard_publish_internal(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len,
+    int require_started)
+{
+    x11_server_fuse_node* directory = NULL;
+    x11_server_fuse_clipboard_entry* entries = NULL;
+    uint8_t* output = NULL;
+    size_t output_len = 0u;
+    uint32_t count = 0u;
+    uint32_t index = 0u;
+    char directory_name[X11_SERVER_FUSE_MAX_NAME_BYTES + 1u];
+    int directory_name_len = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!provider || peer_id == 0u || generation == 0u ||
+        ownership_generation == 0u || !descriptors ||
+        descriptors_len == 0u || !uri_list || !uri_list_len ||
+        (require_started &&
+         (!provider->started || !provider->mounted ||
+          !provider->clipboard_request)))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *uri_list = NULL;
+    *uri_list_len = 0u;
+    status = librdp_clipboard_file_group_count(descriptors,
+                                               descriptors_len,
+                                               &count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (count == 0u || count > (uint32_t)INT32_MAX ||
+        count > provider->config.max_directory_entries ||
+        count > provider->config.max_nodes - 2u)
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    entries = (x11_server_fuse_clipboard_entry*)calloc(
+        count, sizeof(*entries));
+    if (!entries)
+        return LIBRDP_STATUS_NO_MEMORY;
+    for (index = 0u; index < count; index++)
+    {
+        size_t name_len = 0u;
+
+        status = librdp_clipboard_file_metadata_init(
+            &entries[index].metadata);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = librdp_clipboard_file_group_get(
+                descriptors,
+                descriptors_len,
+                index,
+                &entries[index].metadata,
+                entries[index].name,
+                sizeof(entries[index].name),
+                &name_len);
+        }
+        if (status != LIBRDP_STATUS_OK)
+            break;
+        if (name_len == 0u ||
+            (entries[index].metadata.attributes &
+             LIBRDP_CLIPBOARD_FILE_ATTRIBUTE_DIRECTORY) != 0u ||
+            !x11_server_fuse_name_valid(entries[index].name))
+        {
+            status = LIBRDP_STATUS_UNSUPPORTED;
+            break;
+        }
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(entries);
+        return status;
+    }
+    if (provider->clipboard_generation != 0u)
+    {
+        x11_server_fuse_clipboard_clear_internal(
+            provider,
+            provider->clipboard_peer_id,
+            provider->clipboard_peer_generation,
+            provider->clipboard_generation);
+    }
+    directory_name_len = snprintf(directory_name,
+                                  sizeof(directory_name),
+                                  "clipboard-%u-%u-%llu",
+                                  peer_id,
+                                  generation,
+                                  (unsigned long long)ownership_generation);
+    if (directory_name_len <= 0 ||
+        (size_t)directory_name_len >= sizeof(directory_name))
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    directory = x11_server_fuse_allocate_node(
+        provider,
+        X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY,
+        FUSE_ROOT_ID,
+        directory_name,
+        directory_name);
+    if (!directory)
+    {
+        free(entries);
+        return LIBRDP_STATUS_LIMIT_EXCEEDED;
+    }
+    directory->peer_id = peer_id;
+    directory->generation = generation;
+    directory->clipboard_generation = ownership_generation;
+    directory->metadata.directory = 1u;
+    directory->metadata.attributes =
+        LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY;
+    directory->metadata_valid = 1;
+    provider->clipboard_peer_id = peer_id;
+    provider->clipboard_peer_generation = generation;
+    provider->clipboard_generation = ownership_generation;
+    for (index = 0u; index < count; index++)
+    {
+        const x11_server_fuse_clipboard_entry* entry = &entries[index];
+        x11_server_fuse_node* node = NULL;
+        char visible_name[X11_SERVER_FUSE_MAX_NAME_BYTES + 1u];
+        char relative_path[X11_SERVER_FUSE_MAX_PATH_BYTES + 1u];
+        char absolute_path[X11_SERVER_FUSE_MAX_PATH_BYTES + 1u];
+        int absolute_len = 0;
+
+        memcpy(visible_name,
+               entry->name,
+               strlen(entry->name) + 1u);
+        if (x11_server_fuse_find_child(provider,
+                                       directory->inode,
+                                       visible_name))
+        {
+            uint32_t suffix = index + 1u;
+            int visible_len = 0;
+
+            do
+            {
+                visible_len = snprintf(visible_name,
+                                       sizeof(visible_name),
+                                       "file-%u",
+                                       suffix++);
+                if (visible_len <= 0 ||
+                    (size_t)visible_len >= sizeof(visible_name) ||
+                    suffix == 0u)
+                {
+                    status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+                    break;
+                }
+            } while (x11_server_fuse_find_child(provider,
+                                                directory->inode,
+                                                visible_name));
+            if (status != LIBRDP_STATUS_OK)
+                break;
+        }
+        if (!x11_server_fuse_join_path(directory_name,
+                                       visible_name,
+                                       relative_path))
+        {
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+            break;
+        }
+        node = x11_server_fuse_allocate_node(
+            provider,
+            X11_SERVER_FUSE_NODE_CLIPBOARD_FILE,
+            directory->inode,
+            visible_name,
+            relative_path);
+        if (!node)
+        {
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+            break;
+        }
+        node->peer_id = peer_id;
+        node->generation = generation;
+        node->clipboard_generation = ownership_generation;
+        node->clipboard_file_index = (int32_t)index;
+        node->metadata.file_size = entry->metadata.file_size;
+        node->metadata.allocation_size = entry->metadata.file_size;
+        node->metadata.attributes =
+            LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_READONLY;
+        node->metadata.directory = 0u;
+        node->metadata_valid = 1;
+        absolute_len = snprintf(absolute_path,
+                                sizeof(absolute_path),
+                                "%s/%s",
+                                provider->mount_path,
+                                relative_path);
+        if (absolute_len <= 0 ||
+            (size_t)absolute_len >= sizeof(absolute_path))
+        {
+            status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+            break;
+        }
+        status = x11_server_fuse_append_file_uri(&output,
+                                                 &output_len,
+                                                 absolute_path);
+        if (status != LIBRDP_STATUS_OK)
+            break;
+    }
+    if (status != LIBRDP_STATUS_OK)
+    {
+        free(entries);
+        free(output);
+        x11_server_fuse_clipboard_clear_internal(provider,
+                                                 peer_id,
+                                                 generation,
+                                                 ownership_generation);
+        return status;
+    }
+    free(entries);
+    if (provider->mounted)
+    {
+        (void)fuse_lowlevel_notify_inval_inode(provider->session,
+                                               FUSE_ROOT_ID,
+                                               0,
+                                               0);
+    }
+    *uri_list = output;
+    *uri_list_len = output_len;
+    return LIBRDP_STATUS_OK;
 }
 
 static x11_server_fuse_node* x11_server_fuse_add_remote_node(
@@ -1141,6 +1564,7 @@ static void x11_server_fuse_lookup(fuse_req_t request, fuse_ino_t parent_inode,
     }
     if (parent->kind == X11_SERVER_FUSE_NODE_ROOT ||
         parent->kind == X11_SERVER_FUSE_NODE_PEER ||
+        parent->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY ||
         !parent->metadata.directory)
     {
         (void)fuse_reply_err(request, ENOENT);
@@ -1207,8 +1631,7 @@ static void x11_server_fuse_open_common(fuse_req_t request, fuse_ino_t inode,
         (void)fuse_reply_err(request, EINVAL);
         return;
     }
-    if (directory != (node->kind != X11_SERVER_FUSE_NODE_REMOTE ||
-                      node->metadata.directory != 0u))
+    if (directory != x11_server_fuse_node_is_directory(node))
     {
         (void)fuse_reply_err(request, directory ? ENOTDIR : EISDIR);
         return;
@@ -1219,9 +1642,14 @@ static void x11_server_fuse_open_common(fuse_req_t request, fuse_ino_t inode,
         return;
     }
     if (node->kind == X11_SERVER_FUSE_NODE_ROOT ||
-        node->kind == X11_SERVER_FUSE_NODE_PEER)
+        node->kind == X11_SERVER_FUSE_NODE_PEER ||
+        node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_DIRECTORY ||
+        node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE)
     {
-        handle = x11_server_fuse_allocate_handle(provider, inode, 1, 1);
+        handle = x11_server_fuse_allocate_handle(provider,
+                                                 inode,
+                                                 directory,
+                                                 1);
         if (!handle)
         {
             (void)fuse_reply_err(request, EMFILE);
@@ -1274,6 +1702,67 @@ static void x11_server_fuse_read(fuse_req_t request, fuse_ino_t inode,
         handle->closing || offset < 0)
     {
         (void)fuse_reply_err(request, ESTALE);
+        return;
+    }
+    if (size == 0u ||
+        (node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE &&
+         (uint64_t)offset >= node->metadata.file_size))
+    {
+        (void)fuse_reply_buf(request, NULL, 0u);
+        return;
+    }
+    if (node->kind == X11_SERVER_FUSE_NODE_CLIPBOARD_FILE)
+    {
+        server_platform_clipboard_file_request clipboard_request;
+        librdp_status status = LIBRDP_STATUS_OK;
+        uint64_t remaining = node->metadata.file_size - (uint64_t)offset;
+
+        if (!provider->clipboard_request ||
+            !x11_server_fuse_clipboard_node_matches(
+                node,
+                provider->clipboard_peer_id,
+                provider->clipboard_peer_generation,
+                provider->clipboard_generation))
+        {
+            (void)fuse_reply_err(request, ESTALE);
+            return;
+        }
+        pending = x11_server_fuse_allocate_pending(
+            provider, request, X11_SERVER_FUSE_PENDING_CLIPBOARD_READ);
+        if (!pending)
+        {
+            (void)fuse_reply_err(request, EBUSY);
+            return;
+        }
+        pending->inode = inode;
+        pending->handle_id = handle->id;
+        pending->requested_size = size < provider->config.max_read_bytes
+                                      ? size
+                                      : provider->config.max_read_bytes;
+        if ((uint64_t)pending->requested_size > remaining)
+            pending->requested_size = (size_t)remaining;
+        pending->requested_offset = offset;
+        pending->request_id = x11_server_fuse_next_request_id(provider);
+        pending->stream_id = (uint32_t)pending->request_id;
+        if (pending->stream_id == 0u)
+            pending->stream_id = 1u;
+        memset(&clipboard_request, 0, sizeof(clipboard_request));
+        clipboard_request.peer_id = node->peer_id;
+        clipboard_request.generation = node->generation;
+        clipboard_request.ownership_generation =
+            node->clipboard_generation;
+        clipboard_request.request_id = pending->request_id;
+        clipboard_request.stream_id = pending->stream_id;
+        clipboard_request.file_index = node->clipboard_file_index;
+        clipboard_request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+        clipboard_request.position = (uint64_t)offset;
+        clipboard_request.requested_bytes =
+            (uint32_t)pending->requested_size;
+        status = provider->clipboard_request(
+            &clipboard_request, provider->clipboard_user_data);
+        if (status != LIBRDP_STATUS_OK)
+            x11_server_fuse_reply_pending_error(
+                pending, x11_server_fuse_status_errno(status));
         return;
     }
     pending = x11_server_fuse_allocate_pending(provider, request,
@@ -1588,6 +2077,24 @@ static void x11_server_fuse_abort_pending(x11_server_fuse* provider, int error)
 
         if (!pending->occupied)
             continue;
+        if (pending->kind == X11_SERVER_FUSE_PENDING_CLIPBOARD_READ)
+        {
+            x11_server_fuse_node* node =
+                x11_server_fuse_find_node(provider, pending->inode);
+
+            if (node && provider->clipboard_cancel)
+            {
+                (void)provider->clipboard_cancel(
+                    node->peer_id,
+                    node->generation,
+                    node->clipboard_generation,
+                    pending->request_id,
+                    provider->clipboard_user_data);
+            }
+            if (pending->occupied)
+                x11_server_fuse_reply_pending_error(pending, error);
+            continue;
+        }
         if (provider->started && provider->sink.cancel)
         {
             x11_server_fuse_node* node = x11_server_fuse_find_node(
@@ -1657,6 +2164,14 @@ static void x11_server_fuse_stop(void* opaque)
     if (!provider || !provider->started)
         return;
     x11_server_fuse_abort_pending(provider, ESHUTDOWN);
+    if (provider->clipboard_generation != 0u)
+    {
+        x11_server_fuse_clipboard_clear_internal(
+            provider,
+            provider->clipboard_peer_id,
+            provider->clipboard_peer_generation,
+            provider->clipboard_generation);
+    }
     for (index = 0u; index < provider->config.max_handles; index++)
         x11_server_fuse_clear_handle(&provider->handles[index]);
     if (provider->session)
@@ -1963,6 +2478,108 @@ const server_platform_drive_vtable* x11_server_fuse_vtable(void)
     return &x11_server_fuse_drive_vtable;
 }
 
+librdp_status x11_server_fuse_set_clipboard_sink(
+    x11_server_fuse* provider,
+    server_platform_clipboard_file_request_callback request,
+    server_platform_clipboard_cancel_callback cancel,
+    void* user_data)
+{
+    if (!provider || ((request == NULL) != (cancel == NULL)) ||
+        (!request && user_data))
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!request && provider->clipboard_generation != 0u)
+    {
+        x11_server_fuse_clipboard_clear_internal(
+            provider,
+            provider->clipboard_peer_id,
+            provider->clipboard_peer_generation,
+            provider->clipboard_generation);
+    }
+    provider->clipboard_request = request;
+    provider->clipboard_cancel = cancel;
+    provider->clipboard_user_data = user_data;
+    return LIBRDP_STATUS_OK;
+}
+
+int x11_server_fuse_clipboard_ready(const x11_server_fuse* provider)
+{
+    return provider && provider->started && provider->mounted &&
+           provider->clipboard_request && provider->clipboard_cancel;
+}
+
+librdp_status x11_server_fuse_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len)
+{
+    return x11_server_fuse_clipboard_publish_internal(
+        provider,
+        peer_id,
+        generation,
+        ownership_generation,
+        descriptors,
+        descriptors_len,
+        uri_list,
+        uri_list_len,
+        1);
+}
+
+librdp_status x11_server_fuse_clipboard_complete(
+    x11_server_fuse* provider,
+    const server_platform_clipboard_data* data)
+{
+    x11_server_fuse_pending* pending = NULL;
+    x11_server_fuse_node* node = NULL;
+
+    if (!provider || !data || data->request_id == 0u ||
+        data->stream_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    pending = x11_server_fuse_find_pending(provider, data->request_id);
+    if (!pending ||
+        pending->kind != X11_SERVER_FUSE_PENDING_CLIPBOARD_READ)
+        return LIBRDP_STATUS_STATE;
+    node = x11_server_fuse_find_node(provider, pending->inode);
+    if (!x11_server_fuse_clipboard_node_matches(
+            node,
+            data->peer_id,
+            data->generation,
+            data->ownership_generation) ||
+        pending->stream_id != data->stream_id || !data->final_chunk)
+        return LIBRDP_STATUS_STATE;
+    if (data->status != LIBRDP_STATUS_OK)
+    {
+        x11_server_fuse_reply_pending_error(
+            pending, x11_server_fuse_status_errno(data->status));
+        return data->status;
+    }
+    if ((!data->data && data->data_len > 0u) ||
+        data->data_len > pending->requested_size)
+    {
+        x11_server_fuse_reply_pending_error(pending, EPROTO);
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    (void)fuse_reply_buf(pending->request,
+                         (const char*)data->data,
+                         data->data_len);
+    x11_server_fuse_clear_pending(pending);
+    return LIBRDP_STATUS_OK;
+}
+
+void x11_server_fuse_clipboard_clear(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation)
+{
+    x11_server_fuse_clipboard_clear_internal(
+        provider, peer_id, generation, ownership_generation);
+}
+
 #ifdef LIBRDP_X11_SERVER_TESTING
 librdp_status x11_server_fuse_test_present(
     x11_server_fuse* provider, const server_platform_drive_volume* volume)
@@ -1989,6 +2606,46 @@ size_t x11_server_fuse_test_volume_count(const x11_server_fuse* provider)
 int x11_server_fuse_test_mount_path_secure(const char* path)
 {
     return x11_server_fuse_mount_path_secure(path);
+}
+
+librdp_status x11_server_fuse_test_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len)
+{
+    return x11_server_fuse_clipboard_publish_internal(
+        provider,
+        peer_id,
+        generation,
+        ownership_generation,
+        descriptors,
+        descriptors_len,
+        uri_list,
+        uri_list_len,
+        0);
+}
+
+size_t x11_server_fuse_test_clipboard_file_count(
+    const x11_server_fuse* provider)
+{
+    size_t count = 0u;
+    uint32_t index = 0u;
+
+    if (!provider)
+        return 0u;
+    for (index = 0u; index < provider->config.max_nodes; index++)
+    {
+        if (provider->nodes[index].valid &&
+            provider->nodes[index].kind ==
+                X11_SERVER_FUSE_NODE_CLIPBOARD_FILE)
+            count++;
+    }
+    return count;
 }
 #endif
 
@@ -2036,6 +2693,69 @@ const server_platform_drive_vtable* x11_server_fuse_vtable(void)
     return NULL;
 }
 
+librdp_status x11_server_fuse_set_clipboard_sink(
+    x11_server_fuse* provider,
+    server_platform_clipboard_file_request_callback request,
+    server_platform_clipboard_cancel_callback cancel,
+    void* user_data)
+{
+    (void)provider;
+    (void)request;
+    (void)cancel;
+    (void)user_data;
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+int x11_server_fuse_clipboard_ready(const x11_server_fuse* provider)
+{
+    (void)provider;
+    return 0;
+}
+
+librdp_status x11_server_fuse_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len)
+{
+    (void)provider;
+    (void)peer_id;
+    (void)generation;
+    (void)ownership_generation;
+    (void)descriptors;
+    (void)descriptors_len;
+    if (uri_list)
+        *uri_list = NULL;
+    if (uri_list_len)
+        *uri_list_len = 0u;
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+librdp_status x11_server_fuse_clipboard_complete(
+    x11_server_fuse* provider,
+    const server_platform_clipboard_data* data)
+{
+    (void)provider;
+    (void)data;
+    return LIBRDP_STATUS_UNSUPPORTED;
+}
+
+void x11_server_fuse_clipboard_clear(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation)
+{
+    (void)provider;
+    (void)peer_id;
+    (void)generation;
+    (void)ownership_generation;
+}
+
 #ifdef LIBRDP_X11_SERVER_TESTING
 librdp_status x11_server_fuse_test_present(
     x11_server_fuse* provider, const server_platform_drive_volume* volume)
@@ -2055,6 +2775,34 @@ int x11_server_fuse_test_mount_path_secure(const char* path)
 {
     (void)path;
     return 0;
+}
+
+librdp_status x11_server_fuse_test_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len)
+{
+    return x11_server_fuse_clipboard_publish(
+        provider,
+        peer_id,
+        generation,
+        ownership_generation,
+        descriptors,
+        descriptors_len,
+        uri_list,
+        uri_list_len);
+}
+
+size_t x11_server_fuse_test_clipboard_file_count(
+    const x11_server_fuse* provider)
+{
+    (void)provider;
+    return 0u;
 }
 #endif
 

@@ -48,12 +48,46 @@ int x11_server_fuse_available(void);
 x11_server_fuse* x11_server_fuse_new(const x11_server_fuse_config* config);
 void x11_server_fuse_free(x11_server_fuse* provider);
 const server_platform_drive_vtable* x11_server_fuse_vtable(void);
+librdp_status x11_server_fuse_set_clipboard_sink(
+    x11_server_fuse* provider,
+    server_platform_clipboard_file_request_callback request,
+    server_platform_clipboard_cancel_callback cancel,
+    void* user_data);
+int x11_server_fuse_clipboard_ready(const x11_server_fuse* provider);
+librdp_status x11_server_fuse_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len);
+librdp_status x11_server_fuse_clipboard_complete(
+    x11_server_fuse* provider,
+    const server_platform_clipboard_data* data);
+void x11_server_fuse_clipboard_clear(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation);
 
 #ifdef LIBRDP_X11_SERVER_TESTING
 librdp_status x11_server_fuse_test_present(
     x11_server_fuse* provider, const server_platform_drive_volume* volume);
 size_t x11_server_fuse_test_volume_count(const x11_server_fuse* provider);
 int x11_server_fuse_test_mount_path_secure(const char* path);
+librdp_status x11_server_fuse_test_clipboard_publish(
+    x11_server_fuse* provider,
+    uint32_t peer_id,
+    uint32_t generation,
+    uint64_t ownership_generation,
+    const void* descriptors,
+    size_t descriptors_len,
+    uint8_t** uri_list,
+    size_t* uri_list_len);
+size_t x11_server_fuse_test_clipboard_file_count(
+    const x11_server_fuse* provider);
 #endif
 
 #endif

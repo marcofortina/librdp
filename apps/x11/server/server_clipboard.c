@@ -352,6 +352,44 @@ static Atom x11_server_atom_for_format_id(
     return None;
 }
 
+static Atom x11_server_atom_for_offer_format(
+    const x11_server_context* context,
+    const server_platform_clipboard_format* format)
+{
+    Atom atom = None;
+
+    if (!context || !format)
+        return None;
+    atom = x11_server_atom_for_format_id(context, format->id);
+    if (atom != None || !format->mime_type)
+        return atom;
+    if (strcmp(format->mime_type, "text/plain;charset=utf-8") == 0)
+        return context->atom_utf8;
+    if (strcmp(format->mime_type, "text/html") == 0)
+        return context->atom_html;
+    if (strcmp(format->mime_type, "image/png") == 0)
+        return context->atom_png;
+    if (strcmp(format->mime_type, "text/uri-list") == 0)
+        return context->atom_uri_list;
+    return None;
+}
+
+static Atom x11_server_remote_atom_for_format_id(
+    const x11_server_context* context,
+    uint32_t format_id)
+{
+    size_t index = 0u;
+
+    if (!context)
+        return None;
+    for (index = 0u; index < context->remote_format_count; index++)
+    {
+        if (context->remote_format_ids[index] == format_id)
+            return context->remote_targets[index];
+    }
+    return None;
+}
+
 static const char* x11_server_mime_for_atom(
     const x11_server_context* context,
     Atom atom)
@@ -415,12 +453,32 @@ static librdp_status x11_server_clipboard_convert_from_wire(
     size_t* output_len)
 {
     uint8_t* copy = NULL;
+    Atom target = None;
 
-    (void)context;
-    if (format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
+    if (!context)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    target = x11_server_remote_atom_for_format_id(context, format_id);
+    if (target == context->atom_utf8 ||
+        format_id == LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT)
         return x11_server_utf16le_to_utf8(data, length, output, output_len);
-    if (format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
+    if (target == context->atom_html ||
+        format_id == LIBRDP_CLIPBOARD_FORMAT_HTML)
         return x11_server_html_extract(data, length, output, output_len);
+    if (target == context->atom_uri_list ||
+        format_id == LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW)
+    {
+        if (!context->fuse)
+            return LIBRDP_STATUS_UNSUPPORTED;
+        return x11_server_fuse_clipboard_publish(
+            context->fuse,
+            context->clipboard_remote_peer_id,
+            context->clipboard_remote_peer_generation,
+            context->clipboard_remote_generation,
+            data,
+            length,
+            output,
+            output_len);
+    }
     if ((!data && length > 0u) ||
         length > X11_SERVER_CLIPBOARD_MAX_BYTES)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
@@ -432,6 +490,21 @@ static librdp_status x11_server_clipboard_convert_from_wire(
     *output = copy;
     *output_len = length;
     return LIBRDP_STATUS_OK;
+}
+
+static void x11_server_clipboard_clear_remote_files(
+    x11_server_context* context)
+{
+    if (!context || !context->fuse ||
+        context->clipboard_remote_peer_id == 0u ||
+        context->clipboard_remote_peer_generation == 0u ||
+        context->clipboard_remote_generation == 0u)
+        return;
+    x11_server_fuse_clipboard_clear(
+        context->fuse,
+        context->clipboard_remote_peer_id,
+        context->clipboard_remote_peer_generation,
+        context->clipboard_remote_generation);
 }
 
 static void x11_server_clipboard_send_selection_notify(
@@ -1019,6 +1092,7 @@ void x11_server_clipboard_handle_event(x11_server_context* context,
         if (event->xselectionclear.selection == context->atom_clipboard)
         {
             x11_server_clipboard_cancel_write(context);
+            x11_server_clipboard_clear_remote_files(context);
             context->clipboard_remote_peer_id = 0u;
             context->clipboard_remote_peer_generation = 0u;
             context->clipboard_remote_generation = 0u;
@@ -1053,6 +1127,21 @@ static librdp_status x11_server_clipboard_start(
     if (context->clipboard_started)
         return LIBRDP_STATUS_STATE;
     context->clipboard_sink = *sink;
+    if (context->fuse)
+    {
+        librdp_status status = x11_server_fuse_set_clipboard_sink(
+            context->fuse,
+            sink->file_request,
+            sink->cancel,
+            sink->user_data);
+
+        if (status != LIBRDP_STATUS_OK)
+        {
+            memset(&context->clipboard_sink, 0,
+                   sizeof(context->clipboard_sink));
+            return status;
+        }
+    }
     context->clipboard_started = 1;
     XFixesSelectSelectionInput(
         context->display,
@@ -1084,6 +1173,14 @@ static void x11_server_clipboard_stop(void* opaque)
     }
     x11_server_clipboard_read_clear(context);
     x11_server_clipboard_write_clear(context);
+    x11_server_clipboard_clear_remote_files(context);
+    if (context->fuse)
+    {
+        (void)x11_server_fuse_set_clipboard_sink(context->fuse,
+                                                 NULL,
+                                                 NULL,
+                                                 NULL);
+    }
     x11_server_clipboard_files_reset(context->clipboard_files);
     memset(&context->clipboard_sink, 0, sizeof(context->clipboard_sink));
     context->clipboard_started = 0;
@@ -1106,13 +1203,27 @@ static librdp_status x11_server_clipboard_publish_formats(
         offer->format_count > X11_SERVER_CLIPBOARD_MAX_FORMATS ||
         offer->ownership_generation == 0u)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    x11_server_clipboard_clear_remote_files(context);
     context->remote_format_count = 0u;
     for (index = 0u; index < offer->format_count; index++)
     {
-        Atom atom =
-            x11_server_atom_for_format_id(context, offer->formats[index].id);
+        Atom atom = x11_server_atom_for_offer_format(
+            context, &offer->formats[index]);
+        size_t existing = 0u;
 
-        if (atom == None)
+        if (atom == None ||
+            (atom == context->atom_uri_list &&
+             (offer->formats[index].id == LIBRDP_CLIPBOARD_FORMAT_HDROP ||
+              !x11_server_fuse_clipboard_ready(context->fuse))))
+            continue;
+        for (existing = 0u;
+             existing < context->remote_format_count;
+             existing++)
+        {
+            if (context->remote_targets[existing] == atom)
+                break;
+        }
+        if (existing < context->remote_format_count)
             continue;
         context->remote_targets[context->remote_format_count] = atom;
         context->remote_format_ids[context->remote_format_count] =
@@ -1209,6 +1320,8 @@ static librdp_status x11_server_clipboard_write_data(
 
     if (!context || !data)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (data->stream_id != 0u && context->fuse)
+        return x11_server_fuse_clipboard_complete(context->fuse, data);
     write = &context->clipboard_write;
     if (!write->active || write->request_id != data->request_id ||
         write->format_id != data->format_id || !data->final_chunk ||
@@ -1299,6 +1412,7 @@ static void x11_server_clipboard_cancel_peer(void* opaque,
         return;
     x11_server_clipboard_read_clear(context);
     x11_server_clipboard_write_clear(context);
+    x11_server_clipboard_clear_remote_files(context);
     context->clipboard_remote_peer_id = 0u;
     context->clipboard_remote_peer_generation = 0u;
     context->clipboard_remote_generation = 0u;
@@ -1312,6 +1426,7 @@ static void x11_server_clipboard_release_ownership(void* opaque,
 
     if (!context || generation != context->clipboard_remote_generation)
         return;
+    x11_server_clipboard_clear_remote_files(context);
     if (XGetSelectionOwner(context->display,
                            context->atom_clipboard) ==
         context->owner_window)

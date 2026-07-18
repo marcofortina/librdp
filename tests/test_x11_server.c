@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 /*
- * Module: isolated Xvfb exercise for the X11 desktop-server providers.
+ * Module: isolated Xvfb exercise for the X11 desktop-server providers,
+ * including bidirectional direct and INCR clipboard transfers.
  * Coverage: damage-driven BGRA capture, cursor shape and position updates,
  * XTest keyboard/pointer injection, permission state, selection ownership,
  * UTF conversion and outbound INCR chunking.
@@ -40,6 +41,10 @@
 #define LIBRDP_TEST_XVFB_PATH "Xvfb"
 #endif
 
+#define TEST_REMOTE_FORMAT_HTML 0xd101u
+#define TEST_REMOTE_FORMAT_PNG 0xd102u
+#define TEST_CLIPBOARD_FORMAT_LIMIT 8u
+
 #define CHECK(condition)                                                        \
     do                                                                          \
     {                                                                           \
@@ -65,6 +70,9 @@ typedef struct x11_server_test_state
     uint64_t request_count;
     uint64_t cancel_count;
     uint64_t permission_count;
+    uint64_t clipboard_generation;
+    size_t published_format_count;
+    uint32_t published_format_ids[TEST_CLIPBOARD_FORMAT_LIMIT];
     uint32_t last_width;
     uint32_t last_height;
     uint8_t sample_b;
@@ -72,13 +80,34 @@ typedef struct x11_server_test_state
     uint8_t sample_r;
     int pointer_shape;
     int pointer_visible;
-    uint8_t clipboard_data[64];
+    uint8_t clipboard_data[4096];
     size_t clipboard_data_len;
+    size_t clipboard_total_len;
+    uint32_t clipboard_format_id;
+    librdp_status clipboard_status;
     uint32_t clipboard_peer_id;
     uint32_t clipboard_peer_generation;
     int send_large_clipboard;
     int defer_clipboard_response;
+    librdp_status response_status;
 } x11_server_test_state;
+
+typedef struct test_selection_source
+{
+    Display* display;
+    Window owner;
+    Atom clipboard;
+    Atom targets;
+    Atom incr;
+    Atom formats[4];
+    const uint8_t* payload;
+    size_t payload_len;
+    Atom payload_target;
+    XSelectionRequestEvent request;
+    size_t offset;
+    int incremental;
+    int transfer_active;
+} test_selection_source;
 
 static void test_sleep_ms(unsigned int milliseconds)
 {
@@ -89,6 +118,24 @@ static void test_sleep_ms(unsigned int milliseconds)
     while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
     {
     }
+}
+
+static int test_bytes_contains(const uint8_t* data,
+                               size_t data_len,
+                               const uint8_t* needle,
+                               size_t needle_len)
+{
+    size_t index = 0u;
+
+    if ((!data && data_len > 0u) || !needle || needle_len == 0u ||
+        needle_len > data_len)
+        return 0;
+    for (index = 0u; index <= data_len - needle_len; index++)
+    {
+        if (memcmp(data + index, needle, needle_len) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 static int test_start_xvfb(char display_name[32], pid_t* child)
@@ -231,6 +278,18 @@ static void test_clipboard_formats(
         (format_count > 0u && !formats))
         return;
     state->format_count++;
+    state->clipboard_generation = generation;
+    state->published_format_count = format_count;
+    if (format_count > 0u)
+    {
+        size_t index = 0u;
+
+        for (index = 0u;
+             index < format_count &&
+             index < TEST_CLIPBOARD_FORMAT_LIMIT;
+             index++)
+            state->published_format_ids[index] = formats[index].id;
+    }
 }
 
 static void test_clipboard_data(
@@ -242,6 +301,9 @@ static void test_clipboard_data(
     if (!state || !data)
         return;
     state->data_count++;
+    state->clipboard_total_len = data->data_len;
+    state->clipboard_format_id = data->format_id;
+    state->clipboard_status = data->status;
     state->clipboard_data_len =
         data->data_len < sizeof(state->clipboard_data)
             ? data->data_len
@@ -260,6 +322,22 @@ static librdp_status test_clipboard_request(
 {
     static const uint8_t utf16_text[] = {
         'r', 0, 'e', 0, 'm', 0, 'o', 0, 't', 0, 'e', 0, 0, 0,
+    };
+    static const uint8_t html[] =
+        "Version:0.9\r\n"
+        "StartHTML:0000000105\r\n"
+        "EndHTML:0000000187\r\n"
+        "StartFragment:0000000137\r\n"
+        "EndFragment:0000000155\r\n"
+        "<html><body><!--StartFragment-->"
+        "<b>remote html</b>"
+        "<!--EndFragment--></body></html>";
+    static const uint8_t png[] = {
+        0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au,
+        0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x48u, 0x44u, 0x52u,
+        0x00u, 0x00u, 0x00u, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u,
+        0x08u, 0x06u, 0x00u, 0x00u, 0x00u, 0x1fu, 0x15u, 0xc4u,
+        0x89u,
     };
     x11_server_test_state* state = (x11_server_test_state*)user_data;
     server_platform_clipboard_data response;
@@ -282,13 +360,29 @@ static librdp_status test_clipboard_request(
     response.format_id = request->format_id;
     response.status = LIBRDP_STATUS_OK;
     response.final_chunk = 1;
+    if (request->format_id == TEST_REMOTE_FORMAT_HTML)
+    {
+        response.data = html;
+        response.data_len = sizeof(html) - 1u;
+        state->response_status = state->clipboard->write_data(
+            state->clipboard_context, &response);
+        return state->response_status;
+    }
+    if (request->format_id == TEST_REMOTE_FORMAT_PNG)
+    {
+        response.data = png;
+        response.data_len = sizeof(png);
+        state->response_status = state->clipboard->write_data(
+            state->clipboard_context, &response);
+        return state->response_status;
+    }
     if (!state->send_large_clipboard)
     {
         response.data = utf16_text;
         response.data_len = sizeof(utf16_text);
-        (void)state->clipboard->write_data(state->clipboard_context,
-                                           &response);
-        return LIBRDP_STATUS_OK;
+        state->response_status = state->clipboard->write_data(
+            state->clipboard_context, &response);
+        return state->response_status;
     }
     large = (uint8_t*)malloc(large_units * 2u + 2u);
     if (!large)
@@ -302,10 +396,10 @@ static librdp_status test_clipboard_request(
     large[large_units * 2u + 1u] = 0u;
     response.data = large;
     response.data_len = large_units * 2u + 2u;
-    (void)state->clipboard->write_data(state->clipboard_context,
-                                       &response);
+    state->response_status = state->clipboard->write_data(
+        state->clipboard_context, &response);
     free(large);
-    return LIBRDP_STATUS_OK;
+    return state->response_status;
 }
 
 static librdp_status test_clipboard_file_request(
@@ -367,6 +461,148 @@ static int test_wait_for_event(Display* display,
         }
         test_sleep_ms(5u);
         elapsed += 5u;
+    }
+    return 0;
+}
+
+static void test_selection_source_notify(
+    const test_selection_source* source,
+    const XSelectionRequestEvent* request,
+    Atom property)
+{
+    XEvent response;
+
+    memset(&response, 0, sizeof(response));
+    response.xselection.type = SelectionNotify;
+    response.xselection.display = source->display;
+    response.xselection.requestor = request->requestor;
+    response.xselection.selection = request->selection;
+    response.xselection.target = request->target;
+    response.xselection.property = property;
+    response.xselection.time = request->time;
+    XSendEvent(source->display, request->requestor, False, 0, &response);
+    XFlush(source->display);
+}
+
+/*
+ * The synthetic owner implements the native side of ICCCM selection
+ * transfers, including the property-delete handshake required by INCR.
+ */
+static int test_selection_source_dispatch(test_selection_source* source)
+{
+    if (!source || !source->display)
+        return 0;
+    while (XPending(source->display) > 0)
+    {
+        XEvent event;
+
+        XNextEvent(source->display, &event);
+        if (event.type == SelectionRequest)
+        {
+            const XSelectionRequestEvent* request =
+                &event.xselectionrequest;
+            Atom property = request->property != None
+                                ? request->property
+                                : request->target;
+
+            if (request->selection != source->clipboard)
+                continue;
+            if (request->target == source->targets)
+            {
+                XChangeProperty(source->display,
+                                request->requestor,
+                                property,
+                                XA_ATOM,
+                                32,
+                                PropModeReplace,
+                                (const unsigned char*)source->formats,
+                                4);
+                test_selection_source_notify(source, request, property);
+            }
+            else if (request->target == source->payload_target &&
+                     (source->payload || source->payload_len == 0u))
+            {
+                if (source->incremental)
+                {
+                    unsigned long total =
+                        (unsigned long)source->payload_len;
+
+                    source->request = *request;
+                    source->request.property = property;
+                    source->offset = 0u;
+                    source->transfer_active = 1;
+                    XSelectInput(source->display,
+                                 request->requestor,
+                                 PropertyChangeMask);
+                    XChangeProperty(source->display,
+                                    request->requestor,
+                                    property,
+                                    source->incr,
+                                    32,
+                                    PropModeReplace,
+                                    (const unsigned char*)&total,
+                                    1);
+                    test_selection_source_notify(source, request, property);
+                }
+                else
+                {
+                    XChangeProperty(source->display,
+                                    request->requestor,
+                                    property,
+                                    request->target,
+                                    8,
+                                    PropModeReplace,
+                                    source->payload,
+                                    (int)source->payload_len);
+                    test_selection_source_notify(source, request, property);
+                }
+            }
+            else
+                test_selection_source_notify(source, request, None);
+        }
+        else if (event.type == PropertyNotify && source->transfer_active &&
+                 event.xproperty.window == source->request.requestor &&
+                 event.xproperty.atom == source->request.property &&
+                 event.xproperty.state == PropertyDelete)
+        {
+            size_t remaining = source->payload_len - source->offset;
+            size_t chunk = remaining < 7u ? remaining : 7u;
+
+            XChangeProperty(source->display,
+                            source->request.requestor,
+                            source->request.property,
+                            source->request.target,
+                            8,
+                            PropModeReplace,
+                            chunk > 0u
+                                ? source->payload + source->offset
+                                : NULL,
+                            (int)chunk);
+            source->offset += chunk;
+            if (chunk == 0u)
+                source->transfer_active = 0;
+            XFlush(source->display);
+        }
+    }
+    return 1;
+}
+
+static int test_selection_pump_until(
+    const server_platform_capture_vtable* capture,
+    void* context,
+    test_selection_source* source,
+    const uint64_t* counter,
+    uint64_t expected)
+{
+    unsigned int attempt = 0u;
+
+    for (attempt = 0u; attempt < 200u; attempt++)
+    {
+        if (!test_dispatch_platform(capture, context, 20) ||
+            !test_selection_source_dispatch(source))
+            return 0;
+        if (*counter >= expected && !source->transfer_active)
+            return 1;
     }
     return 0;
 }
@@ -701,6 +937,87 @@ static int test_fuse_drive_model(void)
 }
 
 /*
+ * Remote clipboard descriptors become read-only FUSE files only after the
+ * complete descriptor group is valid. URI escaping and duplicate-name
+ * handling prevent ambiguous native paths, while ownership revocation removes
+ * every file atomically.
+ */
+static int test_fuse_clipboard_model(void)
+{
+    char path[] = "/tmp/librdp-x11-clipboard-fuse-XXXXXX";
+    x11_server_fuse_config config;
+    x11_server_fuse* provider = NULL;
+    librdp_clipboard_file_metadata files[2];
+    uint8_t* encoded = NULL;
+    uint8_t* uri_list = NULL;
+    size_t encoded_len = 0u;
+    size_t uri_list_len = 0u;
+
+    if (!x11_server_fuse_available())
+        return 0;
+    CHECK(mkdtemp(path) != NULL);
+    CHECK(chmod(path, 0700) == 0);
+    x11_server_fuse_config_init(&config);
+    config.mount_path = path;
+    provider = x11_server_fuse_new(&config);
+    CHECK(provider != NULL);
+    CHECK(librdp_clipboard_file_metadata_init(&files[0]) ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_clipboard_file_metadata_init(&files[1]) ==
+          LIBRDP_STATUS_OK);
+    files[0].name = "report file.txt";
+    files[0].file_size = 41u;
+    files[1].name = "report file.txt";
+    files[1].file_size = 73u;
+    CHECK(librdp_clipboard_file_group_encode(files,
+                                             2u,
+                                             NULL,
+                                             0u,
+                                             &encoded_len) ==
+          LIBRDP_STATUS_OK);
+    encoded = (uint8_t*)malloc(encoded_len);
+    CHECK(encoded != NULL);
+    CHECK(librdp_clipboard_file_group_encode(files,
+                                             2u,
+                                             encoded,
+                                             encoded_len,
+                                             &encoded_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(x11_server_fuse_test_clipboard_publish(provider,
+                                                 7u,
+                                                 9u,
+                                                 11u,
+                                                 encoded,
+                                                 encoded_len,
+                                                 &uri_list,
+                                                 &uri_list_len) ==
+          LIBRDP_STATUS_OK);
+    CHECK(uri_list != NULL && uri_list_len > 0u);
+    CHECK(strstr((const char*)uri_list, "report%20file.txt") != NULL);
+    CHECK(strstr((const char*)uri_list, "/file-2\r\n") != NULL);
+    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 2u);
+    free(uri_list);
+    uri_list = NULL;
+    CHECK(x11_server_fuse_test_clipboard_publish(provider,
+                                                 7u,
+                                                 9u,
+                                                 12u,
+                                                 encoded,
+                                                 encoded_len - 1u,
+                                                 &uri_list,
+                                                 &uri_list_len) ==
+          LIBRDP_STATUS_PROTOCOL_ERROR);
+    CHECK(uri_list == NULL && uri_list_len == 0u);
+    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 2u);
+    x11_server_fuse_clipboard_clear(provider, 7u, 9u, 11u);
+    CHECK(x11_server_fuse_test_clipboard_file_count(provider) == 0u);
+    free(encoded);
+    x11_server_fuse_free(provider);
+    CHECK(rmdir(path) == 0);
+    return 0;
+}
+
+/*
  * The end-to-end provider fixture exercises all X11 vtables against one
  * isolated display so native event ordering and cross-provider teardown are
  * validated together.
@@ -890,17 +1207,24 @@ static int test_x11_providers(const char* display_name)
     CHECK(state.pointer_visible);
 
     {
-        server_platform_clipboard_format format;
+        server_platform_clipboard_format formats[4];
         server_platform_clipboard_offer offer;
 
-        format.id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
-        format.mime_type = "text/plain;charset=utf-8";
+        memset(formats, 0, sizeof(formats));
+        formats[0].id = LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT;
+        formats[0].mime_type = "text/plain;charset=utf-8";
+        formats[1].id = TEST_REMOTE_FORMAT_HTML;
+        formats[1].mime_type = "text/html";
+        formats[2].id = TEST_REMOTE_FORMAT_PNG;
+        formats[2].mime_type = "image/png";
+        formats[3].id = LIBRDP_CLIPBOARD_FORMAT_HDROP;
+        formats[3].mime_type = "text/uri-list";
         memset(&offer, 0, sizeof(offer));
         offer.peer_id = 23u;
         offer.generation = 5u;
         offer.ownership_generation = 7u;
-        offer.formats = &format;
-        offer.format_count = 1u;
+        offer.formats = formats;
+        offer.format_count = 4u;
         CHECK(clipboard->publish_formats(context, &offer) ==
               LIBRDP_STATUS_OK);
     }
@@ -913,6 +1237,7 @@ static int test_x11_providers(const char* display_name)
                       CurrentTime);
     XFlush(client);
     CHECK(test_dispatch_platform(capture, context, 1000));
+    CHECK(state.response_status == LIBRDP_STATUS_OK);
     CHECK(test_read_selection(client,
                               requestor,
                               property,
@@ -927,6 +1252,69 @@ static int test_x11_providers(const char* display_name)
     CHECK(state.clipboard_peer_generation == 5u);
     free(selection);
     selection = NULL;
+
+    request_count = state.request_count;
+    state.response_status = LIBRDP_STATUS_STATE;
+    XConvertSelection(client,
+                      XInternAtom(client, "CLIPBOARD", False),
+                      XInternAtom(client, "text/html", False),
+                      property,
+                      requestor,
+                      CurrentTime);
+    XFlush(client);
+    CHECK(test_dispatch_platform(capture, context, 1000));
+    CHECK(state.request_count == request_count + 1u);
+    CHECK(state.response_status == LIBRDP_STATUS_OK);
+    CHECK(test_read_selection(client,
+                              requestor,
+                              property,
+                              XInternAtom(client, "INCR", False),
+                              capture,
+                              context,
+                              &selection,
+                              &selection_len));
+    CHECK(selection_len == sizeof("<b>remote html</b>") - 1u &&
+          memcmp(selection,
+                 "<b>remote html</b>",
+                 sizeof("<b>remote html</b>") - 1u) == 0);
+    free(selection);
+    selection = NULL;
+
+    XConvertSelection(client,
+                      XInternAtom(client, "CLIPBOARD", False),
+                      XInternAtom(client, "image/png", False),
+                      property,
+                      requestor,
+                      CurrentTime);
+    XFlush(client);
+    CHECK(test_dispatch_platform(capture, context, 1000));
+    CHECK(test_read_selection(client,
+                              requestor,
+                              property,
+                              XInternAtom(client, "INCR", False),
+                              capture,
+                              context,
+                              &selection,
+                              &selection_len));
+    CHECK(selection_len == 33u &&
+          memcmp(selection, "\x89PNG\r\n\x1a\n", 8u) == 0);
+    free(selection);
+    selection = NULL;
+
+    XConvertSelection(client,
+                      XInternAtom(client, "CLIPBOARD", False),
+                      XInternAtom(client, "text/uri-list", False),
+                      property,
+                      requestor,
+                      CurrentTime);
+    XFlush(client);
+    CHECK(test_dispatch_platform(capture, context, 1000));
+    {
+        XEvent event;
+
+        CHECK(test_wait_for_event(client, SelectionNotify, &event, 1000u));
+        CHECK(event.xselection.property == None);
+    }
 
     state.send_large_clipboard = 1;
     XConvertSelection(client,
@@ -974,6 +1362,197 @@ static int test_x11_providers(const char* display_name)
     }
     CHECK(state.cancel_count == 1u);
 
+    {
+        static const uint8_t local_text[] = "local incremental text";
+        static const uint8_t local_html[] = "<i>local html</i>";
+        static const uint8_t local_png[] = {
+            0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au,
+            0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x48u, 0x44u, 0x52u,
+            0x00u, 0x00u, 0x00u, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u,
+            0x08u, 0x06u, 0x00u, 0x00u, 0x00u, 0x1fu, 0x15u, 0xc4u,
+            0x89u,
+        };
+        static const uint8_t file_contents[] = "clipboard range payload";
+        test_selection_source source;
+        server_platform_clipboard_file_request file_request;
+        librdp_clipboard_file_metadata metadata;
+        char file_path[] = "/tmp/librdp-x11-owner-file-XXXXXX";
+        char file_uri[256];
+        char decoded_name[256];
+        size_t decoded_name_len = 0u;
+        uint32_t file_count = 0u;
+        uint64_t format_events = state.format_count;
+        uint64_t data_events = 0u;
+        int descriptor = -1;
+        int uri_len = 0;
+
+        memset(&source, 0, sizeof(source));
+        source.display = client;
+        source.owner = requestor;
+        source.clipboard = XInternAtom(client, "CLIPBOARD", False);
+        source.targets = XInternAtom(client, "TARGETS", False);
+        source.incr = XInternAtom(client, "INCR", False);
+        source.formats[0] = XInternAtom(client, "UTF8_STRING", False);
+        source.formats[1] = XInternAtom(client, "text/html", False);
+        source.formats[2] = XInternAtom(client, "image/png", False);
+        source.formats[3] = XInternAtom(client, "text/uri-list", False);
+        state.defer_clipboard_response = 0;
+        XSetSelectionOwner(client,
+                           source.clipboard,
+                           source.owner,
+                           CurrentTime);
+        XFlush(client);
+        CHECK(test_selection_pump_until(capture,
+                                        context,
+                                        &source,
+                                        &state.format_count,
+                                        format_events + 1u));
+        CHECK(state.published_format_count == 4u);
+        CHECK(state.published_format_ids[0] ==
+              LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
+        CHECK(state.published_format_ids[1] ==
+              LIBRDP_CLIPBOARD_FORMAT_HTML);
+        CHECK(state.published_format_ids[2] ==
+              LIBRDP_CLIPBOARD_FORMAT_PNG);
+        CHECK(state.published_format_ids[3] ==
+              LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW);
+        CHECK(state.clipboard_generation != 0u);
+
+        source.payload = local_text;
+        source.payload_len = sizeof(local_text) - 1u;
+        source.payload_target = source.formats[0];
+        source.incremental = 1;
+        data_events = state.data_count;
+        CHECK(clipboard->request_data(context,
+                                      501u,
+                                      LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT) ==
+              LIBRDP_STATUS_OK);
+        CHECK(test_selection_pump_until(capture,
+                                        context,
+                                        &source,
+                                        &state.data_count,
+                                        data_events + 1u));
+        CHECK(state.clipboard_status == LIBRDP_STATUS_OK);
+        CHECK(state.clipboard_format_id ==
+              LIBRDP_CLIPBOARD_FORMAT_UNICODETEXT);
+        CHECK(state.clipboard_total_len ==
+              (sizeof(local_text) - 1u) * 2u);
+        CHECK(state.clipboard_data[0] == 'l' &&
+              state.clipboard_data[1] == 0u &&
+              state.clipboard_data[2] == 'o' &&
+              state.clipboard_data[3] == 0u);
+
+        source.payload = local_html;
+        source.payload_len = sizeof(local_html) - 1u;
+        source.payload_target = source.formats[1];
+        source.incremental = 0;
+        data_events = state.data_count;
+        CHECK(clipboard->request_data(context,
+                                      502u,
+                                      LIBRDP_CLIPBOARD_FORMAT_HTML) ==
+              LIBRDP_STATUS_OK);
+        CHECK(test_selection_pump_until(capture,
+                                        context,
+                                        &source,
+                                        &state.data_count,
+                                        data_events + 1u));
+        CHECK(state.clipboard_status == LIBRDP_STATUS_OK);
+        CHECK(test_bytes_contains(state.clipboard_data,
+                                  state.clipboard_data_len,
+                                  local_html,
+                                  sizeof(local_html) - 1u));
+        CHECK(test_bytes_contains(
+            state.clipboard_data,
+            state.clipboard_data_len,
+            (const uint8_t*)"StartFragment:",
+            sizeof("StartFragment:") - 1u));
+
+        source.payload = local_png;
+        source.payload_len = sizeof(local_png);
+        source.payload_target = source.formats[2];
+        data_events = state.data_count;
+        CHECK(clipboard->request_data(context,
+                                      503u,
+                                      LIBRDP_CLIPBOARD_FORMAT_PNG) ==
+              LIBRDP_STATUS_OK);
+        CHECK(test_selection_pump_until(capture,
+                                        context,
+                                        &source,
+                                        &state.data_count,
+                                        data_events + 1u));
+        CHECK(state.clipboard_status == LIBRDP_STATUS_OK);
+        CHECK(state.clipboard_total_len == sizeof(local_png));
+        CHECK(memcmp(state.clipboard_data,
+                     local_png,
+                     sizeof(local_png)) == 0);
+
+        descriptor = mkstemp(file_path);
+        CHECK(descriptor >= 0);
+        CHECK(write(descriptor,
+                    file_contents,
+                    sizeof(file_contents) - 1u) ==
+              (ssize_t)(sizeof(file_contents) - 1u));
+        CHECK(close(descriptor) == 0);
+        descriptor = -1;
+        uri_len = snprintf(file_uri,
+                           sizeof(file_uri),
+                           "file://%s\r\n",
+                           file_path);
+        CHECK(uri_len > 0 && (size_t)uri_len < sizeof(file_uri));
+        source.payload = (const uint8_t*)file_uri;
+        source.payload_len = (size_t)uri_len;
+        source.payload_target = source.formats[3];
+        data_events = state.data_count;
+        CHECK(clipboard->request_data(
+                  context,
+                  504u,
+                  LIBRDP_CLIPBOARD_FORMAT_FILEGROUPDESCRIPTORW) ==
+              LIBRDP_STATUS_OK);
+        CHECK(test_selection_pump_until(capture,
+                                        context,
+                                        &source,
+                                        &state.data_count,
+                                        data_events + 1u));
+        CHECK(state.clipboard_status == LIBRDP_STATUS_OK);
+        CHECK(librdp_clipboard_file_group_count(state.clipboard_data,
+                                                state.clipboard_total_len,
+                                                &file_count) ==
+              LIBRDP_STATUS_OK);
+        CHECK(file_count == 1u);
+        CHECK(librdp_clipboard_file_metadata_init(&metadata) ==
+              LIBRDP_STATUS_OK);
+        CHECK(librdp_clipboard_file_group_get(
+                  state.clipboard_data,
+                  state.clipboard_total_len,
+                  0u,
+                  &metadata,
+                  decoded_name,
+                  sizeof(decoded_name),
+                  &decoded_name_len) == LIBRDP_STATUS_OK);
+        CHECK(metadata.file_size == sizeof(file_contents) - 1u);
+        memset(&file_request, 0, sizeof(file_request));
+        file_request.peer_id = 31u;
+        file_request.generation = 2u;
+        file_request.ownership_generation =
+            state.clipboard_generation;
+        file_request.request_id = 505u;
+        file_request.stream_id = 9u;
+        file_request.file_index = 0;
+        file_request.flags = LIBRDP_CLIPBOARD_FILECONTENTS_RANGE;
+        file_request.position = 10u;
+        file_request.requested_bytes = 5u;
+        data_events = state.data_count;
+        CHECK(clipboard->request_file(context, &file_request) ==
+              LIBRDP_STATUS_OK);
+        CHECK(state.data_count == data_events + 1u);
+        CHECK(state.clipboard_status == LIBRDP_STATUS_OK);
+        CHECK(state.clipboard_total_len == 5u);
+        CHECK(memcmp(state.clipboard_data,
+                     file_contents + 10u,
+                     5u) == 0);
+        CHECK(unlink(file_path) == 0);
+    }
+
     clipboard->stop(context);
     pointer->stop(context);
     capture->stop(context);
@@ -997,6 +1576,8 @@ int main(void)
     if (test_clipboard_files() != 0)
         return 1;
     if (test_fuse_drive_model() != 0)
+        return 1;
+    if (test_fuse_clipboard_model() != 0)
         return 1;
     if (!test_start_xvfb(display_name, &child))
     {
