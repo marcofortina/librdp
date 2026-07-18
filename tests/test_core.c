@@ -69,6 +69,7 @@ static int run_graphics(void)
     if (test_gdiplus_object_table_solid_brush_and_pen() != 0 ||
         test_gdiplus_known_record_families_render_visuals() != 0 ||
         test_gdiplus_compressed_images_render_pixels() != 0 ||
+        test_gdiplus_compressed_image_pixel_contract() != 0 ||
         test_gdiplus_image_failure_accounting() != 0 ||
         test_gdiplus_graphics_state_affects_rendering() != 0 ||
         test_gdiplus_complex_brushes_sample_pixels() != 0 ||

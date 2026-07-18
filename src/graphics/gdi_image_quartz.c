@@ -25,6 +25,49 @@
 
 #define RDP_GDI_IMAGE_QUARTZ_MAX_DIMENSION 16384u
 
+/*
+ * Quartz renders into premultiplied BGRA. The portable image contract uses
+ * straight-alpha BGRA so scaling and blending behave identically across codec
+ * backends.
+ */
+static void rdp_gdi_image_quartz_unpremultiply(rdp_gdi_image* image)
+{
+    uint32_t y = 0u;
+
+    for (y = 0u; y < image->height; y++)
+    {
+        uint8_t* row = image->pixels + ((size_t)y * image->stride);
+        uint32_t x = 0u;
+
+        for (x = 0u; x < image->width; x++)
+        {
+            uint8_t* pixel = row + ((size_t)x * 4u);
+            const uint32_t alpha = pixel[3];
+            size_t channel = 0u;
+
+            if (alpha == 0u)
+            {
+                pixel[0] = 0u;
+                pixel[1] = 0u;
+                pixel[2] = 0u;
+                continue;
+            }
+            if (alpha == 255u)
+                continue;
+            for (channel = 0u; channel < 3u; channel++)
+            {
+                const uint32_t straight = (((uint32_t)pixel[channel] * 255u) + (alpha / 2u)) / alpha;
+                pixel[channel] = (uint8_t)(straight > 255u ? 255u : straight);
+            }
+        }
+    }
+}
+
+/*
+ * Decodes one remote image through ImageIO into the portable top-down,
+ * straight-alpha BGRA contract. The returned pixel allocation is owned by
+ * image; malformed data and partial Core Graphics setup clear all output.
+ */
 librdp_status rdp_gdi_image_decode_quartz(const uint8_t* data,
                                           size_t length,
                                           rdp_gdi_image* image)
@@ -85,13 +128,12 @@ librdp_status rdp_gdi_image_decode_quartz(const uint8_t* data,
         status = LIBRDP_STATUS_NO_MEMORY;
         goto cleanup;
     }
-    CGContextTranslateCTM(context, 0.0, (CGFloat)height);
-    CGContextScaleCTM(context, 1.0, -1.0);
     CGContextSetBlendMode(context, kCGBlendModeCopy);
     CGContextDrawImage(context, CGRectMake(0.0, 0.0, (CGFloat)width, (CGFloat)height), cg_image);
     image->width = (uint32_t)width;
     image->height = (uint32_t)height;
     image->stride = stride;
+    rdp_gdi_image_quartz_unpremultiply(image);
     status = LIBRDP_STATUS_OK;
 
 cleanup:

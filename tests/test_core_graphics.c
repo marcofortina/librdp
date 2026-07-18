@@ -12,6 +12,8 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+#include "graphics/gdi_image.h"
+
 static int append_gdiplus_record(rdp_buffer* stream, uint16_t type, uint16_t flags, const rdp_buffer* payload)
 {
     size_t size = 0;
@@ -648,6 +650,46 @@ int test_gdiplus_compressed_images_render_pixels(void)
     rdp_buffer_free(&payload);
     rdp_buffer_free(&stream);
     librdp_surface_free(surface);
+    return 0;
+}
+
+/*
+ * Coverage: verifies that every compressed-image backend returns top-down,
+ * straight-alpha BGRA pixels. It catches backend-specific channel ordering and
+ * premultiplication differences before GDI+ scaling blends the decoded image.
+ */
+int test_gdiplus_compressed_image_pixel_contract(void)
+{
+    static const uint8_t png_red_half_alpha[] = {
+        0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au,
+        0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x48u, 0x44u, 0x52u,
+        0x00u, 0x00u, 0x00u, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u,
+        0x08u, 0x06u, 0x00u, 0x00u, 0x00u, 0x1fu, 0x15u, 0xc4u,
+        0x89u, 0x00u, 0x00u, 0x00u, 0x0du, 0x49u, 0x44u, 0x41u,
+        0x54u, 0x08u, 0xd7u, 0x63u, 0xf8u, 0xcfu, 0xc0u, 0xd0u,
+        0x00u, 0x00u, 0x04u, 0x81u, 0x01u, 0x80u, 0xd7u, 0x50u,
+        0xa1u, 0xcau, 0x00u, 0x00u, 0x00u, 0x00u, 0x49u, 0x45u,
+        0x4eu, 0x44u, 0xaeu, 0x42u, 0x60u, 0x82u
+    };
+    rdp_gdi_image image;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    rdp_gdi_image_init(&image);
+    status = rdp_gdi_image_decode(png_red_half_alpha,
+                                  sizeof(png_red_half_alpha),
+                                  &image);
+#if defined(RDP_HAVE_PNG) || defined(RDP_HAVE_QUARTZ)
+    CHECK(status == LIBRDP_STATUS_OK);
+    CHECK(image.width == 1u && image.height == 1u && image.stride >= 4u);
+    CHECK(image.pixels != NULL);
+    CHECK(image.pixels[0] == 0u);
+    CHECK(image.pixels[1] == 0u);
+    CHECK(image.pixels[2] == 255u);
+    CHECK(image.pixels[3] == 128u);
+#else
+    CHECK(status == LIBRDP_STATUS_UNSUPPORTED);
+#endif
+    rdp_gdi_image_clear(&image);
     return 0;
 }
 

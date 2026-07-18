@@ -50,6 +50,7 @@ int test_filesystem_information_class_coverage(void);
 int test_gdiplus_object_table_solid_brush_and_pen(void);
 int test_gdiplus_known_record_families_render_visuals(void);
 int test_gdiplus_compressed_images_render_pixels(void);
+int test_gdiplus_compressed_image_pixel_contract(void);
 int test_gdiplus_image_failure_accounting(void);
 int test_gdiplus_graphics_state_affects_rendering(void);
 int test_gdiplus_complex_brushes_sample_pixels(void);
