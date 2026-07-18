@@ -28,5 +28,8 @@ librdp_status rdp_session_handle_printer_io_request(librdp_session* session,
                                                     size_t data_len);
 uint32_t rdp_session_store_printer_cache_event(librdp_session* session,
                                                const rdp_printer_redirection_cache_event* event);
+void rdp_session_printer_backend_notify(void* user_data);
+librdp_status rdp_session_printer_dispatch_completions(librdp_session* session);
+void rdp_session_printer_reset(librdp_session* session);
 
 #endif

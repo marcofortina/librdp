@@ -58,6 +58,11 @@ void rdp_session_credssp_security_reset(librdp_session* session)
     session->credssp_security_ready = 0;
 }
 
+/*
+ * Construct all session-owned protocol, backend, synchronization, and graphics
+ * state. Initialization failures unwind in reverse ownership order before the
+ * partially constructed session can become observable.
+ */
 librdp_session* librdp_session_new(const librdp_settings* settings)
 {
     librdp_session* session = NULL;
@@ -149,6 +154,10 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     rdp_composited_render_tree_init(&session->composited_tree);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
+    rdp_printer_backend_init_cups(&session->printer_backend);
+    rdp_printer_backend_set_notify(&session->printer_backend,
+                                   rdp_session_printer_backend_notify,
+                                   session);
     session->next_dynamic_channel_id = 1;
 #ifdef RDP_HAVE_PCSC
     rdp_smartcard_backend_init_pcsc(&session->smartcard_backend);
@@ -156,6 +165,7 @@ librdp_session* librdp_session_new(const librdp_settings* settings)
     session->avc = rdp_avc_decoder_new();
     if (!session->avc)
     {
+        rdp_printer_backend_clear(&session->printer_backend);
 #ifdef RDP_HAVE_PCSC
         rdp_smartcard_backend_clear(&session->smartcard_backend);
 #endif
@@ -187,6 +197,8 @@ void librdp_session_free(librdp_session* session)
 #ifdef RDP_HAVE_PCSC
     rdp_smartcard_backend_clear(&session->smartcard_backend);
 #endif
+    rdp_session_printer_reset(session);
+    rdp_printer_backend_clear(&session->printer_backend);
     rdp_session_usb_redirection_reset(session);
     rdp_session_composited_reset(session);
     rdp_session_video_redirection_reset(session);
@@ -409,6 +421,7 @@ librdp_status rdp_session_disconnect_inner(librdp_session* session)
     rdp_session_palette_reset(session);
     rdp_session_dynamic_channels_clear(session);
     rdp_session_static_channels_clear(session);
+    rdp_session_printer_reset(session);
     rdp_session_redirected_files_clear(session);
     rdp_session_drive_roots_clear(session);
     rdp_session_smartcard_reset(session);

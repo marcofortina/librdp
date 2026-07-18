@@ -349,6 +349,50 @@ static librdp_status rdp_session_send_printer_response(librdp_session* session,
     return rdp_session_send_device_redirection_packet(session, response, event);
 }
 
+void rdp_session_printer_backend_notify(void* user_data)
+{
+    librdp_session* session = (librdp_session*)user_data;
+
+    if (session)
+        (void)rdp_session_wakeup_signal(session);
+}
+
+librdp_status rdp_session_printer_dispatch_completions(librdp_session* session)
+{
+    rdp_printer_backend_completion completion;
+
+    if (!session)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    while (rdp_printer_backend_take_completion(&session->printer_backend, &completion))
+    {
+        rdp_trace_event(RDP_TRACE_CLIENT,
+                        "client.rdpdr.printer.backend.completion",
+                        "printer_index=%u status=%u cancelled=%u",
+                        completion.printer_index,
+                        completion.status,
+                        completion.cancelled ? 1u : 0u);
+    }
+    return LIBRDP_STATUS_OK;
+}
+
+void rdp_session_printer_reset(librdp_session* session)
+{
+    if (!session)
+        return;
+    rdp_printer_backend_drain(&session->printer_backend);
+    for (size_t i = 0; i < session->limits.file_handles; i++)
+    {
+        rdp_session_redirected_file* job = &session->redirected_files[i];
+
+        if (job->active && job->printer_backend == RDP_SESSION_PRINTER_BACKEND_CUPS)
+        {
+            if (job->path)
+                (void)unlink(job->path);
+            rdp_session_redirected_file_reset(job);
+        }
+    }
+}
+
 /*
  * Handle printer create/open requests from the device redirection channel. The
  * routine binds server file IDs to spool jobs only after printer identity and
@@ -463,7 +507,8 @@ static librdp_status rdp_session_handle_printer_close(librdp_session* session,
     }
     else
     {
-        uint8_t remove_spool = 0;
+        uint8_t remove_spool =
+            job->printer_backend == RDP_SESSION_PRINTER_BACKEND_CUPS ? 1u : 0u;
 
         if (job->fd >= 0 && fsync(job->fd) != 0 && errno != EINVAL)
             io_status = rdp_session_errno_to_device_status(errno);
@@ -473,13 +518,15 @@ static librdp_status rdp_session_handle_printer_close(librdp_session* session,
         if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS &&
             job->printer_backend == RDP_SESSION_PRINTER_BACKEND_CUPS)
         {
-            io_status = rdp_printer_backend_submit_cups_async(
+            io_status = rdp_printer_backend_submit_async(
+                &session->printer_backend,
                 job->printer_index,
                 librdp_settings_printer_output_path(session->settings, job->printer_index),
                 librdp_settings_printer_name(session->settings, job->printer_index),
                 job->path,
                 1);
-            remove_spool = 0;
+            if (io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
+                remove_spool = 0;
         }
         if (remove_spool && job->path && unlink(job->path) != 0 && io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
             io_status = rdp_session_errno_to_device_status(errno);

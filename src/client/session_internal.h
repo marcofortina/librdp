@@ -818,6 +818,7 @@ struct librdp_session
     rdp_session_video_stream video_streams[RDP_SESSION_VIDEO_STREAMS];
     rdp_session_video_optimized_presentation video_optimized_presentations[RDP_SESSION_VIDEO_OPTIMIZED_PRESENTATIONS];
     rdp_session_redirected_file redirected_files[RDP_SESSION_MAX_REDIRECTED_FILES];
+    rdp_printer_backend printer_backend;
     rdp_session_drive_root drive_roots[LIBRDP_SETTINGS_MAX_DRIVES];
     char drive_volume_labels[LIBRDP_SETTINGS_MAX_DRIVES][RDP_SESSION_VOLUME_LABEL_MAX_BYTES];
     uint8_t drive_volume_label_set[LIBRDP_SETTINGS_MAX_DRIVES];

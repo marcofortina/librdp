@@ -22,8 +22,10 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define CHECK(expr)                                                                                                    \
     do                                                                                                                 \
@@ -195,23 +197,92 @@ static int test_smartcard_backend_mock(void)
 }
 
 /*
- * Coverage: validates the printer backend queue boundary without contacting a
- * host print service. It catches malformed CUPS selectors and null spool paths
- * before any asynchronous worker can be created.
+ * Coverage: validates managed printer completion, cancellation, and spool
+ * cleanup without contacting a host print service.
+ * Bug classes: invalid selectors, untracked workers, leaked failed documents,
+ * cancellation stalls, and teardown with an active provider.
  */
 static int test_printer_backend_boundary(void)
 {
     static const uint32_t device_invalid_parameter = 0xc000000du;
+    static const uint32_t device_unsuccessful = 0xc0000001u;
+    rdp_printer_backend backend;
+    rdp_printer_backend_mock mock;
+    rdp_printer_backend_completion completion;
+    char success_path[] = "/tmp/librdp-printer-backend-success-XXXXXX";
+    char failure_path[] = "/tmp/librdp-printer-backend-failure-XXXXXX";
+    char cancel_path[] = "/tmp/librdp-printer-backend-cancel-XXXXXX";
+    struct timespec drain_started;
+    struct timespec drain_finished;
+    int64_t drain_elapsed_ms = 0;
+    int fd = -1;
+    int completed = 0;
 
     CHECK(!rdp_printer_backend_output_is_cups(NULL));
     CHECK(!rdp_printer_backend_output_is_cups(""));
     CHECK(!rdp_printer_backend_output_is_cups("file:/tmp/out"));
     CHECK(rdp_printer_backend_output_is_cups("cups"));
     CHECK(rdp_printer_backend_output_is_cups("cups:Office"));
-    CHECK(rdp_printer_backend_submit_cups_async(0, "file:/tmp/out", "title", "/tmp/spool", 0) ==
+    rdp_printer_backend_mock_init(&mock);
+    rdp_printer_backend_init_mock(&backend, &mock);
+    CHECK(rdp_printer_backend_submit_async(&backend, 0, "file:/tmp/out", "title", "/tmp/spool", 0) ==
           device_invalid_parameter);
-    CHECK(rdp_printer_backend_submit_cups_async(0, "cups", "title", NULL, 0) ==
+    CHECK(rdp_printer_backend_submit_async(&backend, 0, "cups", "title", NULL, 0) ==
           device_invalid_parameter);
+
+    fd = mkstemp(success_path);
+    CHECK(fd >= 0);
+    CHECK(close(fd) == 0);
+    CHECK(rdp_printer_backend_submit_async(&backend, 1, "cups", "success", success_path, 1) == 0u);
+    for (uint32_t waited = 0; waited <= 500u && !completed; waited += 5u)
+    {
+        completed = rdp_printer_backend_take_completion(&backend, &completion);
+        if (!completed)
+            test_backend_sleep_ms(5u);
+    }
+    CHECK(completed);
+    CHECK(completion.printer_index == 1u);
+    CHECK(completion.status == 0u);
+    CHECK(access(success_path, F_OK) != 0 && errno == ENOENT);
+
+    mock.submit_status = device_unsuccessful;
+    fd = mkstemp(failure_path);
+    CHECK(fd >= 0);
+    CHECK(close(fd) == 0);
+    completed = 0;
+    CHECK(rdp_printer_backend_submit_async(&backend, 2, "cups", "failure", failure_path, 1) == 0u);
+    for (uint32_t waited = 0; waited <= 500u && !completed; waited += 5u)
+    {
+        completed = rdp_printer_backend_take_completion(&backend, &completion);
+        if (!completed)
+            test_backend_sleep_ms(5u);
+    }
+    CHECK(completed);
+    CHECK(completion.status == device_unsuccessful);
+    CHECK(access(failure_path, F_OK) != 0 && errno == ENOENT);
+
+    mock.submit_status = 0u;
+    mock.submit_delay_ms = 250u;
+    fd = mkstemp(cancel_path);
+    CHECK(fd >= 0);
+    CHECK(close(fd) == 0);
+    CHECK(rdp_printer_backend_submit_async(&backend, 3, "cups", "cancel", cancel_path, 1) == 0u);
+    for (uint32_t waited = 0;
+         waited <= 500u && atomic_load_explicit(&mock.active_calls, memory_order_acquire) == 0u;
+         waited += 5u)
+        test_backend_sleep_ms(5u);
+    CHECK(atomic_load_explicit(&mock.active_calls, memory_order_acquire) == 1u);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &drain_started) == 0);
+    rdp_printer_backend_drain(&backend);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &drain_finished) == 0);
+    drain_elapsed_ms =
+        ((int64_t)drain_finished.tv_sec - (int64_t)drain_started.tv_sec) * 1000LL +
+        ((int64_t)drain_finished.tv_nsec - (int64_t)drain_started.tv_nsec) / 1000000LL;
+    CHECK(drain_elapsed_ms >= 0 && drain_elapsed_ms < 1000);
+    CHECK(atomic_load_explicit(&mock.active_calls, memory_order_acquire) == 0u);
+    CHECK(atomic_load_explicit(&mock.cancellation_observed, memory_order_acquire) == 1u);
+    CHECK(access(cancel_path, F_OK) != 0 && errno == ENOENT);
+    rdp_printer_backend_clear(&backend);
     return 0;
 }
 

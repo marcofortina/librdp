@@ -4520,6 +4520,9 @@ static librdp_status rdp_session_run_once_inner(librdp_session* session, int tim
     status = rdp_session_usb_dispatch_completions(session);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    status = rdp_session_printer_dispatch_completions(session);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     if (!rdp_session_transport_input_ready_now(session))
         rdp_session_echo_check_timeout(session);
     {
