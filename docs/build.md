@@ -31,6 +31,7 @@ librdp uses CMake to build the C library, unit tests, examples, optional fuzz ta
 - `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
 - `LIBRDP_BUILD_X11_SERVER=ON|OFF`: build the X11 desktop server.
 - `LIBRDP_BUILD_COCOA_VIEWER=ON|OFF`: build the native Cocoa viewer.
+- `LIBRDP_BUILD_COCOA_SERVER=ON|OFF`: build the native Cocoa shadow server.
 - `LIBRDP_BUILD_X11_ADMIN=ON|OFF`: build the X11 administration inventory tool.
 - `LIBRDP_BUILD_X11_WORKSPACE=ON|OFF`: build the X11 workspace feed launcher.
 - `LIBRDP_BUILD_COCOA_ADMIN=ON|OFF`: build the native Cocoa administration inventory tool.

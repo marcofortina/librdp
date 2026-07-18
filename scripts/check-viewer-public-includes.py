@@ -17,21 +17,6 @@ APP_ROOTS = (
     ROOT / "apps" / "cocoa",
     ROOT / "apps" / "x11",
 )
-PRIVATE_PREFIXES = (
-    "channels/",
-    "client/",
-    "clipboard/",
-    "common/",
-    "graphics/",
-    "input/",
-    "licensing/",
-    "nla/",
-    "platform/",
-    "protocol/",
-    "security/",
-    "transport/",
-    "x224/",
-)
 INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]")
 
 
@@ -56,7 +41,12 @@ def main() -> int:
             if not match:
                 continue
             include = match.group(1)
-            if include.startswith("../") or include.startswith("src/") or include.startswith(PRIVATE_PREFIXES):
+            private_header = ROOT / "src" / include
+            if (
+                include.startswith("../")
+                or include.startswith("src/")
+                or private_header.is_file()
+            ):
                 failures.append(f"{rel}:{line_no}: private include {include!r}")
     if failures:
         print("error: apps must include only public librdp headers and app-local headers")

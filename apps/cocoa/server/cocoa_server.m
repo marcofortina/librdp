@@ -1,0 +1,478 @@
+/*
+ * Copyright (C) 2026 Marco Fortina
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+ * Module: Cocoa server context and ScreenCaptureKit source selection.
+ * Invariants: only public display or window sources from the active graphical
+ * session are selected, dimensions are bounded before stream construction,
+ * and native cursor pixels remain composited into the capture stream.
+ * Ownership: the context owns Objective-C objects, descriptors, mutex and
+ * pending frame storage.
+ * Threading: construction and provider methods run on the host thread; frame
+ * ingestion is serialized by the capture queue.
+ * Trust boundary: capture identifiers and framework-returned geometry are
+ * validated before becoming server surface dimensions.
+ */
+
+#include "cocoa_server_internal.h"
+
+#import <CoreGraphics/CoreGraphics.h>
+#import <CoreVideo/CoreVideo.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void cocoa_server_release_dispatch_object(
+    dispatch_object_t object)
+{
+#if !OS_OBJECT_USE_OBJC
+    if (object)
+        dispatch_release(object);
+#else
+    (void)object;
+#endif
+}
+
+void cocoa_server_config_init(cocoa_server_config* config)
+{
+    if (!config)
+        return;
+    memset(config, 0, sizeof(*config));
+    config->version = COCOA_SERVER_CONFIG_VERSION;
+    config->size = sizeof(*config);
+    config->source_kind = COCOA_SERVER_SOURCE_DISPLAY;
+    config->max_fps = 30u;
+    config->max_frame_bytes = 256u * 1024u * 1024u;
+}
+
+static int cocoa_server_config_valid(
+    const cocoa_server_config* config)
+{
+    return config &&
+           config->version == COCOA_SERVER_CONFIG_VERSION &&
+           config->size >= sizeof(*config) &&
+           config->source_kind >= COCOA_SERVER_SOURCE_DISPLAY &&
+           config->source_kind <= COCOA_SERVER_SOURCE_WINDOW &&
+           (config->source_kind != COCOA_SERVER_SOURCE_WINDOW ||
+            config->source_id != 0u) &&
+           config->max_fps > 0u && config->max_fps <= 60u &&
+           config->max_frame_bytes >= 4u &&
+           config->max_frame_bytes <= 512u * 1024u * 1024u &&
+           config->allow_capture == 1;
+}
+
+static int cocoa_server_set_nonblocking(int descriptor)
+{
+    int flags = fcntl(descriptor, F_GETFL, 0);
+    int descriptor_flags = fcntl(descriptor, F_GETFD, 0);
+
+    return flags >= 0 && descriptor_flags >= 0 &&
+           fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 &&
+           fcntl(descriptor,
+                 F_SETFD,
+                 descriptor_flags | FD_CLOEXEC) == 0;
+}
+
+static int cocoa_server_create_pipe(cocoa_server_context* context)
+{
+    int descriptors[2] = { -1, -1 };
+
+    if (!context || pipe(descriptors) != 0)
+        return 0;
+    if (!cocoa_server_set_nonblocking(descriptors[0]) ||
+        !cocoa_server_set_nonblocking(descriptors[1]))
+    {
+        close(descriptors[0]);
+        close(descriptors[1]);
+        return 0;
+    }
+    context->wakeup_read_fd = descriptors[0];
+    context->wakeup_write_fd = descriptors[1];
+    return 1;
+}
+
+static SCShareableContent* cocoa_server_shareable_content(
+    librdp_status* output_status)
+{
+    __block SCShareableContent* content = nil;
+    __block NSError* error = nil;
+    dispatch_semaphore_t semaphore = NULL;
+    long wait_result = 0;
+
+    semaphore = dispatch_semaphore_create(0);
+    if (!semaphore)
+    {
+        *output_status = LIBRDP_STATUS_NO_MEMORY;
+        return nil;
+    }
+    [SCShareableContent
+        getShareableContentExcludingDesktopWindows:NO
+                                onScreenWindowsOnly:YES
+                                 completionHandler:^(
+                                     SCShareableContent* value,
+                                     NSError* value_error) {
+                                     if (value)
+                                         content = [value retain];
+                                     if (value_error)
+                                         error = [value_error retain];
+                                     dispatch_semaphore_signal(semaphore);
+                                 }];
+    wait_result = dispatch_semaphore_wait(
+        semaphore,
+        dispatch_time(DISPATCH_TIME_NOW, 15ll * NSEC_PER_SEC));
+    cocoa_server_release_dispatch_object(
+        (dispatch_object_t)semaphore);
+    if (wait_result != 0 || error || !content)
+    {
+        [error release];
+        [content release];
+        *output_status = wait_result != 0
+                             ? LIBRDP_STATUS_TIMEOUT
+                             : LIBRDP_STATUS_STATE;
+        return nil;
+    }
+    return content;
+}
+
+static SCContentFilter* cocoa_server_select_filter(
+    const cocoa_server_config* config,
+    SCShareableContent* content)
+{
+    if (config->source_kind == COCOA_SERVER_SOURCE_DISPLAY)
+    {
+        if ((NSUInteger)config->source_id >=
+            [[content displays] count])
+            return nil;
+        return [[SCContentFilter alloc]
+            initWithDisplay:[[content displays]
+                                objectAtIndex:
+                                    (NSUInteger)config->source_id]
+          excludingWindows:@[]];
+    }
+    for (SCWindow* window in [content windows])
+    {
+        if ([window windowID] == (CGWindowID)config->source_id)
+        {
+            return [[SCContentFilter alloc]
+                initWithDesktopIndependentWindow:window];
+        }
+    }
+    return nil;
+}
+
+static int cocoa_server_filter_dimensions(
+    SCContentFilter* filter,
+    uint32_t* width,
+    uint32_t* height)
+{
+    CGRect content_rect = [filter contentRect];
+    double scale = 1.0;
+    double pixel_width = 0.0;
+    double pixel_height = 0.0;
+
+    if (@available(macOS 13.0, *))
+        scale = (double)[filter pointPixelScale];
+    pixel_width = ceil(content_rect.size.width * scale);
+    pixel_height = ceil(content_rect.size.height * scale);
+    if (!isfinite(pixel_width) || !isfinite(pixel_height) ||
+        pixel_width < 1.0 || pixel_height < 1.0 ||
+        pixel_width > 16384.0 || pixel_height > 16384.0)
+        return 0;
+    *width = (uint32_t)pixel_width;
+    *height = (uint32_t)pixel_height;
+    return 1;
+}
+
+static int cocoa_server_prepare_stream(
+    cocoa_server_context* context,
+    librdp_status* output_status)
+{
+    SCShareableContent* content = nil;
+    NSError* error = nil;
+
+    content = cocoa_server_shareable_content(output_status);
+    if (!content)
+        return 0;
+    context->filter =
+        cocoa_server_select_filter(&context->config, content);
+    [content release];
+    if (!context->filter ||
+        !cocoa_server_filter_dimensions(context->filter,
+                                        &context->width,
+                                        &context->height))
+    {
+        *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
+        return 0;
+    }
+    if ((size_t)context->width >
+            context->config.max_frame_bytes / 4u ||
+        (size_t)context->height >
+            context->config.max_frame_bytes /
+                ((size_t)context->width * 4u))
+    {
+        *output_status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+        return 0;
+    }
+    context->stream_config =
+        [[SCStreamConfiguration alloc] init];
+    context->capture_delegate =
+        [[CocoaServerCaptureDelegate alloc]
+            initWithContext:context];
+    context->capture_queue =
+        dispatch_queue_create("librdp.cocoa.server.capture",
+                              DISPATCH_QUEUE_SERIAL);
+    if (!context->stream_config || !context->capture_delegate ||
+        !context->capture_queue)
+    {
+        *output_status = LIBRDP_STATUS_NO_MEMORY;
+        return 0;
+    }
+    [context->stream_config setWidth:(size_t)context->width];
+    [context->stream_config setHeight:(size_t)context->height];
+    [context->stream_config
+        setPixelFormat:kCVPixelFormatType_32BGRA];
+    [context->stream_config setShowsCursor:YES];
+    [context->stream_config setQueueDepth:3];
+    [context->stream_config
+        setMinimumFrameInterval:
+            CMTimeMake(1, (int32_t)context->config.max_fps)];
+    context->stream =
+        [[SCStream alloc] initWithFilter:context->filter
+                          configuration:context->stream_config
+                               delegate:context->capture_delegate];
+    if (!context->stream ||
+        ![context->stream
+            addStreamOutput:context->capture_delegate
+                       type:SCStreamOutputTypeScreen
+         sampleHandlerQueue:context->capture_queue
+                      error:&error])
+    {
+        *output_status = LIBRDP_STATUS_IO_ERROR;
+        return 0;
+    }
+    return 1;
+}
+
+cocoa_server_context* cocoa_server_context_new(
+    const cocoa_server_config* config,
+    librdp_status* output_status)
+{
+    cocoa_server_context* context = NULL;
+
+    if (output_status)
+        *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!output_status || !cocoa_server_config_valid(config))
+        return NULL;
+    if (@available(macOS 12.3, *))
+    {
+    }
+    else
+    {
+        *output_status = LIBRDP_STATUS_UNSUPPORTED;
+        return NULL;
+    }
+    if (!CGPreflightScreenCaptureAccess() &&
+        !CGRequestScreenCaptureAccess())
+    {
+        *output_status = LIBRDP_STATUS_STATE;
+        return NULL;
+    }
+    context =
+        (cocoa_server_context*)calloc(1u, sizeof(*context));
+    if (!context)
+    {
+        *output_status = LIBRDP_STATUS_NO_MEMORY;
+        return NULL;
+    }
+    context->config = *config;
+    context->wakeup_read_fd = -1;
+    context->wakeup_write_fd = -1;
+    if (pthread_mutex_init(&context->lock, NULL) != 0)
+    {
+        *output_status = LIBRDP_STATUS_IO_ERROR;
+        free(context);
+        return NULL;
+    }
+    context->lock_ready = 1;
+    if (!cocoa_server_create_pipe(context) ||
+        !cocoa_server_prepare_stream(context, output_status))
+    {
+        cocoa_server_context_free(context);
+        return NULL;
+    }
+    *output_status = LIBRDP_STATUS_OK;
+    return context;
+}
+
+void cocoa_server_context_free(cocoa_server_context* context)
+{
+    if (!context)
+        return;
+    cocoa_server_capture_vtable.stop(context);
+    if (context->stream && context->capture_delegate)
+    {
+        NSError* error = nil;
+
+        (void)[context->stream
+            removeStreamOutput:context->capture_delegate
+                          type:SCStreamOutputTypeScreen
+                         error:&error];
+    }
+    [context->stream release];
+    [context->capture_delegate release];
+    [context->stream_config release];
+    [context->filter release];
+    if (context->capture_queue)
+        cocoa_server_release_dispatch_object(
+            (dispatch_object_t)context->capture_queue);
+    if (context->wakeup_read_fd >= 0)
+        close(context->wakeup_read_fd);
+    if (context->wakeup_write_fd >= 0)
+        close(context->wakeup_write_fd);
+    if (context->lock_ready)
+    {
+        pthread_mutex_lock(&context->lock);
+        free(context->pending_frame.pixels);
+        context->pending_frame.pixels = NULL;
+        pthread_mutex_unlock(&context->lock);
+        pthread_mutex_destroy(&context->lock);
+    }
+    memset(context, 0, sizeof(*context));
+    free(context);
+}
+
+static librdp_status cocoa_server_permission_start(
+    void* opaque,
+    const server_platform_permission_sink* sink)
+{
+    cocoa_server_context* context =
+        (cocoa_server_context*)opaque;
+
+    if (!context || !sink || !sink->changed ||
+        context->permission_started)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    context->permission_sink = *sink;
+    context->permission_started = 1;
+    return LIBRDP_STATUS_OK;
+}
+
+static void cocoa_server_permission_stop(void* opaque)
+{
+    cocoa_server_context* context =
+        (cocoa_server_context*)opaque;
+
+    if (!context)
+        return;
+    context->permission_started = 0;
+    memset(&context->permission_sink,
+           0,
+           sizeof(context->permission_sink));
+}
+
+static librdp_status cocoa_server_permission_query(
+    void* opaque,
+    server_platform_permission_kind kind,
+    server_platform_permission_state* state)
+{
+    cocoa_server_context* context =
+        (cocoa_server_context*)opaque;
+
+    if (!context || !state ||
+        kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *state =
+        kind == SERVER_PLATFORM_PERMISSION_CAPTURE &&
+                context->config.allow_capture &&
+                CGPreflightScreenCaptureAccess()
+            ? SERVER_PLATFORM_PERMISSION_GRANTED
+            : SERVER_PLATFORM_PERMISSION_DENIED;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status cocoa_server_permission_request(
+    void* opaque,
+    server_platform_permission_kind kind)
+{
+    cocoa_server_context* context =
+        (cocoa_server_context*)opaque;
+    server_platform_permission_state state =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+
+    if (!context || kind != SERVER_PLATFORM_PERMISSION_CAPTURE)
+        return LIBRDP_STATUS_UNSUPPORTED;
+    state = CGRequestScreenCaptureAccess()
+                ? SERVER_PLATFORM_PERMISSION_GRANTED
+                : SERVER_PLATFORM_PERMISSION_DENIED;
+    if (context->permission_sink.changed)
+        context->permission_sink.changed(
+            kind,
+            state,
+            context->permission_sink.user_data);
+    return state == SERVER_PLATFORM_PERMISSION_GRANTED
+               ? LIBRDP_STATUS_OK
+               : LIBRDP_STATUS_STATE;
+}
+
+static librdp_status cocoa_server_permission_revoke(
+    void* opaque,
+    server_platform_permission_kind kind)
+{
+    cocoa_server_context* context =
+        (cocoa_server_context*)opaque;
+
+    if (!context ||
+        kind < SERVER_PLATFORM_PERMISSION_CAPTURE ||
+        kind > SERVER_PLATFORM_PERMISSION_DRIVE)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (context->permission_sink.changed)
+        context->permission_sink.changed(
+            kind,
+            SERVER_PLATFORM_PERMISSION_DENIED,
+            context->permission_sink.user_data);
+    return LIBRDP_STATUS_OK;
+}
+
+const server_platform_permission_vtable
+    cocoa_server_permission_vtable = {
+        SERVER_PLATFORM_PERMISSION_VERSION,
+        sizeof(server_platform_permission_vtable),
+        cocoa_server_permission_start,
+        cocoa_server_permission_stop,
+        cocoa_server_permission_query,
+        cocoa_server_permission_request,
+        cocoa_server_permission_revoke,
+        NULL,
+    };
+
+librdp_status cocoa_server_context_platform(
+    cocoa_server_context* context,
+    server_platform* platform)
+{
+    if (!context || !platform)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    server_platform_init(platform);
+    platform->capture.vtable = &cocoa_server_capture_vtable;
+    platform->capture.context = context;
+    platform->permission.vtable =
+        &cocoa_server_permission_vtable;
+    platform->permission.context = context;
+    return server_platform_validate(platform);
+}
+
+uint32_t cocoa_server_context_width(
+    const cocoa_server_context* context)
+{
+    return context ? context->width : 0u;
+}
+
+uint32_t cocoa_server_context_height(
+    const cocoa_server_context* context)
+{
+    return context ? context->height : 0u;
+}
