@@ -17,7 +17,7 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-The `core` test executable covers:
+The aggregate `core`, `protocol`, `server`, and `transport` executables cover:
 
 - stream and buffer bounds;
 - endian encoding and decoding;
@@ -49,11 +49,13 @@ Tests should be deterministic. They must not require network access, host device
 
 ## Test layout
 
-- `tests/test_core.c`: public API behavior, settings, sessions, surfaces, events, input, trace, channels, and shared helpers.
-- `tests/test_protocol.c`: protocol parser, channel, codec, graphics, security, and device packet behavior.
-- `tests/test_transport.c`: TCP/TLS/UDP framing, local transport helpers, and timeout/error behavior.
+- `tests/test_core_*.c`: public settings and session APIs, features, channels, storage and devices, graphics, licensing, workspace, and administration.
+- `tests/test_protocol_*.c`: core framing, channels, security, graphics and codecs, devices, and transport packet behavior.
+- `tests/test_server_*.c`: configuration, feature status, security, lifecycle, channels, graphics, and extension runtime behavior.
+- `tests/test_transport.c`: TCP, TLS, UDP, Gateway framing, local transport helpers, and timeout/error behavior.
+- `tests/test_viewer_*.c`: X11 viewer bridges and backends that can be exercised without a window server or host device.
 
-New tests should be placed near the behavior they exercise. Add a new test file only when an area becomes large enough that local grouping is clearer than extending the existing files.
+Each aggregate executable accepts focused CTest group selections. New tests should be placed in the source suite that owns the behavior. Add another source file when a domain has an independent contract or the existing suite becomes difficult to review.
 
 ## Adding a unit test
 

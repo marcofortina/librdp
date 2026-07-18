@@ -275,6 +275,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_optional_backends_off.cmake)
+    set_tests_properties(core_optional_backends_off PROPERTIES TIMEOUT 300)
     add_test(NAME optional_backend_matrix
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -298,6 +299,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_ABI_VERSION=${LIBRDP_ABI_VERSION}"
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_symbol_visibility.cmake)
+    set_tests_properties(shared_symbol_visibility PROPERTIES TIMEOUT 300)
     add_test(NAME library_type_selection
         COMMAND ${CMAKE_COMMAND}
             "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -310,6 +312,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_STATIC_LIBRARY_SUFFIX=${CMAKE_STATIC_LIBRARY_SUFFIX}"
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/library_type_selection.cmake)
+    set_tests_properties(library_type_selection PROPERTIES TIMEOUT 300)
     if(Python3_Interpreter_FOUND)
         add_test(NAME abi_baseline
             COMMAND ${CMAKE_COMMAND}
@@ -323,6 +326,7 @@ if(LIBRDP_BUILD_TESTS)
                 "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
                 ${LIBRDP_NESTED_CONFIGURE_ARGS}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/abi_baseline.cmake)
+        set_tests_properties(abi_baseline PROPERTIES TIMEOUT 300)
     endif()
     add_test(NAME installed_public_api_consumer
         COMMAND ${CMAKE_COMMAND}
@@ -334,6 +338,7 @@ if(LIBRDP_BUILD_TESTS)
             "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
             ${LIBRDP_NESTED_CONFIGURE_ARGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/install_consumer.cmake)
+    set_tests_properties(installed_public_api_consumer PROPERTIES TIMEOUT 300)
     if(LIBRDP_SANITIZER_ADDRESS_LINKS AND LIBRDP_SANITIZER_UNDEFINED_LINKS)
         add_test(NAME sanitizer_core
             COMMAND ${CMAKE_COMMAND}
@@ -345,12 +350,14 @@ if(LIBRDP_BUILD_TESTS)
                 "-DLIBRDP_BUILD_CONFIG=$<CONFIG>"
                 ${LIBRDP_NESTED_CONFIGURE_ARGS}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/sanitizer_core.cmake)
+        set_tests_properties(sanitizer_core PROPERTIES TIMEOUT 300)
     endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME license_headers
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-license-headers.py ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(license_headers PROPERTIES
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            TIMEOUT 60
         )
         add_test(NAME license_archive_fallback
             COMMAND ${CMAKE_COMMAND}
@@ -358,6 +365,7 @@ if(LIBRDP_BUILD_TESTS)
                 "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                 "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/license_archive_fallback.cmake)
+        set_tests_properties(license_archive_fallback PROPERTIES TIMEOUT 60)
         add_test(NAME public_api_docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-public-api-docs.py)
         add_test(NAME source_comments
@@ -378,15 +386,30 @@ if(LIBRDP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-examples.py)
         add_test(NAME docs
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-docs.py)
+        set_tests_properties(
+            public_api_docs
+            source_comments
+            source_size_advisory
+            internal_header_comments
+            test_fuzz_comments
+            fuzz_corpus
+            feature_status_reasons
+            viewer_public_includes
+            examples_docs
+            docs
+            PROPERTIES TIMEOUT 60
+        )
         add_test(NAME sbom_generation
             COMMAND ${CMAKE_COMMAND}
                 "-DLIBRDP_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
                 "-DLIBRDP_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                 "-DLIBRDP_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/sbom_generation.cmake)
+        set_tests_properties(sbom_generation PROPERTIES TIMEOUT 120)
         if(DOXYGEN_FOUND)
             add_test(NAME doxygen_public_headers
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-doxygen.py)
+            set_tests_properties(doxygen_public_headers PROPERTIES TIMEOUT 180)
         endif()
     endif()
 endif()
