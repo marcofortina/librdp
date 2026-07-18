@@ -15,6 +15,7 @@
 #include "server_cli.h"
 
 #include "server_host.h"
+#include "server_options.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -37,6 +38,9 @@ void x11_server_options_init(x11_server_options* options)
     options->security_mode = LIBRDP_SECURITY_TLS;
     options->width = 1280u;
     options->height = 720u;
+    options->max_fps = SERVER_OPTIONS_DEFAULT_MAX_FPS;
+    options->max_frame_bytes =
+        SERVER_OPTIONS_DEFAULT_MAX_FRAME_BYTES;
     options->max_peers = 4u;
     options->drive_read_only = 1;
 }
@@ -51,6 +55,7 @@ void x11_server_usage(FILE* stream, const char* program)
         "[--mode shadow|managed] [--display name] "
         "[--source root|monitor:index|window:id] [--bind address] "
         "[--port port] [--max-peers count] [--security tls|nla|standard] "
+        "[--max-fps count] [--max-frame-bytes bytes] "
         "[--allow-standard-security] [--user name] [--domain name] "
         "[--password-env name] [--allow-input] [--allow-clipboard] "
         "[--allow-drive --drive-mount path [--drive-read-only]]\n"
@@ -193,16 +198,21 @@ static int x11_server_parse_managed_action(
 static int x11_server_validate_managed(
     const x11_server_options* options)
 {
-    if (!options->broker_socket ||
-        options->broker_socket[0] != '/')
+    if (!server_options_absolute_path_valid(
+            options->broker_socket))
     {
         fprintf(stderr, "managed mode requires an absolute --broker path\n");
         return 0;
     }
     if (options->managed_action == X11_SERVER_MANAGED_START)
     {
-        if (!options->allow_capture || !options->nla_username ||
-            !options->password_environment ||
+        if (!options->allow_capture ||
+            !server_options_identity_valid(
+                options->nla_username, 0) ||
+            !server_options_identity_valid(
+                options->nla_domain, 1) ||
+            !server_options_environment_valid(
+                options->password_environment) ||
             options->width == 0u || options->height == 0u)
         {
             fprintf(stderr,
@@ -219,7 +229,8 @@ static int x11_server_validate_managed(
         return 0;
     }
     if (options->managed_action == X11_SERVER_MANAGED_ATTACH &&
-        !options->reconnect_token_environment)
+        !server_options_environment_valid(
+            options->reconnect_token_environment))
     {
         fprintf(stderr,
                 "managed attach requires --token-env\n");
@@ -238,6 +249,18 @@ static int x11_server_validate_options(const x11_server_options* options)
         fprintf(stderr, "--allow-capture is required\n");
         return 0;
     }
+    if (!server_options_address_valid(options->bind_address) ||
+        (options->display_name &&
+         !server_options_address_valid(options->display_name)) ||
+        options->max_fps == 0u ||
+        options->max_fps > SERVER_OPTIONS_MAX_FPS ||
+        options->max_frame_bytes < 4u ||
+        options->max_frame_bytes >
+            SERVER_OPTIONS_MAX_FRAME_BYTES)
+    {
+        fprintf(stderr, "server configuration exceeds a bounded limit\n");
+        return 0;
+    }
     if (options->security_mode == LIBRDP_SECURITY_STANDARD &&
         !options->allow_standard_security)
     {
@@ -247,19 +270,26 @@ static int x11_server_validate_options(const x11_server_options* options)
     }
     if ((options->security_mode == LIBRDP_SECURITY_TLS ||
          options->security_mode == LIBRDP_SECURITY_NLA) &&
-        (!options->tls_certificate || !options->tls_private_key))
+        (!server_options_absolute_path_valid(
+             options->tls_certificate) ||
+         !server_options_absolute_path_valid(
+             options->tls_private_key)))
     {
         fprintf(stderr, "--tls-cert and --tls-key are required\n");
         return 0;
     }
     if (options->security_mode == LIBRDP_SECURITY_NLA &&
-        (!options->nla_username || !options->password_environment))
+        (!server_options_identity_valid(options->nla_username, 0) ||
+         !server_options_identity_valid(options->nla_domain, 1) ||
+         !server_options_environment_valid(
+             options->password_environment)))
     {
         fprintf(stderr,
                 "NLA requires --user and a password environment name\n");
         return 0;
     }
-    if (options->allow_drive && !options->drive_mount)
+    if (options->allow_drive &&
+        !server_options_absolute_path_valid(options->drive_mount))
     {
         fprintf(stderr, "--allow-drive requires --drive-mount\n");
         return 0;
@@ -359,6 +389,31 @@ int x11_server_parse_options(int argc,
                 value == 0ul)
                 return 0;
             options->max_peers = (uint32_t)value;
+        }
+        else if (strcmp(option, "--max-fps") == 0)
+        {
+            unsigned long value = 0ul;
+
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_ulong(argv[index],
+                                        SERVER_OPTIONS_MAX_FPS,
+                                        &value) ||
+                value == 0ul)
+                return 0;
+            options->max_fps = (uint32_t)value;
+        }
+        else if (strcmp(option, "--max-frame-bytes") == 0)
+        {
+            unsigned long value = 0ul;
+
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_ulong(
+                    argv[index],
+                    SERVER_OPTIONS_MAX_FRAME_BYTES,
+                    &value) ||
+                value < 4ul)
+                return 0;
+            options->max_frame_bytes = (size_t)value;
         }
         else if (strcmp(option, "--width") == 0)
         {

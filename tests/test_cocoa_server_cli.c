@@ -221,6 +221,28 @@ static int test_bounds_and_help(void)
         (char*)"--source",
         (char*)"window:0",
     };
+    char* relative_tls[] = {
+        (char*)"server",
+        (char*)"--allow-capture",
+        (char*)"--tls-cert",
+        (char*)"server.crt",
+        (char*)"--tls-key",
+        (char*)"/tmp/server.key",
+    };
+    char* invalid_environment[] = {
+        (char*)"server",
+        (char*)"--allow-capture",
+        (char*)"--security",
+        (char*)"nla",
+        (char*)"--tls-cert",
+        (char*)"/tmp/server.crt",
+        (char*)"--tls-key",
+        (char*)"/tmp/server.key",
+        (char*)"--user",
+        (char*)"test-user",
+        (char*)"--password-env",
+        (char*)"BAD-NAME",
+    };
     char* help[] = {
         (char*)"server",
         (char*)"--help",
@@ -235,6 +257,16 @@ static int test_bounds_and_help(void)
               (int)(sizeof(invalid_window) /
                     sizeof(invalid_window[0])),
               invalid_window,
+              &options) == 0);
+    CHECK(cocoa_server_parse_options(
+              (int)(sizeof(relative_tls) /
+                    sizeof(relative_tls[0])),
+              relative_tls,
+              &options) == 0);
+    CHECK(cocoa_server_parse_options(
+              (int)(sizeof(invalid_environment) /
+                    sizeof(invalid_environment[0])),
+              invalid_environment,
               &options) == 0);
     CHECK(cocoa_server_parse_options(
               (int)(sizeof(help) / sizeof(help[0])),

@@ -13,6 +13,7 @@
 #include "server_dirty.h"
 #include "server_clipboard.h"
 #include "server_host_internal.h"
+#include "server_options.h"
 #include "server_platform.h"
 
 #include <librdp/librdp.h>
@@ -116,6 +117,63 @@ static int check_int(int condition, const char* expression, int line)
         if (check_int((expression), #expression, __LINE__) != 0)                                    \
             return 1;                                                                                \
     } while (0)
+
+/*
+ * Bound every shared command-line string class without relying on strlen.
+ * Boundary-sized values remain valid, while unterminated-over-limit and
+ * control-bearing values fail before reaching native APIs.
+ */
+static int test_server_option_bounds(void)
+{
+    char address[SERVER_OPTIONS_MAX_ADDRESS_BYTES + 2u];
+    char identity[SERVER_OPTIONS_MAX_IDENTITY_BYTES + 2u];
+    char environment[SERVER_OPTIONS_MAX_ENVIRONMENT_BYTES + 2u];
+    char path[SERVER_OPTIONS_MAX_PATH_BYTES + 2u];
+
+    memset(address, 'a', sizeof(address));
+    address[SERVER_OPTIONS_MAX_ADDRESS_BYTES] = '\0';
+    CHECK(server_options_address_valid(address));
+    address[SERVER_OPTIONS_MAX_ADDRESS_BYTES] = 'a';
+    address[SERVER_OPTIONS_MAX_ADDRESS_BYTES + 1u] = '\0';
+    CHECK(!server_options_address_valid(address));
+    CHECK(server_options_address_valid("::1"));
+    CHECK(!server_options_address_valid("host name"));
+    CHECK(!server_options_address_valid(""));
+
+    memset(identity, 'u', sizeof(identity));
+    identity[SERVER_OPTIONS_MAX_IDENTITY_BYTES] = '\0';
+    CHECK(server_options_identity_valid(identity, 0));
+    identity[SERVER_OPTIONS_MAX_IDENTITY_BYTES] = 'u';
+    identity[SERVER_OPTIONS_MAX_IDENTITY_BYTES + 1u] = '\0';
+    CHECK(!server_options_identity_valid(identity, 0));
+    CHECK(server_options_identity_valid(NULL, 1));
+    CHECK(server_options_identity_valid("", 1));
+    CHECK(!server_options_identity_valid("", 0));
+    CHECK(!server_options_identity_valid("bad\nidentity", 0));
+
+    memset(environment, 'A', sizeof(environment));
+    environment[0] = '_';
+    environment[SERVER_OPTIONS_MAX_ENVIRONMENT_BYTES] = '\0';
+    CHECK(server_options_environment_valid(environment));
+    environment[SERVER_OPTIONS_MAX_ENVIRONMENT_BYTES] = 'A';
+    environment[SERVER_OPTIONS_MAX_ENVIRONMENT_BYTES + 1u] = '\0';
+    CHECK(!server_options_environment_valid(environment));
+    CHECK(server_options_environment_valid("LIBRDP_SERVER_SECRET"));
+    CHECK(!server_options_environment_valid("9SECRET"));
+    CHECK(!server_options_environment_valid("BAD-NAME"));
+
+    memset(path, 'p', sizeof(path));
+    path[0] = '/';
+    path[SERVER_OPTIONS_MAX_PATH_BYTES] = '\0';
+    CHECK(server_options_absolute_path_valid(path));
+    path[SERVER_OPTIONS_MAX_PATH_BYTES] = 'p';
+    path[SERVER_OPTIONS_MAX_PATH_BYTES + 1u] = '\0';
+    CHECK(!server_options_absolute_path_valid(path));
+    CHECK(server_options_absolute_path_valid("/tmp/path with spaces"));
+    CHECK(!server_options_absolute_path_valid("relative/path"));
+    CHECK(!server_options_absolute_path_valid("/tmp/bad\npath"));
+    return 0;
+}
 
 static void mock_trace_event(const server_host_trace_event* event,
                              void* user_data)
@@ -1845,6 +1903,8 @@ static int test_dirty_scheduler(void)
 
 int main(void)
 {
+    if (test_server_option_bounds() != 0)
+        return 1;
     if (test_platform_contract() != 0)
         return 1;
     if (test_clipboard_runtime() != 0)

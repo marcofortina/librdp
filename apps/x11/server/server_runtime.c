@@ -19,6 +19,7 @@
 #include "server_x11.h"
 
 #include "server_host.h"
+#include "server_options.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -85,7 +86,9 @@ x11_server_runtime* x11_server_runtime_new(
 
     if (output_status)
         *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!options || !output_status)
+    if (!options || !output_status ||
+        options->max_fps == 0u ||
+        options->max_fps > SERVER_OPTIONS_MAX_FPS)
         return NULL;
     runtime = (x11_server_runtime*)calloc(1u, sizeof(*runtime));
     if (!runtime)
@@ -103,6 +106,7 @@ x11_server_runtime* x11_server_runtime_new(
     native_config.allow_clipboard = options->allow_clipboard;
     native_config.allow_drive = options->allow_drive;
     native_config.drive_mount = options->drive_mount;
+    native_config.max_frame_bytes = options->max_frame_bytes;
     runtime->native = x11_server_context_new(&native_config);
     if (!runtime->native)
     {
@@ -138,6 +142,8 @@ x11_server_runtime* x11_server_runtime_new(
         host_config.server.nla_password = password;
     }
     host_config.max_peers = options->max_peers;
+    host_config.dirty.frame_interval_ns =
+        1000000000ull / options->max_fps;
     host_config.input_policy = options->allow_input
                                    ? SERVER_HOST_INPUT_FIRST_ACTIVE
                                    : SERVER_HOST_INPUT_DISABLED;

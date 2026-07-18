@@ -202,6 +202,8 @@ int cocoa_server_run(const cocoa_server_options* options)
         host_config.server.nla_password = password;
     }
     host_config.max_peers = options->max_peers;
+    host_config.dirty.frame_interval_ns =
+        1000000000ull / options->max_fps;
     host_config.input_policy =
         permissions.input
             ? SERVER_HOST_INPUT_FIRST_ACTIVE

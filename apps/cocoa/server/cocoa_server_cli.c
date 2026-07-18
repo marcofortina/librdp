@@ -16,13 +16,12 @@
 #include "cocoa_server_cli.h"
 
 #include "server_host.h"
+#include "server_options.h"
 
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define COCOA_SERVER_MAX_FRAME_BYTES (512u * 1024u * 1024u)
 
 void cocoa_server_options_init(cocoa_server_options* options)
 {
@@ -34,8 +33,9 @@ void cocoa_server_options_init(cocoa_server_options* options)
     options->source_kind = COCOA_SERVER_SOURCE_DISPLAY;
     options->security_mode = LIBRDP_SECURITY_TLS;
     options->max_peers = 4u;
-    options->max_fps = 30u;
-    options->max_frame_bytes = 256u * 1024u * 1024u;
+    options->max_fps = SERVER_OPTIONS_DEFAULT_MAX_FPS;
+    options->max_frame_bytes =
+        SERVER_OPTIONS_DEFAULT_MAX_FRAME_BYTES;
 }
 
 void cocoa_server_usage(FILE* stream, const char* program)
@@ -128,8 +128,18 @@ static int cocoa_server_validate_options(const cocoa_server_options* options)
         fprintf(stderr, "--allow-capture is required\n");
         return 0;
     }
+    if (!server_options_address_valid(options->bind_address) ||
+        options->max_fps == 0u ||
+        options->max_fps > SERVER_OPTIONS_MAX_FPS ||
+        options->max_frame_bytes < 4u ||
+        options->max_frame_bytes >
+            SERVER_OPTIONS_MAX_FRAME_BYTES)
+    {
+        fprintf(stderr, "server configuration exceeds a bounded limit\n");
+        return 0;
+    }
     if (options->allow_drive &&
-        (!options->drive_mount || options->drive_mount[0] == '\0'))
+        !server_options_absolute_path_valid(options->drive_mount))
     {
         fprintf(stderr, "--allow-drive requires --drive-mount\n");
         return 0;
@@ -144,13 +154,19 @@ static int cocoa_server_validate_options(const cocoa_server_options* options)
     }
     if ((options->security_mode == LIBRDP_SECURITY_TLS ||
          options->security_mode == LIBRDP_SECURITY_NLA) &&
-        (!options->tls_certificate || !options->tls_private_key))
+        (!server_options_absolute_path_valid(
+             options->tls_certificate) ||
+         !server_options_absolute_path_valid(
+             options->tls_private_key)))
     {
         fprintf(stderr, "--tls-cert and --tls-key are required\n");
         return 0;
     }
     if (options->security_mode == LIBRDP_SECURITY_NLA &&
-        (!options->nla_username || !options->password_environment))
+        (!server_options_identity_valid(options->nla_username, 0) ||
+         !server_options_identity_valid(options->nla_domain, 1) ||
+         !server_options_environment_valid(
+             options->password_environment)))
     {
         fprintf(stderr,
                 "NLA requires --user and a password environment name\n");
@@ -234,7 +250,9 @@ int cocoa_server_parse_options(int argc,
         else if (strcmp(option, "--max-fps") == 0)
         {
             if (!cocoa_server_take_value(argc, argv, &index) ||
-                !cocoa_server_parse_ulong(argv[index], 60ul, &numeric) ||
+                !cocoa_server_parse_ulong(argv[index],
+                                          SERVER_OPTIONS_MAX_FPS,
+                                          &numeric) ||
                 numeric == 0ul)
                 return 0;
             options->max_fps = (uint32_t)numeric;
@@ -244,7 +262,7 @@ int cocoa_server_parse_options(int argc,
             if (!cocoa_server_take_value(argc, argv, &index) ||
                 !cocoa_server_parse_ulong(
                     argv[index],
-                    (unsigned long)COCOA_SERVER_MAX_FRAME_BYTES,
+                    (unsigned long)SERVER_OPTIONS_MAX_FRAME_BYTES,
                     &numeric) ||
                 numeric < 4ul)
                 return 0;

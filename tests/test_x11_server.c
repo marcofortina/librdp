@@ -750,12 +750,29 @@ static int test_cli_policy(void)
         (char*)"--allow-capture",
         (char*)"--source",
         (char*)"monitor:2",
+        (char*)"--max-fps",
+        (char*)"45",
+        (char*)"--max-frame-bytes",
+        (char*)"1048576",
     };
     char* unsafe[] = {
         (char*)"server",
         (char*)"--security",
         (char*)"standard",
         (char*)"--allow-capture",
+    };
+    char* relative_tls[] = {
+        (char*)"server",
+        (char*)"--tls-cert",
+        (char*)"cert.pem",
+        (char*)"--tls-key",
+        (char*)"/tmp/key.pem",
+        (char*)"--allow-capture",
+    };
+    char* zero_fps[] = {
+        (char*)"server",
+        (char*)"--max-fps",
+        (char*)"0",
     };
     char* managed[] = {
         (char*)"server",
@@ -776,10 +793,20 @@ static int test_cli_policy(void)
               &options) == 1);
     CHECK(options.source_kind == X11_SERVER_SOURCE_MONITOR);
     CHECK(options.monitor_index == 2u);
+    CHECK(options.max_fps == 45u);
+    CHECK(options.max_frame_bytes == 1048576u);
     CHECK(options.drive_read_only == 1);
     CHECK(x11_server_parse_options(
               (int)(sizeof(unsafe) / sizeof(unsafe[0])),
               unsafe,
+              &options) == 0);
+    CHECK(x11_server_parse_options(
+              (int)(sizeof(relative_tls) / sizeof(relative_tls[0])),
+              relative_tls,
+              &options) == 0);
+    CHECK(x11_server_parse_options(
+              (int)(sizeof(zero_fps) / sizeof(zero_fps[0])),
+              zero_fps,
               &options) == 0);
     CHECK(x11_server_parse_options(
               (int)(sizeof(managed) / sizeof(managed[0])),

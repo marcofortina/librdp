@@ -61,6 +61,8 @@ typedef struct x11_server_options
     uint32_t width;
     uint32_t height;
     uint32_t monitor_index;
+    uint32_t max_fps;
+    size_t max_frame_bytes;
     unsigned long window_id;
     uint32_t max_peers;
     int allow_standard_security;
