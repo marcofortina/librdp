@@ -40,11 +40,21 @@ typedef struct mock_platform_context
     unsigned int releases;
     unsigned int injections;
     unsigned int dispatches;
+    unsigned int clipboard_cancels;
+    unsigned int clipboard_releases;
+    unsigned int drive_peer_removals;
+    uint32_t last_cleanup_peer_id;
+    uint32_t last_clipboard_generation;
+    uint32_t last_drive_generation;
     int event_read_fd;
     int event_write_fd;
     short event_revents;
     int timeout_ms;
 } mock_platform_context;
+
+static int connect_loopback(uint16_t port);
+static void configure_mock_platform(server_host_config* config,
+                                    mock_platform_context* mock);
 
 static int check_int(int condition, const char* expression, int line)
 {
@@ -240,8 +250,25 @@ static librdp_status mock_write_data(void* context,
 
 static void mock_release_ownership(void* context, uint64_t generation)
 {
-    (void)context;
-    (void)generation;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock)
+        return;
+    mock->clipboard_releases++;
+    mock->last_clipboard_generation = (uint32_t)generation;
+}
+
+static void mock_clipboard_cancel_peer(void* context,
+                                       uint32_t peer_id,
+                                       uint32_t generation)
+{
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock)
+        return;
+    mock->clipboard_cancels++;
+    mock->last_cleanup_peer_id = peer_id;
+    mock->last_clipboard_generation = generation;
 }
 
 static librdp_status mock_drive_start(void* context,
@@ -281,9 +308,13 @@ static void mock_drive_remove_peer(void* context,
                                    uint32_t peer_id,
                                    uint32_t generation)
 {
-    (void)context;
-    (void)peer_id;
-    (void)generation;
+    mock_platform_context* mock = (mock_platform_context*)context;
+
+    if (!mock)
+        return;
+    mock->drive_peer_removals++;
+    mock->last_cleanup_peer_id = peer_id;
+    mock->last_drive_generation = generation;
 }
 
 static librdp_status mock_permission_start(
@@ -367,6 +398,7 @@ static const server_platform_clipboard_vtable mock_clipboard = {
     mock_publish_formats,
     mock_request_data,
     mock_write_data,
+    mock_clipboard_cancel_peer,
     mock_release_ownership,
     &mock_events,
 };
@@ -456,6 +488,65 @@ static int test_platform_contract(void)
     platform.capture.context = &mock;
     CHECK(server_platform_validate(&platform) == LIBRDP_STATUS_INVALID_ARGUMENT);
     CHECK(server_platform_validate(NULL) == LIBRDP_STATUS_INVALID_ARGUMENT);
+    return 0;
+}
+
+/*
+ * Close and reuse one slot while asserting that every peer-scoped platform
+ * resource is revoked with the old generation before the replacement peer is
+ * accepted and requests a fresh capture frame.
+ */
+static int test_host_reconnect_cleanup(void)
+{
+    server_host_config config;
+    server_host_peer_info first;
+    server_host_peer_info replacement;
+    server_host* host = NULL;
+    mock_platform_context mock;
+    uint32_t first_id = 0;
+    int clients[2] = {-1, -1};
+
+    server_host_config_init(&config);
+    config.max_peers = 1u;
+    config.input_policy = SERVER_HOST_INPUT_EXPLICIT;
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    clients[0] = connect_loopback(server_host_local_port(host));
+    CHECK(clients[0] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&first);
+    CHECK(server_host_peer_at(host, 0u, &first) == LIBRDP_STATUS_OK);
+    first_id = first.id;
+    CHECK(server_host_set_input_owner(host, first_id) == LIBRDP_STATUS_OK);
+    CHECK(server_host_close_peer(host, first_id) == LIBRDP_STATUS_OK);
+    CHECK(mock.releases == 1u);
+    CHECK(mock.clipboard_cancels == 1u);
+    CHECK(mock.clipboard_releases == 1u);
+    CHECK(mock.drive_peer_removals == 1u);
+    CHECK(mock.last_cleanup_peer_id == first_id);
+    CHECK(mock.last_clipboard_generation == 1u);
+    CHECK(mock.last_drive_generation == 1u);
+
+    clients[1] = connect_loopback(server_host_local_port(host));
+    CHECK(clients[1] >= 0);
+    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    server_host_peer_info_init(&replacement);
+    CHECK(server_host_peer_at(host, 0u, &replacement) == LIBRDP_STATUS_OK);
+    CHECK(replacement.id != first_id);
+    CHECK(replacement.generation == 2u);
+    CHECK(mock.frame_requests == 2u);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.clipboard_cancels == 2u);
+    CHECK(mock.clipboard_releases == 2u);
+    CHECK(mock.drive_peer_removals == 2u);
+    CHECK(mock.last_clipboard_generation == 2u);
+    CHECK(mock.last_drive_generation == 2u);
+    CHECK(mock.stops == 5u);
+    server_host_free(host);
+    close(clients[0]);
+    close(clients[1]);
     return 0;
 }
 
@@ -599,6 +690,19 @@ static int test_host_lifecycle(void)
     CHECK(server_host_start(host) == LIBRDP_STATUS_STATE);
     CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
     CHECK(mock.stops == 1u);
+    server_host_free(host);
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.capture_sink.lost != NULL);
+    mock.capture_sink.lost(LIBRDP_STATUS_IO_ERROR,
+                           mock.capture_sink.user_data);
+    CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.stops == 5u);
     server_host_free(host);
     return 0;
 }
@@ -854,6 +958,8 @@ int main(void)
     if (test_host_poll_loop() != 0)
         return 1;
     if (test_host_input_ownership() != 0)
+        return 1;
+    if (test_host_reconnect_cleanup() != 0)
         return 1;
     puts("app server tests passed");
     return 0;

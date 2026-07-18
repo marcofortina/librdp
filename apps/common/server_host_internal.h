@@ -51,6 +51,7 @@ struct server_host
     uint32_t input_owner_id;
     server_host_state state;
     server_host_provider_state provider_states[SERVER_PLATFORM_PROVIDER_COUNT];
+    uint8_t provider_started[SERVER_PLATFORM_PROVIDER_COUNT];
     struct pollfd* pollfds;
     size_t poll_capacity;
     int wakeup_read_fd;

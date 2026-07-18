@@ -229,6 +229,9 @@ typedef struct server_platform_clipboard_vtable
                                   uint32_t format_id);
     librdp_status (*write_data)(void* context,
                                 const server_platform_clipboard_data* data);
+    void (*cancel_peer)(void* context,
+                        uint32_t peer_id,
+                        uint32_t generation);
     void (*release_ownership)(void* context, uint64_t generation);
     const server_platform_event_source_vtable* events;
 } server_platform_clipboard_vtable;

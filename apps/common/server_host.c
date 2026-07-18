@@ -178,15 +178,61 @@ static void server_host_release_input_owner(server_host* host)
     host->input_owner_id = 0u;
 }
 
+/*
+ * Cancel every peer-scoped request before platform generations are revoked.
+ * Extension cancellation is metadata-only and remains safe for families that
+ * never negotiated a channel.
+ */
+static void server_host_cancel_peer_protocol(librdp_server_peer* peer)
+{
+    librdp_server_extension_family family =
+        LIBRDP_SERVER_EXTENSION_CLIPBOARD;
+
+    if (!peer)
+        return;
+    (void)librdp_server_peer_cancel_clipboard_requests(peer);
+    for (family = LIBRDP_SERVER_EXTENSION_CLIPBOARD;
+         family <= LIBRDP_SERVER_EXTENSION_GEOMETRY_TRACKING;
+         family = (librdp_server_extension_family)((int)family + 1))
+        (void)librdp_server_peer_cancel_extension(peer, family);
+}
+
 void server_host_release_peer_slot(server_host_peer_slot* slot)
 {
+    server_host* host = slot ? slot->host : NULL;
+
     if (!slot || !slot->occupied)
         return;
-    if (slot->host && slot->host->input_owner_id == slot->id)
-        server_host_release_input_owner(slot->host);
+    if (host && host->input_owner_id == slot->id)
+        server_host_release_input_owner(host);
     slot->state = SERVER_HOST_PEER_CLOSING;
     if (slot->protocol)
     {
+        server_host_cancel_peer_protocol(slot->protocol);
+        if (host &&
+            host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD])
+        {
+            const server_platform_clipboard_vtable* clipboard =
+                (const server_platform_clipboard_vtable*)
+                    host->platform.clipboard.vtable;
+
+            clipboard->cancel_peer(host->platform.clipboard.context,
+                                   slot->id,
+                                   slot->clipboard_generation);
+            clipboard->release_ownership(
+                host->platform.clipboard.context,
+                slot->clipboard_generation);
+        }
+        if (host && host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE])
+        {
+            const server_platform_drive_vtable* drive =
+                (const server_platform_drive_vtable*)
+                    host->platform.drive.vtable;
+
+            drive->remove_peer(host->platform.drive.context,
+                               slot->id,
+                               slot->drive_generation);
+        }
         (void)librdp_server_peer_close(slot->protocol);
         librdp_server_peer_free(slot->protocol);
     }
@@ -452,6 +498,7 @@ static librdp_status server_host_start_providers(server_host* host)
             SERVER_HOST_PROVIDER_FAILED;
         return status;
     }
+    host->provider_started[SERVER_PLATFORM_PROVIDER_PERMISSION] = 1u;
     host->provider_states[SERVER_PLATFORM_PROVIDER_PERMISSION] =
         SERVER_HOST_PROVIDER_READY;
 
@@ -473,6 +520,7 @@ static librdp_status server_host_start_providers(server_host* host)
             SERVER_HOST_PROVIDER_FAILED;
         return status;
     }
+    host->provider_started[SERVER_PLATFORM_PROVIDER_CAPTURE] = 1u;
     host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] =
         SERVER_HOST_PROVIDER_READY;
 
@@ -490,6 +538,7 @@ static librdp_status server_host_start_providers(server_host* host)
                 SERVER_HOST_PROVIDER_FAILED;
             return status;
         }
+        host->provider_started[SERVER_PLATFORM_PROVIDER_POINTER] = 1u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_POINTER] =
             SERVER_HOST_PROVIDER_READY;
     }
@@ -521,6 +570,7 @@ static librdp_status server_host_start_providers(server_host* host)
                     SERVER_HOST_PROVIDER_FAILED;
                 return status;
             }
+            host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD] = 1u;
             host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] =
                 SERVER_HOST_PROVIDER_READY;
         }
@@ -544,6 +594,7 @@ static librdp_status server_host_start_providers(server_host* host)
                     SERVER_HOST_PROVIDER_FAILED;
                 return status;
             }
+            host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE] = 1u;
             host->provider_states[SERVER_PLATFORM_PROVIDER_DRIVE] =
                 SERVER_HOST_PROVIDER_READY;
         }
@@ -572,18 +623,18 @@ static void server_host_stop_providers(server_host* host)
     drive =
         (const server_platform_drive_vtable*)host->platform.drive.vtable;
     if (drive &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_DRIVE] ==
-            SERVER_HOST_PROVIDER_READY)
+        host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE])
     {
         drive->stop(host->platform.drive.context);
+        host->provider_started[SERVER_PLATFORM_PROVIDER_DRIVE] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_DRIVE] =
             SERVER_HOST_PROVIDER_STOPPED;
     }
     if (clipboard &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] ==
-            SERVER_HOST_PROVIDER_READY)
+        host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD])
     {
         clipboard->stop(host->platform.clipboard.context);
+        host->provider_started[SERVER_PLATFORM_PROVIDER_CLIPBOARD] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] =
             SERVER_HOST_PROVIDER_STOPPED;
     }
@@ -603,26 +654,26 @@ static void server_host_stop_providers(server_host* host)
             SERVER_HOST_PROVIDER_STOPPED;
     }
     if (pointer &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_POINTER] ==
-            SERVER_HOST_PROVIDER_READY)
+        host->provider_started[SERVER_PLATFORM_PROVIDER_POINTER])
     {
         pointer->stop(host->platform.pointer.context);
+        host->provider_started[SERVER_PLATFORM_PROVIDER_POINTER] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_POINTER] =
             SERVER_HOST_PROVIDER_STOPPED;
     }
     if (capture &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] ==
-            SERVER_HOST_PROVIDER_READY)
+        host->provider_started[SERVER_PLATFORM_PROVIDER_CAPTURE])
     {
         capture->stop(host->platform.capture.context);
+        host->provider_started[SERVER_PLATFORM_PROVIDER_CAPTURE] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] =
             SERVER_HOST_PROVIDER_STOPPED;
     }
     if (permission &&
-        host->provider_states[SERVER_PLATFORM_PROVIDER_PERMISSION] ==
-            SERVER_HOST_PROVIDER_READY)
+        host->provider_started[SERVER_PLATFORM_PROVIDER_PERMISSION])
     {
         permission->stop(host->platform.permission.context);
+        host->provider_started[SERVER_PLATFORM_PROVIDER_PERMISSION] = 0u;
         host->provider_states[SERVER_PLATFORM_PROVIDER_PERMISSION] =
             SERVER_HOST_PROVIDER_STOPPED;
     }

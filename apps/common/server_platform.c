@@ -116,7 +116,8 @@ static int server_platform_clipboard_valid(
                                         SERVER_PLATFORM_CLIPBOARD_VERSION,
                                         sizeof(*table)) &&
            table->start && table->stop && table->publish_formats &&
-           table->request_data && table->write_data && table->release_ownership &&
+           table->request_data && table->write_data && table->cancel_peer &&
+           table->release_ownership &&
            server_platform_events_valid(table->events);
 }
 
