@@ -27,6 +27,7 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_permission.c
         apps/x11/server/server_pointer.c
         apps/x11/server/server_fuse.c
+        apps/x11/server/server_runtime.c
         apps/x11/server/server_x11.c
     )
     target_include_directories(librdp-x11-server PRIVATE
