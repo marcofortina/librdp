@@ -495,6 +495,10 @@ static void x11_managed_supervisor_ready(
         sizeof(response->display_name),
         supervisor->session.display_name);
     (void)x11_managed_supervisor_copy(
+        response->bind_address,
+        sizeof(response->bind_address),
+        supervisor->session.bind_address);
+    (void)x11_managed_supervisor_copy(
         response->runtime_directory,
         sizeof(response->runtime_directory),
         supervisor->session.runtime_directory);

@@ -757,6 +757,18 @@ static int test_cli_policy(void)
         (char*)"standard",
         (char*)"--allow-capture",
     };
+    char* managed[] = {
+        (char*)"server",
+        (char*)"--mode",
+        (char*)"managed",
+        (char*)"--managed-action",
+        (char*)"start",
+        (char*)"--user",
+        (char*)"test-account",
+        (char*)"--allow-capture",
+        (char*)"--persistent",
+        (char*)"--reconnect",
+    };
 
     CHECK(x11_server_parse_options(
               (int)(sizeof(valid) / sizeof(valid[0])),
@@ -769,6 +781,14 @@ static int test_cli_policy(void)
               (int)(sizeof(unsafe) / sizeof(unsafe[0])),
               unsafe,
               &options) == 0);
+    CHECK(x11_server_parse_options(
+              (int)(sizeof(managed) / sizeof(managed[0])),
+              managed,
+              &options) == 1);
+    CHECK(options.session_mode == X11_SERVER_SESSION_MANAGED);
+    CHECK(options.managed_action == X11_SERVER_MANAGED_START);
+    CHECK(options.persistent_session == 1);
+    CHECK(options.reconnect_session == 1);
     return 0;
 }
 

@@ -29,21 +29,37 @@ typedef enum x11_server_session_mode
     X11_SERVER_SESSION_MANAGED = 2
 } x11_server_session_mode;
 
+typedef enum x11_server_managed_action
+{
+    X11_SERVER_MANAGED_START = 1,
+    X11_SERVER_MANAGED_ATTACH = 2,
+    X11_SERVER_MANAGED_QUERY = 3,
+    X11_SERVER_MANAGED_RESIZE = 4,
+    X11_SERVER_MANAGED_DETACH = 5,
+    X11_SERVER_MANAGED_TERMINATE = 6
+} x11_server_managed_action;
+
 typedef struct x11_server_options
 {
     const char* bind_address;
     const char* display_name;
+    const char* broker_socket;
     const char* tls_certificate;
     const char* tls_private_key;
     const char* nla_username;
     const char* nla_domain;
     const char* nla_password;
     const char* password_environment;
+    const char* reconnect_token_environment;
     const char* drive_mount;
     x11_server_session_mode session_mode;
+    x11_server_managed_action managed_action;
     x11_server_source_kind source_kind;
     librdp_security_mode security_mode;
+    uint64_t managed_session_id;
     uint16_t port;
+    uint32_t width;
+    uint32_t height;
     uint32_t monitor_index;
     unsigned long window_id;
     uint32_t max_peers;
@@ -53,6 +69,8 @@ typedef struct x11_server_options
     int allow_clipboard;
     int allow_drive;
     int drive_read_only;
+    int persistent_session;
+    int reconnect_session;
 } x11_server_options;
 
 void x11_server_options_init(x11_server_options* options);

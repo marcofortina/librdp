@@ -27,10 +27,16 @@ void x11_server_options_init(x11_server_options* options)
         return;
     memset(options, 0, sizeof(*options));
     options->bind_address = "127.0.0.1";
+    options->broker_socket = "/run/librdp/x11-broker.sock";
     options->password_environment = "LIBRDP_SERVER_PASSWORD";
+    options->reconnect_token_environment =
+        "LIBRDP_MANAGED_RECONNECT_TOKEN";
     options->session_mode = X11_SERVER_SESSION_SHADOW;
+    options->managed_action = X11_SERVER_MANAGED_START;
     options->source_kind = X11_SERVER_SOURCE_ROOT;
     options->security_mode = LIBRDP_SECURITY_TLS;
+    options->width = 1280u;
+    options->height = 720u;
     options->max_peers = 4u;
     options->drive_read_only = 1;
 }
@@ -47,7 +53,15 @@ void x11_server_usage(FILE* stream, const char* program)
         "[--port port] [--max-peers count] [--security tls|nla|standard] "
         "[--allow-standard-security] [--user name] [--domain name] "
         "[--password-env name] [--allow-input] [--allow-clipboard] "
-        "[--allow-drive --drive-mount path [--drive-read-only]]\n",
+        "[--allow-drive --drive-mount path [--drive-read-only]]\n"
+        "       %s --mode managed --managed-action "
+        "start|attach|query|resize|detach|terminate "
+        "[--broker path] [--session-id id] [--token-env name] "
+        "[--user name] [--domain name] [--password-env name] "
+        "[--width pixels --height pixels] [--allow-capture] "
+        "[--allow-input] [--allow-clipboard] [--allow-drive] "
+        "[--persistent] [--reconnect]\n",
+        program,
         program);
 }
 
@@ -73,6 +87,23 @@ static int x11_server_parse_ulong(const char* value,
     if (errno != 0 || !end || *end != '\0' || parsed > maximum)
         return 0;
     *output = parsed;
+    return 1;
+}
+
+static int x11_server_parse_u64(const char* value,
+                                uint64_t* output)
+{
+    char* end = NULL;
+    unsigned long long parsed = 0ull;
+
+    if (!value || !output || value[0] == '\0' ||
+        value[0] == '-')
+        return 0;
+    errno = 0;
+    parsed = strtoull(value, &end, 0);
+    if (errno != 0 || !end || *end != '\0')
+        return 0;
+    *output = (uint64_t)parsed;
     return 1;
 }
 
@@ -136,8 +167,72 @@ static int x11_server_parse_mode(const char* value,
     return 1;
 }
 
+static int x11_server_parse_managed_action(
+    const char* value,
+    x11_server_options* options)
+{
+    if (!value || !options)
+        return 0;
+    if (strcmp(value, "start") == 0)
+        options->managed_action = X11_SERVER_MANAGED_START;
+    else if (strcmp(value, "attach") == 0)
+        options->managed_action = X11_SERVER_MANAGED_ATTACH;
+    else if (strcmp(value, "query") == 0)
+        options->managed_action = X11_SERVER_MANAGED_QUERY;
+    else if (strcmp(value, "resize") == 0)
+        options->managed_action = X11_SERVER_MANAGED_RESIZE;
+    else if (strcmp(value, "detach") == 0)
+        options->managed_action = X11_SERVER_MANAGED_DETACH;
+    else if (strcmp(value, "terminate") == 0)
+        options->managed_action = X11_SERVER_MANAGED_TERMINATE;
+    else
+        return 0;
+    return 1;
+}
+
+static int x11_server_validate_managed(
+    const x11_server_options* options)
+{
+    if (!options->broker_socket ||
+        options->broker_socket[0] != '/')
+    {
+        fprintf(stderr, "managed mode requires an absolute --broker path\n");
+        return 0;
+    }
+    if (options->managed_action == X11_SERVER_MANAGED_START)
+    {
+        if (!options->allow_capture || !options->nla_username ||
+            !options->password_environment ||
+            options->width == 0u || options->height == 0u)
+        {
+            fprintf(stderr,
+                    "managed start requires --allow-capture, --user, "
+                    "--password-env, --width and --height\n");
+            return 0;
+        }
+        return 1;
+    }
+    if (options->managed_session_id == 0u)
+    {
+        fprintf(stderr,
+                "managed control actions require --session-id\n");
+        return 0;
+    }
+    if (options->managed_action == X11_SERVER_MANAGED_ATTACH &&
+        !options->reconnect_token_environment)
+    {
+        fprintf(stderr,
+                "managed attach requires --token-env\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int x11_server_validate_options(const x11_server_options* options)
 {
+    if (options &&
+        options->session_mode == X11_SERVER_SESSION_MANAGED)
+        return x11_server_validate_managed(options);
     if (!options || !options->allow_capture)
     {
         fprintf(stderr, "--allow-capture is required\n");
@@ -197,6 +292,35 @@ int x11_server_parse_options(int argc,
                 !x11_server_parse_mode(argv[index], options))
                 return 0;
         }
+        else if (strcmp(option, "--managed-action") == 0)
+        {
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_managed_action(
+                    argv[index], options))
+                return 0;
+        }
+        else if (strcmp(option, "--broker") == 0)
+        {
+            if (!x11_server_take_value(argc, argv, &index))
+                return 0;
+            options->broker_socket = argv[index];
+        }
+        else if (strcmp(option, "--session-id") == 0)
+        {
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_u64(
+                    argv[index],
+                    &options->managed_session_id) ||
+                options->managed_session_id == 0u)
+                return 0;
+        }
+        else if (strcmp(option, "--token-env") == 0)
+        {
+            if (!x11_server_take_value(argc, argv, &index) ||
+                argv[index][0] == '\0')
+                return 0;
+            options->reconnect_token_environment = argv[index];
+        }
         else if (strcmp(option, "--display") == 0)
         {
             if (!x11_server_take_value(argc, argv, &index))
@@ -235,6 +359,28 @@ int x11_server_parse_options(int argc,
                 value == 0ul)
                 return 0;
             options->max_peers = (uint32_t)value;
+        }
+        else if (strcmp(option, "--width") == 0)
+        {
+            unsigned long value = 0ul;
+
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_ulong(
+                    argv[index], 16384ul, &value) ||
+                value == 0ul)
+                return 0;
+            options->width = (uint32_t)value;
+        }
+        else if (strcmp(option, "--height") == 0)
+        {
+            unsigned long value = 0ul;
+
+            if (!x11_server_take_value(argc, argv, &index) ||
+                !x11_server_parse_ulong(
+                    argv[index], 16384ul, &value) ||
+                value == 0ul)
+                return 0;
+            options->height = (uint32_t)value;
         }
         else if (strcmp(option, "--security") == 0)
         {
@@ -291,6 +437,10 @@ int x11_server_parse_options(int argc,
             options->allow_drive = 1;
         else if (strcmp(option, "--drive-read-only") == 0)
             options->drive_read_only = 1;
+        else if (strcmp(option, "--persistent") == 0)
+            options->persistent_session = 1;
+        else if (strcmp(option, "--reconnect") == 0)
+            options->reconnect_session = 1;
         else
         {
             fprintf(stderr, "unknown option: %s\n", option);

@@ -12,6 +12,7 @@
  */
 
 #include "server_cli.h"
+#include "server_managed_client.h"
 #include "server_runtime.h"
 
 #include <stdio.h>
@@ -29,10 +30,7 @@ int main(int argc, char** argv)
         return 2;
     }
     if (options.session_mode == X11_SERVER_SESSION_MANAGED)
-    {
-        fprintf(stderr,
-                "error=managed_session status=unsupported\n");
-        return 1;
-    }
+        return x11_server_run_managed(
+            &options, stdout, stderr);
     return x11_server_run_shadow(&options);
 }

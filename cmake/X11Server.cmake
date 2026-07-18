@@ -98,6 +98,7 @@ if(LIBRDP_BUILD_X11_SERVER)
     add_executable(librdp-x11-server
         apps/x11/server/main.c
         apps/x11/server/server_cli.c
+        apps/x11/server/server_managed_client.c
         apps/x11/server/server_managed_ipc.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
     )
@@ -233,6 +234,40 @@ if(LIBRDP_BUILD_X11_SERVER)
             PROPERTIES TIMEOUT 30)
         add_dependencies(librdp_tests
             test_x11_managed_broker)
+
+        add_executable(test_x11_managed_client
+            tests/test_x11_managed_client.c
+            apps/x11/server/server_cli.c
+            apps/x11/server/server_managed_client.c
+            apps/x11/server/server_managed_ipc.c
+        )
+        target_include_directories(
+            test_x11_managed_client PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(
+            test_x11_managed_client PRIVATE
+            librdp
+            OpenSSL::Crypto
+            Threads::Threads
+        )
+        librdp_apply_system_definitions(
+            test_x11_managed_client)
+        librdp_apply_warning_options(
+            test_x11_managed_client)
+        librdp_apply_sanitizer_compile_options(
+            test_x11_managed_client)
+        librdp_apply_sanitizer_link_options(
+            test_x11_managed_client)
+        add_test(NAME x11_managed_client
+            COMMAND test_x11_managed_client)
+        set_tests_properties(x11_managed_client
+            PROPERTIES TIMEOUT 15)
+        add_dependencies(librdp_tests
+            test_x11_managed_client)
 
         add_executable(test_x11_managed_auth
             tests/test_x11_managed_auth.c
