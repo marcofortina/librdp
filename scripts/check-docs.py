@@ -221,7 +221,7 @@ def viewer_source_options() -> set[str]:
 
 
 def admin_source_options() -> set[str]:
-    return set(VIEWER_OPTION_RE.findall(read("apps/common/admin_options.c")))
+    return set(VIEWER_OPTION_RE.findall(read("apps/admin/admin_options.c")))
 
 
 def workspace_source_options() -> set[str]:

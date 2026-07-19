@@ -4,9 +4,10 @@
 if(LIBRDP_BUILD_ADMIN AND NOT APPLE)
     find_package(X11 REQUIRED)
     add_executable(librdp-admin
-        apps/x11/admin/main.c
+        apps/admin/x11_main.c
     )
     target_include_directories(librdp-admin PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/admin
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
     )

@@ -15,7 +15,7 @@
  */
 
 #import <Cocoa/Cocoa.h>
-#include "admin_options.h"
+#include "admin_app.h"
 
 #include <librdp/librdp.h>
 
@@ -32,21 +32,6 @@
 }
 @end
 
-static void cocoa_admin_append_session(NSMutableString* text, size_t index, const librdp_admin_session* session)
-{
-    [text appendFormat:@"session index=%zu session_id=%u logon_id=%llu user=\"%s\" domain=\"%s\" "
-                       @"state=\"%s\" client=\"%s\" station=\"%s\" protocol=\"%s\"\n",
-                       index,
-                       (unsigned)session->session_id,
-                       (unsigned long long)session->logon_id,
-                       session->username ? session->username : "",
-                       session->domain ? session->domain : "",
-                       session->state ? session->state : "",
-                       session->client_name ? session->client_name : "",
-                       session->station_name ? session->station_name : "",
-                       session->protocol_name ? session->protocol_name : ""];
-}
-
 static NSString* cocoa_admin_summary(const librdp_admin* admin)
 {
     NSMutableString* text = [NSMutableString string];
@@ -60,19 +45,31 @@ static NSString* cocoa_admin_summary(const librdp_admin* admin)
 
         if (librdp_admin_session_init(&session) == LIBRDP_STATUS_OK &&
             librdp_admin_session_at(admin, i, &session) == LIBRDP_STATUS_OK)
-            cocoa_admin_append_session(text, i, &session);
+        {
+            [text appendFormat:@"%zu  id=%u  logon=%llu  user=%s\\%s  "
+                               @"state=%s  client=%s\n",
+                               i,
+                               (unsigned)session.session_id,
+                               (unsigned long long)session.logon_id,
+                               session.domain ? session.domain : "",
+                               session.username ? session.username : "",
+                               session.state ? session.state : "",
+                               session.client_name ? session.client_name : ""];
+        }
     }
     return text;
 }
 
-static void cocoa_admin_show_window(NSString* summary)
+static int cocoa_admin_present(const librdp_admin* admin, void* user_data)
 {
+    NSString* summary = cocoa_admin_summary(admin);
     NSWindow* window = nil;
     NSScrollView* scroll = nil;
     NSTextView* text_view = nil;
     CocoaAdminWindowDelegate* delegate = nil;
     NSRect frame = NSMakeRect(0.0, 0.0, 900.0, 520.0);
 
+    (void)user_data;
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     window = [[NSWindow alloc] initWithContentRect:frame
@@ -94,59 +91,20 @@ static void cocoa_admin_show_window(NSString* summary)
     [window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];
+    return 1;
 }
 
 int main(int argc, char** argv)
 {
-    admin_options options;
-    librdp_admin* admin = NULL;
-    librdp_status status = LIBRDP_STATUS_OK;
-    NSString* summary = nil;
+    const admin_app_platform platform = {
+        cocoa_admin_present,
+        NULL
+    };
     int rc = 0;
 
     @autoreleasepool
     {
-        if (!admin_options_parse(argc, argv, &options, stderr))
-        {
-            admin_options_usage(stderr, argv[0]);
-            return 2;
-        }
-        if (options.show_help)
-        {
-            admin_options_usage(stdout, argv[0]);
-            return 0;
-        }
-        admin = librdp_admin_new(&options.config);
-        if (!admin)
-        {
-            fprintf(stderr, "failed to create admin handle\n");
-            return 2;
-        }
-        if (options.execute_action)
-        {
-            status = librdp_admin_execute_action(admin, &options.action);
-            if (status != LIBRDP_STATUS_OK)
-            {
-                fprintf(stderr, "admin action failed: %s\n", librdp_status_name(status));
-                librdp_admin_free(admin);
-                return 3;
-            }
-            printf("admin action done type=%u session_id=%u\n",
-                   (unsigned)options.action.type,
-                   (unsigned)options.action.session_id);
-        }
-        status = librdp_admin_query_sessions(admin);
-        if (status != LIBRDP_STATUS_OK)
-        {
-            fprintf(stderr, "admin query failed: %s\n", librdp_status_name(status));
-            librdp_admin_free(admin);
-            return 3;
-        }
-        summary = cocoa_admin_summary(admin);
-        fputs([summary UTF8String], stdout);
-        if (!options.no_window)
-            cocoa_admin_show_window(summary);
-        librdp_admin_free(admin);
+        rc = admin_app_run(argc, argv, &platform);
     }
     return rc;
 }

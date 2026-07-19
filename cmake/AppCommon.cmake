@@ -12,7 +12,8 @@ endif()
 
 if(LIBRDP_APP_COMMON_REQUIRED)
     add_library(librdp_app_common STATIC
-        apps/common/admin_options.c
+        apps/admin/admin_app.c
+        apps/admin/admin_options.c
         apps/viewer/client_callbacks.c
         apps/viewer/client_credentials.c
         apps/viewer/client_options.c

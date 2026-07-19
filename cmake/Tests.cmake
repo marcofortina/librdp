@@ -157,6 +157,7 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_app_policy tests/test_app_policy.c)
     target_include_directories(test_app_policy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/admin
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )

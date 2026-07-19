@@ -5,9 +5,10 @@ if(LIBRDP_BUILD_ADMIN AND APPLE)
     enable_language(OBJC)
     find_library(LIBRDP_COCOA_FRAMEWORK Cocoa REQUIRED)
     add_executable(librdp-admin
-        apps/cocoa/admin/main.m
+        apps/admin/cocoa_main.m
     )
     target_include_directories(librdp-admin PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/admin
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(librdp-admin PRIVATE

@@ -14,7 +14,7 @@
  * the public inventory fields printed by explicit user request.
  */
 
-#include "admin_options.h"
+#include "admin_app.h"
 
 #include <librdp/librdp.h>
 
@@ -23,39 +23,6 @@
 
 #include <stdio.h>
 #include <string.h>
-
-static void admin_print_session(size_t index, const librdp_admin_session* session)
-{
-    printf("session index=%zu session_id=%u logon_id=%llu user=\"%s\" domain=\"%s\" "
-           "state=\"%s\" client=\"%s\" station=\"%s\" protocol=\"%s\"\n",
-           index,
-           (unsigned)session->session_id,
-           (unsigned long long)session->logon_id,
-           session->username ? session->username : "",
-           session->domain ? session->domain : "",
-           session->state ? session->state : "",
-           session->client_name ? session->client_name : "",
-           session->station_name ? session->station_name : "",
-           session->protocol_name ? session->protocol_name : "");
-}
-
-static int admin_print_sessions(const librdp_admin* admin)
-{
-    size_t count = librdp_admin_session_count(admin);
-    size_t i = 0;
-
-    printf("sessions count=%zu\n", count);
-    for (i = 0; i < count; i++)
-    {
-        librdp_admin_session session;
-
-        if (librdp_admin_session_init(&session) != LIBRDP_STATUS_OK ||
-            librdp_admin_session_at(admin, i, &session) != LIBRDP_STATUS_OK)
-            return 0;
-        admin_print_session(i, &session);
-    }
-    return 1;
-}
 
 static void admin_draw_line(Display* display, Window window, GC gc, int x, int y, const char* text)
 {
@@ -106,7 +73,7 @@ static void admin_draw_sessions(Display* display, Window window, GC gc, const li
  * Presents a read-only X11 summary window. The caller remains the owner of the
  * admin handle; the event loop only borrows session views during expose redraws.
  */
-static int admin_show_window(const librdp_admin* admin)
+static int x11_admin_present(const librdp_admin* admin, void* user_data)
 {
     Display* display = NULL;
     Window root = 0;
@@ -117,6 +84,7 @@ static int admin_show_window(const librdp_admin* admin)
     XClassHint* class_hint = NULL;
     int running = 1;
 
+    (void)user_data;
     display = XOpenDisplay(NULL);
     if (!display)
     {
@@ -169,56 +137,10 @@ static int admin_show_window(const librdp_admin* admin)
 
 int main(int argc, char** argv)
 {
-    admin_options options;
-    librdp_admin* admin = NULL;
-    librdp_status status = LIBRDP_STATUS_OK;
-    int rc = 0;
+    const admin_app_platform platform = {
+        x11_admin_present,
+        NULL
+    };
 
-    if (!admin_options_parse(argc, argv, &options, stderr))
-    {
-        admin_options_usage(stderr, argv[0]);
-        return 2;
-    }
-    if (options.show_help)
-    {
-        admin_options_usage(stdout, argv[0]);
-        return 0;
-    }
-    admin = librdp_admin_new(&options.config);
-    if (!admin)
-    {
-        fprintf(stderr, "failed to create admin handle\n");
-        return 2;
-    }
-    if (options.execute_action)
-    {
-        status = librdp_admin_execute_action(admin, &options.action);
-        if (status != LIBRDP_STATUS_OK)
-        {
-            fprintf(stderr, "admin action failed: %s\n", librdp_status_name(status));
-            librdp_admin_free(admin);
-            return 3;
-        }
-        printf("admin action done type=%u session_id=%u\n",
-               (unsigned)options.action.type,
-               (unsigned)options.action.session_id);
-        if (options.no_window)
-        {
-            librdp_admin_free(admin);
-            return 0;
-        }
-    }
-    status = librdp_admin_query_sessions(admin);
-    if (status != LIBRDP_STATUS_OK)
-    {
-        fprintf(stderr, "admin query failed: %s\n", librdp_status_name(status));
-        librdp_admin_free(admin);
-        return 3;
-    }
-    if (!admin_print_sessions(admin))
-        rc = 3;
-    else if (!options.no_window && !admin_show_window(admin))
-        rc = 4;
-    librdp_admin_free(admin);
-    return rc;
+    return admin_app_run(argc, argv, &platform);
 }
