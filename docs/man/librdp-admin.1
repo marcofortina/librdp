@@ -1,18 +1,19 @@
 .\" Copyright (C) 2026 Marco Fortina
 .\" SPDX-License-Identifier: AGPL-3.0-or-later
-.TH LIBRDP-X11-ADMIN 1 "2026-07-15" "librdp 0.1.0" "User Commands"
+.TH LIBRDP-ADMIN 1 "2026-07-19" "librdp 0.1.0" "User Commands"
 .SH NAME
-librdp-x11-admin \- query RDS sessions and execute bounded admin actions
+librdp-admin \- query RDS sessions and execute bounded admin actions
 .SH SYNOPSIS
-.B librdp-x11-admin
+.B librdp-admin
 .BI --endpoint " url"
 .RI [ options ]
 .SH DESCRIPTION
-.B librdp-x11-admin
+.B librdp-admin
 queries a WinRM administration endpoint through the public librdp Admin API and
 prints the returned session inventory. It can also run bounded actions against
-a selected session. By default it opens a small X11
-window containing the same inventory. Use
+a selected session. By default it opens a native summary window containing the
+same inventory. The window uses X11 on supported non-Apple systems and AppKit
+on macOS. Use
 .B --no-window
 for scripts, CI jobs, and non-interactive checks.
 .SH OPTIONS
@@ -72,16 +73,16 @@ Disable TLS certificate verification for explicitly controlled lab endpoints.
 Do not use this option for production endpoints.
 .TP
 .B --no-window
-Do not open an X11 window; print the inventory and exit.
+Do not open a native window; print the inventory and exit.
 .TP
 .B -h, --help
 Print usage.
 .SH EXAMPLES
 .nf
-librdp-x11-admin --endpoint http://server:5985/wsman --user admin-user --password-env RDS_PASSWORD --no-window
-librdp-x11-admin --endpoint https://server:5986/wsman --user admin-user --domain EXAMPLE
-librdp-x11-admin --endpoint http://server:5985/wsman --action disconnect --session-id 4 --confirm --no-window
-librdp-x11-admin --endpoint http://server:5985/wsman --action message --session-id 4 --message-text "Maintenance window" --no-window
+librdp-admin --endpoint http://server:5985/wsman --user admin-user --password-env RDS_PASSWORD --no-window
+librdp-admin --endpoint https://server:5986/wsman --user admin-user --domain EXAMPLE
+librdp-admin --endpoint http://server:5985/wsman --action disconnect --session-id 4 --confirm --no-window
+librdp-admin --endpoint http://server:5985/wsman --action message --session-id 4 --message-text "Maintenance window" --no-window
 .fi
 .SH SEE ALSO
 .BR librdp (7),

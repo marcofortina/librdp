@@ -32,8 +32,7 @@ REQUIRED_MARKDOWN = (
     "docs/admin.md",
     "docs/workspace.md",
     "docs/server.md",
-    "docs/server-cocoa.md",
-    "docs/server-x11.md",
+    "docs/server-application.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
     "docs/lifecycle.md",
@@ -48,8 +47,7 @@ REQUIRED_MARKDOWN = (
     "docs/glossary.md",
     "docs/packaging.md",
     "docs/diagnostics.md",
-    "docs/viewer-cocoa.md",
-    "docs/viewer-x11.md",
+    "docs/viewer.md",
 )
 REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "mkdocs.yml",
@@ -60,15 +58,11 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp-tracing.7",
     "docs/man/librdp-server.7",
     "docs/man/librdp-workspace.7",
-    "docs/man/librdp-cocoa-admin.1",
-    "docs/man/librdp-cocoa-server.1",
-    "docs/man/librdp-cocoa-workspace.1",
-    "docs/man/librdp-cocoa-viewer.1",
-    "docs/man/librdp-x11-viewer.1",
-    "docs/man/librdp-x11-admin.1",
-    "docs/man/librdp-x11-server.1",
-    "docs/man/librdp-x11-workspace.1",
-    "docs/man/librdp-x11-session-broker.8",
+    "docs/man/librdp-admin.1",
+    "docs/man/librdp-server.1",
+    "docs/man/librdp-viewer.1",
+    "docs/man/librdp-workspace.1",
+    "docs/man/librdp-session-broker.8",
 )
 FORBIDDEN_DOCS = (
     "docs/roadmap.md",
@@ -80,10 +74,7 @@ DOC_OPTION_RE = re.compile(r"--[a-z0-9-]+")
 NON_VIEWER_OPTIONS = {
     "--build",
 }
-COCOA_ONLY_VIEWER_OPTIONS = {
-    "--accept-tls-certificate",
-    "--help",
-}
+NON_COMMON_VIEWER_OPTIONS = {"--help"}
 CMAKE_OPTION_RE = re.compile(r"(?:option|librdp_feature_option)\((LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+)\b")
 DOC_CMAKE_OPTION_RE = re.compile(r"LIBRDP_(?:BUILD|WITH)_[A-Z0-9_]+")
 FUZZER_RE = re.compile(r"add_librdp_fuzzer\((fuzz_[a-z0-9_]+)\s+([^)]+_fuzzer\.c)\)")
@@ -217,7 +208,7 @@ def viewer_source_options() -> set[str]:
             read("apps/viewer/x11_cli.c"),
         )
     )
-    return set(VIEWER_OPTION_RE.findall(source)) - COCOA_ONLY_VIEWER_OPTIONS
+    return set(VIEWER_OPTION_RE.findall(source)) - NON_COMMON_VIEWER_OPTIONS
 
 
 def admin_source_options() -> set[str]:
@@ -301,80 +292,61 @@ def validate_protocol_rows(errors: list[str]) -> None:
 
 def validate_viewer_options(errors: list[str]) -> None:
     source = viewer_source_options()
-    viewer_doc = documented_options("docs/viewer-x11.md")
-    manpage = documented_options("docs/man/librdp-x11-viewer.1")
+    viewer_doc = documented_options("docs/viewer.md")
+    manpage = documented_options("docs/man/librdp-viewer.1")
 
     for option in sorted(source - viewer_doc):
-        errors.append(f"viewer option missing from docs/viewer-x11.md: {option}")
+        errors.append(f"viewer option missing from docs/viewer.md: {option}")
     for option in sorted(source - manpage):
-        errors.append(f"viewer option missing from docs/man/librdp-x11-viewer.1: {option}")
+        errors.append(f"viewer option missing from docs/man/librdp-viewer.1: {option}")
     for option in sorted((viewer_doc | manpage) - source):
         errors.append(f"documented viewer option not present in source: {option}")
 
 
 def validate_admin_options(errors: list[str]) -> None:
     source = admin_source_options()
-    manpage = documented_options("docs/man/librdp-x11-admin.1")
+    manpage = documented_options("docs/man/librdp-admin.1")
 
     for option in sorted(source - manpage):
-        errors.append(f"admin option missing from docs/man/librdp-x11-admin.1: {option}")
+        errors.append(f"admin option missing from docs/man/librdp-admin.1: {option}")
     for option in sorted(manpage - source):
         errors.append(f"documented admin option not present in source: {option}")
 
 
 def validate_workspace_options(errors: list[str]) -> None:
     source = workspace_source_options()
-    manpage = documented_options("docs/man/librdp-x11-workspace.1")
+    manpage = documented_options("docs/man/librdp-workspace.1")
 
     for option in sorted(source - manpage):
-        errors.append(f"workspace option missing from docs/man/librdp-x11-workspace.1: {option}")
+        errors.append(f"workspace option missing from docs/man/librdp-workspace.1: {option}")
     for option in sorted(manpage - source):
         errors.append(f"documented workspace option not present in source: {option}")
 
 
-def validate_x11_server_options(errors: list[str]) -> None:
-    source = x11_server_source_options()
-    manpage = documented_options(
-        "docs/man/librdp-x11-server.1")
+def validate_server_options(errors: list[str]) -> None:
+    source = x11_server_source_options() | cocoa_server_source_options()
+    manpage = documented_options("docs/man/librdp-server.1")
 
     for option in sorted(source - manpage):
         errors.append(
-            "X11 server option missing from "
-            f"docs/man/librdp-x11-server.1: {option}"
+            "server option missing from docs/man/librdp-server.1: "
+            f"{option}"
         )
     for option in sorted(manpage - source):
         errors.append(
-            "documented X11 server option not present in "
-            f"source: {option}"
-        )
-
-
-def validate_cocoa_server_options(errors: list[str]) -> None:
-    source = cocoa_server_source_options()
-    manpage = documented_options(
-        "docs/man/librdp-cocoa-server.1")
-
-    for option in sorted(source - manpage):
-        errors.append(
-            "Cocoa server option missing from "
-            f"docs/man/librdp-cocoa-server.1: {option}"
-        )
-    for option in sorted(manpage - source):
-        errors.append(
-            "documented Cocoa server option not present in "
-            f"source: {option}"
+            f"documented server option not present in source: {option}"
         )
 
 
 def validate_x11_broker_options(errors: list[str]) -> None:
     source = x11_broker_source_options()
     manpage = documented_options(
-        "docs/man/librdp-x11-session-broker.8")
+        "docs/man/librdp-session-broker.8")
 
     for option in sorted(source - manpage):
         errors.append(
             "X11 broker option missing from "
-            f"docs/man/librdp-x11-session-broker.8: {option}"
+            f"docs/man/librdp-session-broker.8: {option}"
         )
     for option in sorted(manpage - source):
         errors.append(
@@ -529,7 +501,7 @@ def validate_readme(errors: list[str]) -> None:
         "docs/man/librdp.7",
         "docs/man/librdp-api.7",
         "docs/man/librdp-tracing.7",
-        "docs/man/librdp-x11-viewer.1",
+        "docs/man/librdp-viewer.1",
     )
     for snippet in forbidden_readme_links:
         if snippet in text:
@@ -664,8 +636,7 @@ def main() -> int:
     validate_viewer_options(errors)
     validate_admin_options(errors)
     validate_workspace_options(errors)
-    validate_x11_server_options(errors)
-    validate_cocoa_server_options(errors)
+    validate_server_options(errors)
     validate_x11_broker_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)

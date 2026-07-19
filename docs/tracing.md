@@ -48,19 +48,19 @@ librdp trace seq=<n> ts_ns=<n> elapsed_us=<n> category=protocol event=<name> lev
 Client and protocol trace without hexdumps:
 
 ```sh
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 build/librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 build/librdp-viewer --target host --security nla
 ```
 
 Full protocol hexdumps capped at 96 bytes:
 
 ```sh
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 build/librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 build/librdp-viewer --target host --security nla
 ```
 
 Transport timing only:
 
 ```sh
-LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_LEVEL=debug build/librdp-x11-viewer --target host
+LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_LEVEL=debug build/librdp-viewer --target host
 ```
 
 ## Operational rules

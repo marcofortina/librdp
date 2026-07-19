@@ -72,7 +72,7 @@ Large helper functions named `build_*`, `make_*`, `run_*`, or `start_*` should e
 
 ## Backend-oriented tests
 
-Backend-facing protocol code should be tested with controlled inputs rather than host devices. Unit tests should exercise the packet and state-machine behavior. Viewer backends can then be exercised through documented CLI options in [X11 viewer](viewer-x11.md).
+Backend-facing protocol code should be tested with controlled inputs rather than host devices. Unit tests should exercise the packet and state-machine behavior. Viewer backends can then be exercised through documented CLI options in the [viewer](viewer.md).
 
 For file-like and device-like behavior, prefer temporary in-memory packet models or temporary files created by the test process. Do not depend on specific local hardware.
 
@@ -98,4 +98,6 @@ Keep sanitizer build directories separate from normal build directories.
 
 ## Viewer exercising
 
-The X11 viewer is the practical test frontend for public client APIs, input, graphics, resize, pointer updates, clipboard, audio, video, and device options. Viewer usage is documented in [X11 viewer](viewer-x11.md).
+The native viewer is the practical test frontend for public client APIs, input,
+graphics, resize, pointer updates, clipboard, audio, video, and device options.
+Viewer usage is documented in [Viewer](viewer.md).

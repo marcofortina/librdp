@@ -3,9 +3,11 @@ Copyright (C) 2026 Marco Fortina
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# X11 Viewer
+# Viewer
 
-`librdp-x11-viewer` is a minimal X11 frontend used to exercise the public client APIs. It is a debugging and integration tool, not a full desktop product.
+`librdp-viewer` is the native frontend for the public client API. CMake selects
+Cocoa on macOS and X11 on Linux, FreeBSD, OpenBSD, NetBSD, and Solaris. Both
+frontends use the same session configuration and protocol runtime.
 
 ## Build
 
@@ -14,12 +16,12 @@ cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build -j$(nproc)
 ```
 
-The executable is `build/librdp-x11-viewer`.
+The executable is `build/librdp-viewer`.
 
 ## Basic connection
 
 ```sh
-build/librdp-x11-viewer --target host --user user --password password --security nla --width 1024 --height 768
+build/librdp-viewer --target host --user user --password password --security nla --width 1024 --height 768
 ```
 
 Supported security values are:
@@ -63,7 +65,7 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --audio-output [device=name]
 --audio-input [device=name]
 --video file=path
---camera device=/dev/videoN
+--camera source
 --smartcard [pcsc|vsmartcard=path]
 --usb vid:pid|bus:dev
 --pnp
@@ -76,17 +78,27 @@ TLS certificate verification is strict by default. `--tls-prompt-cert` shows the
 --multitransport
 ```
 
-## Graphics and resize
+`--clipboard-file` is available on X11. Camera sources are
+`device=/dev/videoN` on X11 and `device=default`, `device=id`, or `file=path`
+on macOS.
 
-The viewer creates an X11 window matching the requested desktop size. Resize requests are sent through the display control path when enabled by the session. Surface invalidation events are copied into the X11 drawable.
+## Graphics And Resize
+
+The viewer creates a native window matching the requested desktop size. Resize
+requests are sent through the display control path when enabled by the session.
+Surface invalidation events are copied into the selected native drawable.
 
 Pointer shape, pointer cache, pointer visibility, and local cursor presentation are driven by pointer events received from the session.
 
-Resize is viewer-driven: X11 configure events update the requested desktop layout and the session receives a display-control request. The viewer should repaint from the current surface after local expose events and after remote surface invalidation.
+Resize is viewer-driven: native configure events update the requested desktop
+layout and the session receives a display-control request. The viewer repaints
+from the current surface after local expose events and remote invalidation.
 
-Pointer updates are server-driven. The viewer does not infer local cursor shape from coordinates or window contents. It applies default, hidden, position, and shape events from the session and keeps a local X11 cursor cache for the active window.
+Pointer updates are server-driven. The viewer does not infer local cursor shape
+from coordinates or window contents. It applies default, hidden, position, and
+shape events from the session and keeps a native cursor cache.
 
-## Input
+## X11 Integration
 
 Keyboard input is translated through the local X11/XKB stack. The viewer handles focus, keyboard grabs, modifier state, AltGr, dead-key text paths, and remote scancode submission.
 
@@ -112,7 +124,7 @@ For Xwayland, the viewer sets `_XWAYLAND_MAY_GRAB_KEYBOARD` before requesting ke
 Device and media options are safe to combine:
 
 ```sh
-build/librdp-x11-viewer \
+build/librdp-viewer \
     --target host \
     --security nla \
     --audio-output \
@@ -126,7 +138,7 @@ build/librdp-x11-viewer \
 Filesystem, printer, serial, and parallel paths are interpreted on the local host:
 
 ```sh
-build/librdp-x11-viewer \
+build/librdp-viewer \
     --target host \
     --drive work=/home/user/work \
     --printer printer=Generic=/tmp/print-output \
@@ -134,18 +146,30 @@ build/librdp-x11-viewer \
     --parallel LPT1=/tmp/lpt-output
 ```
 
+## macOS Integration
+
+The Cocoa frontend uses AppKit text input for Unicode keyboard events and
+AppKit mouse events for movement, buttons, wheels, and extra buttons. Pointer
+shape updates are applied through `NSCursor`.
+
+Clipboard text, HTML, and PNG payloads are bridged through `NSPasteboard`.
+Framebuffer updates are rendered from the public BGRA surface with
+CoreGraphics. Audio uses Core Audio queues, and AVFoundation provides live
+camera capture. A bounded file camera source is also available for controlled
+input.
+
 ## Trace examples
 
 Client and protocol trace:
 
 ```sh
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 build/librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 build/librdp-viewer --target host --security nla
 ```
 
 Full debug trace with bounded hexdumps:
 
 ```sh
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 build/librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 build/librdp-viewer --target host --security nla
 ```
 
 Do not place passwords in shell history on shared systems. Prefer controlled test credentials for viewer runs.
@@ -157,3 +181,6 @@ Useful event families while debugging the viewer include:
 - `client.active.framebuffer.*` for surface presentation;
 - `client.display_control.*` for resize requests;
 - `x11.audio.*`, `x11.camera.*`, `x11.smartcard.*`, `x11.usb.*`, and `x11.webauthn.*` for backend setup.
+
+The Cocoa frontend emits corresponding `cocoa.*` events for native window,
+input, media, and permission behavior.

@@ -411,25 +411,8 @@ if(LIBRDP_BUILD_SERVER AND LIBRDP_NATIVE_APP_BACKEND STREQUAL "x11")
     )
     if(LIBRDP_BUILD_TESTS)
         find_program(LIBRDP_XVFB_EXECUTABLE NAMES Xvfb)
-
-        if(Python3_FOUND)
-            add_test(NAME app_install_layout
-                COMMAND ${Python3_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_app_install_layout.py
-                    --cmake ${CMAKE_COMMAND}
-                    --build-dir ${CMAKE_CURRENT_BINARY_DIR}
-                    --destdir ${CMAKE_CURRENT_BINARY_DIR}/app-install-layout
-                    --bindir ${CMAKE_INSTALL_FULL_BINDIR}
-                    --sbindir ${CMAKE_INSTALL_FULL_SBINDIR}
-                    --libexecdir ${LIBRDP_X11_SESSION_LIBEXEC_DIR}
-                    --datadir ${CMAKE_INSTALL_FULL_DATADIR}/librdp
-                    --config $<CONFIG>
-            )
-            set_tests_properties(app_install_layout PROPERTIES
-                RUN_SERIAL TRUE
-                TIMEOUT 60
-            )
-        endif()
+        add_test(NAME server_cli COMMAND librdp-server --help)
+        set_tests_properties(server_cli PROPERTIES TIMEOUT 30)
 
         add_executable(test_x11_managed
             tests/test_x11_managed.c

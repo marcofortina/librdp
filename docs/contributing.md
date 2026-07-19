@@ -56,7 +56,7 @@ The X11 viewer is an integration frontend for public APIs. Viewer changes should
 
 - avoid adding protocol logic that belongs in the core;
 - keep X11, XKB, PipeWire, V4L2, PC/SC, libusb, and FIDO2 code outside the core;
-- update [X11 viewer](viewer-x11.md) when CLI flags or behavior change;
+- update [Viewer](viewer.md) when CLI flags or behavior change;
 - preserve keyboard grab, pointer shape, resize, and cleanup behavior.
 
 ## Test and fuzz changes

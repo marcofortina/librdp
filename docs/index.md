@@ -24,13 +24,11 @@ clipboard, audio, video, and channels.
 - [API reference](api-reference.md) for the public header map and object model.
 - [Generated API documentation](generated-api.md) for Doxygen per-symbol pages.
 - [Examples](examples.md)
-- [X11 viewer](viewer-x11.md)
-- [Cocoa viewer](viewer-cocoa.md)
+- [Viewer](viewer.md)
 - [Administration tools](admin.md)
 - [Workspace feeds](workspace.md)
 - [Server API](server.md)
-- [X11 desktop server](server-x11.md)
-- [Cocoa desktop server](server-cocoa.md)
+- [Desktop server application](server-application.md)
 
 ## Engineering references
 
@@ -61,15 +59,11 @@ clipboard, audio, video, and channels.
 - [librdp-server(7)](man/librdp-server.7)
 - [librdp-tracing(7)](man/librdp-tracing.7)
 - [librdp-workspace(7)](man/librdp-workspace.7)
-- [librdp-cocoa-admin(1)](man/librdp-cocoa-admin.1)
-- [librdp-cocoa-server(1)](man/librdp-cocoa-server.1)
-- [librdp-cocoa-workspace(1)](man/librdp-cocoa-workspace.1)
-- [librdp-cocoa-viewer(1)](man/librdp-cocoa-viewer.1)
-- [librdp-x11-admin(1)](man/librdp-x11-admin.1)
-- [librdp-x11-server(1)](man/librdp-x11-server.1)
-- [librdp-x11-workspace(1)](man/librdp-x11-workspace.1)
-- [librdp-x11-viewer(1)](man/librdp-x11-viewer.1)
-- [librdp-x11-session-broker(8)](man/librdp-x11-session-broker.8)
+- [librdp-admin(1)](man/librdp-admin.1)
+- [librdp-server(1)](man/librdp-server.1)
+- [librdp-viewer(1)](man/librdp-viewer.1)
+- [librdp-workspace(1)](man/librdp-workspace.1)
+- [librdp-session-broker(8)](man/librdp-session-broker.8)
 
 ## Doxygen HTML
 

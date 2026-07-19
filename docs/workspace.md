@@ -10,18 +10,14 @@ RemoteApp entries through `<librdp/workspace.h>`. A workspace handle owns the
 feed configuration and the parsed resource list; resource views returned to the
 application are borrowed.
 
-The command-line frontends are:
-
-- `librdp-x11-workspace`;
-- `librdp-cocoa-workspace`.
-
-Both can list resources, select one resource, and launch a viewer process with
-the target and resource metadata supplied by the feed.
+The `librdp-workspace` application can list resources, select one resource, and
+launch `librdp-viewer` with the target and resource metadata supplied by the
+feed. It uses X11 on the supported non-Apple systems and AppKit on macOS.
 
 ## List Resources
 
 ```sh
-librdp-x11-workspace \
+librdp-workspace \
   --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx \
   --user user \
   --password-env RDS_PASSWORD
@@ -42,30 +38,30 @@ The launch flow is:
 5. start the configured viewer executable.
 
 ```sh
-librdp-x11-workspace \
+librdp-workspace \
   --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx \
   --user user \
   --password-env RDS_PASSWORD \
   --select 0 \
   --launch \
-  --viewer build/librdp-x11-viewer
+  --viewer build/librdp-viewer
 ```
 
 For RemoteApp resources the workspace launcher passes the RemoteApp program
 through the viewer `--rail app=...` option. For desktop resources it starts a
 normal viewer connection.
 
-## Cocoa
+## Native Windows
 
-The Cocoa workspace frontend accepts the same feed, credential, selection, and
-viewer options:
+The same feed, credential, selection, and viewer options apply to both native
+frontends:
 
 ```sh
-librdp-cocoa-workspace \
+librdp-workspace \
   --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx \
   --select 0 \
   --launch \
-  --viewer build-macos/librdp-cocoa-viewer
+  --viewer build-macos/librdp-viewer
 ```
 
 ## Integration Notes
@@ -76,5 +72,4 @@ must not be logged. Launchers should avoid passing passwords on command lines
 when a safer local credential source is available.
 
 See also: [API reference](api-reference.md), [librdp-workspace(7)](man/librdp-workspace.7),
-[librdp-x11-workspace(1)](man/librdp-x11-workspace.1), and
-[librdp-cocoa-workspace(1)](man/librdp-cocoa-workspace.1).
+and [librdp-workspace(1)](man/librdp-workspace.1).

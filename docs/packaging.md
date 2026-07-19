@@ -5,7 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Packaging
 
-This document describes packaging expectations for the library, headers, optional viewer, documentation, and generated metadata.
+This document describes packaging expectations for the library, headers,
+native applications, documentation, and generated metadata.
 
 ## Package split
 
@@ -13,19 +14,27 @@ Recommended package split:
 
 - runtime library package: shared library and runtime dependency metadata;
 - development package: public headers, CMake package files when available, and development dependency metadata;
-- viewer package: `librdp-x11-viewer` and viewer runtime dependencies;
-- X11 server package: desktop server, managed-session broker, supervisor,
-  session agent, broker example configuration, and their manual pages;
+- application package: `librdp-admin`, `librdp-server`, `librdp-viewer`, and
+  `librdp-workspace` with the native runtime dependencies selected at build
+  time;
+- managed X11 session package: broker, supervisor, session agent, broker
+  example configuration, and their manual page;
 - documentation package: Markdown documentation, Doxygen output when generated, and man pages.
 
-Distributions may combine these packages, but optional viewer dependencies should not force installation of the viewer when only the core library is needed.
+Distributions may combine these packages, but native application dependencies
+should not be pulled in when only the core library is needed.
 
 ## CPack artifacts
 
 The install rules are the source of truth for generated packages. A default build can create a compressed archive and, when host tools are present, native DEB or RPM artifacts:
 
 ```sh
-cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
+cmake -S . -B build \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_ADMIN=ON \
+  -DLIBRDP_BUILD_SERVER=ON \
+  -DLIBRDP_BUILD_VIEWER=ON \
+  -DLIBRDP_BUILD_WORKSPACE=ON
 cmake --build build -j$(nproc)
 cmake --build build --target package
 ```
@@ -40,11 +49,16 @@ cpack --config build/CPackConfig.cmake -G TGZ
 
 DEB generation requires `dpkg-deb`. RPM generation requires `rpmbuild`. macOS product packages are enabled only on macOS hosts with `productbuild` available.
 
-The generated package installs the library, public headers, CMake package files, pkg-config metadata, Markdown documentation, man pages, and the viewer binary when `LIBRDP_BUILD_VIEWER=ON`.
+The generated package installs the library, public headers, CMake package
+files, pkg-config metadata, Markdown documentation, man pages, and each native
+application selected by its `LIBRDP_BUILD_*` option.
 
 ## Homebrew
 
-The repository ships a head-only Homebrew formula under `packaging/homebrew/librdp.rb`. It builds the portable core library and examples with optional platform backends disabled:
+The repository ships a head-only Homebrew formula under
+`packaging/homebrew/librdp.rb`. It builds the portable library, examples, and
+all four Cocoa applications while leaving unrelated optional protocol
+backends disabled:
 
 ```sh
 brew install --HEAD packaging/homebrew/librdp.rb
@@ -62,10 +76,16 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-The X11 viewer should be built only when the package intentionally provides it:
+Native applications should be selected explicitly when the package provides
+them:
 
 ```sh
-cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
+cmake -S . -B build \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_ADMIN=ON \
+  -DLIBRDP_BUILD_SERVER=ON \
+  -DLIBRDP_BUILD_VIEWER=ON \
+  -DLIBRDP_BUILD_WORKSPACE=ON
 cmake --build build -j$(nproc)
 ```
 
@@ -102,10 +122,10 @@ Package metadata should reflect the build result, not the full optional list.
 | Unit and documentation guardrails | Python 3, Doxygen when API docs are checked | none for runtime | Keep in build or development pipelines. |
 | Generated API docs | Doxygen, Python 3 | static HTML only | Ship in a documentation package when generated. |
 | Fuzz targets | Clang/libFuzzer when available | sanitizer runtime for local developer builds | Do not ship in runtime packages. |
-| X11 viewer | X11, Xcursor, Xfixes, xkbcommon, pthreads | same libraries | Ship separately from the core library. |
-| X11 desktop server | X11, XDamage, XComposite, XTest, XFixes, XRandR, Xau, xkbcommon | same libraries and a local graphical session for shadow mode | Ship separately from the core library. |
+| X11 viewer | X11, Xcursor, Xfixes, xkbcommon, pthreads | same libraries | Ship in the native application package. |
+| X11 desktop server | X11, XDamage, XComposite, XTest, XFixes, XRandR, Xau, xkbcommon | same libraries and a local graphical session for shadow mode | Ship in the native application package. |
 | Managed X11 sessions | PAM or BSD Authentication, Xorg | host authentication stack, virtual X server, selected desktop | Install the broker and session helpers together. |
-| Cocoa desktop server | ScreenCaptureKit, CoreGraphics, Cocoa, ApplicationServices | macOS 12.3 or newer and an active graphical session | Ship separately from the core library. |
+| Cocoa applications | AppKit, CoreGraphics, AudioToolbox, AVFoundation, ScreenCaptureKit, ApplicationServices | macOS native frameworks and an active graphical session for viewer or server UI | Build all four applications in the Homebrew formula. |
 | PipeWire audio | PipeWire development package | PipeWire user session and runtime libs | Make an optional viewer dependency. |
 | Camera | V4L2 headers available through the platform | local video device permissions | Make an optional viewer capability. |
 | Smartcard | PC/SC development package | PC/SC service and reader access | Make an optional backend dependency. |
@@ -122,15 +142,19 @@ Recommended install layout:
 lib*/liblibrdp.so*
 include/librdp/*.h
 share/doc/librdp/*.md
-share/man/man1/librdp-x11-viewer.1
-share/man/man1/librdp-cocoa-server.1
-bin/librdp-x11-viewer
-bin/librdp-x11-server
-bin/librdp-cocoa-server
-bin/librdp-x11-session-broker
-bin/librdp-x11-session-supervisor
-bin/librdp-x11-session-agent
-share/librdp/librdp-x11-session-broker.conf.example
+share/man/man1/librdp-admin.1
+share/man/man1/librdp-server.1
+share/man/man1/librdp-viewer.1
+share/man/man1/librdp-workspace.1
+share/man/man8/librdp-session-broker.8
+bin/librdp-admin
+bin/librdp-server
+bin/librdp-viewer
+bin/librdp-workspace
+sbin/librdp-session-broker
+libexec/librdp/librdp-session-supervisor
+libexec/librdp/librdp-session-agent
+share/librdp/librdp-session-broker.conf.example
 ```
 
 Development packages should include headers and any build-system metadata needed by downstream applications. Runtime packages should not include internal headers under `src/`.
@@ -139,7 +163,9 @@ When install/export support is enabled by downstream packaging, generated CMake 
 
 ## Documentation
 
-Markdown documentation under `docs/` and the viewer man page should be packaged as documentation. Generated Doxygen output may be packaged separately when generated by the packaging system.
+Markdown documentation under `docs/` and the application man pages should be
+packaged as documentation. Generated Doxygen output may be packaged separately
+when generated by the packaging system.
 
 Do not package local build directories, fuzz corpora, sanitizer artifacts, or trace output.
 
@@ -151,6 +177,23 @@ Documentation packages should include:
 - generated Doxygen tagfile when a downstream package creates one.
 
 Documentation packages should not include private traces, local backend artifacts, device captures, or generated build trees.
+
+## Build SBOM
+
+Generate a CycloneDX 1.5 SBOM from a configured build tree:
+
+```sh
+python3 scripts/generate-sbom.py \
+  --source-dir . \
+  --build-dir build \
+  --output build/librdp.cdx.json
+python3 scripts/generate-sbom.py --validate build/librdp.cdx.json
+```
+
+The result records the four generic application build options, the application
+and managed-session artifacts actually produced, selected optional
+dependencies, and configured `bin`, `sbin`, and private `libexec` destinations.
+`SOURCE_DATE_EPOCH` provides a reproducible metadata timestamp.
 
 ## ABI care
 

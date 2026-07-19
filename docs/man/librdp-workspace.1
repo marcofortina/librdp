@@ -1,10 +1,10 @@
 .\" Copyright (C) 2026 Marco Fortina
 .\" SPDX-License-Identifier: AGPL-3.0-or-later
-.TH LIBRDP-X11-WORKSPACE 1 "2026-07-15" "librdp 0.1.0" "General Commands Manual"
+.TH LIBRDP-WORKSPACE 1 "2026-07-19" "librdp 0.1.0" "User Commands"
 .SH NAME
-librdp-x11-workspace \- fetch an RDS workspace feed and launch selected resources
+librdp-workspace \- fetch an RDS workspace feed and launch selected resources
 .SH SYNOPSIS
-.B librdp-x11-workspace
+.B librdp-workspace
 .B --feed
 .I url
 [
@@ -37,14 +37,16 @@ librdp-x11-workspace \- fetch an RDS workspace feed and launch selected resource
 .B --no-window
 ]
 .SH DESCRIPTION
-.B librdp-x11-workspace
+.B librdp-workspace
 loads a workspace feed through the public librdp workspace API, prints the published desktop and RemoteApp resources, and can start
-.BR librdp-x11-viewer (1)
+.BR librdp-viewer (1)
 for one selected entry.
 .P
 When an embedded RDP file contains a gateway host, the launcher passes it to the viewer as Microsoft RD Gateway HTTP transport.
 .P
-The X11 window is intentionally small: it displays the fetched resources, lets the user move the selection with the arrow keys, starts the viewer with Return, and closes with Escape, q, or the window manager close button.
+The native window displays the fetched resources and launches the selected
+entry. The X11 frontend supports keyboard selection and the Cocoa frontend uses
+an AppKit summary window.
 .SH OPTIONS
 .TP
 .BI --feed " url"
@@ -70,7 +72,7 @@ Select a feed resource by zero-based index, id, title, or alias. Headless launch
 .TP
 .BI --viewer " path"
 Viewer executable to launch. The default is
-.BR librdp-x11-viewer .
+.BR librdp-viewer .
 .TP
 .BI --security " auto|rdp|tls|nla"
 Security mode passed to the viewer. The default is
@@ -80,7 +82,7 @@ Security mode passed to the viewer. The default is
 Start the selected resource without opening the workspace window.
 .TP
 .B --no-window
-Fetch and print the feed without opening an X11 window.
+Fetch and print the feed without opening a native window.
 .TP
 .B -h, --help
 Print usage.
@@ -96,15 +98,15 @@ Command-line or workspace configuration error.
 Feed fetch or resource processing failed.
 .TP
 .B 4
-Viewer launch or X11 presentation failed.
+Viewer launch or native presentation failed.
 .SH EXAMPLES
 .nf
-librdp-x11-workspace --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx --user workspace-user --password-env RDS_PASSWORD
-librdp-x11-workspace --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx --select 0 --launch --viewer build/librdp-x11-viewer
+librdp-workspace --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx --user workspace-user --password-env RDS_PASSWORD
+librdp-workspace --feed https://rds.example.com/RDWeb/Feed/webfeed.aspx --select 0 --launch --viewer build/librdp-viewer
 .fi
 .SH SECURITY
 Workspace feeds are untrusted launch metadata. The tool only passes the selected target and RemoteApp identifier to the viewer, but deployments should still restrict trusted feed URLs and avoid logging passwords.
 .SH SEE ALSO
 .BR librdp-workspace (7),
-.BR librdp-x11-viewer (1),
+.BR librdp-viewer (1),
 .BR librdp (7)

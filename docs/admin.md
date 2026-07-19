@@ -10,19 +10,15 @@ inventory and bounded user actions. The API lives in `<librdp/admin.h>` and is
 kept separate from the viewer session API: administration transports, action
 authorization, and operator UI are explicit application concerns.
 
-The command-line frontends are:
-
-- `librdp-x11-admin`;
-- `librdp-cocoa-admin`.
-
-Both tools use the same public API. The X11 build presents a native X11 summary
-window; the Cocoa build presents a native AppKit summary window. `--no-window`
-keeps the tool suitable for terminals and automation.
+The `librdp-admin` application uses the same public API on every supported
+platform. X11 builds present an X11 summary window and macOS builds present an
+AppKit summary window. `--no-window` keeps the tool suitable for terminals and
+automation.
 
 ## Query Sessions
 
 ```sh
-librdp-x11-admin \
+librdp-admin \
   --endpoint https://rds.example.com:5986/wsman \
   --user operator \
   --password-env RDS_ADMIN_PASSWORD \
@@ -47,7 +43,7 @@ Message text is copied into the action object before execution. Passwords are
 read from the configured source and are not printed.
 
 ```sh
-librdp-x11-admin \
+librdp-admin \
   --endpoint https://rds.example.com:5986/wsman \
   --user operator \
   --password-env RDS_ADMIN_PASSWORD \
@@ -58,12 +54,13 @@ librdp-x11-admin \
   --no-window
 ```
 
-## Cocoa
+## Native Windows
 
-The Cocoa tool accepts the same endpoint, credential, and action options:
+The same endpoint, credential, and action options apply to both native
+frontends:
 
 ```sh
-librdp-cocoa-admin \
+librdp-admin \
   --endpoint https://rds.example.com:5986/wsman \
   --user operator \
   --password-env RDS_ADMIN_PASSWORD
@@ -76,5 +73,4 @@ credentials. Trace output reports endpoint and action metadata, but it must not
 log passwords, raw authorization headers, or user message contents.
 
 See also: [API reference](api-reference.md), [Programmer's reference](programmers-reference.md),
-[librdp-x11-admin(1)](man/librdp-x11-admin.1), and
-[librdp-cocoa-admin(1)](man/librdp-cocoa-admin.1).
+and [librdp-admin(1)](man/librdp-admin.1).

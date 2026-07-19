@@ -1,10 +1,10 @@
 .\" Copyright (C) 2026 Marco Fortina
 .\" SPDX-License-Identifier: AGPL-3.0-or-later
-.TH LIBRDP-X11-SERVER 1 "2026-07-18" "librdp 0.1.0" "User Commands"
+.TH LIBRDP-SERVER 1 "2026-07-19" "librdp 0.1.0" "User Commands"
 .SH NAME
-librdp-x11-server \- expose an X11 desktop through the librdp server runtime
+librdp-server \- expose a native desktop through the librdp server runtime
 .SH SYNOPSIS
-.B librdp-x11-server
+.B librdp-server
 .B --mode shadow
 .B --allow-capture
 .B --tls-cert
@@ -15,7 +15,7 @@ librdp-x11-server \- expose an X11 desktop through the librdp server runtime
 .I options
 ]
 .PP
-.B librdp-x11-server
+.B librdp-server
 .B --mode managed
 .B --managed-action
 .I action
@@ -23,19 +23,28 @@ librdp-x11-server \- expose an X11 desktop through the librdp server runtime
 .I options
 ]
 .SH DESCRIPTION
-.B librdp-x11-server
-runs either a shadow server for an existing X11 session or a command client
-for the managed-session broker. Capture, input, clipboard and client-drive
-providers require separate policy grants.
+.B librdp-server
+shares a native display or window through the public librdp server API.
+Capture, input, clipboard and client-drive providers require separate policy
+grants. X11 builds also provide managed-session broker operations; macOS builds
+provide shadow capture only.
 .SH SHADOW OPTIONS
 .TP
 .BI --display " name"
 Select the X display. The current
 .B DISPLAY
-value is used when omitted.
+value is used when omitted. X11 only.
 .TP
-.BI --source " root|monitor:index|window:id"
-Select the capture source.
+.BI --source " selector"
+Select the capture source. X11 accepts
+.BR root ,
+.B monitor:index
+or
+.BR window:id .
+macOS accepts
+.B display:index
+or
+.BR window:id .
 .TP
 .BI --bind " address"
 Set the listener address. The default is loopback.
@@ -90,10 +99,14 @@ Select the isolated client-drive mount point.
 .TP
 .B --drive-read-only
 Restrict client drives to read-only access.
+.TP
+.B --non-interactive
+Do not request macOS privacy permissions or show local consent dialogs. Native
+permissions must already be granted. macOS only.
 .SH MANAGED OPTIONS
 .TP
 .BI --managed-action " start|attach|query|resize|detach|terminate"
-Select the broker operation.
+Select the broker operation. X11 only.
 .TP
 .BI --broker " path"
 Set the absolute broker Unix-socket path.
@@ -126,7 +139,7 @@ The
 and
 .B --allow-drive
 options also describe a managed start request. Broker policy can only remove
-requested privileges.
+requested privileges. Managed options are available only in X11 builds.
 .SH COMMON OPTIONS
 .TP
 .BI --mode " shadow|managed"
@@ -151,6 +164,6 @@ operations are released before their providers are disabled.
 .B SIGINT, SIGTERM
 Stop the listener and release all peers and native providers.
 .SH SEE ALSO
-.BR librdp-x11-session-broker (8),
+.BR librdp-session-broker (8),
 .BR librdp-server (7),
 .BR librdp (7)

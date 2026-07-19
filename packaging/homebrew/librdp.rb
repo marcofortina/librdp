@@ -16,7 +16,10 @@ class Librdp < Formula
       -DLIBRDP_BUILD_TESTS=ON
       -DLIBRDP_BUILD_EXAMPLES=ON
       -DLIBRDP_BUILD_FUZZ=OFF
-      -DLIBRDP_BUILD_VIEWER=OFF
+      -DLIBRDP_BUILD_ADMIN=ON
+      -DLIBRDP_BUILD_SERVER=ON
+      -DLIBRDP_BUILD_VIEWER=ON
+      -DLIBRDP_BUILD_WORKSPACE=ON
       -DLIBRDP_WITH_FFMPEG_AVC=OFF
       -DLIBRDP_WITH_OPENH264_AVC=OFF
       -DLIBRDP_WITH_PCSC=OFF
@@ -49,5 +52,9 @@ class Librdp < Formula
     C
     system ENV.cc, "consumer.c", "-I#{include}", "-L#{lib}", "-llibrdp", "-o", "consumer"
     system "./consumer"
+    system bin/"librdp-admin", "--help"
+    system bin/"librdp-server", "--help"
+    system bin/"librdp-viewer", "--help"
+    system bin/"librdp-workspace", "--help"
   end
 end

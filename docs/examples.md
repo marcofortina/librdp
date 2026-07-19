@@ -33,7 +33,7 @@ objects.
 Share an existing X11 display:
 
 ```sh
-librdp-x11-server \
+librdp-server \
   --mode shadow \
   --display :0 \
   --source root \
@@ -46,7 +46,7 @@ librdp-x11-server \
 Share the first ScreenCaptureKit display on macOS:
 
 ```sh
-librdp-cocoa-server \
+librdp-server \
   --mode shadow \
   --source display:0 \
   --security tls \
@@ -56,8 +56,8 @@ librdp-cocoa-server \
 ```
 
 Input, clipboard, and client drives require separate `--allow-*` grants. See
-the [X11 server](server-x11.md) and [Cocoa server](server-cocoa.md) guides for
-platform permissions and drive behavior.
+the [desktop server application](server-application.md) guide for platform
+permissions and drive behavior.
 
 ## Minimal session
 

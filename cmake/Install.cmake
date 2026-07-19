@@ -125,18 +125,14 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
         PATTERN "requirements.txt" EXCLUDE
 )
 install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-admin.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-server.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-workspace.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-viewer.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-admin.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-server.1
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-workspace.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-admin.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-server.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-viewer.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-workspace.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
 install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-session-broker.8
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-session-broker.8
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man8
 )
 install(FILES

@@ -48,6 +48,18 @@ def main() -> int:
     parser.add_argument("--sbindir", required=True, type=Path)
     parser.add_argument("--libexecdir", required=True, type=Path)
     parser.add_argument("--datadir", required=True, type=Path)
+    parser.add_argument("--mandir", required=True, type=Path)
+    parser.add_argument(
+        "--application",
+        action="append",
+        choices=(
+            "librdp-admin",
+            "librdp-server",
+            "librdp-viewer",
+            "librdp-workspace",
+        ),
+        default=[],
+    )
     parser.add_argument("--config", default="", nargs="?")
     args = parser.parse_args()
 
@@ -59,7 +71,10 @@ def main() -> int:
         command.extend(["--config", args.config])
     subprocess.run(command, check=True, env=environment)
 
-    server = staged_path(args.destdir, args.bindir / "librdp-server")
+    applications = tuple(
+        staged_path(args.destdir, args.bindir / name)
+        for name in args.application
+    )
     broker = staged_path(
         args.destdir, args.sbindir / "librdp-session-broker"
     )
@@ -69,7 +84,7 @@ def main() -> int:
     supervisor = staged_path(
         args.destdir, args.libexecdir / "librdp-session-supervisor"
     )
-    for path in (server, broker, agent, supervisor):
+    for path in (*applications, broker, agent, supervisor):
         executable(path)
 
     forbidden = (
@@ -107,6 +122,17 @@ def main() -> int:
         raise RuntimeError(
             "installed broker configuration is missing: " + ", ".join(missing)
         )
+
+    for section, name in (
+        ("man1", "librdp-admin.1"),
+        ("man1", "librdp-server.1"),
+        ("man1", "librdp-viewer.1"),
+        ("man1", "librdp-workspace.1"),
+        ("man8", "librdp-session-broker.8"),
+    ):
+        manual = staged_path(args.destdir, args.mandir / section / name)
+        if not manual.is_file():
+            raise RuntimeError(f"installed manual page is missing: {manual}")
     return 0
 
 

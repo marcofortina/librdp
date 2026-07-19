@@ -3,11 +3,12 @@ Copyright (C) 2026 Marco Fortina
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# X11 Desktop Server
+# Desktop Server Application
 
-`librdp-x11-server` exposes an existing X11 desktop or a broker-managed virtual
-desktop through the public librdp server API. Platform integration remains in
-the application; the protocol library has no X11, authentication-service or
+`librdp-server` exposes a native desktop through the public server API. CMake
+selects an X11 implementation on the supported non-Apple systems and a Cocoa
+implementation on macOS. Platform integration remains in the application; the
+protocol library has no window-system, authentication-service, or
 display-manager dependency.
 
 Build the server with:
@@ -19,14 +20,14 @@ cmake -S . -B build \
 cmake --build build -j"$(nproc)"
 ```
 
-## Shadow sessions
+## Shadow Sessions
 
 Shadow mode captures a root window, monitor or selected window from the
 current graphical session. Capture, input, clipboard and client-drive access
 are separate providers and remain disabled until explicitly allowed.
 
 ```sh
-librdp-x11-server \
+librdp-server \
   --mode shadow \
   --display :0 \
   --source root \
@@ -42,18 +43,40 @@ local capabilities. Client drives are read-only unless a writable policy is
 selected by the application. The FUSE mount is optional and remains outside
 the protocol core.
 
-## Managed sessions
+### macOS Shadow Capture
+
+On macOS, `display:index` selects a ScreenCaptureKit display and `window:id`
+selects a CoreGraphics window. Capture requires Screen Recording permission;
+remote keyboard and pointer injection require Accessibility permission.
+
+```sh
+librdp-server \
+  --mode shadow \
+  --source display:0 \
+  --bind 127.0.0.1 \
+  --security tls \
+  --tls-cert /etc/librdp/server.crt \
+  --tls-key /etc/librdp/server.key \
+  --allow-capture
+```
+
+`--non-interactive` suppresses native permission requests and consent dialogs.
+Required permissions must already be granted. Client-announced drives are
+mounted read-only under the isolated `--drive-mount` path when FUSE 3 is
+available.
+
+## Managed X11 Sessions
 
 Managed mode separates privileged resource allocation from the desktop
 workload:
 
-- `librdp-x11-session-broker` owns policy, display allocation and the local
+- `librdp-session-broker` owns policy, display allocation and the local
   control socket;
-- `librdp-x11-session-supervisor` performs host authentication and supervises
+- `librdp-session-supervisor` performs host authentication and supervises
   one process group;
-- `librdp-x11-session-agent` runs with the authenticated account and hosts the
+- `librdp-session-agent` runs with the authenticated account and hosts the
   X11 capture, input, clipboard and drive providers;
-- `librdp-x11-server --mode managed` is the unprivileged control client used to
+- `librdp-server --mode managed` is the unprivileged control client used to
   start, attach, query, resize, detach or terminate a session.
 
 The broker never places credentials in configuration, command arguments,
@@ -65,12 +88,12 @@ password and reconnect token from named environment variables.
 The broker accepts an absolute configuration path as its first option:
 
 ```sh
-librdp-x11-session-broker \
-  --config /etc/librdp/x11-session-broker.conf \
+librdp-session-broker \
+  --config /etc/librdp/session-broker.conf \
   --check-config
 
-librdp-x11-session-broker \
-  --config /etc/librdp/x11-session-broker.conf
+librdp-session-broker \
+  --config /etc/librdp/session-broker.conf
 ```
 
 The file uses one `key=value` pair per line. Blank lines and lines beginning
@@ -81,7 +104,7 @@ Unknown keys, embedded NUL bytes, oversized files and relative executable or
 filesystem paths are rejected.
 
 An example is installed as
-`share/librdp/librdp-x11-session-broker.conf.example`.
+`share/librdp/librdp-session-broker.conf.example`.
 
 | Key | Meaning |
 | --- | --- |
@@ -130,10 +153,10 @@ Start a session with credentials supplied outside the command line:
 
 ```sh
 export LIBRDP_SERVER_PASSWORD='account password'
-librdp-x11-server \
+librdp-server \
   --mode managed \
   --managed-action start \
-  --broker /run/librdp/x11-broker.sock \
+  --broker /run/librdp/session-broker.sock \
   --user account \
   --password-env LIBRDP_SERVER_PASSWORD \
   --width 1280 \
@@ -154,7 +177,7 @@ The broker writes stable key/value records to standard error:
 
 ```text
 librdp x11-session-broker event=config.valid security=nla
-librdp x11-session-broker event=broker.start socket="/run/librdp/x11-broker.sock" security=nla
+librdp x11-session-broker event=broker.start socket="/run/librdp/session-broker.sock" security=nla
 librdp x11-session-broker event=broker.stop status=ok
 ```
 
@@ -164,6 +187,6 @@ See [Diagnostics](diagnostics.md) and [Tracing](tracing.md).
 
 ## Manual pages
 
-- [librdp-x11-server(1)](man/librdp-x11-server.1)
-- [librdp-x11-session-broker(8)](man/librdp-x11-session-broker.8)
+- [librdp-server(1)](man/librdp-server.1)
+- [librdp-session-broker(8)](man/librdp-session-broker.8)
 - [librdp-server(7)](man/librdp-server.7)

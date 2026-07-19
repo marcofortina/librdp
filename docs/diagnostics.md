@@ -48,8 +48,8 @@ Use `LIBRDP_TRACE_LEVEL=debug` for control-flow detail and `LIBRDP_TRACE_LEVEL=t
 Validate the administrative policy before starting the service:
 
 ```sh
-librdp-x11-session-broker \
-  --config /etc/librdp/x11-session-broker.conf \
+librdp-session-broker \
+  --config /etc/librdp/session-broker.conf \
   --check-config
 ```
 

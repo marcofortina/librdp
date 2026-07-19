@@ -3,6 +3,41 @@
 
 if(LIBRDP_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND
+       TARGET librdp-session-broker AND
+       TARGET librdp-session-agent AND
+       TARGET librdp-session-supervisor)
+        set(LIBRDP_APP_INSTALL_LAYOUT_ARGUMENTS)
+        foreach(application IN ITEMS
+                librdp-admin
+                librdp-server
+                librdp-viewer
+                librdp-workspace)
+            if(TARGET ${application})
+                list(APPEND
+                    LIBRDP_APP_INSTALL_LAYOUT_ARGUMENTS
+                    --application ${application})
+            endif()
+        endforeach()
+        add_test(NAME app_install_layout
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_app_install_layout.py
+                --cmake ${CMAKE_COMMAND}
+                --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+                --destdir ${CMAKE_CURRENT_BINARY_DIR}/app-install-layout
+                --bindir ${CMAKE_INSTALL_FULL_BINDIR}
+                --sbindir ${CMAKE_INSTALL_FULL_SBINDIR}
+                --libexecdir ${LIBRDP_X11_SESSION_LIBEXEC_DIR}
+                --datadir ${CMAKE_INSTALL_FULL_DATADIR}/librdp
+                --mandir ${CMAKE_INSTALL_FULL_MANDIR}
+                ${LIBRDP_APP_INSTALL_LAYOUT_ARGUMENTS}
+                --config $<CONFIG>
+        )
+        set_tests_properties(app_install_layout PROPERTIES
+            RUN_SERIAL TRUE
+            TIMEOUT 60
+        )
+    endif()
     set(LIBRDP_NESTED_CONFIGURE_ARGS)
     if(DEFINED OpenSSL_DIR AND NOT "${OpenSSL_DIR}" STREQUAL "")
         list(APPEND LIBRDP_NESTED_CONFIGURE_ARGS

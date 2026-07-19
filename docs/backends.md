@@ -38,9 +38,9 @@ Audio output and audio input are configured through `LIBRDP_FEATURE_AUDIO_OUTPUT
 The X11 viewer uses PipeWire when it is available at build time:
 
 ```sh
-build/librdp-x11-viewer --target host --audio-output
-build/librdp-x11-viewer --target host --audio-input
-build/librdp-x11-viewer --target host --audio-output device=pipewire --audio-input device=pipewire
+build/librdp-viewer --target host --audio-output
+build/librdp-viewer --target host --audio-input
+build/librdp-viewer --target host --audio-output device=pipewire --audio-input device=pipewire
 ```
 
 PipeWire streams are owned by the viewer backend. The core receives or emits protocol audio events and never owns PipeWire handles.
@@ -50,13 +50,13 @@ PipeWire streams are owned by the viewer backend. The core receives or emits pro
 Camera capture uses a viewer-owned V4L2 source selected by path:
 
 ```sh
-build/librdp-x11-viewer --target host --camera device=/dev/video0
+build/librdp-viewer --target host --camera device=/dev/video0
 ```
 
 Video output can be directed to a file sink:
 
 ```sh
-build/librdp-x11-viewer --target host --video file=/tmp/librdp-video.bin
+build/librdp-viewer --target host --video file=/tmp/librdp-video.bin
 ```
 
 Applications should treat camera frames and video payloads as sensitive user data. Trace events should describe frame metadata and backend state, not dump full frame contents.
@@ -66,8 +66,8 @@ Applications should treat camera frames and video payloads as sensitive user dat
 Smartcard redirection can use PC/SC or a controlled virtual source:
 
 ```sh
-build/librdp-x11-viewer --target host --smartcard pcsc
-build/librdp-x11-viewer --target host --smartcard vsmartcard=/path/to/socket
+build/librdp-viewer --target host --smartcard pcsc
+build/librdp-viewer --target host --smartcard vsmartcard=/path/to/socket
 ```
 
 PC/SC context and card handles belong to the viewer backend. APDU payload handling belongs to the smartcard channel path and must preserve request ordering.
@@ -77,8 +77,8 @@ PC/SC context and card handles belong to the viewer backend. APDU payload handli
 USB devices are selected with either vendor/product or bus/device notation:
 
 ```sh
-build/librdp-x11-viewer --target host --usb 1234:5678
-build/librdp-x11-viewer --target host --usb 001:004
+build/librdp-viewer --target host --usb 1234:5678
+build/librdp-viewer --target host --usb 001:004
 ```
 
 PNP device descriptors are configured through public settings and advertised through the device redirection path. The viewer `--pnp` flag enables the feature path, but it does not scan or auto-announce local host devices.
@@ -88,20 +88,20 @@ PNP device descriptors are configured through public settings and advertised thr
 Drive redirection maps a local directory to a remote drive name:
 
 ```sh
-build/librdp-x11-viewer --target host --drive work=/home/user/work
+build/librdp-viewer --target host --drive work=/home/user/work
 ```
 
 Serial and parallel ports map a remote name to a local path:
 
 ```sh
-build/librdp-x11-viewer --target host --serial COM1=/dev/ttyUSB0
-build/librdp-x11-viewer --target host --parallel LPT1=/tmp/lpt-output
+build/librdp-viewer --target host --serial COM1=/dev/ttyUSB0
+build/librdp-viewer --target host --parallel LPT1=/tmp/lpt-output
 ```
 
 Printer configuration uses `name=driver=path`:
 
 ```sh
-build/librdp-x11-viewer --target host --printer printer=Generic=/tmp/print-output
+build/librdp-viewer --target host --printer printer=Generic=/tmp/print-output
 ```
 
 The filesystem path is viewer-owned. The library packet path enforces protocol sizes, file identifiers, and request ordering.
@@ -111,10 +111,10 @@ The filesystem path is viewer-owned. The library packet path enforces protocol s
 WebAuthn redirection can use libfido2 or a controlled mock provider:
 
 ```sh
-build/librdp-x11-viewer --target host --webauthn fido2 --webauthn-rp-id login.example.com
-build/librdp-x11-viewer --target host --webauthn fido2=/dev/hidraw0 --webauthn-rp-id login.example.com
-build/librdp-x11-viewer --target host --webauthn mock --webauthn-rp-id login.example.com
-build/librdp-x11-viewer --target host --webauthn mock=/path/to/provider --webauthn-rp-id login.example.com
+build/librdp-viewer --target host --webauthn fido2 --webauthn-rp-id login.example.com
+build/librdp-viewer --target host --webauthn fido2=/dev/hidraw0 --webauthn-rp-id login.example.com
+build/librdp-viewer --target host --webauthn mock --webauthn-rp-id login.example.com
+build/librdp-viewer --target host --webauthn mock=/path/to/provider --webauthn-rp-id login.example.com
 ```
 
 Authenticator handles and user-presence policy belong to the backend. At least one RP ID allowlist entry is required. Protocol code must not trace assertion secrets.
@@ -124,11 +124,11 @@ Authenticator handles and user-presence policy belong to the backend. At least o
 The viewer exposes feature flags for channel paths that do not require a complex local device:
 
 ```sh
-build/librdp-x11-viewer --target host --rail app=/path/to/app
-build/librdp-x11-viewer --target host --cr2
-build/librdp-x11-viewer --target host --echo
-build/librdp-x11-viewer --target host --telemetry
-build/librdp-x11-viewer --target host --multitransport
+build/librdp-viewer --target host --rail app=/path/to/app
+build/librdp-viewer --target host --cr2
+build/librdp-viewer --target host --echo
+build/librdp-viewer --target host --telemetry
+build/librdp-viewer --target host --multitransport
 ```
 
 `--telemetry` enables telemetry channel probing only when the application

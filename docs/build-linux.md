@@ -46,7 +46,7 @@ cmake -S . -B build-linux-x11 -G Ninja \
 cmake --build build-linux-x11 --parallel
 ```
 
-The viewer executable is `build-linux-x11/librdp-x11-viewer`.
+The viewer executable is `build-linux-x11/librdp-viewer`.
 
 ## X11 Desktop Server
 

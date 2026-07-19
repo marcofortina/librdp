@@ -4,7 +4,7 @@
 set(CPACK_PACKAGE_NAME "librdp")
 set(CPACK_PACKAGE_VENDOR "Marco Fortina")
 set(CPACK_PACKAGE_CONTACT "Marco Fortina <marco_fortina@hotmail.it>")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RDP client library and optional X11 viewer")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RDP library and native applications")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/marcofortina/librdp")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")

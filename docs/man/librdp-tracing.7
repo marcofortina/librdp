@@ -45,11 +45,11 @@ Use protocol trace for handshake, parser, PDU, capability, channel, fast-path, s
 Enable bounded protocol hexdumps only when packet bytes are required for parser or interoperability analysis.
 .SH EXAMPLES
 .nf
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-viewer --target host --security nla
 
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_TRANSPORT=1 LIBRDP_TRACE_PROTOCOL=1 LIBRDP_TRACE_LEVEL=trace LIBRDP_TRACE_HEX_BYTES=96 librdp-viewer --target host --security nla
 .fi
 .SH SEE ALSO
 .BR librdp (7),
 .BR librdp-api (7),
-.BR librdp-x11-viewer (1)
+.BR librdp-viewer (1)

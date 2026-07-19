@@ -1,18 +1,21 @@
 .\" Copyright (C) 2026 Marco Fortina
 .\" SPDX-License-Identifier: AGPL-3.0-or-later
-.TH LIBRDP-X11-VIEWER 1 "2026-07-12" "librdp 0.1.0" "User Commands"
+.TH LIBRDP-VIEWER 1 "2026-07-19" "librdp 0.1.0" "User Commands"
 .SH NAME
-librdp-x11-viewer \- minimal X11 RDP client viewer for librdp
+librdp-viewer \- native RDP client viewer
 .SH SYNOPSIS
-.B librdp-x11-viewer
+.B librdp-viewer
 .B --target
 .I host
 [
 .I options
 ]
 .SH DESCRIPTION
-.B librdp-x11-viewer
-is a minimal X11 frontend for exercising the public librdp client APIs. It opens an X11 window, connects to an RDP target, presents framebuffer updates, forwards keyboard and pointer input, and exposes optional device and media feature paths.
+.B librdp-viewer
+connects to an RDP target, presents framebuffer updates, forwards keyboard and
+pointer input, and exposes optional device and media feature paths through the
+public librdp client API. CMake builds the Cocoa frontend on macOS and the X11
+frontend on the supported non-Apple systems.
 .SH OPTIONS
 .TP
 .BI --target " host"
@@ -85,22 +88,32 @@ Redirect a local parallel endpoint.
 Configure printer redirection with output path.
 .TP
 .BI --clipboard-file " path"
-Expose a local file through clipboard file-transfer behavior.
+Expose a local file through clipboard file-transfer behavior. This option is
+available in the X11 frontend.
 .TP
 .BI --audio-output " [device=name]"
-Enable audio output. The viewer uses PipeWire when available.
+Enable audio output. The X11 frontend uses PipeWire when available; the macOS
+frontend uses Core Audio.
 .TP
 .BI --audio-input " [device=name]"
-Enable audio input. The viewer uses PipeWire when available.
+Enable audio input. The X11 frontend uses PipeWire when available; the macOS
+frontend uses Core Audio.
 .TP
 .BI --video " file=path"
 Enable video output handling and write payloads to a file sink.
 .TP
-.BI --camera " device=/dev/videoN"
-Enable camera capture from a V4L2 device.
+.BI --camera " source"
+Enable camera capture. X11 accepts
+.BR device=/dev/videoN .
+macOS accepts
+.BR device=default ,
+.B device=id
+or
+.BR file=path .
 .TP
-.BI --smartcard " [pcsc|vsmartcard=path]"
-Enable smartcard redirection through PC/SC or a controlled virtual source.
+.BI --smartcard " selector"
+Enable smartcard redirection through PC/SC or a controlled source supported by
+the selected native frontend.
 .TP
 .BI --usb " vid:pid|bus:dev"
 Enable USB redirection for the selected local device.
@@ -109,8 +122,9 @@ Enable USB redirection for the selected local device.
 Enable plug-and-play device redirection behavior without auto-announcing local
 host devices.
 .TP
-.BI --webauthn " [fido2|fido2=/dev/hidrawN|mock|mock=path]"
-Enable WebAuthn redirection through libfido2, a hidraw device, or a controlled mock provider.
+.BI --webauthn " selector"
+Enable WebAuthn redirection through libfido2 or a controlled provider supported
+by the selected native frontend.
 .TP
 .BI --webauthn-rp-id " id"
 Add a WebAuthn relying-party identifier allowlist entry. At least one RP ID is required when WebAuthn is enabled.
@@ -129,6 +143,15 @@ Enable telemetry channel probing when a privacy-safe runtime path is available.
 .TP
 .B --multitransport
 Enable multitransport probing when a runtime transport provider is available.
+.SH NATIVE FRONTENDS
+On X11, keyboard translation uses XKB, framebuffer presentation uses XImage or
+MIT-SHM, monitor layout uses XRandR when available, and optional local media
+uses PipeWire and V4L2. The viewer supports Xwayland keyboard-grab policy.
+.PP
+On macOS, AppKit and CoreGraphics provide windowing, input, cursor,
+framebuffer, and pasteboard integration. Core Audio provides media streams and
+AVFoundation provides live camera capture. Native permission prompts are shown
+only for operations that require them.
 .SH ENVIRONMENT
 .TP
 .B LIBRDP_TRACE_CLIENT
@@ -147,11 +170,11 @@ Set trace verbosity: error, warn, info, debug, trace, or the numeric values 0 th
 Set the maximum number of bytes emitted by bounded protocol hexdumps.
 .SH EXAMPLES
 .nf
-librdp-x11-viewer --target host --user user --password password --security nla --width 1024 --height 768
+librdp-viewer --target host --user user --password password --security nla --width 1024 --height 768
 
-librdp-x11-viewer --target host --security nla --gateway https://gateway.example.com/
+librdp-viewer --target host --security nla --gateway https://gateway.example.com/
 
-LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-x11-viewer --target host --security nla
+LIBRDP_TRACE_CLIENT=1 LIBRDP_TRACE_PROTOCOL=1 librdp-viewer --target host --security nla
 .fi
 .SH SEE ALSO
 .BR librdp (7),
