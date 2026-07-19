@@ -5,7 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Build Linux
 
-Linux is the primary development environment and the only CI platform that builds the X11 viewer by default in local developer workflows.
+Linux is the primary development environment. The full GCC and Clang CI
+profiles build all four X11 applications and every required backend.
 
 ## Dependencies
 
@@ -31,7 +32,10 @@ cmake -S . -B build-linux -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=ON \
-  -DLIBRDP_BUILD_VIEWER=OFF
+  -DLIBRDP_BUILD_VIEWER=OFF \
+  -DLIBRDP_BUILD_SERVER=OFF \
+  -DLIBRDP_BUILD_ADMIN=OFF \
+  -DLIBRDP_BUILD_WORKSPACE=OFF
 cmake --build build-linux --parallel
 ctest --test-dir build-linux --output-on-failure
 ```

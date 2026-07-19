@@ -14,6 +14,49 @@ permissions:
   contents: read
 
 jobs:
+  netbsd-x11-apps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test X11 applications in NetBSD
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            export PKG_PATH="https://ftp.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
+            pkg_add \
+              cmake ninja-build pkgconf openssl libiconv python312 \
+              doxygen graphviz libXcursor libxkbcommon
+            if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+              ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
+            fi
+            test -f /usr/X11R7/include/X11/Xlib.h
+          run: |
+            export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig:/usr/X11R7/lib/pkgconfig"
+            cmake -S . -B build-netbsd-x11-apps -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DOPENSSL_ROOT_DIR=/usr/pkg \
+              -DCMAKE_PREFIX_PATH="/usr/pkg;/usr/X11R7" \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=ON \
+              -DLIBRDP_BUILD_VIEWER=ON \
+              -DLIBRDP_BUILD_SERVER=ON \
+              -DLIBRDP_BUILD_ADMIN=ON \
+              -DLIBRDP_BUILD_WORKSPACE=ON \
+              -DLIBRDP_ENABLE_WERROR=ON \
+              -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_PNG=OFF \
+              -DLIBRDP_WITH_JPEG=OFF \
+              -DLIBRDP_WITH_XSHM=ON \
+              -DLIBRDP_WITH_XRANDR=ON \
+              -DLIBRDP_WITH_PAM=ON \
+              -DLIBRDP_WITH_BSDAUTH=OFF
+            cmake --build build-netbsd-x11-apps --parallel
+            ctest --test-dir build-netbsd-x11-apps --output-on-failure
+
   netbsd-core-no-viewer:
     runs-on: ubuntu-latest
 
@@ -42,6 +85,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_SERVER=OFF \
               -DLIBRDP_BUILD_ADMIN=OFF \
               -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
@@ -78,6 +122,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_SERVER=OFF \
               -DLIBRDP_BUILD_ADMIN=OFF \
               -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \

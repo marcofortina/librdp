@@ -14,6 +14,76 @@ permissions:
   contents: read
 
 jobs:
+  openbsd-x11-apps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build and test X11 applications in OpenBSD
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg_add cmake ninja libiconv libxkbcommon
+            pkgconf_package="$(pkg_info -Q pkgconf | LC_ALL=C sort | tail -n 1 || true)"
+            if [ -z "${pkgconf_package}" ]; then
+              pkgconf_package="$(pkg_info -Q pkg-config | LC_ALL=C sort | tail -n 1 || true)"
+            fi
+            test -n "${pkgconf_package}"
+            pkg_add "${pkgconf_package}"
+            openssl_package="$(pkg_info -Q openssl | grep '^openssl-3\.' | LC_ALL=C sort | tail -n 1)"
+            python_package="$(pkg_info -Q python | grep '^python-3\.' | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_package}"
+            test -n "${python_package}"
+            pkg_add "${openssl_package}" "${python_package}"
+            if ! command -v python3 >/dev/null 2>&1; then
+              for candidate in /usr/local/bin/python3.*; do
+                if [ -x "${candidate}" ]; then
+                  ln -sf "${candidate}" /usr/local/bin/python3
+                  break
+                fi
+              done
+            fi
+            test -f /usr/X11R6/include/X11/Xlib.h
+          run: |
+            openssl_config="$(find /usr/local/lib -path '*/cmake/OpenSSL/OpenSSLConfig.cmake' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_config}"
+            openssl_cmake_dir="${openssl_config%/OpenSSLConfig.cmake}"
+            test -f "${openssl_cmake_dir}/OpenSSLConfigVersion.cmake"
+            openssl_header="$(find /usr/local -path '*/include/eopenssl*/openssl/types.h' -print | LC_ALL=C sort | tail -n 1)"
+            test -n "${openssl_header}"
+            export OPENSSL_INCLUDE_DIR="${openssl_header%/openssl/types.h}"
+            export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig"
+            cmake -S . -B build-openbsd-x11-apps -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
+              -DOpenSSL_DIR="${openssl_cmake_dir}" \
+              -DOPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DLIBRDP_OPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR}" \
+              -DCMAKE_PREFIX_PATH="/usr/local;/usr/X11R6" \
+              -DLIBRDP_BUILD_TESTS=ON \
+              -DLIBRDP_BUILD_EXAMPLES=ON \
+              -DLIBRDP_BUILD_VIEWER=ON \
+              -DLIBRDP_BUILD_SERVER=ON \
+              -DLIBRDP_BUILD_ADMIN=ON \
+              -DLIBRDP_BUILD_WORKSPACE=ON \
+              -DLIBRDP_ENABLE_WERROR=ON \
+              -DLIBRDP_WITH_FIDO2=OFF \
+              -DLIBRDP_WITH_CBOR=OFF \
+              -DLIBRDP_WITH_CUPS=OFF \
+              -DLIBRDP_WITH_CURL=OFF \
+              -DLIBRDP_WITH_PIPEWIRE=OFF \
+              -DLIBRDP_WITH_PNG=OFF \
+              -DLIBRDP_WITH_JPEG=OFF \
+              -DLIBRDP_WITH_XSHM=ON \
+              -DLIBRDP_WITH_XRANDR=ON \
+              -DLIBRDP_WITH_PAM=OFF \
+              -DLIBRDP_WITH_BSDAUTH=ON
+            cmake --build build-openbsd-x11-apps --parallel
+            ctest --test-dir build-openbsd-x11-apps --output-on-failure
+
   openbsd-core-no-viewer:
     runs-on: ubuntu-latest
 
@@ -71,6 +141,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_SERVER=OFF \
               -DLIBRDP_BUILD_ADMIN=OFF \
               -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
@@ -137,6 +208,7 @@ jobs:
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
               -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_SERVER=OFF \
               -DLIBRDP_BUILD_ADMIN=OFF \
               -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \

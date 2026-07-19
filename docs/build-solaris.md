@@ -5,7 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Build Solaris
 
-Solaris is a portability guard for the platform-neutral core. The CI profile builds with optional backends disabled and does not build a viewer.
+Solaris CI validates the platform-neutral core and the X11 administration and
+workspace applications. The viewer and server require `xkbcommon`, which is
+not supplied by the OpenCSW profile used here.
 
 ## Dependencies
 
@@ -28,7 +30,10 @@ cmake -S . -B build-solaris \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=OFF \
   -DLIBRDP_BUILD_VIEWER=OFF \
-  -DLIBRDP_ENABLE_WERROR=OFF \
+  -DLIBRDP_BUILD_SERVER=OFF \
+  -DLIBRDP_BUILD_ADMIN=OFF \
+  -DLIBRDP_BUILD_WORKSPACE=OFF \
+  -DLIBRDP_ENABLE_WERROR=ON \
   -DLIBRDP_WITH_FFMPEG_AVC=OFF \
   -DLIBRDP_WITH_OPENH264_AVC=OFF \
   -DLIBRDP_WITH_PCSC=OFF \
@@ -46,4 +51,23 @@ cmake -S . -B build-solaris \
   -DLIBRDP_WITH_XRANDR=OFF
 cmake --build build-solaris --parallel
 ctest --test-dir build-solaris -R '^(common|core|protocol|transport)$' --output-on-failure
+```
+
+## Available X11 Applications
+
+```sh
+cmake -S . -B build-solaris-apps \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_PREFIX_PATH=/opt/csw \
+  -DOPENSSL_ROOT_DIR=/opt/csw \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_EXAMPLES=OFF \
+  -DLIBRDP_BUILD_VIEWER=OFF \
+  -DLIBRDP_BUILD_SERVER=OFF \
+  -DLIBRDP_BUILD_ADMIN=ON \
+  -DLIBRDP_BUILD_WORKSPACE=ON
+cmake --build build-solaris-apps --parallel
+ctest --test-dir build-solaris-apps \
+  -R '^(common|core|protocol|transport|admin_cli|workspace_cli)$' \
+  --output-on-failure
 ```
