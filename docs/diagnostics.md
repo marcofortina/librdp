@@ -82,7 +82,7 @@ reload policy in place.
 | `client.gfx.*`, `client.gdi.*`, `client.active.framebuffer.*` | graphics decode and presentation | `src/graphics/*`, `src/channels/graphics_pipeline.c` |
 | `client.drdynvc.*`, `client.channel.*` | dynamic virtual channels | `src/channels/dynamic_channel.c`, `src/channels/virtual_channel.c` |
 | `client.rdpdr.*`, `client.rdpefs.*`, `client.printer.*` | device redirection | `src/channels/device_redirection.c`, device-specific channel files |
-| `x11.keyboard.*`, `x11.pointer.*` | X11 viewer input and cursor handling | `apps/x11/viewer/main.c` |
+| `x11.keyboard.*`, `x11.pointer.*` | X11 viewer input and cursor handling | `apps/viewer/x11_main.c` |
 
 ## Rendering issues
 

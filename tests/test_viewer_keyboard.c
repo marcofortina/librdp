@@ -12,7 +12,7 @@
  * pressed-key tables only.
  */
 
-#include "viewer_keyboard.h"
+#include "x11_keyboard.h"
 
 #include <X11/X.h>
 

@@ -15,9 +15,9 @@
  * without trusting resource IDs or request codes beyond diagnostics.
  */
 
-#include "viewer_window.h"
+#include "x11_window.h"
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 static volatile int g_x11_window_invalid;
 static volatile int g_x11_trap_error;

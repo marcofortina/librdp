@@ -15,7 +15,7 @@
 #ifndef LIBRDP_X11_VIEWER_RENDER_H
 #define LIBRDP_X11_VIEWER_RENDER_H
 
-#include "viewer_app.h"
+#include "x11_app.h"
 
 #include <stddef.h>
 #include <stdint.h>

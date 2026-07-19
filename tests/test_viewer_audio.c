@@ -11,7 +11,7 @@
  * Determinism: tests use fixed byte arrays and do not open host audio devices.
  */
 
-#include "audio_pipewire.h"
+#include "x11_audio_pipewire.h"
 
 #include <stdint.h>
 #include <stdio.h>

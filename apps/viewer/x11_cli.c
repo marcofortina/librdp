@@ -13,8 +13,8 @@
  * input and must not be traced as secrets.
  */
 
-#include "viewer_cli.h"
-#include "viewer_trace.h"
+#include "x11_cli.h"
+#include "x11_trace.h"
 
 #include <stdio.h>
 #include <string.h>

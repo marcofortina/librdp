@@ -12,7 +12,7 @@
  * devices, environment state, or remote endpoints.
  */
 
-#include "viewer_cli.h"
+#include "x11_cli.h"
 
 #include <librdp/librdp.h>
 

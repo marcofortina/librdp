@@ -18,7 +18,7 @@ CHECKED_ROOTS = (
     Path("apps/common"),
     Path("apps/cocoa"),
     Path("apps/x11/admin"),
-    Path("apps/x11/viewer"),
+    Path("apps/viewer"),
     Path("apps/x11/workspace"),
     Path("examples"),
 )

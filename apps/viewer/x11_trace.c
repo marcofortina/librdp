@@ -11,7 +11,7 @@
  * Trust boundary: this module formats already-redacted viewer diagnostics.
  */
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 #include <ctype.h>
 #include <stdarg.h>

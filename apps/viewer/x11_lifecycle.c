@@ -18,21 +18,21 @@
 
 #include <librdp/librdp.h>
 
-#include "audio_pipewire.h"
-#include "camera_v4l2.h"
+#include "x11_audio_pipewire.h"
+#include "x11_camera_v4l2.h"
 #include "client_callbacks.h"
 #include "client_runtime.h"
-#include "device_backends.h"
-#include "viewer_app.h"
-#include "viewer_clipboard.h"
-#include "viewer_cli.h"
-#include "viewer_display.h"
-#include "viewer_input.h"
-#include "viewer_keyboard.h"
-#include "viewer_lifecycle.h"
-#include "viewer_render.h"
-#include "viewer_trace.h"
-#include "viewer_window.h"
+#include "x11_device_backends.h"
+#include "x11_app.h"
+#include "x11_clipboard.h"
+#include "x11_cli.h"
+#include "x11_display.h"
+#include "x11_input.h"
+#include "x11_keyboard.h"
+#include "x11_lifecycle.h"
+#include "x11_render.h"
+#include "x11_trace.h"
+#include "x11_window.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>

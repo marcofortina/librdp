@@ -202,6 +202,12 @@ int x11_keymap_rdp_to_xkb_name(uint32_t scancode,
     return 0;
 }
 
+/*
+ * Translate an evdev key number reported by libxkbcommon into the RDP Set 1
+ * scancode and extension flags. The output pair is committed only for entries
+ * covered by the fixed protocol mapping; unknown host keys return false so the
+ * caller can use its Unicode fallback without emitting a partial key event.
+ */
 int x11_keymap_evdev_to_rdp(unsigned int evdev,
                             uint32_t* scancode,
                             uint32_t* flags)

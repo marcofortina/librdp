@@ -13,12 +13,12 @@ endif()
 if(LIBRDP_APP_COMMON_REQUIRED)
     add_library(librdp_app_common STATIC
         apps/common/admin_options.c
-        apps/common/client_callbacks.c
-        apps/common/client_credentials.c
-        apps/common/client_options.c
-        apps/common/client_providers.c
-        apps/common/client_runtime.c
-        apps/common/client_tls.c
+        apps/viewer/client_callbacks.c
+        apps/viewer/client_credentials.c
+        apps/viewer/client_options.c
+        apps/viewer/client_providers.c
+        apps/viewer/client_runtime.c
+        apps/viewer/client_tls.c
         apps/common/server_clipboard.c
         apps/common/server_clipboard_files.c
         apps/common/server_dirty.c

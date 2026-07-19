@@ -15,10 +15,10 @@
  * becoming remote input.
  */
 
-#include "viewer_keyboard.h"
+#include "x11_keyboard.h"
 
-#include "viewer_trace.h"
-#include "viewer_window.h"
+#include "x11_trace.h"
+#include "x11_window.h"
 #include "x11_keymap.h"
 
 #include <X11/Xatom.h>

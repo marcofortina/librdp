@@ -30,7 +30,7 @@ Not allowed in the core:
 
 Platform-specific behavior belongs in one of these areas:
 
-- `apps/x11/viewer` for the current X11 frontend and its host backends;
+- `apps/viewer` for the current X11 frontend and its host backends;
 - `src/platform` for small reusable OS abstractions needed by the core;
 - platform backend directories that do not leak native handles into public core headers.
 

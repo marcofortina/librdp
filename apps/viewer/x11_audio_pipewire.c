@@ -16,9 +16,9 @@
  */
 
 
-#include "audio_pipewire.h"
+#include "x11_audio_pipewire.h"
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 #include <stdint.h>
 #include <stdlib.h>

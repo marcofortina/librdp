@@ -13,7 +13,7 @@
  * parser.
  */
 
-#include "viewer_lifecycle.h"
+#include "x11_lifecycle.h"
 
 int main(int argc, char** argv)
 {

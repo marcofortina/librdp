@@ -17,7 +17,7 @@
 #ifndef LIBRDP_X11_VIEWER_KEYBOARD_H
 #define LIBRDP_X11_VIEWER_KEYBOARD_H
 
-#include "viewer_app.h"
+#include "x11_app.h"
 
 #include <stddef.h>
 #include <stdint.h>

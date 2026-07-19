@@ -27,7 +27,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
     endif()
 
     set(LIBRDP_X11_SERVER_PLATFORM_SOURCES
-        apps/x11/x11_keymap.c
+        apps/common/x11_keymap.c
         apps/x11/server/server_capture.c
         apps/x11/server/server_clipboard.c
         apps/x11/server/server_input.c
@@ -410,7 +410,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
         if(LIBRDP_XVFB_EXECUTABLE)
             add_executable(test_x11_server
                 tests/test_x11_server.c
-                apps/x11/x11_keymap.c
+                apps/common/x11_keymap.c
                 apps/x11/server/server_capture.c
                 apps/x11/server/server_cli.c
                 apps/x11/server/server_clipboard.c

@@ -14,10 +14,10 @@
  * normalized public surface APIs and are not trusted to match window geometry.
  */
 
-#include "viewer_render.h"
+#include "x11_render.h"
 
-#include "viewer_trace.h"
-#include "viewer_window.h"
+#include "x11_trace.h"
+#include "x11_window.h"
 
 #include <X11/Xutil.h>
 

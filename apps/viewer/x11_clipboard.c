@@ -15,9 +15,9 @@
  * attacker-controlled inputs and are never traced as payload bytes.
  */
 
-#include "viewer_clipboard.h"
+#include "x11_clipboard.h"
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 #include <X11/Xatom.h>
 #include <X11/extensions/Xfixes.h>

@@ -12,7 +12,7 @@
  * a display server.
  */
 
-#include "viewer_render.h"
+#include "x11_render.h"
 
 #include <stdint.h>
 #include <stdio.h>

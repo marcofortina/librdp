@@ -16,9 +16,9 @@
  */
 
 
-#include "camera_v4l2.h"
+#include "x11_camera_v4l2.h"
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 #include <limits.h>
 #include <stdio.h>

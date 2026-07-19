@@ -11,7 +11,7 @@
  * Determinism: tests use in-memory byte slices and synthetic timestamps only.
  */
 
-#include "viewer_clipboard.h"
+#include "x11_clipboard.h"
 
 #include <stdint.h>
 #include <stdio.h>

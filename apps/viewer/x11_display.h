@@ -15,7 +15,7 @@
 #ifndef LIBRDP_X11_VIEWER_DISPLAY_H
 #define LIBRDP_X11_VIEWER_DISPLAY_H
 
-#include "viewer_app.h"
+#include "x11_app.h"
 
 #ifdef LIBRDP_HAVE_XRANDR
 #include <X11/extensions/Xrandr.h>

@@ -212,9 +212,9 @@ def public_documentation_files() -> list[str]:
 def viewer_source_options() -> set[str]:
     source = "\n".join(
         (
-            read("apps/common/client_options.c"),
-            read("apps/x11/viewer/main.c"),
-            read("apps/x11/viewer/viewer_cli.c"),
+            read("apps/viewer/client_options.c"),
+            read("apps/viewer/x11_main.c"),
+            read("apps/viewer/x11_cli.c"),
         )
     )
     return set(VIEWER_OPTION_RE.findall(source)) - COCOA_ONLY_VIEWER_OPTIONS

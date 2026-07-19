@@ -16,7 +16,7 @@
 #ifndef LIBRDP_X11_VIEWER_WINDOW_H
 #define LIBRDP_X11_VIEWER_WINDOW_H
 
-#include "viewer_app.h"
+#include "x11_app.h"
 
 int x11_window_handle_error(Display* display, XErrorEvent* error);
 int x11_window_is_invalid(void);

@@ -11,7 +11,7 @@
  * Determinism: tests use fixed media descriptors and an in-memory mock backend.
  */
 
-#include "camera_v4l2.h"
+#include "x11_camera_v4l2.h"
 
 #include <stdio.h>
 #include <stdlib.h>

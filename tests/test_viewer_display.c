@@ -11,7 +11,7 @@
  * Determinism: tests use synthetic XRRMonitorInfo arrays only.
  */
 
-#include "viewer_display.h"
+#include "x11_display.h"
 
 #include <stdio.h>
 #include <string.h>

@@ -16,7 +16,7 @@
 #ifndef LIBRDP_X11_VIEWER_INPUT_H
 #define LIBRDP_X11_VIEWER_INPUT_H
 
-#include "viewer_app.h"
+#include "x11_app.h"
 
 void x11_input_clear_cursor(x11_app* app);
 void x11_input_apply_cursor(x11_app* app);

@@ -14,9 +14,9 @@
  * state are both treated as untrusted and checked before sending layouts.
  */
 
-#include "viewer_display.h"
+#include "x11_display.h"
 
-#include "viewer_trace.h"
+#include "x11_trace.h"
 
 #include <limits.h>
 #include <stdint.h>

@@ -12,7 +12,7 @@
  * in-memory settings objects are inspected.
  */
 
-#include "device_backends.h"
+#include "x11_device_backends.h"
 
 #include <librdp/librdp.h>
 
