@@ -12,9 +12,9 @@
  * no listener, authentication backend or X server is involved.
  */
 
-#include "server_managed_policy.h"
+#include "x11_managed_policy.h"
 
-#include "server_managed_auth.h"
+#include "x11_managed_auth.h"
 
 #include <grp.h>
 #include <pwd.h>

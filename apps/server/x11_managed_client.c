@@ -12,9 +12,9 @@
  * remain untrusted until the IPC decoder and correlation checks succeed.
  */
 
-#include "server_managed_client.h"
+#include "x11_managed_client.h"
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <openssl/crypto.h>
 

@@ -18,7 +18,7 @@
  * are bounded before crossing into process-launch configuration.
  */
 
-#include "server_managed_auth.h"
+#include "x11_managed_auth.h"
 
 #include <openssl/crypto.h>
 
@@ -428,6 +428,13 @@ static int x11_managed_auth_config_valid(
            service_length < X11_MANAGED_AUTH_NAME_BYTES;
 }
 
+/*
+ * Authenticate one managed-session identity through the configured provider
+ * or native service and resolve all process credentials before returning.
+ * Ownership: output receives a session only after complete validation.
+ * Failure policy: credentials and partial provider state are cleared on every
+ * denied, cancelled, unavailable, or malformed outcome.
+ */
 librdp_status x11_managed_auth_session_open(
     const x11_managed_auth_config* config,
     const char* username,

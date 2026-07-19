@@ -17,9 +17,9 @@
  * are checked before display, process or listener resources are allocated.
  */
 
-#include "server_managed_policy.h"
+#include "x11_managed_policy.h"
 
-#include "server_managed_auth.h"
+#include "x11_managed_auth.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -170,6 +170,11 @@ static int x11_managed_policy_absolute(const char* value,
            strnlen(value, capacity) < capacity;
 }
 
+/*
+ * Validate the complete administrative policy before it can authorize a
+ * request. Paths, identity lists, permissions, security prerequisites, and
+ * resource ranges must form one internally consistent configuration.
+ */
 int x11_managed_policy_valid(const x11_managed_policy* policy)
 {
     size_t index = 0u;

@@ -12,7 +12,7 @@
  * never consults PAM, BSD Authentication or the host account database.
  */
 
-#include "server_managed_auth.h"
+#include "x11_managed_auth.h"
 
 #include <stdio.h>
 #include <string.h>

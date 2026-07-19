@@ -12,7 +12,7 @@
  * authentication, X server or network endpoint is used.
  */
 
-#include "server_managed_config.h"
+#include "x11_managed_config.h"
 
 #include <fcntl.h>
 #include <stdio.h>

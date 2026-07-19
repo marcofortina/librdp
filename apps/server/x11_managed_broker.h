@@ -17,7 +17,7 @@
 #ifndef LIBRDP_X11_SERVER_MANAGED_BROKER_H
 #define LIBRDP_X11_SERVER_MANAGED_BROKER_H
 
-#include "server_managed_policy.h"
+#include "x11_managed_policy.h"
 
 #include <librdp/librdp.h>
 

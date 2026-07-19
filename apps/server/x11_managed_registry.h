@@ -18,7 +18,7 @@
 #ifndef LIBRDP_X11_SERVER_MANAGED_REGISTRY_H
 #define LIBRDP_X11_SERVER_MANAGED_REGISTRY_H
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <stddef.h>
 #include <stdint.h>

@@ -16,7 +16,7 @@
  * before they reach setgroups, execve or the X server.
  */
 
-#include "server_managed_process.h"
+#include "x11_managed_process.h"
 
 #include <X11/X.h>
 #include <X11/Xauth.h>
@@ -137,6 +137,11 @@ static int x11_managed_process_identity_valid(
            identity->group_count <= X11_MANAGED_AUTH_MAX_GROUPS;
 }
 
+/*
+ * Validate all identity, path, display, command, size, timeout, and
+ * environment bounds before privileged process setup starts. This keeps child
+ * creation from observing a partial or internally inconsistent policy.
+ */
 static int x11_managed_process_config_valid(
     const x11_managed_process_config* config)
 {
@@ -387,9 +392,9 @@ static librdp_status x11_managed_process_build_environment(
 }
 
 /*
- * Parse a trusted administrator command without invoking a shell. Quotes and
- * backslash escapes are accepted, but expansion and command substitution are
- * deliberately absent.
+ * Parse a trusted administrator command without invoking a shell. Validation
+ * bounds both argument count and owned storage; quotes and backslash escapes
+ * are accepted, while expansion and command substitution are absent.
  */
 static librdp_status x11_managed_process_parse_command(
     const char* command,
@@ -541,6 +546,11 @@ static librdp_status x11_managed_process_write_authority(
     return status;
 }
 
+/*
+ * Create the per-session Xorg configuration as a new owner-controlled file.
+ * The generated display bounds are derived only from validated process
+ * policy; write, sync, ownership, or close failure removes the file.
+ */
 static librdp_status x11_managed_process_write_xorg_config(
     const x11_managed_process_config* config,
     x11_managed_process_group* group)
@@ -965,6 +975,11 @@ static int x11_managed_process_error_handler(Display* display,
     return 0;
 }
 
+/*
+ * Apply a bounded RandR resize to the managed display using its private
+ * authority file. The previous process environment and X error handler are
+ * restored on every path; unavailable geometry is reported explicitly.
+ */
 librdp_status x11_managed_process_resize(
     const x11_managed_process_group* group,
     uint32_t width,

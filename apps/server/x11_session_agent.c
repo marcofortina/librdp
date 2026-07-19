@@ -15,8 +15,8 @@
  * server constructor copies them.
  */
 
-#include "server_managed_ipc.h"
-#include "server_managed_process.h"
+#include "x11_managed_ipc.h"
+#include "x11_managed_process.h"
 #include "x11_runtime.h"
 
 #include "server_host.h"
@@ -254,6 +254,12 @@ static librdp_status x11_session_agent_process_pending(
     return status;
 }
 
+/*
+ * Translate a supervisor-authenticated START message into an unprivileged
+ * shadow-server configuration. Validation binds peer IDs, process IDs,
+ * security material, permissions, runtime paths, and reconnect token before
+ * any borrowed message field enters the runtime.
+ */
 static int x11_session_agent_configure(
     const x11_managed_ipc_message* request,
     x11_server_options* options,
@@ -341,6 +347,12 @@ static int x11_session_agent_configure(
     return 1;
 }
 
+/*
+ * Run the unprivileged agent lifecycle over one authenticated supervisor
+ * descriptor. Runtime startup and READY publication are atomic from the
+ * supervisor's perspective; failure policy sends a startup error when
+ * possible, cancels dispatch, joins control work, and clears secret state.
+ */
 static int x11_session_agent_run(int descriptor)
 {
     x11_session_agent agent;

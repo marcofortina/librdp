@@ -15,7 +15,7 @@
  * user text, and existing X sockets or lock files make a display unavailable.
  */
 
-#include "server_managed_registry.h"
+#include "x11_managed_registry.h"
 
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
@@ -627,9 +627,10 @@ static int x11_managed_registry_process_alive(uint64_t process)
 }
 
 /*
- * Reconstruct an entry only from a kernel-authenticated supervisor response.
- * Every path is regenerated from the registry root and session ID so a stale
- * or compromised socket cannot make the broker adopt unrelated files.
+ * Purpose: reconstruct an entry only from a kernel-authenticated supervisor
+ * response. Validation regenerates every path from the registry root and
+ * session ID; failure policy rejects stale processes, foreign files, duplicate
+ * identities, and resource-limit violations without occupying a slot.
  */
 librdp_status x11_managed_registry_adopt(
     x11_managed_registry* registry,

@@ -17,10 +17,10 @@
  * with kernel credentials; every command also carries the session token.
  */
 
-#include "server_managed_supervisor.h"
+#include "x11_managed_supervisor.h"
 
-#include "server_managed_ipc.h"
-#include "server_managed_process.h"
+#include "x11_managed_ipc.h"
+#include "x11_managed_process.h"
 
 #include <openssl/crypto.h>
 
@@ -566,6 +566,12 @@ static librdp_status x11_managed_supervisor_forward(
     return status;
 }
 
+/*
+ * Receive, authorize, forward, and correlate one broker command against the
+ * active supervised session. State changes commit only after a successful
+ * agent response; malformed or recovery-ineligible commands receive an error
+ * and are never forwarded.
+ */
 static librdp_status x11_managed_supervisor_handle_command(
     x11_managed_supervisor* supervisor,
     int descriptor,
@@ -881,6 +887,12 @@ static void x11_managed_supervisor_cleanup(
     x11_managed_ipc_message_clear(&supervisor->session);
 }
 
+/*
+ * Own the authenticated managed-session lifecycle from broker handshake
+ * through X server, desktop, and agent startup to command-loop teardown.
+ * Failure policy sends one correlated startup error, clears credentials, and
+ * releases every descriptor, process, socket, and authentication session.
+ */
 librdp_status x11_managed_supervisor_run(
     int broker_descriptor,
     const x11_managed_supervisor_config* config)

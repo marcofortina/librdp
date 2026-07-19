@@ -12,7 +12,7 @@
  */
 
 #include "x11_cli.h"
-#include "server_managed_client.h"
+#include "x11_managed_client.h"
 #include "x11_runtime.h"
 
 #include <stdio.h>

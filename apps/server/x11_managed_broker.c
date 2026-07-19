@@ -17,10 +17,10 @@
  * policy and reconnect tokens are checked before any session operation.
  */
 
-#include "server_managed_broker.h"
+#include "x11_managed_broker.h"
 
-#include "server_managed_ipc.h"
-#include "server_managed_registry.h"
+#include "x11_managed_ipc.h"
+#include "x11_managed_registry.h"
 
 #include <openssl/crypto.h>
 
@@ -404,6 +404,12 @@ static void x11_managed_broker_stop_supervisor(
     (void)waitpid(process, NULL, 0);
 }
 
+/*
+ * Coordinate one authenticated session start across broker, supervisor,
+ * policy, and registry state. The reserved session is published only after a
+ * correlated READY response; failure policy stops the supervisor, releases
+ * the registry slot, and clears all credential-bearing IPC messages.
+ */
 static librdp_status x11_managed_broker_start(
     x11_managed_broker_worker* worker,
     x11_managed_ipc_message* initial)

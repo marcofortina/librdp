@@ -12,7 +12,7 @@
  * effective process identity; no X server or network listener is required.
  */
 
-#include "server_managed_registry.h"
+#include "x11_managed_registry.h"
 
 #include <fcntl.h>
 #include <stdio.h>

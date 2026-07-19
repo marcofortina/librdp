@@ -16,8 +16,8 @@
  * secrets arrive only over the bounded local IPC conversation.
  */
 
-#include "server_managed_broker.h"
-#include "server_managed_config.h"
+#include "x11_managed_broker.h"
+#include "x11_managed_config.h"
 
 #include <pthread.h>
 #include <signal.h>

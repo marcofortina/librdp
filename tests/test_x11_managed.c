@@ -12,7 +12,7 @@
  * avoid network, desktop and external service dependencies.
  */
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <stdint.h>
 #include <stdio.h>

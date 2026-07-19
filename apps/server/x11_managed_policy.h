@@ -16,7 +16,7 @@
 #ifndef LIBRDP_X11_SERVER_MANAGED_POLICY_H
 #define LIBRDP_X11_SERVER_MANAGED_POLICY_H
 
-#include "server_managed_registry.h"
+#include "x11_managed_registry.h"
 
 #include <librdp/librdp.h>
 

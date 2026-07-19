@@ -15,9 +15,9 @@
  * no network peer, desktop manager or host authentication database is used.
  */
 
-#include "server_managed_supervisor.h"
+#include "x11_managed_supervisor.h"
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <openssl/crypto.h>
 

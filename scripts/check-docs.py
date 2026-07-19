@@ -248,7 +248,7 @@ def cocoa_server_source_options() -> set[str]:
 def x11_broker_source_options() -> set[str]:
     return set(
         VIEWER_OPTION_RE.findall(
-            read("apps/x11/server/session_broker.c")
+            read("apps/server/x11_session_broker.c")
         )
     )
 

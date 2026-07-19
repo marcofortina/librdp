@@ -16,7 +16,7 @@
 #ifndef LIBRDP_X11_SERVER_MANAGED_PROCESS_H
 #define LIBRDP_X11_SERVER_MANAGED_PROCESS_H
 
-#include "server_managed_auth.h"
+#include "x11_managed_auth.h"
 
 #include <librdp/librdp.h>
 

@@ -43,7 +43,6 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(${target} PRIVATE
@@ -78,7 +77,6 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
     function(librdp_configure_x11_managed_target target)
         target_include_directories(${target} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(${target} PRIVATE
@@ -99,38 +97,38 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
     add_executable(librdp-server
         apps/server/x11_main.c
         apps/server/x11_cli.c
-        apps/x11/server/server_managed_client.c
-        apps/x11/server/server_managed_ipc.c
+        apps/server/x11_managed_client.c
+        apps/server/x11_managed_ipc.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
     )
     librdp_configure_x11_server_target(librdp-server)
 
     add_executable(librdp-session-agent
-        apps/x11/server/session_agent.c
+        apps/server/x11_session_agent.c
         apps/server/x11_cli.c
-        apps/x11/server/server_managed_ipc.c
-        apps/x11/server/server_managed_process.c
+        apps/server/x11_managed_ipc.c
+        apps/server/x11_managed_process.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
     )
     librdp_configure_x11_server_target(librdp-session-agent)
 
     add_executable(librdp-session-broker
-        apps/x11/server/session_broker.c
-        apps/x11/server/server_managed_broker.c
-        apps/x11/server/server_managed_config.c
-        apps/x11/server/server_managed_ipc.c
-        apps/x11/server/server_managed_policy.c
-        apps/x11/server/server_managed_registry.c
+        apps/server/x11_session_broker.c
+        apps/server/x11_managed_broker.c
+        apps/server/x11_managed_config.c
+        apps/server/x11_managed_ipc.c
+        apps/server/x11_managed_policy.c
+        apps/server/x11_managed_registry.c
     )
     librdp_configure_x11_managed_target(
         librdp-session-broker)
 
     add_executable(librdp-session-supervisor
-        apps/x11/server/session_supervisor.c
-        apps/x11/server/server_managed_auth.c
-        apps/x11/server/server_managed_ipc.c
-        apps/x11/server/server_managed_process.c
-        apps/x11/server/server_managed_supervisor.c
+        apps/server/x11_session_supervisor.c
+        apps/server/x11_managed_auth.c
+        apps/server/x11_managed_ipc.c
+        apps/server/x11_managed_process.c
+        apps/server/x11_managed_supervisor.c
     )
     librdp_configure_x11_managed_target(
         librdp-session-supervisor)
@@ -152,11 +150,10 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed
             tests/test_x11_managed.c
-            apps/x11/server/server_managed_ipc.c
+            apps/server/x11_managed_ipc.c
         )
         target_include_directories(test_x11_managed PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_x11_managed PRIVATE
@@ -173,12 +170,11 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_registry
             tests/test_x11_managed_registry.c
-            apps/x11/server/server_managed_ipc.c
-            apps/x11/server/server_managed_registry.c
+            apps/server/x11_managed_ipc.c
+            apps/server/x11_managed_registry.c
         )
         target_include_directories(test_x11_managed_registry PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_x11_managed_registry PRIVATE
@@ -196,12 +192,11 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_policy
             tests/test_x11_managed_policy.c
-            apps/x11/server/server_managed_ipc.c
-            apps/x11/server/server_managed_policy.c
+            apps/server/x11_managed_ipc.c
+            apps/server/x11_managed_policy.c
         )
         target_include_directories(test_x11_managed_policy PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_x11_managed_policy PRIVATE
@@ -222,13 +217,12 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_config
             tests/test_x11_managed_config.c
-            apps/x11/server/server_managed_config.c
-            apps/x11/server/server_managed_ipc.c
-            apps/x11/server/server_managed_policy.c
+            apps/server/x11_managed_config.c
+            apps/server/x11_managed_ipc.c
+            apps/server/x11_managed_policy.c
         )
         target_include_directories(test_x11_managed_config PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_x11_managed_config PRIVATE
@@ -270,10 +264,10 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_broker
             tests/test_x11_managed_broker.c
-            apps/x11/server/server_managed_broker.c
-            apps/x11/server/server_managed_ipc.c
-            apps/x11/server/server_managed_policy.c
-            apps/x11/server/server_managed_registry.c
+            apps/server/x11_managed_broker.c
+            apps/server/x11_managed_ipc.c
+            apps/server/x11_managed_policy.c
+            apps/server/x11_managed_registry.c
         )
         librdp_configure_x11_managed_target(
             test_x11_managed_broker)
@@ -291,15 +285,14 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
         add_executable(test_x11_managed_client
             tests/test_x11_managed_client.c
             apps/server/x11_cli.c
-            apps/x11/server/server_managed_client.c
-            apps/x11/server/server_managed_ipc.c
+            apps/server/x11_managed_client.c
+            apps/server/x11_managed_ipc.c
         )
         target_include_directories(
             test_x11_managed_client PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(
@@ -325,11 +318,10 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_auth
             tests/test_x11_managed_auth.c
-            apps/x11/server/server_managed_auth.c
+            apps/server/x11_managed_auth.c
         )
         target_include_directories(test_x11_managed_auth PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_x11_managed_auth PRIVATE
@@ -348,12 +340,11 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
         if(LIBRDP_XVFB_EXECUTABLE)
             add_executable(test_x11_managed_process
                 tests/test_x11_managed_process.c
-                apps/x11/server/server_managed_auth.c
-                apps/x11/server/server_managed_process.c
+                apps/server/x11_managed_auth.c
+                apps/server/x11_managed_process.c
             )
             target_include_directories(test_x11_managed_process PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
             target_compile_definitions(test_x11_managed_process PRIVATE
@@ -379,14 +370,13 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
             add_executable(test_x11_managed_supervisor
                 tests/test_x11_managed_supervisor.c
-                apps/x11/server/server_managed_auth.c
-                apps/x11/server/server_managed_ipc.c
-                apps/x11/server/server_managed_process.c
-                apps/x11/server/server_managed_supervisor.c
+                apps/server/x11_managed_auth.c
+                apps/server/x11_managed_ipc.c
+                apps/server/x11_managed_process.c
+                apps/server/x11_managed_supervisor.c
             )
             target_include_directories(test_x11_managed_supervisor PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
             target_compile_definitions(
@@ -434,7 +424,6 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
-                ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
             target_compile_definitions(test_x11_server PRIVATE

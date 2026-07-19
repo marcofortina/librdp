@@ -15,9 +15,9 @@
  * server, authentication backend or network listener is used.
  */
 
-#include "server_managed_client.h"
+#include "x11_managed_client.h"
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <pthread.h>
 #include <stdint.h>

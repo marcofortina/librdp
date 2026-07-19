@@ -16,7 +16,7 @@
  * paths and resource policy, so unsafe ownership, modes and syntax fail closed.
  */
 
-#include "server_managed_config.h"
+#include "x11_managed_config.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -552,6 +552,11 @@ static void x11_managed_config_trim_right(char* value)
         value[--length] = '\0';
 }
 
+/*
+ * Parse an owner-controlled configuration buffer as bounded key/value lines.
+ * Validation rejects unknown or duplicate non-repeatable keys before applying
+ * them, and records the exact line and key for the first policy failure.
+ */
 static librdp_status x11_managed_config_parse(
     char* content,
     size_t length,

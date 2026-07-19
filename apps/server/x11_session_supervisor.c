@@ -15,7 +15,7 @@
  * name are accepted before entering the supervisor runtime.
  */
 
-#include "server_managed_supervisor.h"
+#include "x11_managed_supervisor.h"
 
 #include <errno.h>
 #include <stdint.h>

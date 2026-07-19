@@ -15,7 +15,7 @@
  * headless session without a desktop manager or network peer.
  */
 
-#include "server_managed_process.h"
+#include "x11_managed_process.h"
 
 #include <grp.h>
 #include <fcntl.h>

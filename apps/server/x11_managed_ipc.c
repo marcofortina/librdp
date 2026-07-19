@@ -16,7 +16,7 @@
  * credential lookup; message semantics are validated independently.
  */
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
@@ -446,6 +446,11 @@ librdp_status x11_managed_ipc_message_validate(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Encode a validated managed-session message into the fixed IPC payload
+ * layout. The caller owns the destination buffer; bounds failure commits no
+ * payload length and sensitive fields remain subject to message cleanup.
+ */
 static librdp_status x11_managed_ipc_encode(
     const x11_managed_ipc_message* message,
     uint8_t* payload,
@@ -534,6 +539,11 @@ static librdp_status x11_managed_ipc_encode(
     return LIBRDP_STATUS_OK;
 }
 
+/*
+ * Decode one complete bounded IPC payload and validate its semantic state.
+ * Truncation, trailing bytes, malformed strings, and invalid status fields
+ * fail as protocol errors so no partially decoded message is dispatched.
+ */
 static librdp_status x11_managed_ipc_decode(
     const uint8_t* payload,
     size_t payload_len,

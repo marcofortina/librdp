@@ -15,9 +15,9 @@
  * host authentication database or RDP network peer is required.
  */
 
-#include "server_managed_broker.h"
+#include "x11_managed_broker.h"
 
-#include "server_managed_ipc.h"
+#include "x11_managed_ipc.h"
 
 #include <openssl/crypto.h>
 
