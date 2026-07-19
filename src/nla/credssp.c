@@ -48,6 +48,12 @@
 #define RDP_NTLM_NEGOTIATE_KEY_EXCH 0x40000000u
 #define RDP_NTLM_NEGOTIATE_56 0x80000000u
 
+#define RDP_NTSTATUS_LOGON_FAILURE 0xc000006du
+#define RDP_NTSTATUS_ACCOUNT_DISABLED 0xc0000072u
+#define RDP_NTSTATUS_PASSWORD_EXPIRED 0xc0000071u
+#define RDP_NTSTATUS_PASSWORD_MUST_CHANGE 0xc0000224u
+#define RDP_NTSTATUS_ACCOUNT_LOCKED_OUT 0xc0000234u
+
 static uint16_t rdp_read_u16_le_bytes(const uint8_t* data)
 {
     return (uint16_t)(data[0] | ((uint16_t)data[1] << 8));
@@ -1155,16 +1161,18 @@ librdp_status rdp_credssp_write_spnego_ntlm_challenge(rdp_buffer* buffer,
  * fields. ASN.1 lengths are derived from validated buffers and credential-
  * bearing data must remain outside trace output.
  */
-librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
-                                           uint32_t version,
-                                           const uint8_t* nego_token,
-                                           size_t nego_token_len,
-                                           const uint8_t* auth_info,
-                                           size_t auth_info_len,
-                                           const uint8_t* pub_key_auth,
-                                           size_t pub_key_auth_len,
-                                           const uint8_t* client_nonce,
-                                           size_t client_nonce_len)
+static librdp_status rdp_credssp_write_ts_request_fields(rdp_buffer* buffer,
+                                                         uint32_t version,
+                                                         const uint8_t* nego_token,
+                                                         size_t nego_token_len,
+                                                         const uint8_t* auth_info,
+                                                         size_t auth_info_len,
+                                                         const uint8_t* pub_key_auth,
+                                                         size_t pub_key_auth_len,
+                                                         uint32_t error_code,
+                                                         int has_error_code,
+                                                         const uint8_t* client_nonce,
+                                                         size_t client_nonce_len)
 {
     rdp_buffer body;
     rdp_buffer field;
@@ -1220,6 +1228,15 @@ librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
             status = rdp_der_write_context(&body, 3, &field);
     }
 
+    if (status == LIBRDP_STATUS_OK && has_error_code)
+    {
+        rdp_buffer_free(&field);
+        rdp_buffer_init(&field);
+        status = rdp_der_write_integer(&field, error_code);
+        if (status == LIBRDP_STATUS_OK)
+            status = rdp_der_write_context(&body, 4, &field);
+    }
+
     if (status == LIBRDP_STATUS_OK && client_nonce_len > 0)
     {
         rdp_buffer_free(&field);
@@ -1238,6 +1255,83 @@ librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
     rdp_buffer_free(&field);
     rdp_buffer_free(&body);
     return status;
+}
+
+librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
+                                           uint32_t version,
+                                           const uint8_t* nego_token,
+                                           size_t nego_token_len,
+                                           const uint8_t* auth_info,
+                                           size_t auth_info_len,
+                                           const uint8_t* pub_key_auth,
+                                           size_t pub_key_auth_len,
+                                           const uint8_t* client_nonce,
+                                           size_t client_nonce_len)
+{
+    return rdp_credssp_write_ts_request_fields(buffer,
+                                               version,
+                                               nego_token,
+                                               nego_token_len,
+                                               auth_info,
+                                               auth_info_len,
+                                               pub_key_auth,
+                                               pub_key_auth_len,
+                                               0,
+                                               0,
+                                               client_nonce,
+                                               client_nonce_len);
+}
+
+librdp_status rdp_credssp_write_ts_error(rdp_buffer* buffer,
+                                         uint32_t version,
+                                         uint32_t error_code)
+{
+    if (error_code == 0)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    return rdp_credssp_write_ts_request_fields(buffer,
+                                               version,
+                                               NULL,
+                                               0,
+                                               NULL,
+                                               0,
+                                               NULL,
+                                               0,
+                                               error_code,
+                                               1,
+                                               NULL,
+                                               0);
+}
+
+librdp_status rdp_credssp_status_from_error_code(uint32_t error_code)
+{
+    switch (error_code)
+    {
+        case 0:
+            return LIBRDP_STATUS_OK;
+        case RDP_NTSTATUS_PASSWORD_EXPIRED:
+        case RDP_NTSTATUS_PASSWORD_MUST_CHANGE:
+            return LIBRDP_STATUS_CREDENTIALS_EXPIRED;
+        case RDP_NTSTATUS_ACCOUNT_LOCKED_OUT:
+            return LIBRDP_STATUS_ACCOUNT_LOCKED;
+        case RDP_NTSTATUS_LOGON_FAILURE:
+        case RDP_NTSTATUS_ACCOUNT_DISABLED:
+        default:
+            return LIBRDP_STATUS_AUTHENTICATION_FAILED;
+    }
+}
+
+uint32_t rdp_credssp_error_code_from_status(librdp_status status)
+{
+    switch (status)
+    {
+        case LIBRDP_STATUS_CREDENTIALS_EXPIRED:
+            return RDP_NTSTATUS_PASSWORD_EXPIRED;
+        case LIBRDP_STATUS_ACCOUNT_LOCKED:
+            return RDP_NTSTATUS_ACCOUNT_LOCKED_OUT;
+        case LIBRDP_STATUS_AUTHENTICATION_FAILED:
+        default:
+            return RDP_NTSTATUS_LOGON_FAILURE;
+    }
 }
 
 librdp_status rdp_credssp_write_negotiate_request(rdp_buffer* buffer, const char* workstation, const char* domain)
@@ -1324,6 +1418,45 @@ static librdp_status rdp_der_parse_integer(const uint8_t* data, size_t length, u
             ASN1_INTEGER_get_uint64(&parsed, integer) == 1 && parsed <= UINT32_MAX)
         {
             *value = (uint32_t)parsed;
+            status = LIBRDP_STATUS_OK;
+        }
+    }
+    ASN1_INTEGER_free(integer);
+    rdp_buffer_free(&encoded);
+    rdp_buffer_free(&body);
+    return status;
+}
+
+/*
+ * CredSSP errorCode carries a 32-bit NTSTATUS. Windows encodes failure values
+ * as negative DER INTEGERs, so preserve their two's-complement bit pattern
+ * instead of rejecting the sign bit as the unsigned version parser does.
+ */
+static librdp_status rdp_der_parse_error_code(const uint8_t* data,
+                                              size_t length,
+                                              uint32_t* value)
+{
+    rdp_buffer body;
+    rdp_buffer encoded;
+    const unsigned char* p = NULL;
+    ASN1_INTEGER* integer = NULL;
+    int64_t parsed = 0;
+    librdp_status status = LIBRDP_STATUS_PROTOCOL_ERROR;
+
+    if (!data || !value || length == 0)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    rdp_buffer_init(&body);
+    rdp_buffer_init(&encoded);
+    if (rdp_buffer_append(&body, data, length) == LIBRDP_STATUS_OK &&
+        rdp_der_wrap(&encoded, V_ASN1_INTEGER, &body) == LIBRDP_STATUS_OK)
+    {
+        p = encoded.data;
+        integer = d2i_ASN1_INTEGER(NULL, &p, (long)encoded.length);
+        if (integer && p == encoded.data + encoded.length &&
+            ASN1_INTEGER_get_int64(&parsed, integer) == 1 &&
+            parsed >= INT32_MIN && parsed <= UINT32_MAX)
+        {
+            *value = parsed < 0 ? (uint32_t)(int32_t)parsed : (uint32_t)parsed;
             status = LIBRDP_STATUS_OK;
         }
     }
@@ -1422,7 +1555,7 @@ librdp_status rdp_credssp_parse_ts_request(const void* data, size_t length, rdp_
         {
             if (rdp_der_read_tlv(&field, &inner_tag, &inner, &inner_len) != LIBRDP_STATUS_OK || inner_tag != 0x02)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
-            if (rdp_der_parse_integer(inner, inner_len, &request->error_code) != LIBRDP_STATUS_OK)
+            if (rdp_der_parse_error_code(inner, inner_len, &request->error_code) != LIBRDP_STATUS_OK)
                 return LIBRDP_STATUS_PROTOCOL_ERROR;
             request->has_error_code = 1;
         }

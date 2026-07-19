@@ -100,6 +100,11 @@ static int server_host_configure_wakeup_fd(int fd)
            fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC) == 0;
 }
 
+/*
+ * Construct the listener and bounded peer/provider runtimes as one ownership
+ * unit. Every allocation and descriptor created here is unwound on failure;
+ * borrowed platform providers remain valid until server_host_free().
+ */
 server_host* server_host_new(const server_host_config* config)
 {
     server_host* host = NULL;
@@ -124,6 +129,17 @@ server_host* server_host_new(const server_host_config* config)
     host->listener = librdp_server_new(&listener_config);
     if (!host->listener)
     {
+        free(host->peers);
+        free(host);
+        return NULL;
+    }
+    if (config->credentials_provider &&
+        librdp_server_set_credentials_provider(
+            host->listener,
+            config->credentials_provider,
+            config->credentials_provider_user_data) != LIBRDP_STATUS_OK)
+    {
+        librdp_server_free(host->listener);
         free(host->peers);
         free(host);
         return NULL;

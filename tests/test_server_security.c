@@ -472,7 +472,7 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
     status = librdp_server_peer_run_once(peer, 1000);
     if (flags & (TEST_SERVER_NLA_PROVIDER_REJECT | TEST_SERVER_NLA_WRONG_PASSWORD))
     {
-        SCHECK(status == LIBRDP_STATUS_PROTOCOL_ERROR);
+        SCHECK(status == LIBRDP_STATUS_AUTHENTICATION_FAILED);
         SCHECK(librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_FAILED);
         goto cleanup;
     }

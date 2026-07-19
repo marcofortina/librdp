@@ -155,6 +155,11 @@ librdp_status rdp_credssp_write_ts_request(rdp_buffer* buffer,
                                            size_t pub_key_auth_len,
                                            const uint8_t* client_nonce,
                                            size_t client_nonce_len);
+librdp_status rdp_credssp_write_ts_error(rdp_buffer* buffer,
+                                         uint32_t version,
+                                         uint32_t error_code);
+librdp_status rdp_credssp_status_from_error_code(uint32_t error_code);
+uint32_t rdp_credssp_error_code_from_status(librdp_status status);
 librdp_status rdp_credssp_write_negotiate_request(rdp_buffer* buffer,
                                                   const char* workstation,
                                                   const char* domain);

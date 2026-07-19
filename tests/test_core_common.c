@@ -41,6 +41,8 @@ static void trace_protocol_hexdump(void)
 
 static void trace_sensitive_hexdumps(void)
 {
+    const uint8_t x224_request[] =
+        "TPKT-X224-Cookie: mstshash=LIBRDP_IDENTITY_CANARY";
     const uint8_t password[] = "HDR:LIBRDP_PASSWORD_CANARY";
     const uint8_t token[] = "HDR:LIBRDP_CREDSSP_TOKEN_CANARY";
     const uint8_t clipboard[] = "HDR:LIBRDP_CLIPBOARD_CANARY";
@@ -54,6 +56,10 @@ static void trace_sensitive_hexdumps(void)
     setenv("LIBRDP_TRACE_HEX_BYTES", "96", 1);
     unsetenv("LIBRDP_TRACE_UNSAFE");
     rdp_trace_reset_for_tests();
+    rdp_trace_hexdump("x224.negotiation.request",
+                      RDP_TRACE_SENSITIVITY_AUTH,
+                      x224_request,
+                      sizeof(x224_request) - 1u);
     rdp_trace_hexdump("rdp.client_info.pdu", RDP_TRACE_SENSITIVITY_AUTH, password, sizeof(password) - 1u);
     rdp_trace_hexdump("credssp.token", RDP_TRACE_SENSITIVITY_AUTH, token, sizeof(token) - 1u);
     rdp_trace_hexdump("client.clipboard.pdu",
@@ -176,6 +182,7 @@ int test_trace(void)
     CHECK(capture_stderr(trace_sensitive_hexdumps, output, sizeof(output)));
     CHECK(strstr(output, "sensitivity=auth redacted=1 unsafe=0") != NULL);
     CHECK(strstr(output, "sensitivity=input redacted=1 unsafe=0") != NULL);
+    CHECK(strstr(output, "LIBRDP_IDENTITY_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_PASSWORD_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_CREDSSP_TOKEN_CANARY") == NULL);
     CHECK(strstr(output, "LIBRDP_CLIPBOARD_CANARY") == NULL);

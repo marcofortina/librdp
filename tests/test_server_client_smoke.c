@@ -39,6 +39,10 @@
 #define SMOKE_PIXEL_BYTES (SMOKE_CAPTURE_WIDTH * SMOKE_CAPTURE_HEIGHT * 4u)
 #define SMOKE_PUMP_LIMIT 500u
 
+static const char smoke_nla_username[] = "smoke-user-731";
+static const char smoke_nla_password[] = "smoke-secret-739";
+static const char smoke_nla_domain[] = "SMOKE-DOMAIN-733";
+
 typedef struct smoke_platform
 {
     server_platform_capture_sink capture_sink;
@@ -70,6 +74,18 @@ typedef struct smoke_client_events
     unsigned int error_events;
     int active;
 } smoke_client_events;
+
+typedef struct smoke_nla_provider
+{
+    librdp_status status;
+    unsigned int calls;
+} smoke_nla_provider;
+
+typedef struct smoke_trace_capture
+{
+    unsigned int records;
+    int leaked;
+} smoke_trace_capture;
 
 static int smoke_check(int condition, const char* expression, int line)
 {
@@ -106,6 +122,36 @@ static uint64_t smoke_now_ns(void)
     if (clock_gettime(CLOCK_MONOTONIC, &value) != 0)
         return 0u;
     return (uint64_t)value.tv_sec * 1000000000u + (uint64_t)value.tv_nsec;
+}
+
+static librdp_status smoke_nla_credentials_provider(
+    librdp_server_peer* peer,
+    const librdp_server_credentials_request* request,
+    librdp_credentials* credentials,
+    void* user_data)
+{
+    smoke_nla_provider* provider = (smoke_nla_provider*)user_data;
+
+    if (!peer || !request || !credentials || !provider)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    provider->calls++;
+    return provider->status;
+}
+
+static void smoke_trace_callback(librdp_session* session,
+                                 const librdp_trace_record* record,
+                                 void* user_data)
+{
+    smoke_trace_capture* capture = (smoke_trace_capture*)user_data;
+
+    (void)session;
+    if (!capture || !record || !record->line)
+        return;
+    capture->records++;
+    if (strstr(record->line, smoke_nla_username) ||
+        strstr(record->line, smoke_nla_password) ||
+        strstr(record->line, smoke_nla_domain))
+        capture->leaked = 1;
 }
 
 static librdp_status smoke_capture_start(
@@ -643,9 +689,6 @@ static int smoke_configure_security(server_host_config* host_config,
                                     const char* cert_path,
                                     const char* key_path)
 {
-    static const char username[] = "smoke-user-731";
-    static const char password[] = "smoke-secret-739";
-    static const char domain[] = "SMOKE-DOMAIN-733";
     librdp_tls_policy tls_policy;
 
     host_config->server.security_mode = security;
@@ -665,14 +708,15 @@ static int smoke_configure_security(server_host_config* host_config,
         return 0;
     if (security != LIBRDP_SECURITY_NLA)
         return 1;
-    host_config->server.nla_username = username;
-    host_config->server.nla_password = password;
-    host_config->server.nla_domain = domain;
-    return librdp_settings_set_username(settings, username) ==
+    host_config->server.nla_username = smoke_nla_username;
+    host_config->server.nla_password = smoke_nla_password;
+    host_config->server.nla_domain = smoke_nla_domain;
+    return librdp_settings_set_username(settings, smoke_nla_username) ==
                LIBRDP_STATUS_OK &&
-           librdp_settings_set_password(settings, password) ==
+           librdp_settings_set_password(settings, smoke_nla_password) ==
                LIBRDP_STATUS_OK &&
-           librdp_settings_set_domain(settings, domain) == LIBRDP_STATUS_OK;
+           librdp_settings_set_domain(settings, smoke_nla_domain) ==
+               LIBRDP_STATUS_OK;
 }
 
 /*
@@ -680,7 +724,8 @@ static int smoke_configure_security(server_host_config* host_config,
  * server host. Every provider must cross a real protocol boundary before the
  * fixture accepts the run.
  */
-static int smoke_run_profile(librdp_security_mode security)
+static int smoke_run_profile(librdp_security_mode security,
+                             librdp_status expected_connect_status)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -690,12 +735,17 @@ static int smoke_run_profile(librdp_security_mode security)
     smoke_platform platform;
     smoke_host host_fixture;
     smoke_client_events events;
+    smoke_nla_provider nla_provider;
+    smoke_trace_capture trace_capture;
     server_host_config host_config;
     librdp_settings* settings = NULL;
     librdp_session* session = NULL;
     client_runtime runtime;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
     librdp_key_event key;
     librdp_mouse_event mouse;
+    librdp_status connect_status = LIBRDP_STATUS_OK;
     uint16_t port = 0u;
     unsigned int cycle = 0u;
     int clipboard_sent = 0;
@@ -705,6 +755,8 @@ static int smoke_run_profile(librdp_security_mode security)
 
     memset(&host_fixture, 0, sizeof(host_fixture));
     memset(&events, 0, sizeof(events));
+    memset(&nla_provider, 0, sizeof(nla_provider));
+    memset(&trace_capture, 0, sizeof(trace_capture));
     memset(&runtime, 0, sizeof(runtime));
     memset(&key, 0, sizeof(key));
     memset(&mouse, 0, sizeof(mouse));
@@ -747,6 +799,13 @@ static int smoke_run_profile(librdp_security_mode security)
                                      security,
                                      cert_path,
                                      key_path));
+    if (expected_connect_status != LIBRDP_STATUS_OK)
+    {
+        REQUIRE(security == LIBRDP_SECURITY_NLA);
+        nla_provider.status = expected_connect_status;
+        host_config.credentials_provider = smoke_nla_credentials_provider;
+        host_config.credentials_provider_user_data = &nla_provider;
+    }
     host_fixture.host = server_host_new(&host_config);
     REQUIRE(host_fixture.host != NULL);
     REQUIRE(pthread_create(&host_fixture.thread,
@@ -760,8 +819,43 @@ static int smoke_run_profile(librdp_security_mode security)
     session = librdp_session_new(settings);
     REQUIRE(session != NULL);
     librdp_session_set_event_callback(session, smoke_client_event, &events);
+    REQUIRE(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_ALL;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.hex_bytes = 96u;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = smoke_trace_callback;
+    trace_policy.callback_user_data = &trace_capture;
+    trace_policy.trace_id = "server-client-smoke";
+    REQUIRE(librdp_session_set_trace_policy(session, &trace_policy) ==
+            LIBRDP_STATUS_OK);
     client_runtime_init(&runtime, session);
-    REQUIRE(client_runtime_connect(&runtime) == LIBRDP_STATUS_OK);
+    connect_status = client_runtime_connect(&runtime);
+    if (expected_connect_status != LIBRDP_STATUS_OK)
+    {
+        const librdp_error* error = NULL;
+
+        REQUIRE(connect_status == expected_connect_status);
+        REQUIRE(nla_provider.calls == 1u);
+        REQUIRE(trace_capture.records > 0u);
+        REQUIRE(trace_capture.leaked == 0);
+        error = librdp_session_last_error(session);
+        REQUIRE(error != NULL);
+        REQUIRE(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+        REQUIRE(librdp_error_copy_info(error, &error_info) ==
+                LIBRDP_STATUS_OK);
+        REQUIRE(error_info.status == expected_connect_status);
+        REQUIRE(error_info.component == LIBRDP_ERROR_COMPONENT_CREDSSP);
+        REQUIRE(error_info.phase != NULL);
+        REQUIRE(strcmp(error_info.phase, "credssp.nla.authenticate") == 0);
+        (void)server_host_cancel(host_fixture.host);
+        REQUIRE(pthread_join(host_fixture.thread, NULL) == 0);
+        thread_started = 0;
+        REQUIRE(host_fixture.status == LIBRDP_STATUS_OK);
+        result = 0;
+        goto cleanup;
+    }
+    REQUIRE(connect_status == LIBRDP_STATUS_OK);
     for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
     {
         const librdp_surface* surface = NULL;
@@ -819,6 +913,8 @@ static int smoke_run_profile(librdp_security_mode security)
     REQUIRE(events.active);
     REQUIRE(events.surface_events > 0u);
     REQUIRE(events.error_events == 0u);
+    REQUIRE(trace_capture.records > 0u);
+    REQUIRE(trace_capture.leaked == 0);
     REQUIRE(librdp_surface_width(librdp_session_get_surface(session)) ==
             SMOKE_WIDTH);
     REQUIRE(librdp_surface_height(librdp_session_get_surface(session)) ==
@@ -867,16 +963,33 @@ cleanup:
 }
 
 static int smoke_parse_security(const char* value,
-                                librdp_security_mode* security)
+                                librdp_security_mode* security,
+                                librdp_status* expected_status)
 {
-    if (!value || !security)
+    if (!value || !security || !expected_status)
         return 0;
+    *expected_status = LIBRDP_STATUS_OK;
     if (strcmp(value, "standard") == 0)
         *security = LIBRDP_SECURITY_STANDARD;
     else if (strcmp(value, "tls") == 0)
         *security = LIBRDP_SECURITY_TLS;
     else if (strcmp(value, "nla") == 0)
         *security = LIBRDP_SECURITY_NLA;
+    else if (strcmp(value, "nla-invalid") == 0)
+    {
+        *security = LIBRDP_SECURITY_NLA;
+        *expected_status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
+    }
+    else if (strcmp(value, "nla-expired") == 0)
+    {
+        *security = LIBRDP_SECURITY_NLA;
+        *expected_status = LIBRDP_STATUS_CREDENTIALS_EXPIRED;
+    }
+    else if (strcmp(value, "nla-locked") == 0)
+    {
+        *security = LIBRDP_SECURITY_NLA;
+        *expected_status = LIBRDP_STATUS_ACCOUNT_LOCKED;
+    }
     else
         return 0;
     return 1;
@@ -885,12 +998,15 @@ static int smoke_parse_security(const char* value,
 int main(int argc, char** argv)
 {
     librdp_security_mode security = LIBRDP_SECURITY_AUTO;
+    librdp_status expected_status = LIBRDP_STATUS_OK;
 
-    if (argc != 2 || !smoke_parse_security(argv[1], &security))
+    if (argc != 2 ||
+        !smoke_parse_security(argv[1], &security, &expected_status))
     {
         fprintf(stderr,
-                "usage: test_server_client_smoke standard|tls|nla\n");
+                "usage: test_server_client_smoke "
+                "standard|tls|nla|nla-invalid|nla-expired|nla-locked\n");
         return 2;
     }
-    return smoke_run_profile(security);
+    return smoke_run_profile(security, expected_status);
 }

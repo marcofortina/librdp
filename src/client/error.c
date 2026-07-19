@@ -57,7 +57,16 @@ static const rdp_status_info RDP_STATUS_INFO[] = {
      "Configured size, count, or pending-operation limit was exceeded."},
     {LIBRDP_STATUS_CANCELLED,
      "cancelled",
-     "Operation was cancelled by the application."}
+     "Operation was cancelled by the application."},
+    {LIBRDP_STATUS_AUTHENTICATION_FAILED,
+     "authentication_failed",
+     "Remote authentication rejected the supplied credentials."},
+    {LIBRDP_STATUS_CREDENTIALS_EXPIRED,
+     "credentials_expired",
+     "Remote authentication reported expired credentials."},
+    {LIBRDP_STATUS_ACCOUNT_LOCKED,
+     "account_locked",
+     "Remote authentication reported a locked account."}
 };
 
 static const rdp_status_info* rdp_status_info_find(librdp_status status)

@@ -346,7 +346,13 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_client_smoke_tls
         COMMAND test_server_client_smoke tls)
     add_test(NAME server_client_smoke_nla
-        COMMAND test_server_client_smoke nla)
+             COMMAND test_server_client_smoke nla)
+    add_test(NAME server_client_smoke_nla_invalid
+             COMMAND test_server_client_smoke nla-invalid)
+    add_test(NAME server_client_smoke_nla_expired
+             COMMAND test_server_client_smoke nla-expired)
+    add_test(NAME server_client_smoke_nla_locked
+             COMMAND test_server_client_smoke nla-locked)
     set_tests_properties(
         common
         transport
@@ -360,6 +366,9 @@ if(LIBRDP_BUILD_TESTS)
         server_client_smoke_standard
         server_client_smoke_tls
         server_client_smoke_nla
+        server_client_smoke_nla_invalid
+        server_client_smoke_nla_expired
+        server_client_smoke_nla_locked
         PROPERTIES TIMEOUT 60
     )
     set_tests_properties(

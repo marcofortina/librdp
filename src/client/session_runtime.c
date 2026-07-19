@@ -652,6 +652,10 @@ static librdp_error_component rdp_session_error_component_for_status(librdp_stat
         case LIBRDP_STATUS_TLS_HOSTNAME_MISMATCH:
         case LIBRDP_STATUS_TLS_HANDSHAKE_FAILED:
             return LIBRDP_ERROR_COMPONENT_TLS;
+        case LIBRDP_STATUS_AUTHENTICATION_FAILED:
+        case LIBRDP_STATUS_CREDENTIALS_EXPIRED:
+        case LIBRDP_STATUS_ACCOUNT_LOCKED:
+            return LIBRDP_ERROR_COMPONENT_CREDSSP;
         case LIBRDP_STATUS_PROTOCOL_ERROR:
         case LIBRDP_STATUS_UNSUPPORTED:
         case LIBRDP_STATUS_SECURITY_DOWNGRADE:

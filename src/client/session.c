@@ -3385,7 +3385,7 @@ librdp_status librdp_session_connect(librdp_session* session)
     if (status != LIBRDP_STATUS_OK)
         goto fail;
     rdp_trace_hexdump("x224.negotiation.request",
-                      RDP_TRACE_SENSITIVITY_HEADER,
+                      RDP_TRACE_SENSITIVITY_AUTH,
                       request.data,
                       request.length);
     status = rdp_transport_write_all(&session->transport, request.data, request.length);
@@ -3496,6 +3496,7 @@ librdp_status librdp_session_connect(librdp_session* session)
         rdp_ntlm_authenticate_result ntlm_auth_result;
         rdp_ntlm_security_context ntlm_security;
         uint8_t client_nonce[32];
+        const char* credssp_failure_phase = "credssp.nla";
 
         rdp_buffer_init(&credssp_request);
         rdp_buffer_init(&credssp_reply);
@@ -3559,6 +3560,11 @@ librdp_status librdp_session_connect(librdp_session* session)
                             ts_response.version,
                             (unsigned)ts_response.nego_token_len,
                             ts_response.has_error_code ? ts_response.error_code : 0);
+        if (status == LIBRDP_STATUS_OK && ts_response.has_error_code)
+        {
+            credssp_failure_phase = "credssp.nla.challenge";
+            status = rdp_credssp_status_from_error_code(ts_response.error_code);
+        }
         if (status == LIBRDP_STATUS_OK && ts_response.nego_token_len > 0)
         {
             const uint8_t* ntlm_token = NULL;
@@ -3653,6 +3659,11 @@ librdp_status librdp_session_connect(librdp_session* session)
                                 (unsigned)pub_key_response.auth_info_len,
                                 (unsigned)pub_key_response.pub_key_auth_len,
                                 pub_key_response.has_error_code ? pub_key_response.error_code : 0);
+            if (status == LIBRDP_STATUS_OK && pub_key_response.has_error_code)
+            {
+                credssp_failure_phase = "credssp.nla.authenticate";
+                status = rdp_credssp_status_from_error_code(pub_key_response.error_code);
+            }
             if (status == LIBRDP_STATUS_OK)
                 status = rdp_credssp_verify_public_key_hash(&ntlm_security,
                                                             client_nonce,
@@ -3717,7 +3728,7 @@ librdp_status librdp_session_connect(librdp_session* session)
                                        status,
                                        0,
                                        LIBRDP_ERROR_COMPONENT_CREDSSP,
-                                       "credssp.nla",
+                                       credssp_failure_phase,
                                        "nla authentication failed");
             rdp_trace_event(RDP_TRACE_PROTOCOL, "credssp.nla.failed", "status=%d", (int)status);
             goto fail;

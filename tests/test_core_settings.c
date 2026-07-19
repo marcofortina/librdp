@@ -71,7 +71,10 @@ int test_settings_surface_input_session(void)
         {LIBRDP_STATUS_TLS_HANDSHAKE_FAILED, "tls_handshake_failed"},
         {LIBRDP_STATUS_SECURITY_DOWNGRADE, "security_downgrade"},
         {LIBRDP_STATUS_LIMIT_EXCEEDED, "limit_exceeded"},
-        {LIBRDP_STATUS_CANCELLED, "cancelled"}
+        {LIBRDP_STATUS_CANCELLED, "cancelled"},
+        {LIBRDP_STATUS_AUTHENTICATION_FAILED, "authentication_failed"},
+        {LIBRDP_STATUS_CREDENTIALS_EXPIRED, "credentials_expired"},
+        {LIBRDP_STATUS_ACCOUNT_LOCKED, "account_locked"}
     };
     librdp_credentials credentials;
     librdp_error_info error_info;

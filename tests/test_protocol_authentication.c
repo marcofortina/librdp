@@ -127,6 +127,10 @@ int test_protocol_authentication_vectors(void)
         0xa8, 0x88, 0x3d, 0xa8, 0xfb, 0xa6, 0x99, 0xf8,
         0x74, 0x2e, 0xc3, 0x02, 0x03, 0x01, 0x00, 0x01
     };
+    const uint8_t credssp_windows_logon_failure[] = {
+        0x30, 0x0d, 0xa0, 0x03, 0x02, 0x01, 0x06,
+        0xa4, 0x06, 0x02, 0x04, 0xc0, 0x00, 0x00, 0x6d
+    };
     const uint8_t ntlm_v2_expected_lm[] = {
         0xd6, 0xe6, 0x15, 0x2e, 0xa2, 0x5d, 0x03, 0xb7,
         0xc6, 0xba, 0x66, 0x29, 0xc2, 0xd6, 0xaa, 0xf0,
@@ -247,6 +251,36 @@ int test_protocol_authentication_vectors(void)
     PCHECK(memcmp(parsed_ts.client_nonce, credssp_client_nonce, sizeof(credssp_client_nonce)) == 0);
     PCHECK(rdp_credssp_parse_ts_request(ts_request.data, ts_request.length - 1u, &parsed_ts) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    PCHECK(rdp_credssp_parse_ts_request(credssp_windows_logon_failure,
+                                        sizeof(credssp_windows_logon_failure),
+                                        &parsed_ts) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_ts.has_error_code && parsed_ts.error_code == 0xc000006du);
+    PCHECK(rdp_credssp_status_from_error_code(parsed_ts.error_code) ==
+           LIBRDP_STATUS_AUTHENTICATION_FAILED);
+    ts_request.length = 0;
+    PCHECK(rdp_credssp_write_ts_error(&ts_request, 6u, 0xc0000071u) ==
+           LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_parse_ts_request(ts_request.data,
+                                        ts_request.length,
+                                        &parsed_ts) == LIBRDP_STATUS_OK);
+    PCHECK(parsed_ts.has_error_code && parsed_ts.error_code == 0xc0000071u);
+    PCHECK(rdp_credssp_status_from_error_code(parsed_ts.error_code) ==
+           LIBRDP_STATUS_CREDENTIALS_EXPIRED);
+    PCHECK(rdp_credssp_status_from_error_code(0xc0000224u) ==
+           LIBRDP_STATUS_CREDENTIALS_EXPIRED);
+    PCHECK(rdp_credssp_status_from_error_code(0xc0000234u) ==
+           LIBRDP_STATUS_ACCOUNT_LOCKED);
+    PCHECK(rdp_credssp_status_from_error_code(0xc0000072u) ==
+           LIBRDP_STATUS_AUTHENTICATION_FAILED);
+    PCHECK(rdp_credssp_status_from_error_code(0u) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_credssp_error_code_from_status(
+               LIBRDP_STATUS_AUTHENTICATION_FAILED) == 0xc000006du);
+    PCHECK(rdp_credssp_error_code_from_status(
+               LIBRDP_STATUS_CREDENTIALS_EXPIRED) == 0xc0000071u);
+    PCHECK(rdp_credssp_error_code_from_status(
+               LIBRDP_STATUS_ACCOUNT_LOCKED) == 0xc0000234u);
+    PCHECK(rdp_credssp_write_ts_error(&ts_request, 6u, 0u) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_credssp_write_negotiate_request(&nla_request, "host", "dom") == LIBRDP_STATUS_OK);
     PCHECK(rdp_credssp_parse_ts_request(nla_request.data, nla_request.length, &parsed_ts) == LIBRDP_STATUS_OK);
     PCHECK(parsed_ts.version == 6 && parsed_ts.nego_token_len > 0);

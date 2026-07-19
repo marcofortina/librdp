@@ -1114,6 +1114,45 @@ static librdp_status rdp_server_send_credssp_ts_request(librdp_server_peer* peer
     return status;
 }
 
+static librdp_status rdp_server_reject_credssp_authentication(
+    librdp_server_peer* peer,
+    uint32_t version,
+    librdp_status reason)
+{
+    rdp_buffer response;
+    librdp_status status = reason;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (status != LIBRDP_STATUS_CREDENTIALS_EXPIRED &&
+        status != LIBRDP_STATUS_ACCOUNT_LOCKED)
+        status = LIBRDP_STATUS_AUTHENTICATION_FAILED;
+    rdp_buffer_init(&response);
+    {
+        librdp_status write_status = rdp_credssp_write_ts_error(
+            &response,
+            version ? version : 6u,
+            rdp_credssp_error_code_from_status(status));
+
+        if (write_status == LIBRDP_STATUS_OK)
+        {
+            librdp_status send_status =
+                rdp_server_peer_send_all(peer, response.data, response.length);
+
+            if (send_status == LIBRDP_STATUS_OK)
+                rdp_server_metric_add(&peer->metrics.pdu_out, 1u);
+            else
+                status = send_status;
+        }
+        else
+        {
+            status = write_status;
+        }
+    }
+    rdp_buffer_free(&response);
+    return status;
+}
+
 static librdp_status rdp_server_prepare_credssp_challenge(librdp_server_peer* peer,
                                                           rdp_ntlm_challenge* challenge)
 {
@@ -1409,7 +1448,17 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_parse_ntlm_authenticate(ntlm, ntlm_len, &authenticate);
     if (status == LIBRDP_STATUS_OK)
-        status = rdp_server_credssp_resolve_expected_credentials(peer, &authenticate, request.version);
+    {
+        status = rdp_server_credssp_resolve_expected_credentials(
+            peer,
+            &authenticate,
+            request.version);
+        if (status != LIBRDP_STATUS_OK)
+            status = rdp_server_reject_credssp_authentication(
+                peer,
+                request.version,
+                status);
+    }
     if (status == LIBRDP_STATUS_OK)
     {
         memset(&challenge, 0, sizeof(challenge));
@@ -1427,6 +1476,11 @@ static librdp_status rdp_server_handle_credssp_authenticate(librdp_server_peer* 
                                                       peer->credssp_expected_username,
                                                       peer->credssp_expected_password,
                                                       &result);
+        if (status == LIBRDP_STATUS_PROTOCOL_ERROR)
+            status = rdp_server_reject_credssp_authentication(
+                peer,
+                request.version,
+                LIBRDP_STATUS_AUTHENTICATION_FAILED);
     }
     if (status == LIBRDP_STATUS_OK)
         status = rdp_credssp_ntlm_server_security_init(&peer->credssp_security, &result);
