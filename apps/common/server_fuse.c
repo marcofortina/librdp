@@ -2147,6 +2147,14 @@ static server_fuse_node* server_fuse_ensure_peer(server_fuse* provider,
         {
             node->peer_id = peer_id;
             node->generation = generation;
+            if (provider->mounted)
+            {
+                (void)fuse_lowlevel_notify_inval_entry(
+                    provider->session,
+                    FUSE_ROOT_ID,
+                    node->name,
+                    strlen(node->name));
+            }
         }
         return node;
     }
@@ -2195,8 +2203,12 @@ static librdp_status server_fuse_present(
     node->metadata.attributes = LIBRDP_SERVER_DRIVE_FILE_ATTRIBUTE_DIRECTORY;
     node->metadata_valid = 1;
     if (provider->mounted)
-        (void)fuse_lowlevel_notify_inval_inode(provider->session, peer->inode,
-                                               0, 0);
+    {
+        (void)fuse_lowlevel_notify_inval_entry(provider->session,
+                                               peer->inode,
+                                               node->name,
+                                               strlen(node->name));
+    }
     return LIBRDP_STATUS_OK;
 }
 

@@ -42,6 +42,7 @@ typedef struct server_host_poll_group
     server_host_peer_slot* peer;
     const server_platform_event_source_vtable* events;
     void* context;
+    server_platform_provider_kind provider;
 } server_host_poll_group;
 
 typedef struct server_host_platform_source
@@ -49,6 +50,7 @@ typedef struct server_host_platform_source
     const server_platform_event_source_vtable* events;
     void* context;
     int timeout_ms;
+    server_platform_provider_kind provider;
 } server_host_platform_source;
 
 static int server_host_min_timeout(int current, int candidate)
@@ -111,6 +113,7 @@ static librdp_status server_host_append_poll_group(
     group->peer = peer;
     group->events = events;
     group->context = context;
+    group->provider = SERVER_PLATFORM_PROVIDER_COUNT;
     *poll_count += descriptor_count;
     return LIBRDP_STATUS_OK;
 }
@@ -150,6 +153,7 @@ static size_t server_host_collect_platform_sources(
         sources[count].events = events;
         sources[count].context = context;
         sources[count].timeout_ms = -1;
+        sources[count].provider = kind;
         count++;
     }
     return count;
@@ -310,6 +314,7 @@ static librdp_status server_host_prepare_poll(
         if (status != LIBRDP_STATUS_OK)
             return status;
         group = &groups[*group_count - 1u];
+        group->provider = source->provider;
         if (descriptor_count > 0u)
         {
             status = source->events->get_pollfds(
@@ -319,6 +324,18 @@ static librdp_status server_host_prepare_poll(
                 &descriptor_count);
             if (status != LIBRDP_STATUS_OK)
                 return status;
+        }
+        if ((host->provider_poll_traced &
+             (uint8_t)(1u << (unsigned int)source->provider)) == 0u)
+        {
+            server_host_trace_emit(host,
+                                   SERVER_HOST_TRACE_PROVIDER_POLL,
+                                   NULL,
+                                   LIBRDP_STATUS_OK,
+                                   (uint64_t)source->provider,
+                                   (uint64_t)descriptor_count);
+            host->provider_poll_traced |=
+                (uint8_t)(1u << (unsigned int)source->provider);
         }
     }
     if (host->drive)
@@ -427,6 +444,19 @@ static librdp_status server_host_dispatch_provider(
     status = group->events->dispatch(
         group->context,
         host->max_work_per_iteration - *work);
+    if (group->provider < SERVER_PLATFORM_PROVIDER_COUNT &&
+        (host->provider_dispatch_traced &
+         (uint8_t)(1u << (unsigned int)group->provider)) == 0u)
+    {
+        server_host_trace_emit(host,
+                               SERVER_HOST_TRACE_PROVIDER_DISPATCH,
+                               NULL,
+                               status,
+                               (uint64_t)group->provider,
+                               (uint64_t)group->count);
+        host->provider_dispatch_traced |=
+            (uint8_t)(1u << (unsigned int)group->provider);
+    }
     (*work)++;
     return status;
 }

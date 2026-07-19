@@ -25,6 +25,8 @@
 #include <X11/keysym.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -91,6 +93,14 @@ typedef struct x11_server_test_state
     int defer_clipboard_response;
     librdp_status response_status;
 } x11_server_test_state;
+
+typedef struct test_fuse_drive_state
+{
+    uint64_t request_count;
+    uint64_t cancel_count;
+    server_platform_drive_request request;
+    char path[256];
+} test_fuse_drive_state;
 
 typedef struct test_selection_source
 {
@@ -196,6 +206,38 @@ static void test_stop_xvfb(pid_t child)
         return;
     kill(child, SIGTERM);
     (void)waitpid(child, NULL, 0);
+}
+
+static void test_fuse_drive_request(
+    const server_platform_drive_request* request,
+    void* user_data)
+{
+    test_fuse_drive_state* state = (test_fuse_drive_state*)user_data;
+
+    if (!state || !request)
+        return;
+    state->request_count++;
+    state->request = *request;
+    state->path[0] = '\0';
+    if (request->operation.path)
+        (void)snprintf(state->path,
+                       sizeof(state->path),
+                       "%s",
+                       request->operation.path);
+}
+
+static void test_fuse_drive_cancel(uint32_t peer_id,
+                                   uint32_t generation,
+                                   uint64_t request_id,
+                                   void* user_data)
+{
+    test_fuse_drive_state* state = (test_fuse_drive_state*)user_data;
+
+    (void)peer_id;
+    (void)generation;
+    (void)request_id;
+    if (state)
+        state->cancel_count++;
 }
 
 static int test_dispatch_platform(const server_platform_capture_vtable* capture,
@@ -984,6 +1026,105 @@ static int test_fuse_drive_model(void)
 }
 
 /*
+ * A real low-level FUSE session must expose kernel lookups through its poll
+ * source without a private worker. The request remains pending until stop so
+ * the fixture also verifies deterministic cancellation of a blocked caller.
+ */
+static int test_fuse_drive_event_source(void)
+{
+    char path[] = "/tmp/librdp-x11-fuse-events-XXXXXX";
+    char remote_path[PATH_MAX];
+    server_fuse_config config;
+    server_fuse* provider = NULL;
+    server_platform_drive_sink sink;
+    server_platform_drive_volume volume;
+    const server_platform_drive_vtable* drive = NULL;
+    const server_platform_event_source_vtable* events = NULL;
+    test_fuse_drive_state state;
+    struct pollfd descriptor;
+    size_t count = 0u;
+    pid_t reader = -1;
+    unsigned int attempt = 0u;
+    int ready = 0;
+    int dispatch_ok = 1;
+    int child_status = 0;
+
+    if (!server_fuse_available())
+        return 0;
+    CHECK(mkdtemp(path) != NULL);
+    CHECK(chmod(path, 0700) == 0);
+    server_fuse_config_init(&config);
+    config.mount_path = path;
+    provider = server_fuse_new(&config);
+    CHECK(provider != NULL);
+    drive = server_fuse_vtable();
+    CHECK(drive != NULL && drive->events != NULL);
+    events = drive->events;
+    memset(&state, 0, sizeof(state));
+    memset(&sink, 0, sizeof(sink));
+    sink.request = test_fuse_drive_request;
+    sink.cancel = test_fuse_drive_cancel;
+    sink.user_data = &state;
+    CHECK(drive->start(provider, &sink) == LIBRDP_STATUS_OK);
+
+    memset(&volume, 0, sizeof(volume));
+    volume.volume_id = 17u;
+    volume.peer_id = 3u;
+    volume.generation = 5u;
+    volume.device.reconnect_generation = 5u;
+    volume.device.device_id = 9u;
+    volume.name = "documents";
+    volume.read_only = 1;
+    CHECK(drive->present(provider, &volume) == LIBRDP_STATUS_OK);
+    CHECK(snprintf(remote_path,
+                   sizeof(remote_path),
+                   "%s/peer-3-5/documents/probe.txt",
+                   path) > 0);
+    reader = fork();
+    CHECK(reader >= 0);
+    if (reader == 0)
+    {
+        int file = open(remote_path, O_RDONLY);
+
+        if (file >= 0)
+            close(file);
+        _exit(file >= 0 ? 0 : 1);
+    }
+    for (attempt = 0u; attempt < 8u && state.request_count == 0u; attempt++)
+    {
+        if (events->get_pollfds(provider, NULL, 0u, &count) !=
+                LIBRDP_STATUS_OK ||
+            count != 1u ||
+            events->get_pollfds(provider, &descriptor, 1u, &count) !=
+                LIBRDP_STATUS_OK)
+        {
+            dispatch_ok = 0;
+            break;
+        }
+        ready = poll(&descriptor, 1u, 3000);
+        if (ready != 1 ||
+            events->notify_poll(provider, &descriptor, 1u) !=
+                LIBRDP_STATUS_OK ||
+            events->dispatch(provider, 8u) != LIBRDP_STATUS_OK)
+        {
+            dispatch_ok = 0;
+            break;
+        }
+    }
+
+    drive->stop(provider);
+    CHECK(waitpid(reader, &child_status, 0) == reader);
+    CHECK(WIFEXITED(child_status));
+    server_fuse_free(provider);
+    CHECK(rmdir(path) == 0);
+    CHECK(dispatch_ok);
+    CHECK(state.request_count == 1u);
+    CHECK(state.request.operation.operation == LIBRDP_SERVER_DRIVE_CREATE);
+    CHECK(state.path[0] == '\0');
+    return 0;
+}
+
+/*
  * Remote clipboard descriptors become read-only FUSE files only after the
  * complete descriptor group is valid. URI escaping and duplicate-name
  * handling prevent ambiguous native paths, while ownership revocation removes
@@ -1634,6 +1775,8 @@ int main(void)
     if (test_clipboard_files() != 0)
         return 1;
     if (test_fuse_drive_model() != 0)
+        return 1;
+    if (test_fuse_drive_event_source() != 0)
         return 1;
     if (test_fuse_clipboard_model() != 0)
         return 1;

@@ -61,6 +61,8 @@ struct server_host
     uint8_t pointer_visible;
     uint8_t drive_configured;
     uint8_t capture_pending;
+    uint8_t provider_poll_traced;
+    uint8_t provider_dispatch_traced;
     int listener_running;
     struct pollfd* pollfds;
     size_t poll_capacity;

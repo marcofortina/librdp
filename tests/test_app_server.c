@@ -2007,7 +2007,7 @@ static int test_host_trace_metrics(void)
         CHECK(strstr(event->name, (const char*)canary_data) == NULL);
     }
     for (index = SERVER_HOST_TRACE_LISTENER_START;
-         index <= SERVER_HOST_TRACE_POINTER_FAILED;
+         index <= SERVER_HOST_TRACE_PROVIDER_DISPATCH;
          index++)
     {
         CHECK(strcmp(server_host_trace_name((server_host_trace_type)index),

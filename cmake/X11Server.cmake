@@ -459,6 +459,34 @@ if(LIBRDP_BUILD_X11_SERVER)
             add_test(NAME x11_server COMMAND test_x11_server)
             set_tests_properties(x11_server PROPERTIES TIMEOUT 30)
             add_dependencies(librdp_tests test_x11_server)
+
+            if(LIBRDP_FUSE3_FOUND)
+                add_executable(test_x11_server_interop
+                    tests/test_x11_server_interop.c
+                )
+                target_compile_definitions(
+                    test_x11_server_interop PRIVATE
+                    LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
+                    LIBRDP_TEST_X11_SERVER_PATH="$<TARGET_FILE:librdp-x11-server>"
+                )
+                librdp_apply_system_definitions(
+                    test_x11_server_interop)
+                librdp_apply_warning_options(
+                    test_x11_server_interop)
+                librdp_apply_sanitizer_compile_options(
+                    test_x11_server_interop)
+                librdp_apply_sanitizer_link_options(
+                    test_x11_server_interop)
+                add_test(NAME x11_server_external_interop
+                    COMMAND test_x11_server_interop)
+                set_tests_properties(
+                    x11_server_external_interop PROPERTIES
+                    SKIP_RETURN_CODE 77
+                    TIMEOUT 45
+                )
+                add_dependencies(librdp_tests
+                    test_x11_server_interop)
+            endif()
         endif()
     endif()
 endif()

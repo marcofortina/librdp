@@ -1312,6 +1312,8 @@ librdp_status server_host_start(server_host* host)
     atomic_store_explicit(&host->cancellation_requested,
                           0,
                           memory_order_release);
+    host->provider_poll_traced = 0u;
+    host->provider_dispatch_traced = 0u;
     do
     {
         count = read(host->wakeup_read_fd,
