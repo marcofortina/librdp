@@ -83,7 +83,7 @@ void x11_managed_auth_config_init(x11_managed_auth_config* config)
     memset(config, 0, sizeof(*config));
     config->version = X11_MANAGED_AUTH_VERSION;
     config->size = sizeof(*config);
-    config->service_name = "librdp-x11";
+    config->service_name = "librdp";
 }
 
 void x11_managed_auth_identity_init(x11_managed_auth_identity* identity)

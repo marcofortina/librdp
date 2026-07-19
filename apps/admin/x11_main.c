@@ -102,12 +102,12 @@ static int x11_admin_present(const librdp_admin* admin, void* user_data)
                                  1,
                                  BlackPixel(display, screen),
                                  WhitePixel(display, screen));
-    XStoreName(display, window, "librdp-x11-admin");
+    XStoreName(display, window, "librdp-admin");
     class_hint = XAllocClassHint();
     if (class_hint)
     {
-        class_hint->res_name = (char*)"librdp-x11-admin";
-        class_hint->res_class = (char*)"librdp-x11-admin";
+        class_hint->res_name = (char*)"librdp-admin";
+        class_hint->res_class = (char*)"LibrdpAdmin";
         XSetClassHint(display, window, class_hint);
         XFree(class_hint);
     }

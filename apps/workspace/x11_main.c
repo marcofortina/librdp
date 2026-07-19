@@ -164,12 +164,12 @@ static int x11_workspace_present(
                                  1,
                                  BlackPixel(display, screen),
                                  WhitePixel(display, screen));
-    XStoreName(display, window, "librdp-x11-workspace");
+    XStoreName(display, window, "librdp-workspace");
     class_hint = XAllocClassHint();
     if (class_hint)
     {
-        class_hint->res_name = (char*)"librdp-x11-workspace";
-        class_hint->res_class = (char*)"librdp-x11-workspace";
+        class_hint->res_name = (char*)"librdp-workspace";
+        class_hint->res_class = (char*)"LibrdpWorkspace";
         XSetClassHint(display, window, class_hint);
         XFree(class_hint);
     }

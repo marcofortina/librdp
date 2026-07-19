@@ -682,7 +682,7 @@ cocoa_clipboard_decode_remote_data(cocoa_server_clipboard* clipboard,
 static NSError* cocoa_clipboard_error(librdp_status status)
 {
     return [NSError
-        errorWithDomain:@"org.librdp.cocoa-server.clipboard"
+        errorWithDomain:@"org.librdp.server.clipboard"
                    code:(NSInteger)status
                userInfo:@{
                    NSLocalizedDescriptionKey : [NSString

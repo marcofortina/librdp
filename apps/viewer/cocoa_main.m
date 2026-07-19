@@ -413,7 +413,7 @@ static void cocoa_viewer_session_status(librdp_status status,
                                                         NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    [self.window setTitle:@"librdp-cocoa-viewer"];
+    [self.window setTitle:@"librdp-viewer"];
     [self.window setContentView:self.view];
     [self.window setAcceptsMouseMovedEvents:YES];
     [self.window center];

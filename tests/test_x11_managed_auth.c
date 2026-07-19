@@ -93,6 +93,7 @@ static int test_provider_outcomes(void)
 
     memset(&context, 0, sizeof(context));
     x11_managed_auth_config_init(&config);
+    CHECK(strcmp(config.service_name, "librdp") == 0);
     config.provider = test_auth_provider;
     config.provider_user_data = &context;
     CHECK(x11_managed_auth_session_open(&config,

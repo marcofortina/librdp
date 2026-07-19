@@ -72,9 +72,9 @@ static void set_window_identity(x11_app* app)
     if (!app || !app->display || !app->window)
         return;
 
-    XStoreName(app->display, app->window, "librdp-x11-viewer");
-    hint.res_name = (char*)"librdp-x11-viewer";
-    hint.res_class = (char*)"LibrdpX11Viewer";
+    XStoreName(app->display, app->window, "librdp-viewer");
+    hint.res_name = (char*)"librdp-viewer";
+    hint.res_class = (char*)"LibrdpViewer";
     XSetClassHint(app->display, app->window, &hint);
 }
 

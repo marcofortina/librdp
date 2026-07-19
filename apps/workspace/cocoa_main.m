@@ -144,7 +144,7 @@ static int cocoa_workspace_present(
                                              defer:NO];
     delegate = [[CocoaWorkspaceWindowDelegate alloc] init];
     [window setDelegate:delegate];
-    [window setTitle:@"librdp-cocoa-workspace"];
+    [window setTitle:@"librdp-workspace"];
     scroll = [[NSScrollView alloc] initWithFrame:frame];
     [scroll setHasVerticalScroller:YES];
     text_view = [[NSTextView alloc] initWithFrame:frame];

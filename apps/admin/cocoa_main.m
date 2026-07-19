@@ -79,7 +79,7 @@ static int cocoa_admin_present(const librdp_admin* admin, void* user_data)
                                              defer:NO];
     delegate = [[CocoaAdminWindowDelegate alloc] init];
     [window setDelegate:delegate];
-    [window setTitle:@"librdp-cocoa-admin"];
+    [window setTitle:@"librdp-admin"];
     scroll = [[NSScrollView alloc] initWithFrame:frame];
     [scroll setHasVerticalScroller:YES];
     text_view = [[NSTextView alloc] initWithFrame:frame];

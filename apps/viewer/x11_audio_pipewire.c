@@ -297,7 +297,7 @@ static int x11_pipewire_ensure(x11_pipewire_audio* audio)
         return 1;
 
     pw_init(NULL, NULL);
-    audio->loop = pw_thread_loop_new("librdp-x11-audio", NULL);
+    audio->loop = pw_thread_loop_new("librdp-viewer-audio", NULL);
     if (!audio->loop)
         goto fail;
     audio->context = pw_context_new(pw_thread_loop_get_loop(audio->loop), NULL, 0);
@@ -548,7 +548,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
         return 0;
     x11_pipewire_audio_stop_output(audio);
     params[0] = x11_pipewire_format_param(format_storage, sizeof(format_storage), format, spa_format);
-    props = x11_pipewire_props("librdp-x11-audio-output", "Playback", device);
+    props = x11_pipewire_props("librdp-viewer-audio-output", "Playback", device);
     if (!props || !params[0])
         return 0;
 
@@ -557,7 +557,7 @@ int x11_pipewire_audio_start_output(x11_pipewire_audio* audio,
     audio->output_channels = format->channels;
     audio->output_bits = format->bits_per_sample;
     pw_thread_loop_lock(audio->loop);
-    audio->output_stream = pw_stream_new(audio->core, "librdp-x11-audio-output", props);
+    audio->output_stream = pw_stream_new(audio->core, "librdp-viewer-audio-output", props);
     if (audio->output_stream)
     {
         pw_stream_add_listener(audio->output_stream,
@@ -620,7 +620,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
         return 0;
     x11_pipewire_audio_stop_input(audio);
     params[0] = x11_pipewire_format_param(format_storage, sizeof(format_storage), format, spa_format);
-    props = x11_pipewire_props("librdp-x11-audio-input", "Capture", device);
+    props = x11_pipewire_props("librdp-viewer-audio-input", "Capture", device);
     if (!props || !params[0])
         return 0;
 
@@ -629,7 +629,7 @@ int x11_pipewire_audio_start_input(x11_pipewire_audio* audio,
     audio->input_channels = format->channels;
     audio->input_bits = format->bits_per_sample;
     pw_thread_loop_lock(audio->loop);
-    audio->input_stream = pw_stream_new(audio->core, "librdp-x11-audio-input", props);
+    audio->input_stream = pw_stream_new(audio->core, "librdp-viewer-audio-input", props);
     if (audio->input_stream)
     {
         pw_stream_add_listener(audio->input_stream, &audio->input_listener, &x11_pipewire_input_events, audio);
