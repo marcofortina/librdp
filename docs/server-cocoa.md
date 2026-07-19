@@ -15,7 +15,7 @@ Build the server on macOS 12.3 or newer with:
 ```sh
 cmake -S . -B build-macos -G Ninja \
   -DOpenSSL_DIR="$(brew --prefix openssl@3)/lib/cmake/OpenSSL" \
-  -DLIBRDP_BUILD_COCOA_SERVER=ON
+  -DLIBRDP_BUILD_SERVER=ON
 cmake --build build-macos --target librdp-cocoa-server
 ```
 

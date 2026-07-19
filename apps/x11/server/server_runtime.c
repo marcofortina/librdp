@@ -152,7 +152,7 @@ x11_server_runtime* x11_server_runtime_new(
         x11_server_context_width(runtime->native);
     host_config.server.height =
         x11_server_context_height(runtime->native);
-    host_config.server.server_name = "librdp-x11-server";
+    host_config.server.server_name = "librdp-server";
     host_config.server.security_mode = options->security_mode;
     host_config.server.tls_certificate_path = options->tls_certificate;
     host_config.server.tls_private_key_path = options->tls_private_key;

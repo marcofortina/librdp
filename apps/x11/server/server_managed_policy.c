@@ -31,12 +31,12 @@
 
 #ifndef LIBRDP_X11_SESSION_SUPERVISOR_PATH
 #define LIBRDP_X11_SESSION_SUPERVISOR_PATH \
-    "/usr/bin/librdp-x11-session-supervisor"
+    "/usr/bin/librdp-session-supervisor"
 #endif
 
 #ifndef LIBRDP_X11_SESSION_AGENT_PATH
 #define LIBRDP_X11_SESSION_AGENT_PATH \
-    "/usr/bin/librdp-x11-session-agent"
+    "/usr/bin/librdp-session-agent"
 #endif
 
 static int x11_managed_policy_copy(char* output,

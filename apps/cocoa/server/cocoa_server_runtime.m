@@ -208,7 +208,7 @@ int cocoa_server_run(const cocoa_server_options* options)
         cocoa_server_context_width(native);
     host_config.server.height =
         cocoa_server_context_height(native);
-    host_config.server.server_name = "librdp-cocoa-server";
+    host_config.server.server_name = "librdp-server";
     host_config.server.security_mode = options->security_mode;
     host_config.server.tls_certificate_path =
         options->tls_certificate;

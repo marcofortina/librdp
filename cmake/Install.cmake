@@ -109,7 +109,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-x11-session-broker.conf.example
+    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-session-broker.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/librdp
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/

@@ -3,8 +3,8 @@
 
 socket=/run/librdp/x11-broker.sock
 runtime-root=/run/librdp/x11-sessions
-supervisor=/usr/bin/librdp-x11-session-supervisor
-agent=/usr/bin/librdp-x11-session-agent
+supervisor=/usr/bin/librdp-session-supervisor
+agent=/usr/bin/librdp-session-agent
 xserver=/usr/bin/Xorg
 desktop=/usr/bin/startxfce4
 auth-service=librdp

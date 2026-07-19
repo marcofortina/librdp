@@ -25,7 +25,7 @@ Distributions may combine these packages, but optional viewer dependencies shoul
 The install rules are the source of truth for generated packages. A default build can create a compressed archive and, when host tools are present, native DEB or RPM artifacts:
 
 ```sh
-cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_X11_VIEWER=ON
+cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build -j$(nproc)
 cmake --build build --target package
 ```
@@ -40,7 +40,7 @@ cpack --config build/CPackConfig.cmake -G TGZ
 
 DEB generation requires `dpkg-deb`. RPM generation requires `rpmbuild`. macOS product packages are enabled only on macOS hosts with `productbuild` available.
 
-The generated package installs the library, public headers, CMake package files, pkg-config metadata, Markdown documentation, man pages, and the viewer binary when `LIBRDP_BUILD_X11_VIEWER=ON`.
+The generated package installs the library, public headers, CMake package files, pkg-config metadata, Markdown documentation, man pages, and the viewer binary when `LIBRDP_BUILD_VIEWER=ON`.
 
 ## Homebrew
 
@@ -65,7 +65,7 @@ ctest --test-dir build --output-on-failure
 The X11 viewer should be built only when the package intentionally provides it:
 
 ```sh
-cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_X11_VIEWER=ON
+cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build -j$(nproc)
 ```
 

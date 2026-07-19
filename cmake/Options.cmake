@@ -13,18 +13,22 @@ endif()
 
 option(LIBRDP_BUILD_TESTS "Build unit tests" ON)
 option(LIBRDP_BUILD_FUZZ "Build fuzz targets" OFF)
-option(LIBRDP_BUILD_X11_VIEWER "Build X11 viewer" OFF)
-option(LIBRDP_BUILD_X11_SERVER "Build X11 desktop server" OFF)
-option(LIBRDP_BUILD_COCOA_VIEWER "Build native Cocoa viewer" OFF)
-option(LIBRDP_BUILD_COCOA_SERVER "Build native Cocoa desktop server" OFF)
-option(LIBRDP_BUILD_X11_ADMIN "Build X11 administration inventory tool" OFF)
-option(LIBRDP_BUILD_X11_WORKSPACE "Build X11 workspace feed launcher" OFF)
-option(LIBRDP_BUILD_COCOA_ADMIN "Build native Cocoa administration inventory tool" OFF)
-option(LIBRDP_BUILD_COCOA_WORKSPACE "Build native Cocoa workspace feed launcher" OFF)
+option(LIBRDP_BUILD_VIEWER "Build the native viewer application" OFF)
+option(LIBRDP_BUILD_SERVER "Build the native desktop server application" OFF)
+option(LIBRDP_BUILD_ADMIN "Build the native administration application" OFF)
+option(LIBRDP_BUILD_WORKSPACE "Build the native workspace application" OFF)
 option(LIBRDP_BUILD_EXAMPLES "Build example programs" ON)
 option(LIBRDP_ENABLE_WERROR "Treat project compiler warnings as errors" OFF)
 option(LIBRDP_ENABLE_SANITIZERS "Enable selected compiler sanitizers on project targets" OFF)
 set(LIBRDP_SANITIZERS "address;undefined" CACHE STRING "Sanitizers enabled when LIBRDP_ENABLE_SANITIZERS is ON")
+
+if((LIBRDP_BUILD_VIEWER OR
+    LIBRDP_BUILD_SERVER OR
+    LIBRDP_BUILD_ADMIN OR
+    LIBRDP_BUILD_WORKSPACE) AND NOT UNIX)
+    message(FATAL_ERROR
+        "librdp applications require macOS or a supported X11 Unix platform")
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -179,7 +183,7 @@ endfunction()
 function(librdp_summary_viewer_backend name option found)
     librdp_summary_target_backend(
         "${name}" "${option}" "${found}"
-        LIBRDP_BUILD_X11_VIEWER librdp-x11-viewer
+        LIBRDP_BUILD_X11_VIEWER_NATIVE librdp-viewer
     )
 endfunction()
 

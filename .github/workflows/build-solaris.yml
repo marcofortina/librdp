@@ -38,9 +38,9 @@ jobs:
               -DOPENSSL_ROOT_DIR=/opt/csw \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=OFF \
-              -DLIBRDP_BUILD_X11_VIEWER=OFF \
-              -DLIBRDP_BUILD_X11_ADMIN=OFF \
-              -DLIBRDP_BUILD_X11_WORKSPACE=OFF \
+              -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_ADMIN=OFF \
+              -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=OFF
             cmake --build build-solaris-core-no-viewer --parallel
             ctest --test-dir build-solaris-core-no-viewer -R '^(common|core|protocol|transport)$' --output-on-failure
@@ -69,9 +69,9 @@ jobs:
               -DOPENSSL_ROOT_DIR=/opt/csw \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=OFF \
-              -DLIBRDP_BUILD_X11_VIEWER=OFF \
-              -DLIBRDP_BUILD_X11_ADMIN=OFF \
-              -DLIBRDP_BUILD_X11_WORKSPACE=OFF \
+              -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_ADMIN=OFF \
+              -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=OFF \
               -DLIBRDP_WITH_FFMPEG_AVC=OFF \
               -DLIBRDP_WITH_OPENH264_AVC=OFF \

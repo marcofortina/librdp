@@ -31,7 +31,7 @@ cmake -S . -B build-linux -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=ON \
-  -DLIBRDP_BUILD_X11_VIEWER=OFF
+  -DLIBRDP_BUILD_VIEWER=OFF
 cmake --build build-linux --parallel
 ctest --test-dir build-linux --output-on-failure
 ```
@@ -42,7 +42,7 @@ ctest --test-dir build-linux --output-on-failure
 cmake -S . -B build-linux-x11 -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIBRDP_BUILD_TESTS=ON \
-  -DLIBRDP_BUILD_X11_VIEWER=ON
+  -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build-linux-x11 --parallel
 ```
 
@@ -54,7 +54,7 @@ The viewer executable is `build-linux-x11/librdp-x11-viewer`.
 cmake -S . -B build-linux-server -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIBRDP_BUILD_TESTS=ON \
-  -DLIBRDP_BUILD_X11_SERVER=ON \
+  -DLIBRDP_BUILD_SERVER=ON \
   -DLIBRDP_WITH_FUSE3=ON \
   -DLIBRDP_WITH_PAM=ON
 cmake --build build-linux-server --parallel
@@ -71,6 +71,6 @@ CC=clang cmake -S . -B build-linux-fuzz -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLIBRDP_BUILD_FUZZ=ON \
   -DLIBRDP_BUILD_TESTS=OFF \
-  -DLIBRDP_BUILD_X11_VIEWER=OFF
+  -DLIBRDP_BUILD_VIEWER=OFF
 cmake --build build-linux-fuzz --parallel
 ```

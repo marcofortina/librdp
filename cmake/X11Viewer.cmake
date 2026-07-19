@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-if(LIBRDP_BUILD_X11_VIEWER)
+if(LIBRDP_BUILD_VIEWER AND NOT APPLE)
     find_package(X11 REQUIRED COMPONENTS Xcursor Xfixes)
     if(NOT "${LIBRDP_WITH_XSHM}" STREQUAL "OFF")
         find_package(X11 QUIET COMPONENTS Xext)
@@ -22,7 +22,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
     pkg_check_modules(XKBCOMMON REQUIRED xkbcommon)
-    add_executable(librdp-x11-viewer
+    add_executable(librdp-viewer
         apps/x11/viewer/audio_pipewire.c
         apps/x11/viewer/camera_v4l2.c
         apps/x11/viewer/device_backends.c
@@ -38,7 +38,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         apps/x11/viewer/viewer_window.c
         apps/x11/x11_keymap.c
     )
-    target_include_directories(librdp-x11-viewer PRIVATE
+    target_include_directories(librdp-viewer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/viewer
@@ -46,7 +46,7 @@ if(LIBRDP_BUILD_X11_VIEWER)
         ${X11_INCLUDE_DIR}
         ${XKBCOMMON_INCLUDE_DIRS}
     )
-    target_link_libraries(librdp-x11-viewer PRIVATE
+    target_link_libraries(librdp-viewer PRIVATE
         librdp_app_common
         Iconv::Iconv
         ${X11_LIBRARIES}
@@ -55,8 +55,8 @@ if(LIBRDP_BUILD_X11_VIEWER)
         ${XKBCOMMON_LIBRARIES}
         Threads::Threads
     )
-    librdp_apply_system_definitions(librdp-x11-viewer)
-    get_target_property(LIBRDP_X11_VIEWER_INCLUDES librdp-x11-viewer INCLUDE_DIRECTORIES)
+    librdp_apply_system_definitions(librdp-viewer)
+    get_target_property(LIBRDP_X11_VIEWER_INCLUDES librdp-viewer INCLUDE_DIRECTORIES)
     foreach(LIBRDP_X11_VIEWER_INCLUDE IN LISTS LIBRDP_X11_VIEWER_INCLUDES)
         if(NOT IS_ABSOLUTE "${LIBRDP_X11_VIEWER_INCLUDE}")
             continue()
@@ -66,35 +66,35 @@ if(LIBRDP_BUILD_X11_VIEWER)
         string(FIND "${LIBRDP_X11_VIEWER_INCLUDE_REAL}/"
             "${LIBRDP_SOURCE_PRIVATE_INCLUDE_REAL}/" LIBRDP_X11_VIEWER_PRIVATE_INCLUDE_INDEX)
         if(LIBRDP_X11_VIEWER_PRIVATE_INCLUDE_INDEX EQUAL 0)
-            message(FATAL_ERROR "librdp-x11-viewer must not include private src headers")
+            message(FATAL_ERROR "librdp-viewer must not include private src headers")
         endif()
     endforeach()
-    librdp_apply_warning_options(librdp-x11-viewer)
-    librdp_apply_sanitizer_compile_options(librdp-x11-viewer)
-    librdp_apply_sanitizer_link_options(librdp-x11-viewer)
+    librdp_apply_warning_options(librdp-viewer)
+    librdp_apply_sanitizer_compile_options(librdp-viewer)
+    librdp_apply_sanitizer_link_options(librdp-viewer)
     if(LIBRDP_PIPEWIRE_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
-        target_link_libraries(librdp-x11-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)
+        target_compile_definitions(librdp-viewer PRIVATE LIBRDP_HAVE_PIPEWIRE=1)
+        target_link_libraries(librdp-viewer PRIVATE PkgConfig::LIBRDP_PIPEWIRE)
     endif()
-    librdp_apply_x11_device_backends(librdp-x11-viewer)
-    librdp_apply_x11_camera_backends(librdp-x11-viewer)
+    librdp_apply_x11_device_backends(librdp-viewer)
+    librdp_apply_x11_camera_backends(librdp-viewer)
     if(LIBRDP_XSHM_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_XSHM=1)
+        target_compile_definitions(librdp-viewer PRIVATE LIBRDP_HAVE_XSHM=1)
         if(TARGET X11::Xext)
-            target_link_libraries(librdp-x11-viewer PRIVATE X11::Xext)
+            target_link_libraries(librdp-viewer PRIVATE X11::Xext)
         else()
-            target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xext_LIB})
+            target_link_libraries(librdp-viewer PRIVATE ${X11_Xext_LIB})
         endif()
     endif()
     if(LIBRDP_XRANDR_FOUND)
-        target_compile_definitions(librdp-x11-viewer PRIVATE LIBRDP_HAVE_XRANDR=1)
+        target_compile_definitions(librdp-viewer PRIVATE LIBRDP_HAVE_XRANDR=1)
         if(TARGET X11::Xrandr)
-            target_link_libraries(librdp-x11-viewer PRIVATE X11::Xrandr)
+            target_link_libraries(librdp-viewer PRIVATE X11::Xrandr)
         else()
-            target_link_libraries(librdp-x11-viewer PRIVATE ${X11_Xrandr_LIB})
+            target_link_libraries(librdp-viewer PRIVATE ${X11_Xrandr_LIB})
         endif()
     endif()
-    install(TARGETS librdp-x11-viewer
+    install(TARGETS librdp-viewer
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)

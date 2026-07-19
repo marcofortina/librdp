@@ -15,8 +15,7 @@ client APIs.
 ```sh
 cmake -S . -B build-macos -G Ninja \
   -DLIBRDP_BUILD_TESTS=ON \
-  -DLIBRDP_BUILD_X11_VIEWER=OFF \
-  -DLIBRDP_BUILD_COCOA_VIEWER=ON
+  -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build-macos --parallel
 ```
 

@@ -17,69 +17,48 @@ endif()
 librdp_summary_build_target(tests LIBRDP_BUILD_TESTS librdp_tests)
 librdp_summary_build_target(examples LIBRDP_BUILD_EXAMPLES examples)
 librdp_summary_build_target(fuzz LIBRDP_BUILD_FUZZ fuzz-targets)
-if(LIBRDP_BUILD_X11_VIEWER)
-    librdp_summary_line(x11-viewer ON found librdp-x11-viewer yes enabled)
+if(APPLE)
+    set(LIBRDP_NATIVE_APP_BACKEND cocoa)
+    set(LIBRDP_BUILD_X11_VIEWER_NATIVE OFF)
+    set(LIBRDP_BUILD_X11_SERVER_NATIVE OFF)
+    set(LIBRDP_BUILD_COCOA_SERVER_NATIVE ${LIBRDP_BUILD_SERVER})
 else()
-    librdp_summary_line(x11-viewer OFF not-searched librdp-x11-viewer no disabled-by-user)
+    set(LIBRDP_NATIVE_APP_BACKEND x11)
+    set(LIBRDP_BUILD_X11_VIEWER_NATIVE ${LIBRDP_BUILD_VIEWER})
+    set(LIBRDP_BUILD_X11_SERVER_NATIVE ${LIBRDP_BUILD_SERVER})
+    set(LIBRDP_BUILD_COCOA_SERVER_NATIVE OFF)
 endif()
-if(LIBRDP_BUILD_X11_SERVER)
-    librdp_summary_line(x11-server ON found librdp-x11-server yes enabled)
-else()
-    librdp_summary_line(x11-server OFF not-searched librdp-x11-server no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_COCOA_VIEWER)
-    if(APPLE)
-        librdp_summary_line(cocoa-viewer ON found librdp-cocoa-viewer yes enabled)
+
+foreach(LIBRDP_APP_NAME IN ITEMS admin server viewer workspace)
+    string(TOUPPER "${LIBRDP_APP_NAME}" LIBRDP_APP_NAME_UPPER)
+    set(LIBRDP_APP_OPTION "LIBRDP_BUILD_${LIBRDP_APP_NAME_UPPER}")
+    if(${LIBRDP_APP_OPTION})
+        librdp_summary_line(
+            "${LIBRDP_APP_NAME}"
+            ON
+            "backend-${LIBRDP_NATIVE_APP_BACKEND}"
+            "librdp-${LIBRDP_APP_NAME}"
+            yes
+            enabled
+        )
     else()
-        librdp_summary_line(cocoa-viewer ON missing librdp-cocoa-viewer no platform-not-apple)
+        librdp_summary_line(
+            "${LIBRDP_APP_NAME}"
+            OFF
+            not-searched
+            "librdp-${LIBRDP_APP_NAME}"
+            no
+            disabled-by-user
+        )
     endif()
-else()
-    librdp_summary_line(cocoa-viewer OFF not-searched librdp-cocoa-viewer no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_COCOA_SERVER)
-    if(APPLE)
-        librdp_summary_line(cocoa-server ON found librdp-cocoa-server yes enabled)
-    else()
-        librdp_summary_line(cocoa-server ON missing librdp-cocoa-server no platform-not-apple)
-    endif()
-else()
-    librdp_summary_line(cocoa-server OFF not-searched librdp-cocoa-server no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_X11_ADMIN)
-    librdp_summary_line(x11-admin ON found librdp-x11-admin yes enabled)
-else()
-    librdp_summary_line(x11-admin OFF not-searched librdp-x11-admin no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_X11_WORKSPACE)
-    librdp_summary_line(x11-workspace ON found librdp-x11-workspace yes enabled)
-else()
-    librdp_summary_line(x11-workspace OFF not-searched librdp-x11-workspace no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_COCOA_ADMIN)
-    if(APPLE)
-        librdp_summary_line(cocoa-admin ON found librdp-cocoa-admin yes enabled)
-    else()
-        librdp_summary_line(cocoa-admin ON missing librdp-cocoa-admin no platform-not-apple)
-    endif()
-else()
-    librdp_summary_line(cocoa-admin OFF not-searched librdp-cocoa-admin no disabled-by-user)
-endif()
-if(LIBRDP_BUILD_COCOA_WORKSPACE)
-    if(APPLE)
-        librdp_summary_line(cocoa-workspace ON found librdp-cocoa-workspace yes enabled)
-    else()
-        librdp_summary_line(cocoa-workspace ON missing librdp-cocoa-workspace no platform-not-apple)
-    endif()
-else()
-    librdp_summary_line(cocoa-workspace OFF not-searched librdp-cocoa-workspace no disabled-by-user)
-endif()
+endforeach()
 if(DOXYGEN_FOUND)
     librdp_summary_line(docs-api AUTO found docs-api yes enabled)
 else()
     librdp_summary_line(docs-api AUTO missing docs-api no dependency-not-found)
 endif()
-if(LIBRDP_BUILD_X11_VIEWER)
-    set(LIBRDP_DEVICE_BACKEND_TARGETS librdp+librdp-x11-viewer)
+if(LIBRDP_BUILD_X11_VIEWER_NATIVE)
+    set(LIBRDP_DEVICE_BACKEND_TARGETS librdp+librdp-viewer)
 else()
     set(LIBRDP_DEVICE_BACKEND_TARGETS librdp)
 endif()
@@ -103,23 +82,23 @@ librdp_summary_optional_backend(jpeg LIBRDP_WITH_JPEG LIBRDP_JPEG_FOUND librdp)
 librdp_summary_viewer_backend(xshm LIBRDP_WITH_XSHM LIBRDP_XSHM_FOUND)
 librdp_summary_target_backend(
     xshm-server LIBRDP_WITH_XSHM LIBRDP_X11_SERVER_XSHM_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-server
+    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-server
 )
 librdp_summary_viewer_backend(xrandr LIBRDP_WITH_XRANDR LIBRDP_XRANDR_FOUND)
 librdp_summary_target_backend(
     fuse3-x11-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-server
+    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-server
 )
 librdp_summary_target_backend(
     fuse3-cocoa-server LIBRDP_WITH_FUSE3 LIBRDP_FUSE3_FOUND
-    LIBRDP_BUILD_COCOA_SERVER librdp-cocoa-server
+    LIBRDP_BUILD_COCOA_SERVER_NATIVE librdp-server
 )
 librdp_summary_target_backend(
     pam-managed-server LIBRDP_WITH_PAM LIBRDP_PAM_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-session-supervisor
+    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-session-supervisor
 )
 librdp_summary_target_backend(
     bsdauth-managed-server LIBRDP_WITH_BSDAUTH LIBRDP_BSDAUTH_FOUND
-    LIBRDP_BUILD_X11_SERVER librdp-x11-session-supervisor
+    LIBRDP_BUILD_X11_SERVER_NATIVE librdp-session-supervisor
 )
 message(STATUS "librdp feature summary end")

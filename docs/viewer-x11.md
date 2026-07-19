@@ -10,7 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Build
 
 ```sh
-cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_X11_VIEWER=ON
+cmake -S . -B build -DLIBRDP_BUILD_TESTS=ON -DLIBRDP_BUILD_VIEWER=ON
 cmake --build build -j$(nproc)
 ```
 

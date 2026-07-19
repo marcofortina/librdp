@@ -157,7 +157,7 @@ int main(int argc, char** argv)
     {
         if (!workspace_options_parse(argc,
                                      argv,
-                                     "librdp-cocoa-viewer",
+                                     "librdp-viewer",
                                      &options,
                                      stderr))
         {

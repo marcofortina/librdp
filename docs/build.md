@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Build
 
-librdp uses CMake to build the C library, unit tests, examples, optional fuzz targets, and the X11 viewer. The core library is portable across Unix-like systems; platform-specific viewer and backend paths are enabled only when their dependencies are present.
+librdp uses CMake to build the C library, unit tests, examples, optional fuzz targets, and native applications. The core library is portable across Unix-like systems; CMake selects Cocoa applications on macOS and X11 applications on the other supported systems.
 
 ## Platform Guides
 
@@ -28,14 +28,10 @@ librdp uses CMake to build the C library, unit tests, examples, optional fuzz ta
 
 - `LIBRDP_BUILD_TESTS=ON|OFF`: build unit tests and repository guardrails.
 - `LIBRDP_BUILD_FUZZ=ON|OFF`: build fuzz targets.
-- `LIBRDP_BUILD_X11_VIEWER=ON|OFF`: build the X11 viewer.
-- `LIBRDP_BUILD_X11_SERVER=ON|OFF`: build the X11 desktop server.
-- `LIBRDP_BUILD_COCOA_VIEWER=ON|OFF`: build the native Cocoa viewer.
-- `LIBRDP_BUILD_COCOA_SERVER=ON|OFF`: build the native Cocoa shadow server.
-- `LIBRDP_BUILD_X11_ADMIN=ON|OFF`: build the X11 administration inventory tool.
-- `LIBRDP_BUILD_X11_WORKSPACE=ON|OFF`: build the X11 workspace feed launcher.
-- `LIBRDP_BUILD_COCOA_ADMIN=ON|OFF`: build the native Cocoa administration inventory tool.
-- `LIBRDP_BUILD_COCOA_WORKSPACE=ON|OFF`: build the native Cocoa workspace feed launcher.
+- `LIBRDP_BUILD_VIEWER=ON|OFF`: build the native RDP viewer.
+- `LIBRDP_BUILD_SERVER=ON|OFF`: build the native RDP server.
+- `LIBRDP_BUILD_ADMIN=ON|OFF`: build the RDS administration application.
+- `LIBRDP_BUILD_WORKSPACE=ON|OFF`: build the workspace feed launcher.
 - `LIBRDP_BUILD_EXAMPLES=ON|OFF`: build standalone C examples from `examples/`.
 - `LIBRDP_ABI_VERSION=<n>`: shared-library ABI version used as `SOVERSION`.
 - `LIBRDP_LIBRARY_TYPE=AUTO|STATIC|SHARED|BOTH`: choose the library artifacts to build. `AUTO` preserves the standard CMake `BUILD_SHARED_LIBS` behavior.

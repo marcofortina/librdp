@@ -41,9 +41,9 @@ jobs:
               -DCMAKE_PREFIX_PATH=/usr/pkg \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
-              -DLIBRDP_BUILD_X11_VIEWER=OFF \
-              -DLIBRDP_BUILD_X11_ADMIN=OFF \
-              -DLIBRDP_BUILD_X11_WORKSPACE=OFF \
+              -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_ADMIN=OFF \
+              -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
               -DLIBRDP_WITH_PIPEWIRE=OFF \
               -DLIBRDP_WITH_PNG=OFF \
@@ -77,9 +77,9 @@ jobs:
               -DCMAKE_PREFIX_PATH=/usr/pkg \
               -DLIBRDP_BUILD_TESTS=ON \
               -DLIBRDP_BUILD_EXAMPLES=ON \
-              -DLIBRDP_BUILD_X11_VIEWER=OFF \
-              -DLIBRDP_BUILD_X11_ADMIN=OFF \
-              -DLIBRDP_BUILD_X11_WORKSPACE=OFF \
+              -DLIBRDP_BUILD_VIEWER=OFF \
+              -DLIBRDP_BUILD_ADMIN=OFF \
+              -DLIBRDP_BUILD_WORKSPACE=OFF \
               -DLIBRDP_ENABLE_WERROR=ON \
               -DLIBRDP_WITH_FFMPEG_AVC=OFF \
               -DLIBRDP_WITH_OPENH264_AVC=OFF \

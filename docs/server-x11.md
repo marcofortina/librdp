@@ -14,7 +14,7 @@ Build the server with:
 
 ```sh
 cmake -S . -B build \
-  -DLIBRDP_BUILD_X11_SERVER=ON \
+  -DLIBRDP_BUILD_SERVER=ON \
   -DLIBRDP_BUILD_TESTS=ON
 cmake --build build -j"$(nproc)"
 ```

@@ -1,9 +1,9 @@
 # Copyright (C) 2026 Marco Fortina
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-if(LIBRDP_BUILD_X11_SERVER)
-    if(NOT UNIX OR APPLE)
-        message(FATAL_ERROR "LIBRDP_BUILD_X11_SERVER requires an X11 Unix platform")
+if(LIBRDP_BUILD_SERVER AND NOT APPLE)
+    if(NOT UNIX)
+        message(FATAL_ERROR "LIBRDP_BUILD_SERVER requires macOS or a supported X11 Unix platform")
     endif()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBRDP_X11_SERVER REQUIRED IMPORTED_TARGET
@@ -85,8 +85,8 @@ if(LIBRDP_BUILD_X11_SERVER)
             Threads::Threads
         )
         target_compile_definitions(${target} PRIVATE
-            LIBRDP_X11_SESSION_SUPERVISOR_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-x11-session-supervisor"
-            LIBRDP_X11_SESSION_AGENT_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-x11-session-agent"
+            LIBRDP_X11_SESSION_SUPERVISOR_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-session-supervisor"
+            LIBRDP_X11_SESSION_AGENT_PATH="${CMAKE_INSTALL_FULL_BINDIR}/librdp-session-agent"
         )
         librdp_apply_system_definitions(${target})
         librdp_apply_warning_options(${target})
@@ -94,25 +94,25 @@ if(LIBRDP_BUILD_X11_SERVER)
         librdp_apply_sanitizer_link_options(${target})
     endfunction()
 
-    add_executable(librdp-x11-server
+    add_executable(librdp-server
         apps/x11/server/main.c
         apps/x11/server/server_cli.c
         apps/x11/server/server_managed_client.c
         apps/x11/server/server_managed_ipc.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
     )
-    librdp_configure_x11_server_target(librdp-x11-server)
+    librdp_configure_x11_server_target(librdp-server)
 
-    add_executable(librdp-x11-session-agent
+    add_executable(librdp-session-agent
         apps/x11/server/session_agent.c
         apps/x11/server/server_cli.c
         apps/x11/server/server_managed_ipc.c
         apps/x11/server/server_managed_process.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
     )
-    librdp_configure_x11_server_target(librdp-x11-session-agent)
+    librdp_configure_x11_server_target(librdp-session-agent)
 
-    add_executable(librdp-x11-session-broker
+    add_executable(librdp-session-broker
         apps/x11/server/session_broker.c
         apps/x11/server/server_managed_broker.c
         apps/x11/server/server_managed_config.c
@@ -121,9 +121,9 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_managed_registry.c
     )
     librdp_configure_x11_managed_target(
-        librdp-x11-session-broker)
+        librdp-session-broker)
 
-    add_executable(librdp-x11-session-supervisor
+    add_executable(librdp-session-supervisor
         apps/x11/server/session_supervisor.c
         apps/x11/server/server_managed_auth.c
         apps/x11/server/server_managed_ipc.c
@@ -131,18 +131,18 @@ if(LIBRDP_BUILD_X11_SERVER)
         apps/x11/server/server_managed_supervisor.c
     )
     librdp_configure_x11_managed_target(
-        librdp-x11-session-supervisor)
-    target_link_libraries(librdp-x11-session-supervisor PRIVATE
+        librdp-session-supervisor)
+    target_link_libraries(librdp-session-supervisor PRIVATE
         PkgConfig::LIBRDP_X11_SERVER
     )
     librdp_apply_x11_managed_auth(
-        librdp-x11-session-supervisor)
+        librdp-session-supervisor)
 
     install(TARGETS
-        librdp-x11-server
-        librdp-x11-session-agent
-        librdp-x11-session-broker
-        librdp-x11-session-supervisor
+        librdp-server
+        librdp-session-agent
+        librdp-session-broker
+        librdp-session-supervisor
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
@@ -246,14 +246,14 @@ if(LIBRDP_BUILD_X11_SERVER)
         file(MAKE_DIRECTORY
             ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR})
         file(COPY
-            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-x11-session-broker.conf.example
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/librdp-session-broker.conf.example
             DESTINATION ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}
             FILE_PERMISSIONS OWNER_READ OWNER_WRITE
         )
         add_test(NAME x11_managed_config_cli
-            COMMAND librdp-x11-session-broker
+            COMMAND librdp-session-broker
                 --config
-                ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}/librdp-x11-session-broker.conf.example
+                ${LIBRDP_X11_MANAGED_TEST_CONFIG_DIR}/librdp-session-broker.conf.example
                 --check-config
         )
         set_tests_properties(x11_managed_config_cli
@@ -467,7 +467,7 @@ if(LIBRDP_BUILD_X11_SERVER)
                 target_compile_definitions(
                     test_x11_server_interop PRIVATE
                     LIBRDP_TEST_XVFB_PATH="${LIBRDP_XVFB_EXECUTABLE}"
-                    LIBRDP_TEST_X11_SERVER_PATH="$<TARGET_FILE:librdp-x11-server>"
+                    LIBRDP_TEST_X11_SERVER_PATH="$<TARGET_FILE:librdp-server>"
                 )
                 librdp_apply_system_definitions(
                     test_x11_server_interop)

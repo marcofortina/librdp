@@ -23,10 +23,7 @@ if(LIBRDP_BUILD_TESTS)
     add_dependencies(librdp_tests test_cocoa_server_cli)
 endif()
 
-if(LIBRDP_BUILD_COCOA_SERVER)
-    if(NOT APPLE)
-        message(FATAL_ERROR "LIBRDP_BUILD_COCOA_SERVER=ON requires macOS")
-    endif()
+if(LIBRDP_BUILD_SERVER AND APPLE)
     enable_language(OBJC)
     find_library(LIBRDP_COCOA_SERVER_COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(
@@ -38,7 +35,7 @@ if(LIBRDP_BUILD_COCOA_SERVER)
     find_library(LIBRDP_COCOA_SERVER_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
     find_library(LIBRDP_COCOA_SERVER_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(LIBRDP_COCOA_SERVER_SCREENCAPTUREKIT_FRAMEWORK ScreenCaptureKit REQUIRED)
-    add_executable(librdp-cocoa-server
+    add_executable(librdp-server
         apps/cocoa/server/main.m
         apps/cocoa/server/cocoa_capture.m
         apps/cocoa/server/cocoa_clipboard.m
@@ -49,12 +46,12 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         apps/cocoa/server/cocoa_server_runtime.m
         apps/common/server_fuse.c
     )
-    target_include_directories(librdp-cocoa-server PRIVATE
+    target_include_directories(librdp-server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(librdp-cocoa-server PRIVATE
+    target_link_libraries(librdp-server PRIVATE
         librdp_app_common
         ${LIBRDP_COCOA_SERVER_APPLICATIONSERVICES_FRAMEWORK}
         ${LIBRDP_COCOA_SERVER_COCOA_FRAMEWORK}
@@ -66,25 +63,25 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         Threads::Threads
     )
     if(LIBRDP_FUSE3_FOUND)
-        target_compile_definitions(librdp-cocoa-server PRIVATE
+        target_compile_definitions(librdp-server PRIVATE
             LIBRDP_HAVE_FUSE3=1
         )
-        target_link_libraries(librdp-cocoa-server PRIVATE
+        target_link_libraries(librdp-server PRIVATE
             PkgConfig::LIBRDP_FUSE3
         )
     endif()
-    target_compile_options(librdp-cocoa-server PRIVATE
+    target_compile_options(librdp-server PRIVATE
         $<$<COMPILE_LANGUAGE:OBJC>:-fblocks>
         $<$<COMPILE_LANGUAGE:OBJC>:-mmacosx-version-min=12.3>
     )
-    target_link_options(librdp-cocoa-server PRIVATE
+    target_link_options(librdp-server PRIVATE
         -mmacosx-version-min=12.3
     )
-    librdp_apply_system_definitions(librdp-cocoa-server)
-    librdp_apply_warning_options(librdp-cocoa-server)
-    librdp_apply_sanitizer_compile_options(librdp-cocoa-server)
-    librdp_apply_sanitizer_link_options(librdp-cocoa-server)
-    install(TARGETS librdp-cocoa-server
+    librdp_apply_system_definitions(librdp-server)
+    librdp_apply_warning_options(librdp-server)
+    librdp_apply_sanitizer_compile_options(librdp-server)
+    librdp_apply_sanitizer_link_options(librdp-server)
+    install(TARGETS librdp-server
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
     if(LIBRDP_BUILD_TESTS)
@@ -236,7 +233,7 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         add_dependencies(librdp_tests
             test_cocoa_server_clipboard)
         add_test(NAME cocoa_server_help
-            COMMAND librdp-cocoa-server --help)
+            COMMAND librdp-server --help)
         set_tests_properties(cocoa_server_help PROPERTIES TIMEOUT 30)
     endif()
 endif()

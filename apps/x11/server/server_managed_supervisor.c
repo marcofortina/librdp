@@ -159,7 +159,7 @@ void x11_managed_supervisor_config_init(
     config->version = X11_MANAGED_SUPERVISOR_VERSION;
     config->size = sizeof(*config);
     x11_managed_auth_config_init(&config->authentication);
-    config->agent_path = "/usr/bin/librdp-x11-session-agent";
+    config->agent_path = "/usr/bin/librdp-session-agent";
     config->authentication_timeout_ms = 30000;
     config->startup_timeout_ms = 30000;
     config->command_timeout_ms = 5000;
