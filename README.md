@@ -5,7 +5,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # librdp
 
-librdp is a C client library for building RDP viewers and integration tools on Unix-like systems. The core is platform-neutral and exposes session, settings, event, surface, input, audio, video, clipboard, and channel APIs.
+librdp is a C library for building RDP clients, servers, viewers, and
+integration tools on Unix-like systems. The core is platform-neutral and
+exposes session, peer, settings, event, surface, input, audio, video,
+clipboard, and channel APIs.
 
 The project targets Linux, macOS, FreeBSD, OpenBSD, and NetBSD. Platform-specific behavior is kept behind viewer or backend boundaries.
 

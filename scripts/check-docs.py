@@ -32,6 +32,7 @@ REQUIRED_MARKDOWN = (
     "docs/admin.md",
     "docs/workspace.md",
     "docs/server.md",
+    "docs/server-cocoa.md",
     "docs/server-x11.md",
     "docs/abi-versioning.md",
     "docs/architecture.md",
@@ -60,6 +61,7 @@ REQUIRED_FILES = REQUIRED_MARKDOWN + (
     "docs/man/librdp-server.7",
     "docs/man/librdp-workspace.7",
     "docs/man/librdp-cocoa-admin.1",
+    "docs/man/librdp-cocoa-server.1",
     "docs/man/librdp-cocoa-workspace.1",
     "docs/man/librdp-cocoa-viewer.1",
     "docs/man/librdp-x11-viewer.1",
@@ -235,6 +237,14 @@ def x11_server_source_options() -> set[str]:
     )
 
 
+def cocoa_server_source_options() -> set[str]:
+    return set(
+        VIEWER_OPTION_RE.findall(
+            read("apps/cocoa/server/cocoa_server_cli.c")
+        )
+    )
+
+
 def x11_broker_source_options() -> set[str]:
     return set(
         VIEWER_OPTION_RE.findall(
@@ -335,6 +345,23 @@ def validate_x11_server_options(errors: list[str]) -> None:
     for option in sorted(manpage - source):
         errors.append(
             "documented X11 server option not present in "
+            f"source: {option}"
+        )
+
+
+def validate_cocoa_server_options(errors: list[str]) -> None:
+    source = cocoa_server_source_options()
+    manpage = documented_options(
+        "docs/man/librdp-cocoa-server.1")
+
+    for option in sorted(source - manpage):
+        errors.append(
+            "Cocoa server option missing from "
+            f"docs/man/librdp-cocoa-server.1: {option}"
+        )
+    for option in sorted(manpage - source):
+        errors.append(
+            "documented Cocoa server option not present in "
             f"source: {option}"
         )
 
@@ -638,6 +665,7 @@ def main() -> int:
     validate_admin_options(errors)
     validate_workspace_options(errors)
     validate_x11_server_options(errors)
+    validate_cocoa_server_options(errors)
     validate_x11_broker_options(errors)
     validate_cmake_options(errors)
     validate_fuzz_targets(errors)

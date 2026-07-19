@@ -5,7 +5,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # librdp
 
-librdp is a C client library for building RDP viewers and integration tools on Unix-like systems. The core is platform-neutral and exposes public APIs for sessions, settings, events, surfaces, input, clipboard, audio, video, and channels.
+librdp is a C library for building RDP clients, servers, viewers, and
+integration tools on Unix-like systems. The core is platform-neutral and
+exposes public APIs for sessions, peers, settings, events, surfaces, input,
+clipboard, audio, video, and channels.
 
 ## Start here
 
@@ -27,6 +30,7 @@ librdp is a C client library for building RDP viewers and integration tools on U
 - [Workspace feeds](workspace.md)
 - [Server API](server.md)
 - [X11 desktop server](server-x11.md)
+- [Cocoa desktop server](server-cocoa.md)
 
 ## Engineering references
 
@@ -58,6 +62,7 @@ librdp is a C client library for building RDP viewers and integration tools on U
 - [librdp-tracing(7)](man/librdp-tracing.7)
 - [librdp-workspace(7)](man/librdp-workspace.7)
 - [librdp-cocoa-admin(1)](man/librdp-cocoa-admin.1)
+- [librdp-cocoa-server(1)](man/librdp-cocoa-server.1)
 - [librdp-cocoa-workspace(1)](man/librdp-cocoa-workspace.1)
 - [librdp-cocoa-viewer(1)](man/librdp-cocoa-viewer.1)
 - [librdp-x11-admin(1)](man/librdp-x11-admin.1)

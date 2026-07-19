@@ -23,6 +23,42 @@ The repository also ships standalone examples that are compiled by CMake when `L
 | `librdp-example-workspace-list` | `examples/workspace_list.c` | Loads a workspace feed from HTTP(S) or XML and lists published resources. |
 | `librdp-example-server-listener` | `examples/server_listener.c` | Opens a loopback server listener, drives one peer, presents a BGRA desktop, and receives input/channel events through public server APIs. |
 
+## Desktop server applications
+
+The server listener example demonstrates the protocol-facing API without a
+platform desktop. The X11 and Cocoa server applications add native capture,
+input, clipboard, and client-drive providers around the same public server
+objects.
+
+Share an existing X11 display:
+
+```sh
+librdp-x11-server \
+  --mode shadow \
+  --display :0 \
+  --source root \
+  --security tls \
+  --tls-cert /etc/librdp/server.crt \
+  --tls-key /etc/librdp/server.key \
+  --allow-capture
+```
+
+Share the first ScreenCaptureKit display on macOS:
+
+```sh
+librdp-cocoa-server \
+  --mode shadow \
+  --source display:0 \
+  --security tls \
+  --tls-cert /etc/librdp/server.crt \
+  --tls-key /etc/librdp/server.key \
+  --allow-capture
+```
+
+Input, clipboard, and client drives require separate `--allow-*` grants. See
+the [X11 server](server-x11.md) and [Cocoa server](server-cocoa.md) guides for
+platform permissions and drive behavior.
+
 ## Minimal session
 
 ```c

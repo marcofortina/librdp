@@ -91,6 +91,7 @@ nav:
       - Examples: examples.md
       - Server API: server.md
       - X11 server: server-x11.md
+      - Cocoa server: server-cocoa.md
       - ABI and versioning: abi-versioning.md
   - Architecture and protocols:
       - Architecture: architecture.md

@@ -5,8 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Build macOS
 
-macOS builds the portable core, tests, examples, and an optional native viewer.
-The X11 viewer is not part of the macOS build profile.
+macOS builds the portable core, tests, examples, and optional native viewer,
+administration, workspace, and shadow-server applications. X11 applications
+are not part of the macOS build profile.
 
 ## Dependencies
 
@@ -24,13 +25,14 @@ brew install \
 ```sh
 cmake -S . -B build-macos -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
+  -DOpenSSL_DIR="$(brew --prefix openssl@3)/lib/cmake/OpenSSL" \
   -DLIBRDP_BUILD_TESTS=ON \
   -DLIBRDP_BUILD_EXAMPLES=ON \
   -DLIBRDP_BUILD_X11_VIEWER=OFF \
   -DLIBRDP_BUILD_COCOA_VIEWER=ON \
   -DLIBRDP_BUILD_COCOA_ADMIN=ON \
   -DLIBRDP_BUILD_COCOA_WORKSPACE=ON \
+  -DLIBRDP_BUILD_COCOA_SERVER=ON \
   -DLIBRDP_WITH_PIPEWIRE=OFF \
   -DLIBRDP_WITH_PNG=OFF \
   -DLIBRDP_WITH_JPEG=OFF \
@@ -40,5 +42,8 @@ cmake --build build-macos --parallel
 ctest --test-dir build-macos --output-on-failure
 ```
 
-The disabled options are X11-viewer-specific paths. The Cocoa viewer, admin,
-and workspace tools use AppKit and the public librdp APIs.
+The disabled options are X11-specific paths. The Cocoa viewer, admin,
+workspace, and server applications use native macOS frameworks and public
+librdp APIs. Building the server does not require Screen Recording or
+Accessibility permission; those permissions are evaluated when its
+corresponding runtime providers are requested.

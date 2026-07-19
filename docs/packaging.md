@@ -105,6 +105,7 @@ Package metadata should reflect the build result, not the full optional list.
 | X11 viewer | X11, Xcursor, Xfixes, xkbcommon, pthreads | same libraries | Ship separately from the core library. |
 | X11 desktop server | X11, XDamage, XComposite, XTest, XFixes, XRandR, Xau, xkbcommon | same libraries and a local graphical session for shadow mode | Ship separately from the core library. |
 | Managed X11 sessions | PAM or BSD Authentication, Xorg | host authentication stack, virtual X server, selected desktop | Install the broker and session helpers together. |
+| Cocoa desktop server | ScreenCaptureKit, CoreGraphics, Cocoa, ApplicationServices | macOS 12.3 or newer and an active graphical session | Ship separately from the core library. |
 | PipeWire audio | PipeWire development package | PipeWire user session and runtime libs | Make an optional viewer dependency. |
 | Camera | V4L2 headers available through the platform | local video device permissions | Make an optional viewer capability. |
 | Smartcard | PC/SC development package | PC/SC service and reader access | Make an optional backend dependency. |
@@ -122,8 +123,10 @@ lib*/liblibrdp.so*
 include/librdp/*.h
 share/doc/librdp/*.md
 share/man/man1/librdp-x11-viewer.1
+share/man/man1/librdp-cocoa-server.1
 bin/librdp-x11-viewer
 bin/librdp-x11-server
+bin/librdp-cocoa-server
 bin/librdp-x11-session-broker
 bin/librdp-x11-session-supervisor
 bin/librdp-x11-session-agent

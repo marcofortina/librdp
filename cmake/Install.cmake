@@ -121,6 +121,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs/
 )
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-admin.1
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-server.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-workspace.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-cocoa-viewer.1
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/man/librdp-x11-viewer.1
