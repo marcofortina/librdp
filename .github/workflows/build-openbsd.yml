@@ -56,6 +56,7 @@ jobs:
             test -n "${openssl_header}"
             export OPENSSL_INCLUDE_DIR="${openssl_header%/openssl/types.h}"
             export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig"
+            export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
             cmake -S . -B build-openbsd-x11-apps -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
               -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
