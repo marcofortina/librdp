@@ -26,6 +26,7 @@ jobs:
         with:
           usesh: true
           prepare: |
+            export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
             pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen graphviz
             if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
               ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
@@ -64,6 +65,7 @@ jobs:
         with:
           usesh: true
           prepare: |
+            export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r)/All/"
             pkg_add cmake ninja-build pkgconf openssl libiconv python312 doxygen graphviz
             if command -v python3.12 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
               ln -sf /usr/pkg/bin/python3.12 /usr/pkg/bin/python3
