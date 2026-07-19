@@ -511,6 +511,9 @@ static int test_broker_lifecycle(void)
     policy.first_display =
         700u + (uint32_t)(getpid() % 100);
     policy.last_display = policy.first_display + 1u;
+    CHECK(x11_managed_policy_add_user(
+              &policy, account->pw_name) ==
+          LIBRDP_STATUS_OK);
     CHECK(x11_managed_policy_valid(&policy));
     CHECK(test_start_broker(
         &policy, &first, &first_thread));

@@ -24,8 +24,12 @@
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -722,6 +726,78 @@ librdp_status x11_managed_ipc_receive(
         x11_managed_ipc_message_init(message);
     }
     OPENSSL_cleanse(frame, sizeof(frame));
+    return status;
+}
+
+/*
+ * Create a connected Unix socket pair through bind/connect/accept so BSD
+ * kernels attach peer credentials to both endpoints.
+ */
+librdp_status x11_managed_ipc_connected_pair(int descriptors[2])
+{
+    char directory[] = "/tmp/librdp-managed-ipc-XXXXXX";
+    struct sockaddr_un address;
+    char socket_path[sizeof(address.sun_path)];
+    int listener = -1;
+    int connector = -1;
+    int accepted = -1;
+    int length = 0;
+    librdp_status status = LIBRDP_STATUS_IO_ERROR;
+
+    if (!descriptors)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    descriptors[0] = -1;
+    descriptors[1] = -1;
+    socket_path[0] = '\0';
+    if (!mkdtemp(directory))
+        return LIBRDP_STATUS_IO_ERROR;
+    length = snprintf(socket_path,
+                      sizeof(socket_path),
+                      "%s/control",
+                      directory);
+    if (length < 0 || (size_t)length >= sizeof(socket_path))
+        status = LIBRDP_STATUS_LIMIT_EXCEEDED;
+    else
+    {
+        listener = socket(AF_UNIX, SOCK_STREAM, 0);
+        connector = socket(AF_UNIX, SOCK_STREAM, 0);
+        memset(&address, 0, sizeof(address));
+        address.sun_family = AF_UNIX;
+        memcpy(address.sun_path,
+               socket_path,
+               (size_t)length + 1u);
+        if (listener >= 0 && connector >= 0 &&
+            bind(listener,
+                 (const struct sockaddr*)&address,
+                 sizeof(address)) == 0 &&
+            listen(listener, 1) == 0 &&
+            connect(connector,
+                    (const struct sockaddr*)&address,
+                    sizeof(address)) == 0)
+        {
+            do
+            {
+                accepted = accept(listener, NULL, NULL);
+            } while (accepted < 0 && errno == EINTR);
+            if (accepted >= 0)
+            {
+                descriptors[0] = connector;
+                descriptors[1] = accepted;
+                connector = -1;
+                accepted = -1;
+                status = LIBRDP_STATUS_OK;
+            }
+        }
+    }
+    if (listener >= 0)
+        close(listener);
+    if (connector >= 0)
+        close(connector);
+    if (accepted >= 0)
+        close(accepted);
+    if (socket_path[0] != '\0')
+        (void)unlink(socket_path);
+    (void)rmdir(directory);
     return status;
 }
 

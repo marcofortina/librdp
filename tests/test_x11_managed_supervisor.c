@@ -258,7 +258,8 @@ static int test_managed_lifecycle(void)
                       ":%d",
                       820 + (int)(getpid() % 100));
     CHECK(length > 0 && (size_t)length < sizeof(display));
-    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, bootstrap) == 0);
+    CHECK(x11_managed_ipc_connected_pair(bootstrap) ==
+          LIBRDP_STATUS_OK);
     x11_managed_supervisor_config_init(&config);
     CHECK(strcmp(config.agent_path,
                  LIBRDP_X11_SESSION_AGENT_PATH) == 0);

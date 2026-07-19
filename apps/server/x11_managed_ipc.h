@@ -132,6 +132,8 @@ librdp_status x11_managed_ipc_receive(
     int descriptor,
     x11_managed_ipc_message* message,
     int timeout_ms);
+/* Create connected endpoints that support kernel peer credential queries. */
+librdp_status x11_managed_ipc_connected_pair(int descriptors[2]);
 librdp_status x11_managed_ipc_peer_identity(
     int descriptor,
     x11_managed_ipc_identity* identity);

@@ -405,7 +405,8 @@ static librdp_status x11_managed_supervisor_start_agent(
     int length = 0;
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
+    if (x11_managed_ipc_connected_pair(sockets) !=
+        LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_IO_ERROR;
     length = snprintf(descriptor,
                       sizeof(descriptor),

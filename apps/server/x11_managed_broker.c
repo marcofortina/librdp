@@ -291,8 +291,10 @@ static librdp_status x11_managed_broker_spawn_supervisor(
     int spawn_status = 0;
     int length = 0;
 
-    if (!descriptor || !process ||
-        socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
+    if (!descriptor || !process)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (x11_managed_ipc_connected_pair(sockets) !=
+        LIBRDP_STATUS_OK)
         return LIBRDP_STATUS_IO_ERROR;
     *descriptor = -1;
     *process = -1;

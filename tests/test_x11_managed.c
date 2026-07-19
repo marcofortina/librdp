@@ -8,7 +8,7 @@
  * authentication, random reconnect tokens and sensitive-field cleansing.
  * Bug classes: over-read, oversized allocation, version confusion, stale
  * token acceptance, partial-frame commit and credential lifetime leaks.
- * Determinism: socketpairs, bounded deadlines and local kernel credentials
+ * Determinism: local Unix sockets, bounded deadlines and kernel credentials
  * avoid network, desktop and external service dependencies.
  */
 
@@ -161,7 +161,8 @@ static int test_peer_identity_and_token(void)
     char second[X11_MANAGED_IPC_TOKEN_BYTES];
     int sockets[2] = {-1, -1};
 
-    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    CHECK(x11_managed_ipc_connected_pair(sockets) ==
+          LIBRDP_STATUS_OK);
     CHECK(x11_managed_ipc_peer_identity(sockets[0], &identity) ==
           LIBRDP_STATUS_OK);
     CHECK(identity.uid == geteuid());
