@@ -52,3 +52,37 @@ execute_process(
 if(NOT compare_result EQUAL 0)
     message(FATAL_ERROR "SBOM generation is not deterministic")
 endif()
+
+file(READ "${sbom_one}" sbom_content)
+foreach(required IN ITEMS
+        "librdp:cmake:LIBRDP_BUILD_ADMIN"
+        "librdp:cmake:LIBRDP_BUILD_SERVER"
+        "librdp:cmake:LIBRDP_BUILD_VIEWER"
+        "librdp:cmake:LIBRDP_BUILD_WORKSPACE"
+        "librdp:application-backend"
+        "librdp:install:application-directory"
+        "librdp-admin"
+        "librdp-server"
+        "librdp-viewer"
+        "librdp-workspace")
+    string(FIND "${sbom_content}" "\"${required}\"" required_position)
+    if(required_position EQUAL -1)
+        message(FATAL_ERROR "SBOM is missing ${required}")
+    endif()
+endforeach()
+
+if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD|NetBSD|SunOS)$")
+    foreach(required IN ITEMS
+            "librdp:install:session-broker"
+            "librdp:install:session-agent"
+            "librdp:install:session-supervisor"
+            "librdp:install:session-broker-config-example"
+            "librdp-session-broker"
+            "librdp-session-agent"
+            "librdp-session-supervisor")
+        string(FIND "${sbom_content}" "\"${required}\"" required_position)
+        if(required_position EQUAL -1)
+            message(FATAL_ERROR "SBOM is missing ${required}")
+        endif()
+    endforeach()
+endif()

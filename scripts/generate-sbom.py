@@ -66,6 +66,18 @@ ARTIFACT_PATTERNS = (
     "librdp.pc",
     "librdpConfig*.cmake",
 )
+APPLICATION_ARTIFACTS = (
+    ("LIBRDP_BUILD_ADMIN", "librdp-admin"),
+    ("LIBRDP_BUILD_SERVER", "librdp-server"),
+    ("LIBRDP_BUILD_VIEWER", "librdp-viewer"),
+    ("LIBRDP_BUILD_WORKSPACE", "librdp-workspace"),
+)
+INSTALL_DIR_DEFAULTS = {
+    "CMAKE_INSTALL_BINDIR": "bin",
+    "CMAKE_INSTALL_SBINDIR": "sbin",
+    "CMAKE_INSTALL_LIBEXECDIR": "libexec",
+    "CMAKE_INSTALL_DATADIR": "share",
+}
 CACHE_RE = re.compile(r"^([^:#][^:]*):([^=]+)=(.*)$")
 
 
@@ -151,6 +163,82 @@ def property_entry(name: str, value: object) -> dict[str, str]:
     return {"name": name, "value": str(value)}
 
 
+def application_backend(cache: dict[str, str]) -> str:
+    if cache.get("CMAKE_SYSTEM_NAME") == "Darwin":
+        return "cocoa"
+    if cache.get("CMAKE_SYSTEM_NAME") in {
+        "Linux",
+        "FreeBSD",
+        "OpenBSD",
+        "NetBSD",
+        "SunOS",
+    }:
+        return "x11"
+    return "none"
+
+
+def install_path(cache: dict[str, str], directory_name: str, *parts: str) -> str:
+    directory = cache.get(directory_name) or INSTALL_DIR_DEFAULTS[directory_name]
+    if os.path.isabs(directory):
+        root = Path(directory)
+    else:
+        root = Path(cache.get("CMAKE_INSTALL_PREFIX") or "/usr/local") / directory
+    return str(root.joinpath(*parts))
+
+
+def install_properties(cache: dict[str, str]) -> list[dict[str, str]]:
+    properties = [
+        property_entry(
+            "librdp:install:application-directory",
+            install_path(cache, "CMAKE_INSTALL_BINDIR"),
+        )
+    ]
+    if (
+        application_backend(cache) == "x11"
+        and bool_cache(cache.get("LIBRDP_BUILD_SERVER")) == "true"
+    ):
+        properties.extend(
+            (
+                property_entry(
+                    "librdp:install:session-broker",
+                    install_path(
+                        cache,
+                        "CMAKE_INSTALL_SBINDIR",
+                        "librdp-session-broker",
+                    ),
+                ),
+                property_entry(
+                    "librdp:install:session-agent",
+                    install_path(
+                        cache,
+                        "CMAKE_INSTALL_LIBEXECDIR",
+                        "librdp",
+                        "librdp-session-agent",
+                    ),
+                ),
+                property_entry(
+                    "librdp:install:session-supervisor",
+                    install_path(
+                        cache,
+                        "CMAKE_INSTALL_LIBEXECDIR",
+                        "librdp",
+                        "librdp-session-supervisor",
+                    ),
+                ),
+                property_entry(
+                    "librdp:install:session-broker-config-example",
+                    install_path(
+                        cache,
+                        "CMAKE_INSTALL_DATADIR",
+                        "librdp",
+                        "librdp-session-broker.conf.example",
+                    ),
+                ),
+            )
+        )
+    return properties
+
+
 def created_timestamp() -> str:
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if epoch:
@@ -232,13 +320,15 @@ def dependency_components(cache: dict[str, str]) -> tuple[list[dict[str, object]
 
 
 def feature_properties(cache: dict[str, str]) -> list[dict[str, str]]:
-    properties: list[dict[str, str]] = []
+    properties = [
+        property_entry("librdp:application-backend", application_backend(cache))
+    ]
     for name in BUILD_OPTIONS:
         properties.append(property_entry(f"librdp:cmake:{name}", cache.get(name, "")))
     for feature_name, option, prefix, _modules in OPTIONAL_FEATURES:
         properties.append(property_entry(f"librdp:feature:{feature_name}:requested", cache.get(option, "AUTO")))
         properties.append(property_entry(f"librdp:feature:{feature_name}:found", "true" if feature_found(cache, prefix) else "false"))
-    return properties
+    return properties + install_properties(cache)
 
 
 def artifact_components(build_dir: Path) -> tuple[list[dict[str, object]], list[str]]:
@@ -380,8 +470,19 @@ def validate_bom(bom: dict[str, object]) -> None:
         root_properties = root.get("properties", [])
         require(isinstance(root_properties, list), errors, "root properties missing")
         property_names = {item.get("name") for item in root_properties if isinstance(item, dict)}
+        properties_by_name = component_properties(root)
         require("librdp:source-hash" in property_names, errors, "source hash property missing")
         require("librdp:compiler" in property_names, errors, "compiler property missing")
+        require("librdp:application-backend" in property_names,
+                errors,
+                "application backend property missing")
+        require("librdp:install:application-directory" in property_names,
+                errors,
+                "application install directory property missing")
+        for option_name in BUILD_OPTIONS:
+            require(f"librdp:cmake:{option_name}" in property_names,
+                    errors,
+                    f"build option property missing: {option_name}")
         for feature_name, _option, _prefix, _modules in OPTIONAL_FEATURES:
             require(f"librdp:feature:{feature_name}:requested" in property_names,
                     errors,
@@ -389,7 +490,19 @@ def validate_bom(bom: dict[str, object]) -> None:
             require(f"librdp:feature:{feature_name}:found" in property_names,
                     errors,
                     f"feature found property missing: {feature_name}")
+        if (properties_by_name.get("librdp:application-backend") == "x11" and
+                bool_cache(properties_by_name.get("librdp:cmake:LIBRDP_BUILD_SERVER")) == "true"):
+            for property_name in (
+                "librdp:install:session-broker",
+                "librdp:install:session-agent",
+                "librdp:install:session-supervisor",
+                "librdp:install:session-broker-config-example",
+            ):
+                require(property_name in property_names,
+                        errors,
+                        f"managed-session install property missing: {property_name}")
 
+    component_names: set[str] = set()
     for index, component in enumerate(components):
         require(isinstance(component, dict), errors, f"component {index}: not an object")
         if not isinstance(component, dict):
@@ -403,11 +516,31 @@ def validate_bom(bom: dict[str, object]) -> None:
         require(isinstance(component.get("name"), str) and bool(component.get("name")),
                 errors,
                 f"component {index}: name missing")
+        if isinstance(component.get("name"), str):
+            component_names.add(str(component["name"]))
         component_type = component.get("type")
         properties = component_properties(component)
         linked_path = properties.get("librdp:linked-path", "")
         if component_type == "file" or (linked_path and linked_path != "built-in"):
             validate_hashes(component, errors, f"component {index}")
+
+    if isinstance(root, dict):
+        root_properties = component_properties(root)
+        for option_name, artifact_name in APPLICATION_ARTIFACTS:
+            if bool_cache(root_properties.get(f"librdp:cmake:{option_name}")) == "true":
+                require(artifact_name in component_names,
+                        errors,
+                        f"requested application artifact missing: {artifact_name}")
+        if (root_properties.get("librdp:application-backend") == "x11" and
+                bool_cache(root_properties.get("librdp:cmake:LIBRDP_BUILD_SERVER")) == "true"):
+            for artifact_name in (
+                "librdp-session-agent",
+                "librdp-session-broker",
+                "librdp-session-supervisor",
+            ):
+                require(artifact_name in component_names,
+                        errors,
+                        f"managed-session artifact missing: {artifact_name}")
 
     dependency_refs: set[str] = set()
     for entry in dependencies:
