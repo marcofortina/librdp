@@ -1701,11 +1701,13 @@ int test_transport(void)
     EVP_PKEY* self_signed_key = NULL;
     EVP_PKEY* wrong_host_key = NULL;
     EVP_PKEY* expired_key = NULL;
+    EVP_PKEY* not_yet_valid_key = NULL;
     X509* ca_cert = NULL;
     X509* server_cert = NULL;
     X509* self_signed_cert = NULL;
     X509* wrong_host_cert = NULL;
     X509* expired_cert = NULL;
+    X509* not_yet_valid_cert = NULL;
     test_tls_callback_state tofu_accept;
     test_tls_callback_state tofu_reject;
     test_tls_trace_case trace_case;
@@ -1819,6 +1821,15 @@ int test_transport(void)
                                         "DNS:localhost",
                                         -7200,
                                         -3600));
+    TCHECK(make_test_server_certificate(&not_yet_valid_key,
+                                        &not_yet_valid_cert,
+                                        ca_key,
+                                        ca_cert,
+                                        5,
+                                        "localhost",
+                                        "DNS:localhost",
+                                        3600,
+                                        7200));
     TCHECK(make_test_self_signed_server_certificate(&self_signed_key, &self_signed_cert));
     TCHECK(test_certificate_fingerprint(self_signed_cert, self_signed_fingerprint));
     memcpy(wrong_fingerprint, self_signed_fingerprint, sizeof(wrong_fingerprint));
@@ -1850,6 +1861,18 @@ int test_transport(void)
                               NULL));
     TCHECK(run_tls_client_case(expired_key,
                               expired_cert,
+                              ca_cert,
+                              "localhost",
+                              LIBRDP_TLS_POLICY_STRICT,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
+                              LIBRDP_STATUS_TLS_CERTIFICATE_REJECTED,
+                              0,
+                              NULL));
+    TCHECK(run_tls_client_case(not_yet_valid_key,
+                              not_yet_valid_cert,
                               ca_cert,
                               "localhost",
                               LIBRDP_TLS_POLICY_STRICT,
@@ -1961,11 +1984,13 @@ int test_transport(void)
     TCHECK(memcmp(tls_public_key.data, expected_public_key, tls_public_key.length) == 0);
 
     X509_free(expired_cert);
+    X509_free(not_yet_valid_cert);
     X509_free(wrong_host_cert);
     X509_free(self_signed_cert);
     X509_free(server_cert);
     X509_free(ca_cert);
     EVP_PKEY_free(expired_key);
+    EVP_PKEY_free(not_yet_valid_key);
     EVP_PKEY_free(wrong_host_key);
     EVP_PKEY_free(self_signed_key);
     EVP_PKEY_free(server_key);
