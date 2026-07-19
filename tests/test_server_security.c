@@ -141,7 +141,7 @@ int test_server_loopback_tls_handshake(void)
 
             SCHECK(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
         }
-        status = librdp_server_peer_run_once(peer, 0);
+        status = librdp_server_peer_run_once(peer, 10);
         SCHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
         if (librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_X224_CONFIRMED && tls_ready)
             break;
@@ -391,7 +391,7 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
 
             SCHECK(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
         }
-        status = librdp_server_peer_run_once(peer, 0);
+        status = librdp_server_peer_run_once(peer, 10);
         SCHECK(status == LIBRDP_STATUS_OK || status == LIBRDP_STATUS_TIMEOUT);
         if (librdp_server_peer_get_state(peer) == LIBRDP_SERVER_PEER_NLA_AUTHENTICATING && tls_ready)
             break;
