@@ -33,6 +33,7 @@
 #include <pthread.h>
 #endif
 
+#if defined(LIBRDP_HAVE_PIPEWIRE) || defined(LIBRDP_X11_AUDIO_TESTING)
 typedef struct x11_audio_ring
 {
     uint8_t* data;
@@ -41,6 +42,7 @@ typedef struct x11_audio_ring
     size_t write_pos;
     size_t size;
 } x11_audio_ring;
+#endif
 
 struct x11_pipewire_audio
 {
@@ -75,6 +77,7 @@ struct x11_pipewire_audio
 
 #define X11_PIPEWIRE_RING_BYTES (4u * 1024u * 1024u)
 
+#if defined(LIBRDP_HAVE_PIPEWIRE) || defined(LIBRDP_X11_AUDIO_TESTING)
 static void x11_audio_ring_free(x11_audio_ring* ring)
 {
     if (!ring)
@@ -165,6 +168,7 @@ static uint32_t x11_audio_latency_ms(size_t queued_bytes, size_t frame_size, uin
     ms = (frames * 1000u) / rate;
     return ms > UINT32_MAX ? UINT32_MAX : (uint32_t)ms;
 }
+#endif
 
 #ifdef LIBRDP_X11_AUDIO_TESTING
 struct x11_audio_memory_sink
