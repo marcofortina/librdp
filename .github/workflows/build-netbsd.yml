@@ -42,7 +42,7 @@ jobs:
             test -f /usr/X11R7/include/X11/Xlib.h
           run: |
             export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig:/usr/X11R7/lib/pkgconfig"
-            export LDFLAGS="-L/usr/pkg/lib"
+            export LDFLAGS="-L/usr/pkg/lib -Wl,-R/usr/pkg/lib"
             cmake -S . -B build-netbsd-x11-apps -G Ninja \
               -DCMAKE_BUILD_TYPE=Debug \
               -DOPENSSL_ROOT_DIR=/usr/pkg \
