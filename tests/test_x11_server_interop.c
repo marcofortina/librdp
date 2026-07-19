@@ -260,7 +260,11 @@ static uint16_t interop_select_port(void)
         return 0u;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1)
+    {
+        close(socket_fd);
+        return 0u;
+    }
     if (bind(socket_fd,
              (const struct sockaddr*)&address,
              sizeof(address)) == 0 &&
