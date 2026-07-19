@@ -2786,10 +2786,14 @@ static int test_filesystem_redirection_channel(void)
     rdp_buffer_init(&response);
 
     PCHECK(rdp_filesystem_redirection_write_close_response(&response, 1, 3, 0) == LIBRDP_STATUS_OK);
+    PCHECK(response.length == 21u);
     PCHECK(rdp_filesystem_redirection_parse_close_response(response.data,
                                                            response.length,
                                                            &completion_response) == LIBRDP_STATUS_OK);
     PCHECK(completion_response.device_id == 1u && completion_response.completion_id == 3u);
+    PCHECK(rdp_filesystem_redirection_parse_close_response(response.data,
+                                                           response.length - 1u,
+                                                           &completion_response) == LIBRDP_STATUS_PROTOCOL_ERROR);
     response.data[16] = 1;
     PCHECK(rdp_filesystem_redirection_parse_close_response(response.data,
                                                            response.length,

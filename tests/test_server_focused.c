@@ -485,6 +485,7 @@ int test_server_channels_focused(void)
     librdp_server_drive_event initialized_drive_event;
     librdp_server_drive_request drive_request;
     librdp_server_drive_request_id drive_request_id = 0u;
+    librdp_server_drive_device_handle primary_drive_device;
     librdp_server_drive_file_handle stale_drive_file;
     rdp_clipboard_format_entry entry;
     rdp_device_redirection_capability_config capability_config;
@@ -495,6 +496,18 @@ int test_server_channels_focused(void)
     static const uint8_t format_name[] = {'T', 0, 'E', 0, 'S', 0, 'T', 0};
     static const uint8_t drive_name[] = {
         'D', 0, 'R', 0, 'I', 0, 'V', 0, 'E', 0, 0, 0
+    };
+    static const uint8_t utf8_drive_name[] = {
+        'S', 'M', 'O', 'K', 'E', 0
+    };
+    static const uint8_t unterminated_drive_name[] = {
+        'B', 'A', 'D'
+    };
+    static const uint8_t embedded_null_drive_name[] = {
+        'B', 0, 'A', 0
+    };
+    static const uint8_t invalid_utf16_drive_name[] = {
+        0, 0xd8, 0, 0
     };
     static const librdp_server_drive_operation drive_operations[] = {
         LIBRDP_SERVER_DRIVE_WRITE,
@@ -523,6 +536,7 @@ int test_server_channels_focused(void)
     drive.valid = 1;
     memset(&channel, 0, sizeof(channel));
     memset(&device_announce, 0, sizeof(device_announce));
+    memset(&primary_drive_device, 0, sizeof(primary_drive_device));
     memset(&stale_drive_file, 0, sizeof(stale_drive_file));
     rdp_buffer_init(&packet);
     SCHECK(librdp_server_clipboard_event_init(NULL) ==
@@ -769,6 +783,7 @@ int test_server_channels_focused(void)
            drive.device.device_id == device_announce.device_id);
     SCHECK(strcmp(drive.preferred_name, "DRIVE") == 0 &&
            strcmp(drive.name, "DRIVE") == 0);
+    primary_drive_device = drive.device;
     SCHECK(rdp_server_emit_extension_event(fixture.peer,
                                            "rdpdr",
                                            5u,
@@ -778,10 +793,90 @@ int test_server_channels_focused(void)
                                            packet.data,
                                            packet.length) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
+    device_announce.device_id = 0x44525632u;
+    memcpy(device_announce.preferred_dos_name, "ALT", 4u);
+    device_announce.data = utf8_drive_name;
+    device_announce.data_len = (uint32_t)sizeof(utf8_drive_name);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_device_list_announce(
+               &packet,
+               &device_announce,
+               1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(drive.counts[LIBRDP_SERVER_DRIVE_DEVICE_ADDED] == 2u);
+    SCHECK(strcmp(drive.preferred_name, "ALT") == 0 &&
+           strcmp(drive.name, "SMOKE") == 0);
+    device_announce.device_id = 0x44525633u;
+    device_announce.data = unterminated_drive_name;
+    device_announce.data_len =
+        (uint32_t)sizeof(unterminated_drive_name);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_device_list_announce(
+               &packet,
+               &device_announce,
+               1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    device_announce.device_id = 0x44525634u;
+    device_announce.data = embedded_null_drive_name;
+    device_announce.data_len =
+        (uint32_t)sizeof(embedded_null_drive_name);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_device_list_announce(
+               &packet,
+               &device_announce,
+               1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    device_announce.device_id = 0x44525635u;
+    device_announce.data = invalid_utf16_drive_name;
+    device_announce.data_len =
+        (uint32_t)sizeof(invalid_utf16_drive_name);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_device_list_announce(
+               &packet,
+               &device_announce,
+               1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    SCHECK(drive.counts[LIBRDP_SERVER_DRIVE_DEVICE_ADDED] == 2u);
+    device_announce.device_id = 0x44525631u;
+    memcpy(device_announce.preferred_dos_name, "DRIVE", 6u);
+    device_announce.data = drive_name;
+    device_announce.data_len = (uint32_t)sizeof(drive_name);
     SCHECK(librdp_server_drive_request_init(&drive_request) ==
            LIBRDP_STATUS_OK);
     drive_request.operation = LIBRDP_SERVER_DRIVE_CREATE;
-    drive_request.device = drive.device;
+    drive_request.device = primary_drive_device;
     drive_request.path = "\\folder\\file.bin";
     drive_request.desired_access = 0x0012019fu;
     drive_request.shared_access = 7u;

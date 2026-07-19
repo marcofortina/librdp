@@ -51,6 +51,60 @@ static char* rdp_server_drive_copy_name(const char* value)
     return copy;
 }
 
+/*
+ * Normalize the full drive name carried by a filesystem announcement. Drive
+ * capability version 2 specifies terminated UTF-16LE, while deployed clients
+ * also send a terminated UTF-8 name. Both forms are validated strictly before
+ * any device state becomes visible.
+ */
+static librdp_status rdp_server_drive_decode_announced_name(
+    const uint8_t* data,
+    size_t data_len,
+    char** name,
+    size_t* name_len)
+{
+    uint8_t* validation = NULL;
+    size_t validation_len = 0u;
+    size_t index = 0u;
+    char* copy = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!data || data_len == 0u || !name || !name_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    *name = NULL;
+    *name_len = 0u;
+    if ((data_len & 1u) == 0u && data_len >= 2u &&
+        data[data_len - 2u] == 0u && data[data_len - 1u] == 0u)
+    {
+        for (index = 0u; index + 2u < data_len; index += 2u)
+        {
+            if (data[index] == 0u && data[index + 1u] == 0u)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        return rdp_charset_utf16le_to_utf8_alloc(
+            data, data_len - 2u, 0, name, name_len);
+    }
+    if (data[data_len - 1u] != 0u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    for (index = 0u; index + 1u < data_len; index++)
+    {
+        if (data[index] == 0u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    status = rdp_charset_utf8_bytes_to_utf16le_alloc(
+        data, data_len - 1u, 0, &validation, &validation_len);
+    free(validation);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    copy = (char*)malloc(data_len);
+    if (!copy)
+        return LIBRDP_STATUS_NO_MEMORY;
+    memcpy(copy, data, data_len);
+    *name = copy;
+    *name_len = data_len - 1u;
+    return LIBRDP_STATUS_OK;
+}
+
 static rdp_server_redirected_device* rdp_server_find_redirected_device_mut(
     librdp_server_peer* peer,
     uint32_t device_id)
@@ -566,10 +620,9 @@ librdp_status rdp_server_redirected_device_store(
     {
         if (announce->data_len > 0u)
         {
-            librdp_status status = rdp_charset_utf16le_to_utf8_alloc(
+            librdp_status status = rdp_server_drive_decode_announced_name(
                 announce->data,
                 announce->data_len,
-                1,
                 &normalized_name,
                 &normalized_name_len);
 
@@ -1100,6 +1153,20 @@ librdp_status librdp_server_peer_submit_drive_request(
                                             &packet);
     if (status == LIBRDP_STATUS_OK)
     {
+        rdp_trace_event_level(
+            RDP_TRACE_PROTOCOL,
+            RDP_TRACE_LEVEL_DEBUG,
+            "server.rdpdr.drive.request",
+            "operation=%u device_id=%u file_id=%u completion_id=%u payload_len=%u",
+            (unsigned int)request->operation,
+            device->device_id,
+            file_id,
+            completion_id,
+            (unsigned int)packet.length);
+        rdp_trace_hexdump("server.rdpdr.drive.request",
+                          RDP_TRACE_SENSITIVITY_FILE,
+                          packet.data,
+                          packet.length);
         status = librdp_server_peer_send_static_extension_data(
             peer,
             LIBRDP_SERVER_EXTENSION_FILESYSTEM,
@@ -1278,6 +1345,21 @@ librdp_status rdp_server_drive_handle_completion(
                                                 &event);
     if (status != LIBRDP_STATUS_OK)
         return status;
+    rdp_trace_event_level(
+        RDP_TRACE_PROTOCOL,
+        RDP_TRACE_LEVEL_DEBUG,
+        "server.rdpdr.drive.completion",
+        "operation=%u device_id=%u file_id=%u completion_id=%u io_status=%u payload_len=%u",
+        (unsigned int)pending->operation,
+        completion.device_id,
+        pending->file_id,
+        completion.completion_id,
+        completion.io_status,
+        (unsigned int)data_len);
+    rdp_trace_hexdump("server.rdpdr.drive.completion",
+                      RDP_TRACE_SENSITIVITY_FILE,
+                      data,
+                      data_len);
     if (pending->operation == LIBRDP_SERVER_DRIVE_CREATE &&
         completion.io_status == RDP_DEVICE_REDIRECTION_STATUS_SUCCESS)
     {
