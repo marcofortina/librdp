@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -659,8 +660,14 @@ static void x11_managed_process_child_identity(
 {
     if (geteuid() == 0)
     {
+#if defined(__linux__)
         if (setgroups(config->identity->group_count,
                       config->identity->groups) != 0 ||
+#else
+        if (config->identity->group_count > (size_t)INT_MAX ||
+            setgroups((int)config->identity->group_count,
+                      config->identity->groups) != 0 ||
+#endif
             setgid(config->identity->gid) != 0 ||
             setuid(config->identity->uid) != 0)
             _exit(126);
