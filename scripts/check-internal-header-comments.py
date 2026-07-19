@@ -16,6 +16,7 @@ CHECKED_ROOTS = (
     Path("apps/common"),
     Path("src"),
     Path("apps/viewer"),
+    Path("apps/workspace"),
 )
 REQUIRED_FIELDS = (
     "Module:",

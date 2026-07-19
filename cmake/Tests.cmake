@@ -159,6 +159,7 @@ if(LIBRDP_BUILD_TESTS)
     target_include_directories(test_app_policy PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/admin
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/workspace
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(test_app_policy PRIVATE librdp_app_common)

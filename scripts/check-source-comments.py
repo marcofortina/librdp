@@ -19,7 +19,7 @@ CHECKED_ROOTS = (
     Path("apps/common"),
     Path("apps/cocoa"),
     Path("apps/viewer"),
-    Path("apps/x11/workspace"),
+    Path("apps/workspace"),
     Path("examples"),
 )
 CHECKED_SUFFIXES = {".c", ".m"}

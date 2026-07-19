@@ -14,7 +14,7 @@
  * input; only validated target and RemoteApp fields are passed to the viewer.
  */
 
-#include "workspace_options.h"
+#include "workspace_app.h"
 
 #include <librdp/librdp.h>
 
@@ -30,54 +30,15 @@
 
 #define WORKSPACE_DISPLAY_LINE_CAPACITY 512u
 
-static void workspace_print_resource(size_t index, const librdp_workspace_resource* resource)
-{
-    char target[WORKSPACE_FIELD_CAPACITY];
-    char remote_app[WORKSPACE_FIELD_CAPACITY];
-    char gateway[WORKSPACE_FIELD_CAPACITY];
-
-    target[0] = '\0';
-    remote_app[0] = '\0';
-    gateway[0] = '\0';
-    workspace_resource_target(resource, target, sizeof(target));
-    workspace_resource_remote_app(resource, remote_app, sizeof(remote_app));
-    workspace_resource_gateway(resource, gateway, sizeof(gateway));
-    printf("resource index=%zu type=%s id=\"%s\" alias=\"%s\" title=\"%s\" target=\"%s\" app=\"%s\" gateway=\"%s\"\n",
-           index,
-           workspace_resource_type_name(resource->type),
-           resource->id ? resource->id : "",
-           resource->alias ? resource->alias : "",
-           resource->title ? resource->title : "",
-           target,
-           remote_app,
-           gateway);
-}
-
-static int workspace_print_resources(const librdp_workspace* workspace)
-{
-    size_t count = librdp_workspace_resource_count(workspace);
-    size_t i = 0;
-
-    printf("resources count=%zu\n", count);
-    for (i = 0; i < count; i++)
-    {
-        librdp_workspace_resource resource;
-
-        if (librdp_workspace_resource_init(&resource) != LIBRDP_STATUS_OK ||
-            librdp_workspace_resource_at(workspace, i, &resource) != LIBRDP_STATUS_OK)
-            return 0;
-        workspace_print_resource(i, &resource);
-    }
-    return 1;
-}
-
 /*
  * Launches the standalone viewer with the selected resource metadata. The
  * child receives only explicit viewer arguments; failures are reported through
  * the child exit status and never mutate the workspace handle.
  */
-static int workspace_launch_viewer(const workspace_options* options,
-                                   const librdp_workspace_resource* resource)
+static int x11_workspace_launch(
+  const workspace_options* options,
+  const librdp_workspace_resource* resource,
+  void* user_data)
 {
     workspace_launch_plan plan;
     char* arguments[WORKSPACE_LAUNCH_ARGUMENT_CAPACITY];
@@ -85,6 +46,7 @@ static int workspace_launch_viewer(const workspace_options* options,
     pid_t pid = 0;
     int status = 0;
 
+    (void)user_data;
     if (!workspace_launch_plan_build(options, resource, &plan, stderr))
         return 0;
     for (index = 0; index <= plan.argument_count; index++)
@@ -167,9 +129,12 @@ static void workspace_draw_resources(Display* display,
  * changes only the local selected index; Return launches the viewer through
  * the same explicit path used by command-line selection.
  */
-static int workspace_show_window(const workspace_options* options,
-                                 const librdp_workspace* workspace,
-                                 size_t selected)
+static int x11_workspace_present(
+  const workspace_options* options,
+  const librdp_workspace* workspace,
+  size_t selected,
+  workspace_app_launch_callback launch,
+  void* user_data)
 {
     Display* display = NULL;
     Window root = 0;
@@ -245,7 +210,7 @@ static int workspace_show_window(const workspace_options* options,
 
                 if (librdp_workspace_resource_init(&resource) == LIBRDP_STATUS_OK &&
                     librdp_workspace_resource_at(workspace, selected, &resource) == LIBRDP_STATUS_OK)
-                    rc = workspace_launch_viewer(options, &resource);
+                    rc = launch(options, &resource, user_data);
                 else
                     rc = 0;
                 running = 0;
@@ -262,70 +227,14 @@ static int workspace_show_window(const workspace_options* options,
 
 int main(int argc, char** argv)
 {
-    workspace_options options;
-    librdp_workspace* workspace = NULL;
-    librdp_status status = LIBRDP_STATUS_OK;
-    size_t selected = 0;
-    int have_selection = 0;
-    int rc = 0;
+    const workspace_app_platform platform = {
+        x11_workspace_launch,
+        x11_workspace_present,
+        NULL
+    };
 
-    if (!workspace_options_parse(argc,
-                                 argv,
-                                 "librdp-viewer",
-                                 &options,
-                                 stderr))
-    {
-        workspace_options_usage(stderr, argv[0]);
-        return 2;
-    }
-    if (options.show_help)
-    {
-        workspace_options_usage(stdout, argv[0]);
-        return 0;
-    }
-    workspace = librdp_workspace_new(&options.config);
-    if (!workspace)
-    {
-        fprintf(stderr, "failed to create workspace handle\n");
-        return 2;
-    }
-    status = librdp_workspace_fetch(workspace);
-    if (status != LIBRDP_STATUS_OK)
-    {
-        fprintf(stderr, "workspace fetch failed: %s\n", librdp_status_name(status));
-        librdp_workspace_free(workspace);
-        return 3;
-    }
-    if (!workspace_print_resources(workspace))
-        rc = 3;
-    else
-    {
-        if (options.select || librdp_workspace_resource_count(workspace) == 1u)
-            have_selection =
-              workspace_select_resource(workspace, options.select, &selected, stderr);
-        else
-        {
-            selected = 0;
-            have_selection = 0;
-        }
-        if (options.launch)
-        {
-            librdp_workspace_resource resource;
-
-            if (!have_selection ||
-                librdp_workspace_resource_init(&resource) != LIBRDP_STATUS_OK ||
-                librdp_workspace_resource_at(workspace, selected, &resource) != LIBRDP_STATUS_OK ||
-                !workspace_launch_viewer(&options, &resource))
-                rc = 4;
-        }
-        else if (!options.no_window)
-        {
-            if (!have_selection)
-                selected = 0;
-            if (!workspace_show_window(&options, workspace, selected))
-                rc = 4;
-        }
-    }
-    librdp_workspace_free(workspace);
-    return rc;
+    return workspace_app_run(argc,
+                             argv,
+                             "librdp-viewer",
+                             &platform);
 }

@@ -5,9 +5,10 @@ if(LIBRDP_BUILD_WORKSPACE AND APPLE)
     enable_language(OBJC)
     find_library(LIBRDP_COCOA_FRAMEWORK Cocoa REQUIRED)
     add_executable(librdp-workspace
-        apps/cocoa/workspace/main.m
+        apps/workspace/cocoa_main.m
     )
     target_include_directories(librdp-workspace PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/workspace
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(librdp-workspace PRIVATE

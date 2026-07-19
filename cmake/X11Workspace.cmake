@@ -4,9 +4,10 @@
 if(LIBRDP_BUILD_WORKSPACE AND NOT APPLE)
     find_package(X11 REQUIRED)
     add_executable(librdp-workspace
-        apps/x11/workspace/main.c
+        apps/workspace/x11_main.c
     )
     target_include_directories(librdp-workspace PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/workspace
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${X11_INCLUDE_DIR}
     )

@@ -14,7 +14,7 @@
  */
 
 #import <Cocoa/Cocoa.h>
-#include "workspace_options.h"
+#include "workspace_app.h"
 
 #include <librdp/librdp.h>
 
@@ -80,8 +80,10 @@ static NSString* cocoa_workspace_summary(const librdp_workspace* workspace)
  * is rejected at the native boundary rather than silently dropping a remote
  * field or producing a different command line.
  */
-static int cocoa_workspace_launch_viewer(const workspace_options* options,
-                                         const librdp_workspace_resource* resource)
+static int cocoa_workspace_launch(
+  const workspace_options* options,
+  const librdp_workspace_resource* resource,
+  void* user_data)
 {
     workspace_launch_plan plan;
     NSMutableArray<NSString*>* arguments = [NSMutableArray array];
@@ -90,6 +92,7 @@ static int cocoa_workspace_launch_viewer(const workspace_options* options,
     NSError* error = nil;
     size_t index = 0;
 
+    (void)user_data;
     if (!workspace_launch_plan_build(options, resource, &plan, stderr))
         return 0;
     executable = [NSString stringWithUTF8String:plan.executable];
@@ -114,14 +117,24 @@ static int cocoa_workspace_launch_viewer(const workspace_options* options,
     return [task terminationStatus] == 0;
 }
 
-static void cocoa_workspace_show_window(NSString* summary)
+static int cocoa_workspace_present(
+  const workspace_options* options,
+  const librdp_workspace* workspace,
+  size_t selected,
+  workspace_app_launch_callback launch,
+  void* user_data)
 {
+    NSString* summary = cocoa_workspace_summary(workspace);
     NSWindow* window = nil;
     NSScrollView* scroll = nil;
     NSTextView* text_view = nil;
     CocoaWorkspaceWindowDelegate* delegate = nil;
     NSRect frame = NSMakeRect(0.0, 0.0, 940.0, 560.0);
 
+    (void)options;
+    (void)selected;
+    (void)launch;
+    (void)user_data;
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     window = [[NSWindow alloc] initWithContentRect:frame
@@ -143,65 +156,24 @@ static void cocoa_workspace_show_window(NSString* summary)
     [window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];
+    return 1;
 }
 
 int main(int argc, char** argv)
 {
-    workspace_options options;
-    librdp_workspace* workspace = NULL;
-    librdp_status status = LIBRDP_STATUS_OK;
-    NSString* summary = nil;
+    const workspace_app_platform platform = {
+        cocoa_workspace_launch,
+        cocoa_workspace_present,
+        NULL
+    };
     int rc = 0;
 
     @autoreleasepool
     {
-        if (!workspace_options_parse(argc,
-                                     argv,
-                                     "librdp-viewer",
-                                     &options,
-                                     stderr))
-        {
-            workspace_options_usage(stderr, argv[0]);
-            return 2;
-        }
-        if (options.show_help)
-        {
-            workspace_options_usage(stdout, argv[0]);
-            return 0;
-        }
-        workspace = librdp_workspace_new(&options.config);
-        if (!workspace)
-        {
-            fprintf(stderr, "failed to create workspace handle\n");
-            return 2;
-        }
-        status = librdp_workspace_fetch(workspace);
-        if (status != LIBRDP_STATUS_OK)
-        {
-            fprintf(stderr, "workspace fetch failed: %s\n", librdp_status_name(status));
-            librdp_workspace_free(workspace);
-            return 3;
-        }
-        summary = cocoa_workspace_summary(workspace);
-        fputs([summary UTF8String], stdout);
-        if (options.launch)
-        {
-            size_t selected = 0;
-            librdp_workspace_resource resource;
-
-            if (!workspace_select_resource(workspace,
-                                           options.select,
-                                           &selected,
-                                           stderr) ||
-                librdp_workspace_resource_init(&resource) != LIBRDP_STATUS_OK ||
-                librdp_workspace_resource_at(workspace, selected, &resource) !=
-                  LIBRDP_STATUS_OK ||
-                !cocoa_workspace_launch_viewer(&options, &resource))
-                rc = 4;
-        }
-        if (rc == 0 && !options.no_window)
-            cocoa_workspace_show_window(summary);
-        librdp_workspace_free(workspace);
+        rc = workspace_app_run(argc,
+                               argv,
+                               "librdp-viewer",
+                               &platform);
     }
     return rc;
 }

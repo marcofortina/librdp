@@ -29,7 +29,8 @@ if(LIBRDP_APP_COMMON_REQUIRED)
         apps/common/server_host_trace.c
         apps/common/server_options.c
         apps/common/server_platform.c
-        apps/common/workspace_options.c
+        apps/workspace/workspace_app.c
+        apps/workspace/workspace_options.c
     )
     target_include_directories(librdp_app_common
         PUBLIC
