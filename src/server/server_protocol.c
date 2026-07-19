@@ -119,13 +119,33 @@ librdp_status rdp_server_handle_mcs_connect_initial(librdp_server_peer* peer, co
         status = LIBRDP_STATUS_PROTOCOL_ERROR;
     if (status == LIBRDP_STATUS_OK)
     {
+        uint32_t desktop_width =
+            client_data.desktop_width ? client_data.desktop_width : peer->width;
+        uint32_t desktop_height =
+            client_data.desktop_height ? client_data.desktop_height : peer->height;
+
+        if (desktop_width != peer->width || desktop_height != peer->height)
+        {
+            if (peer->framebuffer)
+            {
+                status = rdp_server_surface_set_dimensions(peer,
+                                                           desktop_width,
+                                                           desktop_height);
+            }
+            else
+            {
+                peer->width = (uint16_t)desktop_width;
+                peer->height = (uint16_t)desktop_height;
+            }
+        }
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
         int reconnect = peer->advertised_channel_count > 0 ? 1 : 0;
 
         rdp_server_clipboard_state_reset(peer, peer->advertised_channel_count > 0 ? 1 : 0);
         rdp_server_drive_state_reset(peer, reconnect);
         rdp_server_extension_states_reset(peer, reconnect);
-        peer->width = client_data.desktop_width ? client_data.desktop_width : peer->width;
-        peer->height = client_data.desktop_height ? client_data.desktop_height : peer->height;
         peer->advertised_channel_count = client_data.channel_count;
         rdp_server_dynamic_channels_reset(peer, peer->dynamic_channel_count > 0 ? 1 : 0);
         memset(peer->advertised_channels, 0, sizeof(peer->advertised_channels));

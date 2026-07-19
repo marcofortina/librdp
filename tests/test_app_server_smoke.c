@@ -34,7 +34,9 @@
 
 #define SMOKE_WIDTH 64u
 #define SMOKE_HEIGHT 48u
-#define SMOKE_PIXEL_BYTES (SMOKE_WIDTH * SMOKE_HEIGHT * 4u)
+#define SMOKE_CAPTURE_WIDTH 80u
+#define SMOKE_CAPTURE_HEIGHT 60u
+#define SMOKE_PIXEL_BYTES (SMOKE_CAPTURE_WIDTH * SMOKE_CAPTURE_HEIGHT * 4u)
 #define SMOKE_PUMP_LIMIT 500u
 
 typedef struct smoke_platform
@@ -143,9 +145,9 @@ static librdp_status smoke_capture_request(void* context)
                                          memory_order_relaxed) +
                1u;
     memset(&frame, 0, sizeof(frame));
-    frame.width = SMOKE_WIDTH;
-    frame.height = SMOKE_HEIGHT;
-    frame.stride = SMOKE_WIDTH * 4u;
+    frame.width = SMOKE_CAPTURE_WIDTH;
+    frame.height = SMOKE_CAPTURE_HEIGHT;
+    frame.stride = SMOKE_CAPTURE_WIDTH * 4u;
     frame.pixels = platform->pixels;
     frame.pixels_len = sizeof(platform->pixels);
     frame.sequence = sequence;
@@ -526,8 +528,8 @@ static void smoke_client_event(librdp_session* session,
     if (event->type == LIBRDP_EVENT_STATE_CHANGED)
     {
         events->state_events++;
-        if (event->data.state.new_state == LIBRDP_SESSION_ACTIVE)
-            events->active = 1;
+        events->active =
+            event->data.state.new_state == LIBRDP_SESSION_ACTIVE;
     }
     else if (event->type == LIBRDP_EVENT_SURFACE_INVALIDATED)
         events->surface_events++;
@@ -722,8 +724,8 @@ static int smoke_run_profile(librdp_security_mode security)
 
     server_host_config_init(&host_config);
     host_config.server.bind_address = "127.0.0.1";
-    host_config.server.width = SMOKE_WIDTH;
-    host_config.server.height = SMOKE_HEIGHT;
+    host_config.server.width = SMOKE_CAPTURE_WIDTH;
+    host_config.server.height = SMOKE_CAPTURE_HEIGHT;
     host_config.max_peers = 1u;
     host_config.dirty.frame_interval_ns = 0u;
     smoke_platform_init(&platform, &host_config);
@@ -762,10 +764,17 @@ static int smoke_run_profile(librdp_security_mode security)
     REQUIRE(client_runtime_connect(&runtime) == LIBRDP_STATUS_OK);
     for (cycle = 0u; cycle < SMOKE_PUMP_LIMIT; cycle++)
     {
+        const librdp_surface* surface = NULL;
+        int desktop_ready = 0;
         librdp_status status = smoke_client_pump(&runtime);
 
         REQUIRE(status == LIBRDP_STATUS_OK);
-        if (events.active && !clipboard_sent)
+        surface = librdp_session_get_surface(session);
+        desktop_ready =
+            events.active && surface &&
+            librdp_surface_width(surface) == SMOKE_WIDTH &&
+            librdp_surface_height(surface) == SMOKE_HEIGHT;
+        if (desktop_ready && !clipboard_sent)
         {
             status = librdp_session_clipboard_set_data(
                 session,
@@ -777,7 +786,7 @@ static int smoke_run_profile(librdp_security_mode security)
             else
                 REQUIRE(status == LIBRDP_STATUS_STATE);
         }
-        if (events.active && !input_sent)
+        if (desktop_ready && !input_sent)
         {
             key.scancode = 0x1eu;
             key.state = LIBRDP_KEY_PRESSED;
@@ -794,7 +803,7 @@ static int smoke_run_profile(librdp_security_mode security)
                     LIBRDP_STATUS_OK);
             input_sent = 1;
         }
-        if (events.active && events.surface_events > 0u &&
+        if (desktop_ready && events.surface_events > 0u &&
             clipboard_sent &&
             atomic_load_explicit(&platform.clipboard_offers,
                                  memory_order_acquire) > 0u &&
@@ -810,6 +819,10 @@ static int smoke_run_profile(librdp_security_mode security)
     REQUIRE(events.active);
     REQUIRE(events.surface_events > 0u);
     REQUIRE(events.error_events == 0u);
+    REQUIRE(librdp_surface_width(librdp_session_get_surface(session)) ==
+            SMOKE_WIDTH);
+    REQUIRE(librdp_surface_height(librdp_session_get_surface(session)) ==
+            SMOKE_HEIGHT);
     REQUIRE(clipboard_sent);
     REQUIRE(input_sent);
     REQUIRE(atomic_load_explicit(&platform.capture_requests,

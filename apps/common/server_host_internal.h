@@ -60,6 +60,7 @@ struct server_host
     uint16_t next_pointer_cache_index;
     uint8_t pointer_visible;
     uint8_t drive_configured;
+    uint8_t capture_pending;
     int listener_running;
     struct pollfd* pollfds;
     size_t poll_capacity;

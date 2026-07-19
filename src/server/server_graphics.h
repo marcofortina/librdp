@@ -17,6 +17,14 @@
 
 void rdp_server_graphics_frame_state_reset(librdp_server_peer* peer);
 
+/*
+ * Replace the peer-owned desktop buffer while preserving the negotiated
+ * dimensions as the sole bounds used by subsequent graphics operations.
+ */
+librdp_status rdp_server_surface_set_dimensions(librdp_server_peer* peer,
+                                                uint32_t width,
+                                                uint32_t height);
+
 librdp_status rdp_server_surface_flush_repaint(librdp_server_peer* peer);
 
 librdp_status rdp_server_handle_refresh_rect(librdp_server_peer* peer,

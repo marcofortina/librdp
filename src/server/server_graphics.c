@@ -129,7 +129,9 @@ static int rdp_server_rect_valid(const librdp_server_peer* peer,
     return 1;
 }
 
-static librdp_status rdp_server_surface_allocate(librdp_server_peer* peer, uint32_t width, uint32_t height)
+librdp_status rdp_server_surface_set_dimensions(librdp_server_peer* peer,
+                                                uint32_t width,
+                                                uint32_t height)
 {
     uint8_t* pixels = NULL;
     size_t stride = 0;
@@ -162,7 +164,7 @@ static librdp_status rdp_server_surface_ensure(librdp_server_peer* peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->framebuffer)
         return LIBRDP_STATUS_OK;
-    return rdp_server_surface_allocate(peer, peer->width, peer->height);
+    return rdp_server_surface_set_dimensions(peer, peer->width, peer->height);
 }
 
 /*
@@ -476,7 +478,7 @@ librdp_status librdp_server_peer_surface_resize(librdp_server_peer* peer, uint32
     if (!peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     was_active = peer->state == LIBRDP_SERVER_PEER_ACTIVE;
-    status = rdp_server_surface_allocate(peer, width, height);
+    status = rdp_server_surface_set_dimensions(peer, width, height);
     if (status != LIBRDP_STATUS_OK)
     {
         rdp_server_record_status(peer,

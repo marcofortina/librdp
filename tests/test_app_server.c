@@ -1315,7 +1315,7 @@ static int test_host_reconnect_cleanup(void)
     CHECK(server_host_peer_at(host, 0u, &replacement) == LIBRDP_STATUS_OK);
     CHECK(replacement.id != first_id);
     CHECK(replacement.generation == 2u);
-    CHECK(mock.frame_requests == 2u);
+    CHECK(mock.frame_requests == 0u);
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(mock.clipboard_cancels == 2u);
     CHECK(mock.clipboard_releases == 0u);
@@ -1543,7 +1543,7 @@ static int test_host_lifecycle(void)
     CHECK(clients[1] >= 0);
     CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_peer_count(host) == 2u);
-    CHECK(mock.frame_requests == 2u);
+    CHECK(mock.frame_requests == 0u);
     CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_LIMIT_EXCEEDED);
 
     server_host_peer_info_init(&first);
@@ -1640,7 +1640,8 @@ static int test_host_lifecycle(void)
     CHECK(server_host_get_provider_state(
               host,
               SERVER_PLATFORM_PROVIDER_POINTER) == SERVER_HOST_PROVIDER_READY);
-    CHECK(mock.frame_requests == 4u);
+    CHECK(server_host_run_once(host, 0) == LIBRDP_STATUS_OK);
+    CHECK(mock.frame_requests == 1u);
     frame.sequence = 2u;
     mock.capture_sink.frame(&frame, mock.capture_sink.user_data);
     server_host_metrics_init(&metrics);
@@ -1648,7 +1649,8 @@ static int test_host_lifecycle(void)
     CHECK(metrics.capture_frames == 1u);
     server_host_peer_info_init(&reused);
     CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
-    CHECK(reused.desktop_width == 4u && reused.desktop_height == 3u);
+    CHECK(reused.desktop_width == config.server.width &&
+          reused.desktop_height == config.server.height);
 
     CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_revoke_permission(

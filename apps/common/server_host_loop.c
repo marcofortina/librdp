@@ -510,6 +510,34 @@ static void server_host_dispatch_frames(server_host* host,
     }
 }
 
+/*
+ * Run synchronous capture providers only after protocol dispatch unwinds.
+ * This prevents resize reactivation from changing peer state inside the
+ * callback that completed the preceding activation sequence.
+ */
+static librdp_status server_host_dispatch_capture_request(
+    server_host* host,
+    unsigned int* work)
+{
+    const server_platform_capture_vtable* capture = NULL;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host || !work)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!host->capture_pending)
+        return LIBRDP_STATUS_OK;
+    host->capture_pending = 0u;
+    if (host->provider_states[SERVER_PLATFORM_PROVIDER_CAPTURE] !=
+        SERVER_HOST_PROVIDER_READY)
+        return LIBRDP_STATUS_STATE;
+    capture = (const server_platform_capture_vtable*)
+        host->platform.capture.vtable;
+    status = capture->request_frame(host->platform.capture.context);
+    if (status == LIBRDP_STATUS_OK)
+        (*work)++;
+    return status;
+}
+
 static void server_host_reap_terminal_peers(server_host* host)
 {
     size_t index = 0;
@@ -639,6 +667,12 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
         server_host_metric_add(&host->metrics.cancellations, 1u);
         (void)server_host_stop(host);
         return LIBRDP_STATUS_CANCELLED;
+    }
+    status = server_host_dispatch_capture_request(host, &work);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        host->state = SERVER_HOST_FAILED;
+        return status;
     }
     if (host->drive)
     {
