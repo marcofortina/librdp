@@ -17,9 +17,11 @@ sudo apt-get install -y \
   build-essential clang cmake ninja-build pkg-config python3 doxygen graphviz \
   libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev \
   libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev \
-  libacl1-dev libattr1-dev libarchive-dev \
-  libx11-dev libxcursor-dev libxfixes-dev libxext-dev libxrandr-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libpipewire-0.3-dev libjpeg-dev
+  libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev \
+  libcairo2-dev libfuse3-dev libpam0g-dev libpng-dev libjpeg-dev \
+  libx11-dev libxau-dev libxcomposite-dev libxcursor-dev libxdamage-dev \
+  libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev \
+  libxkbcommon-x11-dev libxtst-dev libpipewire-0.3-dev xvfb
 ```
 
 ## Core And Tests
@@ -45,6 +47,22 @@ cmake --build build-linux-x11 --parallel
 ```
 
 The viewer executable is `build-linux-x11/librdp-x11-viewer`.
+
+## X11 Desktop Server
+
+```sh
+cmake -S . -B build-linux-server -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLIBRDP_BUILD_TESTS=ON \
+  -DLIBRDP_BUILD_X11_SERVER=ON \
+  -DLIBRDP_WITH_FUSE3=ON \
+  -DLIBRDP_WITH_PAM=ON
+cmake --build build-linux-server --parallel
+```
+
+The shadow server, managed-session broker, supervisor, and session agent are
+built together. FUSE provides read-only client-drive mounts, and PAM provides
+host authentication for managed sessions.
 
 ## Fuzz Targets
 

@@ -32,9 +32,10 @@ jobs:
           libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
           libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
           libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
-          libx11-dev libxcursor-dev
-          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
-          libpipewire-0.3-dev libpng-dev libjpeg-dev
+          libcairo2-dev libfuse3-dev libpam0g-dev
+          libx11-dev libxau-dev libxcomposite-dev libxcursor-dev libxdamage-dev
+          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev libxtst-dev
+          libpipewire-0.3-dev libpng-dev libjpeg-dev xvfb
 
       - name: Cache build directory
         uses: actions/cache@v6
@@ -50,6 +51,7 @@ jobs:
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
           -DLIBRDP_BUILD_X11_VIEWER=ON
+          -DLIBRDP_BUILD_X11_SERVER=ON
           -DLIBRDP_BUILD_X11_ADMIN=ON
           -DLIBRDP_BUILD_X11_WORKSPACE=ON
           -DLIBRDP_ENABLE_WERROR=ON
@@ -65,11 +67,16 @@ jobs:
           -DLIBRDP_WITH_ARCHIVE=ON
           -DLIBRDP_WITH_CURL=ON
           -DLIBRDP_WITH_LIBXML2=ON
+          -DLIBRDP_WITH_CAIRO=ON
+          -DLIBRDP_WITH_QUARTZ=OFF
           -DLIBRDP_WITH_PIPEWIRE=ON
           -DLIBRDP_WITH_PNG=ON
           -DLIBRDP_WITH_JPEG=ON
           -DLIBRDP_WITH_XSHM=ON
           -DLIBRDP_WITH_XRANDR=ON
+          -DLIBRDP_WITH_FUSE3=ON
+          -DLIBRDP_WITH_PAM=ON
+          -DLIBRDP_WITH_BSDAUTH=OFF
 
       - name: Build
         run: cmake --build build-linux-gcc-full -j$(nproc)
@@ -92,9 +99,10 @@ jobs:
           libssl-dev libavcodec-dev libavutil-dev libswscale-dev libopenh264-dev
           libpcsclite-dev libusb-1.0-0-dev libfido2-dev libcbor-dev libcups2-dev
           libacl1-dev libattr1-dev libarchive-dev libcurl4-openssl-dev libxml2-dev
-          libx11-dev libxcursor-dev
-          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev
-          libpipewire-0.3-dev libpng-dev libjpeg-dev
+          libcairo2-dev libfuse3-dev libpam0g-dev
+          libx11-dev libxau-dev libxcomposite-dev libxcursor-dev libxdamage-dev
+          libxfixes-dev libxext-dev libxrandr-dev libxkbcommon-dev libxtst-dev
+          libpipewire-0.3-dev libpng-dev libjpeg-dev xvfb
 
       - name: Cache build directory
         uses: actions/cache@v6
@@ -110,6 +118,7 @@ jobs:
           -DLIBRDP_BUILD_TESTS=ON
           -DLIBRDP_BUILD_EXAMPLES=ON
           -DLIBRDP_BUILD_X11_VIEWER=ON
+          -DLIBRDP_BUILD_X11_SERVER=ON
           -DLIBRDP_BUILD_X11_ADMIN=ON
           -DLIBRDP_BUILD_X11_WORKSPACE=ON
           -DLIBRDP_ENABLE_WERROR=ON
@@ -125,11 +134,16 @@ jobs:
           -DLIBRDP_WITH_ARCHIVE=ON
           -DLIBRDP_WITH_CURL=ON
           -DLIBRDP_WITH_LIBXML2=ON
+          -DLIBRDP_WITH_CAIRO=ON
+          -DLIBRDP_WITH_QUARTZ=OFF
           -DLIBRDP_WITH_PIPEWIRE=ON
           -DLIBRDP_WITH_PNG=ON
           -DLIBRDP_WITH_JPEG=ON
           -DLIBRDP_WITH_XSHM=ON
           -DLIBRDP_WITH_XRANDR=ON
+          -DLIBRDP_WITH_FUSE3=ON
+          -DLIBRDP_WITH_PAM=ON
+          -DLIBRDP_WITH_BSDAUTH=OFF
 
       - name: Build
         run: cmake --build build-linux-clang-full -j$(nproc)
