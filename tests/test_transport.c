@@ -742,7 +742,7 @@ static int test_gateway_connect_transport(void)
     config.gateway_url = gateway_url;
     config.mode = LIBRDP_GATEWAY_RDG_HTTP;
     config.timeout_ms = 5000u;
-    config.queue_bytes = 64u;
+    config.queue_bytes = 0u;
     config.queue_nodes = 1u;
     TCHECK(rdp_gateway_connect_transport(&transport, &config) == LIBRDP_STATUS_OK);
     TCHECK(rdp_transport_write_all(&transport, "ping", 4u) == LIBRDP_STATUS_OK);
