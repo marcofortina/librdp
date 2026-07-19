@@ -103,6 +103,9 @@ typedef struct rdp_rdg_http_context
     int send_paused;
     int receive_paused;
     int outbound_backpressured;
+    int out_headers_ready;
+    int in_added;
+    unsigned long out_http_status;
     int control_pipe[2];
     int event_pipe[2];
     librdp_status error;
@@ -1042,6 +1045,51 @@ static void rdp_rdg_curl_init_once(void)
     (void)curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
+/*
+ * Delay the upload channel until the gateway has accepted the download
+ * channel. Authentication can produce intermediate responses, so only a final
+ * successful header block advances the two-connection RDG sequence.
+ */
+static size_t rdp_rdg_out_header(char* ptr,
+                                 size_t size,
+                                 size_t nmemb,
+                                 void* user_data)
+{
+    rdp_rdg_http_context* context =
+        (rdp_rdg_http_context*)user_data;
+    char line[64];
+    size_t copied = 0;
+    size_t length = 0;
+    unsigned int status = 0;
+
+    if (size != 0 && nmemb > SIZE_MAX / size)
+        return 0;
+    length = size * nmemb;
+    if (!context || (!ptr && length > 0))
+        return 0;
+    if (length >= 5u && memcmp(ptr, "HTTP/", 5u) == 0)
+    {
+        copied = length < sizeof(line) - 1u
+                     ? length
+                     : sizeof(line) - 1u;
+        memcpy(line, ptr, copied);
+        line[copied] = '\0';
+        if (sscanf(line, "HTTP/%*u.%*u %u", &status) == 1)
+            context->out_http_status = (unsigned long)status;
+        else
+            context->out_http_status = 0;
+    }
+    else if ((length == 2u && ptr[0] == '\r' &&
+              ptr[1] == '\n') ||
+             (length == 1u && ptr[0] == '\n'))
+    {
+        if (context->out_http_status >= 200ul &&
+            context->out_http_status < 300ul)
+            context->out_headers_ready = 1;
+    }
+    return length;
+}
+
 static size_t rdp_rdg_out_write(char* ptr, size_t size, size_t nmemb, void* user_data)
 {
     rdp_rdg_http_context* context = (rdp_rdg_http_context*)user_data;
@@ -1197,9 +1245,14 @@ static void* rdp_rdg_worker_main(void* user_data)
     int running = 0;
     CURLMcode multi_code = CURLM_OK;
 
-    (void)curl_multi_add_handle(context->multi, context->out_easy);
-    (void)curl_multi_perform(context->multi, &running);
-    (void)curl_multi_add_handle(context->multi, context->in_easy);
+    multi_code =
+        curl_multi_add_handle(context->multi, context->out_easy);
+    if (multi_code != CURLM_OK)
+    {
+        rdp_rdg_worker_set_error(context,
+                                 LIBRDP_STATUS_IO_ERROR);
+        return NULL;
+    }
     while (!context->closing)
     {
         int messages = 0;
@@ -1215,6 +1268,25 @@ static void* rdp_rdg_worker_main(void* user_data)
         {
             rdp_rdg_worker_set_error(context, LIBRDP_STATUS_IO_ERROR);
             break;
+        }
+        if (context->out_headers_ready && !context->in_added)
+        {
+            multi_code = curl_multi_add_handle(context->multi,
+                                               context->in_easy);
+            if (multi_code != CURLM_OK)
+            {
+                rdp_rdg_worker_set_error(
+                    context,
+                    LIBRDP_STATUS_IO_ERROR);
+                break;
+            }
+            context->in_added = 1;
+            rdp_trace_event(
+                RDP_TRACE_TRANSPORT,
+                "transport.gateway.rdg.http.out_ready",
+                "status=%lu",
+                context->out_http_status);
+            continue;
         }
         while ((message = curl_multi_info_read(context->multi, &messages)) != NULL)
         {
@@ -1242,7 +1314,9 @@ static void* rdp_rdg_worker_main(void* user_data)
             break;
         }
     }
-    (void)curl_multi_remove_handle(context->multi, context->in_easy);
+    if (context->in_added)
+        (void)curl_multi_remove_handle(context->multi,
+                                       context->in_easy);
     (void)curl_multi_remove_handle(context->multi, context->out_easy);
     return NULL;
 }
@@ -1324,6 +1398,11 @@ static librdp_status rdp_rdg_configure_easy(rdp_rdg_http_context* context,
         code = curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, upload ? rdp_rdg_in_write : rdp_rdg_out_write);
     if (code == CURLE_OK)
         code = curl_easy_setopt(easy, CURLOPT_WRITEDATA, context);
+    if (code == CURLE_OK && !upload)
+        code = curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION,
+                                rdp_rdg_out_header);
+    if (code == CURLE_OK && !upload)
+        code = curl_easy_setopt(easy, CURLOPT_HEADERDATA, context);
     return code == CURLE_OK ? LIBRDP_STATUS_OK : LIBRDP_STATUS_IO_ERROR;
 }
 

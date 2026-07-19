@@ -567,7 +567,7 @@ static int test_gateway_rdg_http_child(int listen_fd)
                 close(client);
             break;
         }
-        if (strstr(request, "RDG_OUT_DATA "))
+        if (i == 0 && strstr(request, "RDG_OUT_DATA "))
         {
             if (out_fd >= 0)
             {
@@ -576,7 +576,7 @@ static int test_gateway_rdg_http_child(int listen_fd)
             }
             out_fd = client;
         }
-        else if (strstr(request, "RDG_IN_DATA "))
+        else if (i == 1 && strstr(request, "RDG_IN_DATA "))
         {
             if (in_fd >= 0)
             {
