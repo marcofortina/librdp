@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -107,6 +108,7 @@ typedef struct mock_trace_context
 } mock_trace_context;
 
 static int connect_loopback(uint16_t port);
+static librdp_status accept_loopback_peer(server_host* host);
 static void configure_mock_platform(server_host_config* config,
                                     mock_platform_context* mock);
 
@@ -1295,7 +1297,7 @@ static int test_host_reconnect_cleanup(void)
     CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
     clients[0] = connect_loopback(server_host_local_port(host));
     CHECK(clients[0] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     server_host_peer_info_init(&first);
     CHECK(server_host_peer_at(host, 0u, &first) == LIBRDP_STATUS_OK);
     first_id = first.id;
@@ -1311,7 +1313,7 @@ static int test_host_reconnect_cleanup(void)
 
     clients[1] = connect_loopback(server_host_local_port(host));
     CHECK(clients[1] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     server_host_peer_info_init(&replacement);
     CHECK(server_host_peer_at(host, 0u, &replacement) == LIBRDP_STATUS_OK);
     CHECK(replacement.id != first_id);
@@ -1349,6 +1351,32 @@ static int connect_loopback(uint16_t port)
         return -1;
     }
     return fd;
+}
+
+static librdp_status accept_loopback_peer(server_host* host)
+{
+    struct pollfd descriptor;
+    size_t count = 0;
+    int poll_result = 0;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!host)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status =
+        librdp_server_get_pollfds(host->listener, &descriptor, 1u, &count);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if (count != 1u)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    do
+    {
+        poll_result = poll(&descriptor, 1u, 1000);
+    } while (poll_result < 0 && errno == EINTR);
+    if (poll_result == 0)
+        return LIBRDP_STATUS_TIMEOUT;
+    if (poll_result < 0 || (descriptor.revents & POLLIN) == 0)
+        return LIBRDP_STATUS_IO_ERROR;
+    return server_host_accept_pending(host);
 }
 
 static void configure_mock_platform(server_host_config* config,
@@ -1539,10 +1567,10 @@ static int test_host_lifecycle(void)
 
     clients[0] = connect_loopback(port);
     CHECK(clients[0] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     clients[1] = connect_loopback(port);
     CHECK(clients[1] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     CHECK(server_host_peer_count(host) == 2u);
     CHECK(mock.frame_requests == 0u);
     CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_LIMIT_EXCEEDED);
@@ -1591,7 +1619,7 @@ static int test_host_lifecycle(void)
 
     clients[2] = connect_loopback(port);
     CHECK(clients[2] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     server_host_peer_info_init(&reused);
     CHECK(server_host_peer_at(host, 0u, &reused) == LIBRDP_STATUS_OK);
     CHECK(reused.id != first_id);
@@ -1720,8 +1748,8 @@ static int test_host_input_ownership(void)
     clients[0] = connect_loopback(server_host_local_port(host));
     clients[1] = connect_loopback(server_host_local_port(host));
     CHECK(clients[0] >= 0 && clients[1] >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     server_host_peer_info_init(&first);
     server_host_peer_info_init(&second);
     CHECK(server_host_peer_at(host, 0u, &first) == LIBRDP_STATUS_OK);
@@ -1916,7 +1944,7 @@ static int test_host_trace_metrics(void)
     CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
     client = connect_loopback(server_host_local_port(host));
     CHECK(client >= 0);
-    CHECK(server_host_accept_pending(host) == LIBRDP_STATUS_OK);
+    CHECK(accept_loopback_peer(host) == LIBRDP_STATUS_OK);
     server_host_peer_info_init(&peer);
     CHECK(server_host_peer_at(host, 0u, &peer) == LIBRDP_STATUS_OK);
     slot = server_host_find_peer_slot(host, peer.id);
