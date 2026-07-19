@@ -84,7 +84,7 @@ static int cocoa_server_rect_from_value(id value,
     if (!value || !output)
         return 0;
     if ([value isKindOfClass:[NSString class]])
-        rect = CGRectFromString((NSString*)value);
+        rect = NSRectToCGRect(NSRectFromString((NSString*)value));
     else if ([value isKindOfClass:[NSValue class]])
         rect = [(NSValue*)value rectValue];
     else
@@ -188,7 +188,8 @@ static int cocoa_server_content_dimensions(
     scale_value =
         [metadata objectForKey:SCStreamFrameInfoScaleFactor];
     if ([rect_value isKindOfClass:[NSString class]])
-        rect = CGRectFromString((NSString*)rect_value);
+        rect = NSRectToCGRect(
+            NSRectFromString((NSString*)rect_value));
     else if ([rect_value isKindOfClass:[NSValue class]])
         rect = [(NSValue*)rect_value rectValue];
     else

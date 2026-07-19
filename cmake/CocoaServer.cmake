@@ -91,6 +91,7 @@ if(LIBRDP_BUILD_COCOA_SERVER)
         add_executable(test_cocoa_server_input
             tests/test_cocoa_server_input.m
             apps/cocoa/server/cocoa_input.m
+            apps/cocoa/server/cocoa_permission.m
         )
         target_compile_definitions(test_cocoa_server_input PRIVATE
             LIBRDP_COCOA_SERVER_TESTING=1

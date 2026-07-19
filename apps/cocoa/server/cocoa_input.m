@@ -676,7 +676,7 @@ static librdp_status cocoa_server_input_inject(
         event->version != LIBRDP_SERVER_INPUT_EVENT_VERSION ||
         event->size < sizeof(*event))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
-    if (!cocoa_server_accessibility_trusted(0))
+    if (!cocoa_server_accessibility_permission(0))
     {
         cocoa_server_input_release_all(context);
         if (context->permission_sink.changed)

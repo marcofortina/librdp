@@ -208,20 +208,17 @@ static SCContentFilter* cocoa_server_select_stable_filter(
     return nil;
 }
 
-static int cocoa_server_filter_geometry(
-    SCContentFilter* filter,
+static int cocoa_server_geometry_from_rect(
+    CGRect content_rect,
+    double scale,
     uint32_t* width,
     uint32_t* height,
     CGRect* source_rect,
     double* source_scale)
 {
-    CGRect content_rect = [filter contentRect];
-    double scale = 1.0;
     double pixel_width = 0.0;
     double pixel_height = 0.0;
 
-    if (@available(macOS 13.0, *))
-        scale = (double)[filter pointPixelScale];
     pixel_width = ceil(content_rect.size.width * scale);
     pixel_height = ceil(content_rect.size.height * scale);
     if (!width || !height || !source_rect || !source_scale ||
@@ -241,6 +238,137 @@ static int cocoa_server_filter_geometry(
     return 1;
 }
 
+static int cocoa_server_display_scale(SCDisplay* display,
+                                      double* scale)
+{
+    CGRect frame = CGRectZero;
+    size_t pixel_width = 0u;
+    size_t pixel_height = 0u;
+    double horizontal = 0.0;
+    double vertical = 0.0;
+
+    if (!display || !scale)
+        return 0;
+    frame = [display frame];
+    pixel_width = CGDisplayPixelsWide([display displayID]);
+    pixel_height = CGDisplayPixelsHigh([display displayID]);
+    if (!isfinite(frame.size.width) ||
+        !isfinite(frame.size.height) ||
+        frame.size.width <= 0.0 || frame.size.height <= 0.0 ||
+        pixel_width == 0u || pixel_height == 0u)
+        return 0;
+    horizontal = (double)pixel_width / frame.size.width;
+    vertical = (double)pixel_height / frame.size.height;
+    if (!isfinite(horizontal) || !isfinite(vertical) ||
+        horizontal <= 0.0 || vertical <= 0.0 ||
+        fabs(horizontal - vertical) > 0.01)
+        return 0;
+    *scale = horizontal;
+    return 1;
+}
+
+static int cocoa_server_legacy_filter_geometry(
+    const cocoa_server_context* context,
+    SCShareableContent* content,
+    uint32_t* width,
+    uint32_t* height,
+    CGRect* source_rect,
+    double* source_scale)
+{
+    if (!context || !content)
+        return 0;
+    if (context->config.source_kind ==
+        COCOA_SERVER_SOURCE_DISPLAY)
+    {
+        for (SCDisplay* display in [content displays])
+        {
+            double scale = 0.0;
+
+            if ([display displayID] !=
+                    (CGDirectDisplayID)context->stable_source_id ||
+                !cocoa_server_display_scale(display, &scale))
+                continue;
+            return cocoa_server_geometry_from_rect(
+                [display frame],
+                scale,
+                width,
+                height,
+                source_rect,
+                source_scale);
+        }
+        return 0;
+    }
+    for (SCWindow* window in [content windows])
+    {
+        CGRect window_frame = CGRectZero;
+        double selected_scale = 0.0;
+        double selected_area = 0.0;
+
+        if ([window windowID] !=
+            (CGWindowID)context->stable_source_id)
+            continue;
+        window_frame = [window frame];
+        for (SCDisplay* display in [content displays])
+        {
+            CGRect overlap =
+                CGRectIntersection(window_frame, [display frame]);
+            double scale = 0.0;
+            double area = 0.0;
+
+            if (CGRectIsNull(overlap) ||
+                CGRectIsEmpty(overlap) ||
+                !cocoa_server_display_scale(display, &scale))
+                continue;
+            area = overlap.size.width * overlap.size.height;
+            if (isfinite(area) && area > selected_area)
+            {
+                selected_area = area;
+                selected_scale = scale;
+            }
+        }
+        if (selected_scale <= 0.0)
+            selected_scale = 1.0;
+        return cocoa_server_geometry_from_rect(
+            window_frame,
+            selected_scale,
+            width,
+            height,
+            source_rect,
+            source_scale);
+    }
+    return 0;
+}
+
+static int cocoa_server_filter_geometry(
+    const cocoa_server_context* context,
+    SCShareableContent* content,
+    SCContentFilter* filter,
+    uint32_t* width,
+    uint32_t* height,
+    CGRect* source_rect,
+    double* source_scale)
+{
+    if (!context || !content || !filter)
+        return 0;
+    if (@available(macOS 14.0, *))
+    {
+        return cocoa_server_geometry_from_rect(
+            [filter contentRect],
+            (double)[filter pointPixelScale],
+            width,
+            height,
+            source_rect,
+            source_scale);
+    }
+    return cocoa_server_legacy_filter_geometry(
+        context,
+        content,
+        width,
+        height,
+        source_rect,
+        source_scale);
+}
+
 static int cocoa_server_prepare_stream(
     cocoa_server_context* context,
     librdp_status* output_status)
@@ -253,17 +381,20 @@ static int cocoa_server_prepare_stream(
         return 0;
     context->filter =
         cocoa_server_select_initial_filter(context, content);
-    [content release];
     if (!context->filter ||
-        !cocoa_server_filter_geometry(context->filter,
+        !cocoa_server_filter_geometry(context,
+                                      content,
+                                      context->filter,
                                       &context->width,
                                       &context->height,
                                       &context->source_rect,
                                       &context->source_scale))
     {
+        [content release];
         *output_status = LIBRDP_STATUS_INVALID_ARGUMENT;
         return 0;
     }
+    [content release];
     if ((size_t)context->width >
             context->config.max_frame_bytes / 4u ||
         (size_t)context->height >
@@ -455,17 +586,20 @@ librdp_status cocoa_server_refresh_topology(
     if (!content)
         return status;
     filter = cocoa_server_select_stable_filter(context, content);
-    [content release];
     if (!filter ||
-        !cocoa_server_filter_geometry(filter,
+        !cocoa_server_filter_geometry(context,
+                                      content,
+                                      filter,
                                       &width,
                                       &height,
                                       &source_rect,
                                       &source_scale))
     {
+        [content release];
         [filter release];
         return LIBRDP_STATUS_CLOSED;
     }
+    [content release];
     if ((size_t)width > context->config.max_frame_bytes / 4u ||
         (size_t)height >
             context->config.max_frame_bytes /
