@@ -12,6 +12,24 @@
 #include "test_core_support.h"
 #include "test_core_suites.h"
 
+typedef struct resolution_trace_capture
+{
+    int resolve_failed;
+} resolution_trace_capture;
+
+static void on_resolution_trace(librdp_session* session,
+                                const librdp_trace_record* record,
+                                void* user_data)
+{
+    resolution_trace_capture* capture =
+        (resolution_trace_capture*)user_data;
+
+    (void)session;
+    if (capture && record && record->event &&
+        strcmp(record->event, "transport.tcp.resolve.failed") == 0)
+        capture->resolve_failed = 1;
+}
+
 /*
  * Coverage: exercises public settings, surface, input, callback, clipboard,
  * channel, audio, video, and session lifecycle APIs together to catch
@@ -1835,6 +1853,69 @@ int test_connect_timeout(void)
     librdp_settings_free(settings);
     CHECK(waitpid(server_pid, &child_status, 0) == server_pid);
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    return 0;
+}
+
+/*
+ * Coverage: drives a deterministic resolver rejection through the public
+ * session API and verifies transport attribution, trace visibility, bounded
+ * completion, and terminal cleanup without consulting an external DNS server.
+ */
+int test_resolution_failure(void)
+{
+    librdp_settings* settings = NULL;
+    librdp_session* session = NULL;
+    librdp_trace_policy trace_policy;
+    librdp_error_info error_info;
+    resolution_trace_capture capture;
+    struct timespec started;
+    struct timespec finished;
+    uint64_t elapsed_ms = 0u;
+
+    memset(&capture, 0, sizeof(capture));
+    settings = librdp_settings_new();
+    CHECK(settings != NULL);
+    CHECK(librdp_settings_set_target(settings, "invalid host name") ==
+          LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_port(settings, 33989u) == LIBRDP_STATUS_OK);
+    CHECK(librdp_settings_set_security_mode(
+              settings,
+              LIBRDP_SECURITY_STANDARD) == LIBRDP_STATUS_OK);
+    session = librdp_session_new(settings);
+    CHECK(session != NULL);
+    CHECK(librdp_trace_policy_init(&trace_policy) == LIBRDP_STATUS_OK);
+    trace_policy.categories = LIBRDP_TRACE_CATEGORY_TRANSPORT;
+    trace_policy.level = LIBRDP_TRACE_LEVEL_TRACE;
+    trace_policy.sink = LIBRDP_TRACE_SINK_CALLBACK;
+    trace_policy.callback = on_resolution_trace;
+    trace_policy.callback_user_data = &capture;
+    CHECK(librdp_session_set_trace_policy(session, &trace_policy) ==
+          LIBRDP_STATUS_OK);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &started) == 0);
+    CHECK(librdp_session_connect(session) == LIBRDP_STATUS_IO_ERROR);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &finished) == 0);
+    elapsed_ms = ((uint64_t)(finished.tv_sec - started.tv_sec) * 1000u) +
+                 ((uint64_t)(finished.tv_nsec >= started.tv_nsec ?
+                                 finished.tv_nsec - started.tv_nsec :
+                                 1000000000L + finished.tv_nsec -
+                                     started.tv_nsec) /
+                  1000000u);
+    if (finished.tv_nsec < started.tv_nsec)
+        elapsed_ms -= 1000u;
+    CHECK(elapsed_ms < 1000u);
+    CHECK(capture.resolve_failed == 1);
+    CHECK(librdp_session_get_state(session) == LIBRDP_SESSION_FAILED);
+    CHECK(librdp_error_info_init(&error_info) == LIBRDP_STATUS_OK);
+    CHECK(librdp_error_copy_info(
+              librdp_session_last_error(session),
+              &error_info) == LIBRDP_STATUS_OK);
+    CHECK(error_info.status == LIBRDP_STATUS_IO_ERROR);
+    CHECK(error_info.component == LIBRDP_ERROR_COMPONENT_TRANSPORT);
+    CHECK(error_info.phase != NULL &&
+          strcmp(error_info.phase, "transport.tcp.connect") == 0);
+
+    librdp_session_free(session);
+    librdp_settings_free(settings);
     return 0;
 }
 

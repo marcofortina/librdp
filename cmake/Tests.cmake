@@ -300,6 +300,7 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME core COMMAND test_core)
     add_test(NAME core_settings_session_error_metrics COMMAND test_core settings)
     add_test(NAME core_connect_timeout COMMAND test_core timeouts)
+    add_test(NAME core_resolution_failure COMMAND test_core resolution)
     add_test(NAME core_features COMMAND test_core features)
     add_test(NAME core_channels COMMAND test_core channels)
     add_test(NAME core_storage_devices COMMAND test_core storage)
@@ -343,6 +344,10 @@ if(LIBRDP_BUILD_TESTS)
     add_test(NAME server_host_drive COMMAND test_server_host_drive)
     add_test(NAME server_client_smoke_standard
         COMMAND test_server_client_smoke standard)
+    add_test(NAME server_client_smoke_standard_dns
+        COMMAND test_server_client_smoke standard-dns)
+    add_test(NAME server_client_smoke_standard_ipv6
+        COMMAND test_server_client_smoke standard-ipv6)
     add_test(NAME server_client_smoke_tls
         COMMAND test_server_client_smoke tls)
     add_test(NAME server_client_smoke_nla
@@ -372,6 +377,8 @@ if(LIBRDP_BUILD_TESTS)
     )
     set_tests_properties(
         server_client_smoke_standard
+        server_client_smoke_standard_dns
+        server_client_smoke_standard_ipv6
         server_client_smoke_tls
         server_client_smoke_nla
         server_client_smoke_nla_invalid
@@ -405,6 +412,7 @@ if(LIBRDP_BUILD_TESTS)
         core
         core_settings_session_error_metrics
         core_connect_timeout
+        core_resolution_failure
         core_channels
         core_storage_devices
         core_graphics

@@ -113,8 +113,13 @@ typedef struct smoke_nla_provider
 typedef struct smoke_trace_capture
 {
     unsigned int records;
+    unsigned int connect_starts;
+    unsigned int connect_completions;
     int leaked;
+    int address_matched;
     const smoke_nla_identity* identity;
+    const char* target;
+    uint16_t port;
 } smoke_trace_capture;
 
 static int smoke_check(int condition, const char* expression, int line)
@@ -173,11 +178,28 @@ static void smoke_trace_callback(librdp_session* session,
                                  void* user_data)
 {
     smoke_trace_capture* capture = (smoke_trace_capture*)user_data;
+    char expected_address[320] = {0};
 
     (void)session;
     if (!capture || !record || !record->line)
         return;
     capture->records++;
+    if (record->event &&
+        strcmp(record->event, "transport.tcp.connect.start") == 0)
+    {
+        capture->connect_starts++;
+        if (capture->target && record->message &&
+            snprintf(expected_address,
+                     sizeof(expected_address),
+                     "host=%s port=%u",
+                     capture->target,
+                     (unsigned int)capture->port) > 0 &&
+            strcmp(record->message, expected_address) == 0)
+            capture->address_matched = 1;
+    }
+    else if (record->event &&
+             strcmp(record->event, "transport.tcp.connect.done") == 0)
+        capture->connect_completions++;
     if (!capture->identity)
         return;
     if ((capture->identity->username &&
@@ -766,7 +788,9 @@ static int smoke_configure_security(server_host_config* host_config,
  */
 static int smoke_run_profile(librdp_security_mode security,
                              librdp_status expected_connect_status,
-                             const smoke_nla_identity* identity)
+                             const smoke_nla_identity* identity,
+                             const char* bind_address,
+                             const char* target)
 {
     char cert_path[128] = {0};
     char key_path[128] = {0};
@@ -788,6 +812,7 @@ static int smoke_run_profile(librdp_security_mode security,
     librdp_mouse_event mouse;
     librdp_status connect_status = LIBRDP_STATUS_OK;
     uint16_t port = 0u;
+    uint16_t default_port = 0u;
     unsigned int cycle = 0u;
     int clipboard_sent = 0;
     int input_sent = 0;
@@ -802,6 +827,8 @@ static int smoke_run_profile(librdp_security_mode security,
     memset(&runtime, 0, sizeof(runtime));
     memset(&key, 0, sizeof(key));
     memset(&mouse, 0, sizeof(mouse));
+    REQUIRE(bind_address != NULL);
+    REQUIRE(target != NULL);
     atomic_init(&host_fixture.port, 0u);
     host_fixture.status = LIBRDP_STATUS_AGAIN;
     REQUIRE(smoke_make_drive(drive_directory,
@@ -817,7 +844,7 @@ static int smoke_run_profile(librdp_security_mode security,
     }
 
     server_host_config_init(&host_config);
-    host_config.server.bind_address = "127.0.0.1";
+    host_config.server.bind_address = bind_address;
     host_config.server.width = SMOKE_CAPTURE_WIDTH;
     host_config.server.height = SMOKE_CAPTURE_HEIGHT;
     host_config.max_peers = 1u;
@@ -826,7 +853,8 @@ static int smoke_run_profile(librdp_security_mode security,
 
     settings = librdp_settings_new();
     REQUIRE(settings != NULL);
-    REQUIRE(librdp_settings_set_target(settings, "127.0.0.1") ==
+    default_port = librdp_settings_port(settings);
+    REQUIRE(librdp_settings_set_target(settings, target) ==
             LIBRDP_STATUS_OK);
     REQUIRE(librdp_settings_set_desktop_size(settings,
                                              SMOKE_WIDTH,
@@ -857,7 +885,10 @@ static int smoke_run_profile(librdp_security_mode security,
                            &host_fixture) == 0);
     thread_started = 1;
     REQUIRE(smoke_wait_for_port(&host_fixture, &port));
+    REQUIRE(port != default_port);
     REQUIRE(librdp_settings_set_port(settings, port) == LIBRDP_STATUS_OK);
+    trace_capture.target = target;
+    trace_capture.port = port;
 
     session = librdp_session_new(settings);
     REQUIRE(session != NULL);
@@ -881,6 +912,9 @@ static int smoke_run_profile(librdp_security_mode security,
         REQUIRE(connect_status == expected_connect_status);
         REQUIRE(nla_provider.calls == 1u);
         REQUIRE(trace_capture.records > 0u);
+        REQUIRE(trace_capture.connect_starts == 1u);
+        REQUIRE(trace_capture.connect_completions == 1u);
+        REQUIRE(trace_capture.address_matched);
         REQUIRE(trace_capture.leaked == 0);
         error = librdp_session_last_error(session);
         REQUIRE(error != NULL);
@@ -957,6 +991,9 @@ static int smoke_run_profile(librdp_security_mode security,
     REQUIRE(events.surface_events > 0u);
     REQUIRE(events.error_events == 0u);
     REQUIRE(trace_capture.records > 0u);
+    REQUIRE(trace_capture.connect_starts == 1u);
+    REQUIRE(trace_capture.connect_completions == 1u);
+    REQUIRE(trace_capture.address_matched);
     REQUIRE(trace_capture.leaked == 0);
     REQUIRE(librdp_surface_width(librdp_session_get_surface(session)) ==
             SMOKE_WIDTH);
@@ -1008,14 +1045,30 @@ cleanup:
 static int smoke_parse_security(const char* value,
                                 librdp_security_mode* security,
                                 librdp_status* expected_status,
-                                const smoke_nla_identity** identity)
+                                const smoke_nla_identity** identity,
+                                const char** bind_address,
+                                const char** target)
 {
-    if (!value || !security || !expected_status || !identity)
+    if (!value || !security || !expected_status || !identity ||
+        !bind_address || !target)
         return 0;
     *expected_status = LIBRDP_STATUS_OK;
     *identity = &smoke_nla_default_identity;
+    *bind_address = "127.0.0.1";
+    *target = "127.0.0.1";
     if (strcmp(value, "standard") == 0)
         *security = LIBRDP_SECURITY_STANDARD;
+    else if (strcmp(value, "standard-dns") == 0)
+    {
+        *security = LIBRDP_SECURITY_STANDARD;
+        *target = "localhost";
+    }
+    else if (strcmp(value, "standard-ipv6") == 0)
+    {
+        *security = LIBRDP_SECURITY_STANDARD;
+        *bind_address = "::1";
+        *target = "::1";
+    }
     else if (strcmp(value, "tls") == 0)
         *security = LIBRDP_SECURITY_TLS;
     else if (strcmp(value, "nla") == 0)
@@ -1065,18 +1118,27 @@ int main(int argc, char** argv)
     librdp_security_mode security = LIBRDP_SECURITY_AUTO;
     librdp_status expected_status = LIBRDP_STATUS_OK;
     const smoke_nla_identity* identity = NULL;
+    const char* bind_address = NULL;
+    const char* target = NULL;
 
     if (argc != 2 ||
         !smoke_parse_security(argv[1],
                               &security,
                               &expected_status,
-                              &identity))
+                              &identity,
+                              &bind_address,
+                              &target))
     {
         fprintf(stderr,
                 "usage: test_server_client_smoke "
-                "standard|tls|nla|nla-invalid|nla-expired|nla-locked|"
+                "standard|standard-dns|standard-ipv6|tls|nla|"
+                "nla-invalid|nla-expired|nla-locked|"
                 "nla-no-domain|nla-empty-domain|nla-upn|nla-utf8\n");
         return 2;
     }
-    return smoke_run_profile(security, expected_status, identity);
+    return smoke_run_profile(security,
+                             expected_status,
+                             identity,
+                             bind_address,
+                             target);
 }
