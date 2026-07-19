@@ -1628,6 +1628,28 @@ static int test_device_redirection_channel(void)
     PCHECK(caps.capabilities[1].type == RDP_DEVICE_REDIRECTION_CAP_DRIVE);
     PCHECK(caps.capabilities[1].version == RDP_DEVICE_REDIRECTION_CAP_VERSION_2);
     PCHECK(caps.capabilities[2].type == RDP_DEVICE_REDIRECTION_CAP_SMARTCARD);
+    PCHECK(rdp_device_redirection_write_server_capability_request(
+               &packet,
+               &cap_config) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_device_redirection_parse_capability_list(
+               packet.data,
+               packet.length,
+               RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
+               &caps) == LIBRDP_STATUS_OK);
+    PCHECK(caps.count == 3 &&
+           caps.capabilities[0].type ==
+               RDP_DEVICE_REDIRECTION_CAP_GENERAL &&
+           caps.capabilities[1].type ==
+               RDP_DEVICE_REDIRECTION_CAP_DRIVE &&
+           caps.capabilities[2].type ==
+               RDP_DEVICE_REDIRECTION_CAP_SMARTCARD);
+    rdp_buffer_free(&packet);
+    rdp_buffer_init(&packet);
+    PCHECK(rdp_device_redirection_parse_capability_list(
+               buffer.data,
+               buffer.length,
+               RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+               &caps) == LIBRDP_STATUS_OK);
     bad_cap = caps.capabilities[0];
     bad_cap.length = 43;
     PCHECK(rdp_device_redirection_parse_general_capability(&bad_cap, &general) ==

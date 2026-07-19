@@ -210,7 +210,11 @@ int test_server_append_mcs_tpkt(rdp_buffer* output, const rdp_buffer* mcs_pdu);
 
 int test_server_send_channel_join(int fd, uint16_t user_id, uint16_t channel_id);
 
-int test_server_send_confirm_active(int fd, uint32_t share_id, uint16_t user_id);
+int test_server_send_confirm_active(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security);
 
 int test_server_send_encrypted_slowpath(int fd,
                                                uint16_t user_id,
@@ -224,17 +228,42 @@ int test_server_send_encrypted_channel_payload(int fd,
                                                       rdp_standard_security_context* security,
                                                       const rdp_buffer* payload);
 
-int test_server_send_client_synchronize(int fd, uint32_t share_id, uint16_t user_id);
+int test_server_send_client_synchronize(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security);
 
-int test_server_send_client_control(int fd, uint32_t share_id, uint16_t user_id, uint16_t action);
+int test_server_send_client_control(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    uint16_t action,
+    rdp_standard_security_context* security);
 
-int test_server_send_client_font_list(int fd, uint32_t share_id, uint16_t user_id);
+int test_server_send_client_font_list(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security);
 
-int test_server_send_keyboard_input(int fd, uint32_t share_id, uint16_t user_id);
+int test_server_send_keyboard_input(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security);
 
-int test_server_send_sync_input(int fd, uint32_t share_id, uint16_t user_id);
+int test_server_send_sync_input(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security);
 
-int test_server_send_static_channel_data(int fd, uint16_t user_id, uint16_t channel_id);
+int test_server_send_static_channel_data(
+    int fd,
+    uint16_t user_id,
+    uint16_t channel_id,
+    rdp_standard_security_context* security);
 
 int test_server_send_channel_payload(int fd, uint16_t user_id, uint16_t channel_id, const rdp_buffer* payload);
 

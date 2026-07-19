@@ -83,6 +83,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#define RDP_SERVER_RDPDR_STATUS_NOT_SUPPORTED 0xc00000bbu
+
 static void rdp_server_emit_dynamic_channel_event(
     librdp_server_peer* peer,
     const rdp_server_dynamic_channel* channel,
@@ -337,6 +339,124 @@ void rdp_server_static_channels_reset(librdp_server_peer* peer)
     for (index = 0; index < RDP_GCC_MAX_SERVER_CHANNELS; index++)
         rdp_buffer_free(&peer->static_channels[index].fragment);
     memset(peer->static_channels, 0, sizeof(peer->static_channels));
+    rdp_server_device_redirection_reset(peer);
+}
+
+void rdp_server_device_redirection_reset(librdp_server_peer* peer)
+{
+    if (!peer)
+        return;
+    peer->device_redirection_channel_id = 0u;
+    peer->device_redirection_version_minor = 0u;
+    peer->device_redirection_client_id = 0u;
+    peer->device_redirection_client_io_code1 = 0u;
+    peer->device_redirection_client_capability_types = 0u;
+    peer->device_redirection_announce_sent = 0u;
+    peer->device_redirection_client_confirmed = 0u;
+    peer->device_redirection_client_named = 0u;
+    peer->device_redirection_capabilities_sent = 0u;
+    peer->device_redirection_capabilities_received = 0u;
+    peer->device_redirection_client_id_sent = 0u;
+    peer->device_redirection_logged_on_sent = 0u;
+    peer->device_redirection_user_logged_on_supported = 0u;
+    peer->device_redirection_ready = 0u;
+}
+
+static int rdp_server_device_redirection_provider_ready(
+    const librdp_server_peer* peer)
+{
+    static const librdp_server_extension_family families[] = {
+        LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION,
+        LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+        LIBRDP_SERVER_EXTENSION_PRINTER,
+        LIBRDP_SERVER_EXTENSION_SERIAL_PORT,
+        LIBRDP_SERVER_EXTENSION_PARALLEL_PORT,
+        LIBRDP_SERVER_EXTENSION_SMARTCARD,
+    };
+    size_t index = 0u;
+
+    if (!peer)
+        return 0;
+    for (index = 0u;
+         index < sizeof(families) / sizeof(families[0]);
+         index++)
+    {
+        if (rdp_server_extension_provider_ready(
+                peer->backend_extension_families,
+                families[index]))
+            return 1;
+    }
+    return 0;
+}
+
+/*
+ * Start the server-owned RDPDR lifecycle only after activation and only when
+ * at least one application provider is ready. The client identifier is
+ * unpredictable but carries no credential or persistent identity semantics.
+ */
+librdp_status rdp_server_device_redirection_start(librdp_server_peer* peer)
+{
+    rdp_buffer packet;
+    uint32_t client_id = 0u;
+    uint16_t channel_id = 0u;
+    uint16_t index = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (peer->state != LIBRDP_SERVER_PEER_ACTIVE)
+        return LIBRDP_STATUS_STATE;
+    if (peer->device_redirection_announce_sent ||
+        !rdp_server_device_redirection_provider_ready(peer))
+        return LIBRDP_STATUS_OK;
+    for (index = 0u; index < peer->advertised_channel_count; index++)
+    {
+        char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
+
+        if (!peer->advertised_channel_joined[index])
+            continue;
+        rdp_server_copy_channel_name(name,
+                                     peer->advertised_channels[index].name);
+        if (strcmp(name, RDP_DEVICE_REDIRECTION_CHANNEL_NAME) == 0)
+        {
+            channel_id = peer->advertised_channel_ids[index];
+            break;
+        }
+    }
+    if (channel_id == 0u)
+        return LIBRDP_STATUS_OK;
+    if (RAND_bytes((unsigned char*)&client_id,
+                   (int)sizeof(client_id)) != 1)
+        return LIBRDP_STATUS_IO_ERROR;
+    if (client_id == 0u)
+        client_id = 1u;
+    rdp_buffer_init(&packet);
+    status = rdp_device_redirection_write_server_announce(
+        &packet,
+        RDP_DEVICE_REDIRECTION_VERSION_MINOR_13,
+        client_id);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = librdp_server_peer_send_channel_data(peer,
+                                                      channel_id,
+                                                      packet.data,
+                                                      packet.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->device_redirection_channel_id = channel_id;
+        peer->device_redirection_version_minor =
+            RDP_DEVICE_REDIRECTION_VERSION_MINOR_13;
+        peer->device_redirection_client_id = client_id;
+        peer->device_redirection_announce_sent = 1u;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.rdpdr.announce",
+                        "channel_id=%u version_minor=%u",
+                        channel_id,
+                        peer->device_redirection_version_minor);
+    }
+    rdp_buffer_free(&packet);
+    return status;
 }
 
 void rdp_server_emit_channel_joined_event(librdp_server_peer* peer, uint16_t channel_id)
@@ -442,10 +562,390 @@ static void rdp_server_classify_device_payload(const librdp_server_peer* peer,
         *family = rdp_server_redirected_device_family(device->device_type, feature);
 }
 
-static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* peer,
-                                                          const librdp_server_extension_event* event)
+static int rdp_server_device_type_provider_ready(
+    const librdp_server_peer* peer,
+    uint32_t device_type)
+{
+    librdp_server_extension_family family =
+        rdp_server_redirected_device_family(device_type, NULL);
+
+    return peer &&
+           rdp_server_extension_provider_ready(
+               peer->backend_extension_families,
+               family);
+}
+
+static uint16_t rdp_server_device_capability_type(uint32_t device_type)
+{
+    switch (device_type)
+    {
+        case RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM:
+            return RDP_DEVICE_REDIRECTION_CAP_DRIVE;
+        case RDP_DEVICE_REDIRECTION_TYPE_PRINTER:
+            return RDP_DEVICE_REDIRECTION_CAP_PRINTER;
+        case RDP_DEVICE_REDIRECTION_TYPE_SERIAL:
+        case RDP_DEVICE_REDIRECTION_TYPE_PARALLEL:
+            return RDP_DEVICE_REDIRECTION_CAP_PORT;
+        case RDP_DEVICE_REDIRECTION_TYPE_SMARTCARD:
+            return RDP_DEVICE_REDIRECTION_CAP_SMARTCARD;
+        default:
+            return 0u;
+    }
+}
+
+static int rdp_server_device_capability_received(
+    const librdp_server_peer* peer,
+    uint32_t device_type)
+{
+    uint16_t type = rdp_server_device_capability_type(device_type);
+
+    return peer && type > 0u && type < 32u &&
+           (peer->device_redirection_client_capability_types &
+            (UINT32_C(1) << type)) != 0u;
+}
+
+static librdp_status rdp_server_send_device_reply_unchecked(
+    librdp_server_peer* peer,
+    uint32_t device_id,
+    uint32_t io_status)
+{
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || peer->device_redirection_channel_id == 0u ||
+        device_id == 0u)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    status = rdp_device_redirection_write_device_reply(&packet,
+                                                       device_id,
+                                                       io_status);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = librdp_server_peer_send_channel_data(
+            peer,
+            peer->device_redirection_channel_id,
+            packet.data,
+            packet.length);
+    }
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+static librdp_status rdp_server_send_device_redirection_capabilities(
+    librdp_server_peer* peer)
+{
+    rdp_device_redirection_capability_config config;
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!peer->device_redirection_client_confirmed ||
+        !peer->device_redirection_client_named ||
+        peer->device_redirection_capabilities_sent)
+        return LIBRDP_STATUS_OK;
+    rdp_buffer_init(&packet);
+    status = rdp_device_redirection_make_default_capability_config(&config);
+    if (status == LIBRDP_STATUS_OK)
+    {
+        config.general.protocol_minor_version =
+            peer->device_redirection_version_minor;
+        config.include_drive = (uint8_t)rdp_server_extension_provider_ready(
+            peer->backend_extension_families,
+            LIBRDP_SERVER_EXTENSION_FILESYSTEM);
+        config.include_printer =
+            (uint8_t)rdp_server_extension_provider_ready(
+                peer->backend_extension_families,
+                LIBRDP_SERVER_EXTENSION_PRINTER);
+        config.include_port =
+            (uint8_t)(rdp_server_extension_provider_ready(
+                          peer->backend_extension_families,
+                          LIBRDP_SERVER_EXTENSION_SERIAL_PORT) ||
+                      rdp_server_extension_provider_ready(
+                          peer->backend_extension_families,
+                          LIBRDP_SERVER_EXTENSION_PARALLEL_PORT));
+        config.include_smartcard =
+            (uint8_t)rdp_server_extension_provider_ready(
+                peer->backend_extension_families,
+                LIBRDP_SERVER_EXTENSION_SMARTCARD);
+        status = rdp_device_redirection_write_server_capability_request(
+            &packet,
+            &config);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        status = librdp_server_peer_send_channel_data(
+            peer,
+            peer->device_redirection_channel_id,
+            packet.data,
+            packet.length);
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->device_redirection_capabilities_sent = 1u;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.rdpdr.capabilities",
+                        "channel_id=%u drive=%u printer=%u port=%u smartcard=%u",
+                        peer->device_redirection_channel_id,
+                        config.include_drive,
+                        config.include_printer,
+                        config.include_port,
+                        config.include_smartcard);
+    }
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+/*
+ * Validate capability structure and retain only fields used to gate later
+ * requests. Unknown capability types remain forward-compatible, while
+ * duplicate or malformed known types fail before any negotiated state changes.
+ */
+static librdp_status rdp_server_validate_device_redirection_capabilities(
+    const librdp_server_peer* peer,
+    const uint8_t* data,
+    size_t data_len,
+    rdp_device_redirection_general_capability* general,
+    uint32_t* capability_types)
+{
+    rdp_device_redirection_capability_list list;
+    uint32_t seen = 0u;
+    uint16_t index = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !data || !general || !capability_types)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = rdp_device_redirection_parse_capability_list(
+        data,
+        data_len,
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+        &list);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    for (index = 0u; index < list.count; index++)
+    {
+        const rdp_device_redirection_capability* capability =
+            &list.capabilities[index];
+        uint32_t bit = 0u;
+
+        if (capability->type > 0u && capability->type < 32u)
+            bit = UINT32_C(1) << capability->type;
+        if (bit != 0u && (seen & bit) != 0u)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        seen |= bit;
+        if (capability->type == RDP_DEVICE_REDIRECTION_CAP_GENERAL)
+        {
+            status = rdp_device_redirection_parse_general_capability(
+                capability,
+                general);
+            if (status != LIBRDP_STATUS_OK)
+                return status;
+        }
+        else if (capability->type ==
+                     RDP_DEVICE_REDIRECTION_CAP_PRINTER ||
+                 capability->type == RDP_DEVICE_REDIRECTION_CAP_PORT ||
+                 capability->type ==
+                     RDP_DEVICE_REDIRECTION_CAP_SMARTCARD)
+        {
+            if (capability->length != 8u ||
+                capability->data_len != 0u ||
+                capability->version !=
+                    RDP_DEVICE_REDIRECTION_CAP_VERSION_1)
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+        else if (capability->type == RDP_DEVICE_REDIRECTION_CAP_DRIVE)
+        {
+            if (capability->length != 8u ||
+                capability->data_len != 0u ||
+                (capability->version !=
+                     RDP_DEVICE_REDIRECTION_CAP_VERSION_1 &&
+                 capability->version !=
+                     RDP_DEVICE_REDIRECTION_CAP_VERSION_2))
+                return LIBRDP_STATUS_PROTOCOL_ERROR;
+        }
+    }
+    if ((seen &
+         (UINT32_C(1) << RDP_DEVICE_REDIRECTION_CAP_GENERAL)) == 0u ||
+        general->protocol_minor_version !=
+            peer->device_redirection_version_minor)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    *capability_types = seen;
+    return LIBRDP_STATUS_OK;
+}
+
+static librdp_status rdp_server_finish_device_redirection_handshake(
+    librdp_server_peer* peer)
+{
+    rdp_buffer packet;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    rdp_buffer_init(&packet);
+    if (!peer->device_redirection_client_id_sent)
+    {
+        status = rdp_device_redirection_write_client_announce(
+            &packet,
+            peer->device_redirection_version_minor,
+            peer->device_redirection_client_id);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = librdp_server_peer_send_channel_data(
+                peer,
+                peer->device_redirection_channel_id,
+                packet.data,
+                packet.length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            peer->device_redirection_client_id_sent = 1u;
+    }
+    packet.length = 0u;
+    if (status == LIBRDP_STATUS_OK &&
+        peer->device_redirection_user_logged_on_supported &&
+        !peer->device_redirection_logged_on_sent)
+    {
+        status = rdp_device_redirection_write_user_loggedon(&packet);
+        if (status == LIBRDP_STATUS_OK)
+        {
+            status = librdp_server_peer_send_channel_data(
+                peer,
+                peer->device_redirection_channel_id,
+                packet.data,
+                packet.length);
+        }
+        if (status == LIBRDP_STATUS_OK)
+            peer->device_redirection_logged_on_sent = 1u;
+    }
+    if (status == LIBRDP_STATUS_OK)
+    {
+        peer->device_redirection_ready = 1u;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.rdpdr.ready",
+                        "channel_id=%u version_minor=%u",
+                        peer->device_redirection_channel_id,
+                        peer->device_redirection_version_minor);
+    }
+    rdp_buffer_free(&packet);
+    return status;
+}
+
+/*
+ * Advance the server side of the RDPDR startup exchange in wire order. Device
+ * announcements and completions are rejected until both sides have confirmed
+ * identity and capabilities; client names are validated but never retained.
+ */
+static librdp_status rdp_server_handle_device_redirection_lifecycle(
+    librdp_server_peer* peer,
+    const librdp_server_extension_event* event,
+    const rdp_device_redirection_header* header)
+{
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!peer || !event || !header)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (header->component == RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER)
+    {
+        return peer->device_redirection_ready
+                   ? LIBRDP_STATUS_OK
+                   : LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
+    if (header->component != RDP_DEVICE_REDIRECTION_COMPONENT_CORE ||
+        !peer->device_redirection_announce_sent ||
+        event->channel_id != peer->device_redirection_channel_id)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header->packet_id ==
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENTID_CONFIRM)
+    {
+        rdp_device_redirection_announce confirm;
+
+        if (peer->device_redirection_client_confirmed)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = rdp_device_redirection_parse_client_id_confirm(
+            event->payload,
+            event->payload_len,
+            &confirm);
+        if (status != LIBRDP_STATUS_OK ||
+            confirm.version_major !=
+                RDP_DEVICE_REDIRECTION_VERSION_MAJOR ||
+            confirm.version_minor !=
+                peer->device_redirection_version_minor ||
+            confirm.client_id != peer->device_redirection_client_id)
+            return status == LIBRDP_STATUS_OK
+                       ? LIBRDP_STATUS_PROTOCOL_ERROR
+                       : status;
+        peer->device_redirection_client_confirmed = 1u;
+        return rdp_server_send_device_redirection_capabilities(peer);
+    }
+    if (header->packet_id ==
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_NAME)
+    {
+        rdp_device_redirection_client_name name;
+
+        if (peer->device_redirection_client_named)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = rdp_device_redirection_parse_client_name(
+            event->payload,
+            event->payload_len,
+            &name);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        if (name.name_len > (RDP_SERVER_MAX_TEXT * 2u) + 2u)
+            return LIBRDP_STATUS_LIMIT_EXCEEDED;
+        peer->device_redirection_client_named = 1u;
+        return rdp_server_send_device_redirection_capabilities(peer);
+    }
+    if (header->packet_id ==
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY)
+    {
+        rdp_device_redirection_general_capability general;
+        uint32_t capability_types = 0u;
+
+        if (!peer->device_redirection_capabilities_sent ||
+            peer->device_redirection_capabilities_received)
+            return LIBRDP_STATUS_PROTOCOL_ERROR;
+        status = rdp_server_validate_device_redirection_capabilities(
+            peer,
+            event->payload,
+            event->payload_len,
+            &general,
+            &capability_types);
+        if (status != LIBRDP_STATUS_OK)
+            return status;
+        peer->device_redirection_client_io_code1 = general.io_code1;
+        peer->device_redirection_client_capability_types =
+            capability_types;
+        peer->device_redirection_user_logged_on_supported =
+            (general.extended_pdu &
+             RDP_DEVICE_REDIRECTION_EXT_USER_LOGGEDON) != 0u;
+        peer->device_redirection_capabilities_received = 1u;
+        return rdp_server_finish_device_redirection_handshake(peer);
+    }
+    if (!peer->device_redirection_ready)
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (header->packet_id ==
+            RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE ||
+        header->packet_id ==
+            RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_REMOVE ||
+        header->packet_id ==
+            RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICE_IOCOMPLETION)
+        return LIBRDP_STATUS_OK;
+    return LIBRDP_STATUS_PROTOCOL_ERROR;
+}
+
+/*
+ * Apply one validated RDPDR lifecycle or device-state message to the peer.
+ * Announcements are committed only after the startup exchange, provider
+ * availability, and the matching client capability have all been verified.
+ * Malformed lifecycle messages fail the dispatch without retaining devices;
+ * unsupported device classes receive a wire-level rejection and are omitted
+ * from server state.
+ */
+static librdp_status rdp_server_update_redirected_devices(
+    librdp_server_peer* peer,
+    const librdp_server_extension_event* event)
 {
     rdp_device_redirection_header header;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || !event || !event->payload ||
         (event->family != LIBRDP_SERVER_EXTENSION_DEVICE_REDIRECTION &&
@@ -456,8 +956,15 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
          event->family != LIBRDP_SERVER_EXTENSION_SMARTCARD))
         return LIBRDP_STATUS_OK;
     if (rdp_device_redirection_parse_header(event->payload, event->payload_len, &header) != LIBRDP_STATUS_OK ||
+        (header.component != RDP_DEVICE_REDIRECTION_COMPONENT_CORE &&
+         header.component != RDP_DEVICE_REDIRECTION_COMPONENT_PRINTER))
+        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    status = rdp_server_handle_device_redirection_lifecycle(peer,
+                                                            event,
+                                                            &header);
+    if (status != LIBRDP_STATUS_OK ||
         header.component != RDP_DEVICE_REDIRECTION_COMPONENT_CORE)
-        return LIBRDP_STATUS_OK;
+        return status;
     if (header.packet_id == RDP_DEVICE_REDIRECTION_PAKID_CORE_DEVICELIST_ANNOUNCE)
     {
         rdp_device_redirection_device_list list;
@@ -471,13 +978,30 @@ static librdp_status rdp_server_update_redirected_devices(librdp_server_peer* pe
             librdp_feature device_feature = (librdp_feature)0;
             librdp_server_extension_family device_family =
                 rdp_server_redirected_device_family(list.devices[i].device_type, &device_feature);
-            librdp_status status = rdp_server_redirected_device_store(
+            librdp_status store_status = LIBRDP_STATUS_OK;
+
+            if (!rdp_server_device_type_provider_ready(
+                    peer,
+                    list.devices[i].device_type) ||
+                !rdp_server_device_capability_received(
+                    peer,
+                    list.devices[i].device_type))
+            {
+                store_status = rdp_server_send_device_reply_unchecked(
+                    peer,
+                    list.devices[i].device_id,
+                    RDP_SERVER_RDPDR_STATUS_NOT_SUPPORTED);
+                if (store_status != LIBRDP_STATUS_OK)
+                    return store_status;
+                continue;
+            }
+            store_status = rdp_server_redirected_device_store(
                 peer,
                 event->channel_id,
                 &list.devices[i]);
 
-            if (status != LIBRDP_STATUS_OK)
-                return status;
+            if (store_status != LIBRDP_STATUS_OK)
+                return store_status;
             rdp_server_extension_state_mark_open(peer, device_family, event->channel_id, 0, 0);
         }
     }

@@ -487,6 +487,7 @@ int test_server_channels_focused(void)
     librdp_server_drive_request_id drive_request_id = 0u;
     librdp_server_drive_file_handle stale_drive_file;
     rdp_clipboard_format_entry entry;
+    rdp_device_redirection_capability_config capability_config;
     rdp_device_redirection_device_announce device_announce;
     rdp_buffer packet;
     int provider_enabled = 0;
@@ -660,6 +661,95 @@ int test_server_channels_focused(void)
     memcpy(device_announce.preferred_dos_name, "DRIVE", 5u);
     device_announce.data = drive_name;
     device_announce.data_len = (uint32_t)sizeof(drive_name);
+    fixture.peer->state = LIBRDP_SERVER_PEER_ACTIVE;
+    fixture.peer->advertised_channel_count = 1u;
+    memcpy(fixture.peer->advertised_channels[0].name, "rdpdr", 6u);
+    fixture.peer->advertised_channel_ids[0] = device_channel_id;
+    fixture.peer->advertised_channel_joined[0] = 1u;
+    SCHECK(librdp_server_peer_enable_extension_provider(
+               fixture.peer,
+               LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+               1) == LIBRDP_STATUS_OK);
+    SCHECK(fixture.peer->device_redirection_announce_sent &&
+           fixture.peer->device_redirection_channel_id ==
+               device_channel_id &&
+           fixture.peer->device_redirection_client_id != 0u);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_device_list_announce(
+               &packet,
+               &device_announce,
+               1u) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    SCHECK(drive.counts[LIBRDP_SERVER_DRIVE_DEVICE_ADDED] == 0u);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_client_announce(
+               &packet,
+               fixture.peer->device_redirection_version_minor,
+               fixture.peer->device_redirection_client_id) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(fixture.peer->device_redirection_client_confirmed &&
+           !fixture.peer->device_redirection_capabilities_sent);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_write_client_name_utf16le(
+               &packet,
+               drive_name,
+               (uint32_t)sizeof(drive_name)) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(fixture.peer->device_redirection_client_named &&
+           fixture.peer->device_redirection_capabilities_sent);
+    packet.length = 0u;
+    SCHECK(rdp_device_redirection_make_default_capability_config(
+               &capability_config) == LIBRDP_STATUS_OK);
+    capability_config.include_drive = 1u;
+    SCHECK(rdp_device_redirection_write_client_capability_response(
+               &packet,
+               &capability_config) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_emit_extension_event(fixture.peer,
+                                           "rdpdr",
+                                           5u,
+                                           device_channel_id,
+                                           0u,
+                                           0u,
+                                           packet.data,
+                                           packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(fixture.peer->device_redirection_ready &&
+           fixture.peer->device_redirection_client_id_sent &&
+           fixture.peer->device_redirection_logged_on_sent);
     packet.length = 0u;
     SCHECK(rdp_device_redirection_write_device_list_announce(
                &packet,
@@ -688,11 +778,6 @@ int test_server_channels_focused(void)
                                            packet.data,
                                            packet.length) ==
            LIBRDP_STATUS_PROTOCOL_ERROR);
-    fixture.peer->state = LIBRDP_SERVER_PEER_ACTIVE;
-    fixture.peer->advertised_channel_count = 1u;
-    memcpy(fixture.peer->advertised_channels[0].name, "rdpdr", 6u);
-    fixture.peer->advertised_channel_ids[0] = device_channel_id;
-    fixture.peer->advertised_channel_joined[0] = 1u;
     SCHECK(librdp_server_drive_request_init(&drive_request) ==
            LIBRDP_STATUS_OK);
     drive_request.operation = LIBRDP_SERVER_DRIVE_CREATE;

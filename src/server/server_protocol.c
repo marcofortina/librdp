@@ -738,6 +738,8 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
             {
                 rdp_server_set_state(peer, LIBRDP_SERVER_PEER_ACTIVE);
                 status = rdp_server_surface_flush_repaint(peer);
+                if (status == LIBRDP_STATUS_OK)
+                    status = rdp_server_device_redirection_start(peer);
             }
             else
                 rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);

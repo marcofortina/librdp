@@ -698,52 +698,32 @@ int test_server_send_channel_join(int fd, uint16_t user_id, uint16_t channel_id)
     return ok;
 }
 
-int test_server_send_confirm_active(int fd, uint32_t share_id, uint16_t user_id)
+int test_server_send_confirm_active(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security)
 {
     rdp_buffer confirm;
-    rdp_buffer security_payload;
-    rdp_buffer send_data;
     int ok = 0;
 
     rdp_buffer_init(&confirm);
-    rdp_buffer_init(&security_payload);
-    rdp_buffer_init(&send_data);
-    if (rdp_slowpath_write_confirm_active(&confirm, share_id, (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID, 800, 600, "test") ==
-            LIBRDP_STATUS_OK &&
-        rdp_security_write_header(&security_payload, 0) == LIBRDP_STATUS_OK &&
-        rdp_buffer_append(&security_payload, confirm.data, confirm.length) == LIBRDP_STATUS_OK &&
-        rdp_security_write_send_data_request(&send_data,
-                                             user_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
-                                             security_payload.data,
-                                             security_payload.length) == LIBRDP_STATUS_OK)
-        ok = test_server_send_mcs_pdu(fd, &send_data);
-    rdp_buffer_free(&send_data);
-    rdp_buffer_free(&security_payload);
+    if (rdp_slowpath_write_confirm_active(
+            &confirm,
+            share_id,
+            (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
+            800,
+            600,
+            "test") == LIBRDP_STATUS_OK)
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &confirm,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&confirm);
-    return ok;
-}
-
-static int test_server_send_slowpath(int fd, uint16_t user_id, const rdp_buffer* slowpath)
-{
-    rdp_buffer security_payload;
-    rdp_buffer send_data;
-    int ok = 0;
-
-    if (!slowpath)
-        return 0;
-    rdp_buffer_init(&security_payload);
-    rdp_buffer_init(&send_data);
-    if (rdp_security_write_header(&security_payload, 0) == LIBRDP_STATUS_OK &&
-        rdp_buffer_append(&security_payload, slowpath->data, slowpath->length) == LIBRDP_STATUS_OK &&
-        rdp_security_write_send_data_request(&send_data,
-                                             user_id,
-                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
-                                             security_payload.data,
-                                             security_payload.length) == LIBRDP_STATUS_OK)
-        ok = test_server_send_mcs_pdu(fd, &send_data);
-    rdp_buffer_free(&send_data);
-    rdp_buffer_free(&security_payload);
     return ok;
 }
 
@@ -822,7 +802,11 @@ int test_server_send_encrypted_channel_payload(int fd,
     return ok;
 }
 
-int test_server_send_client_synchronize(int fd, uint32_t share_id, uint16_t user_id)
+int test_server_send_client_synchronize(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security)
 {
     rdp_buffer slowpath;
     int ok = 0;
@@ -831,12 +815,24 @@ int test_server_send_client_synchronize(int fd, uint32_t share_id, uint16_t user
     if (rdp_slowpath_write_client_synchronize(&slowpath,
                                               share_id,
                                               (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
-        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &slowpath,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&slowpath);
     return ok;
 }
 
-int test_server_send_client_control(int fd, uint32_t share_id, uint16_t user_id, uint16_t action)
+int test_server_send_client_control(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    uint16_t action,
+    rdp_standard_security_context* security)
 {
     rdp_buffer slowpath;
     int ok = 0;
@@ -846,12 +842,23 @@ int test_server_send_client_control(int fd, uint32_t share_id, uint16_t user_id,
                                           share_id,
                                           (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
                                           action) == LIBRDP_STATUS_OK)
-        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &slowpath,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&slowpath);
     return ok;
 }
 
-int test_server_send_client_font_list(int fd, uint32_t share_id, uint16_t user_id)
+int test_server_send_client_font_list(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security)
 {
     rdp_buffer slowpath;
     int ok = 0;
@@ -860,12 +867,23 @@ int test_server_send_client_font_list(int fd, uint32_t share_id, uint16_t user_i
     if (rdp_slowpath_write_client_font_list(&slowpath,
                                             share_id,
                                             (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID) == LIBRDP_STATUS_OK)
-        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &slowpath,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&slowpath);
     return ok;
 }
 
-int test_server_send_keyboard_input(int fd, uint32_t share_id, uint16_t user_id)
+int test_server_send_keyboard_input(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security)
 {
     rdp_buffer slowpath;
     int ok = 0;
@@ -876,12 +894,23 @@ int test_server_send_keyboard_input(int fd, uint32_t share_id, uint16_t user_id)
                                                  (uint16_t)RDP_MCS_GLOBAL_CHANNEL_ID,
                                                  0,
                                                  30) == LIBRDP_STATUS_OK)
-        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &slowpath,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&slowpath);
     return ok;
 }
 
-int test_server_send_sync_input(int fd, uint32_t share_id, uint16_t user_id)
+int test_server_send_sync_input(
+    int fd,
+    uint32_t share_id,
+    uint16_t user_id,
+    rdp_standard_security_context* security)
 {
     static const uint8_t payload[16] = {
         1, 0, 0, 0,
@@ -899,35 +928,40 @@ int test_server_send_sync_input(int fd, uint32_t share_id, uint16_t user_id)
                                     RDP_SLOWPATH_DATA_PDU_INPUT,
                                     payload,
                                     sizeof(payload)) == LIBRDP_STATUS_OK)
-        ok = test_server_send_slowpath(fd, user_id, &slowpath);
+    {
+        ok = test_server_send_encrypted_slowpath(
+            fd,
+            user_id,
+            security,
+            &slowpath,
+            TEST_SERVER_SECURITY_TAMPER_NONE);
+    }
     rdp_buffer_free(&slowpath);
     return ok;
 }
 
-int test_server_send_static_channel_data(int fd, uint16_t user_id, uint16_t channel_id)
+int test_server_send_static_channel_data(
+    int fd,
+    uint16_t user_id,
+    uint16_t channel_id,
+    rdp_standard_security_context* security)
 {
     static const uint8_t payload[] = {1, 2, 3, 4};
-    rdp_buffer channel_packet;
-    rdp_buffer send_data;
+    rdp_buffer data;
     int ok = 0;
 
-    rdp_buffer_init(&channel_packet);
-    rdp_buffer_init(&send_data);
-    if (rdp_virtual_channel_write_packet(
-            &channel_packet,
-            payload,
-            sizeof(payload),
-            RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
-                RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK &&
-        rdp_security_write_send_data_request(&send_data,
-                                             user_id,
-                                             channel_id,
-                                             channel_packet.data,
-                                             channel_packet.length) ==
-            LIBRDP_STATUS_OK)
-        ok = test_server_send_mcs_pdu(fd, &send_data);
-    rdp_buffer_free(&send_data);
-    rdp_buffer_free(&channel_packet);
+    rdp_buffer_init(&data);
+    if (rdp_buffer_append(&data, payload, sizeof(payload)) ==
+        LIBRDP_STATUS_OK)
+    {
+        ok = test_server_send_encrypted_channel_payload(
+            fd,
+            user_id,
+            channel_id,
+            security,
+            &data);
+    }
+    rdp_buffer_free(&data);
     return ok;
 }
 

@@ -510,6 +510,10 @@ static int test_server_loopback_nla_handshake_variant(uint32_t flags)
                                               tls_public_key.length,
                                               pub_key_response.pub_key_auth,
                                               pub_key_response.pub_key_auth_len) == LIBRDP_STATUS_OK);
+    status = librdp_server_peer_run_once(peer, 0);
+    SCHECK(status == LIBRDP_STATUS_TIMEOUT || status == LIBRDP_STATUS_AGAIN);
+    SCHECK(librdp_server_peer_get_state(peer) ==
+           LIBRDP_SERVER_PEER_NLA_AUTHENTICATING);
 
     SCHECK(rdp_credssp_encrypt_password_credentials(&ntlm_security,
                                                     domain,

@@ -638,14 +638,24 @@ librdp_status rdp_device_redirection_make_default_capability_config(
     return LIBRDP_STATUS_OK;
 }
 
-librdp_status rdp_device_redirection_write_client_capability_response(
+/*
+ * Serialize one capability exchange with a caller-selected direction. Keeping
+ * both client and server wrappers on this path prevents capability versions
+ * and optional device classes from drifting between the two roles.
+ */
+static librdp_status rdp_device_redirection_write_capability_exchange(
     rdp_buffer* buffer,
+    uint16_t packet_id,
     const rdp_device_redirection_capability_config* config)
 {
     uint16_t count = 1u;
     librdp_status status = LIBRDP_STATUS_OK;
 
     if (!buffer || !config ||
+        (packet_id !=
+             RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY &&
+         packet_id !=
+             RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY) ||
         config->general.version != RDP_DEVICE_REDIRECTION_CAP_VERSION_2 ||
         config->general.protocol_major_version != RDP_DEVICE_REDIRECTION_VERSION_MAJOR ||
         !rdp_device_redirection_valid_version_minor(config->general.protocol_minor_version))
@@ -660,7 +670,7 @@ librdp_status rdp_device_redirection_write_client_capability_response(
         count++;
     status = rdp_device_redirection_write_header(buffer,
                                                  RDP_DEVICE_REDIRECTION_COMPONENT_CORE,
-                                                 RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY);
+                                                 packet_id);
     if (status != LIBRDP_STATUS_OK)
         return status;
     status = rdp_buffer_append_u16_le(buffer, count);
@@ -705,6 +715,26 @@ librdp_status rdp_device_redirection_write_client_capability_response(
             return status;
     }
     return LIBRDP_STATUS_OK;
+}
+
+librdp_status rdp_device_redirection_write_client_capability_response(
+    rdp_buffer* buffer,
+    const rdp_device_redirection_capability_config* config)
+{
+    return rdp_device_redirection_write_capability_exchange(
+        buffer,
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_CLIENT_CAPABILITY,
+        config);
+}
+
+librdp_status rdp_device_redirection_write_server_capability_request(
+    rdp_buffer* buffer,
+    const rdp_device_redirection_capability_config* config)
+{
+    return rdp_device_redirection_write_capability_exchange(
+        buffer,
+        RDP_DEVICE_REDIRECTION_PAKID_CORE_SERVER_CAPABILITY,
+        config);
 }
 
 librdp_status rdp_device_redirection_parse_device_list_announce(

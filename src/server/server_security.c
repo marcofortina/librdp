@@ -1588,9 +1588,14 @@ static librdp_status rdp_server_handle_credssp_credentials(librdp_server_peer* p
         rdp_trace_event(RDP_TRACE_PROTOCOL, "server.credssp.done", "credentials=redacted");
         rdp_server_credssp_expected_clear(peer);
     }
-    if (status != LIBRDP_STATUS_OK)
+    if (status != LIBRDP_STATUS_OK && status != LIBRDP_STATUS_TIMEOUT &&
+        status != LIBRDP_STATUS_AGAIN)
     {
         peer->nla_failed_attempts++;
+        rdp_trace_event(RDP_TRACE_PROTOCOL,
+                        "server.credssp.credentials.failed",
+                        "status=%d payload=redacted",
+                        (int)status);
         rdp_server_credssp_expected_clear(peer);
     }
     rdp_credssp_password_credentials_clear(&credentials);
@@ -1778,30 +1783,30 @@ librdp_status rdp_server_unwrap_optional_security_header(librdp_server_peer* pee
                                                                 size_t* output_len)
 {
     uint16_t flags = 0;
-    uint16_t flags_hi = 0;
-    uint16_t allowed = (uint16_t)(RDP_SEC_EXCHANGE_PKT | RDP_SEC_ENCRYPT | RDP_SEC_INFO_PKT |
-                                  RDP_SEC_LICENSE_PKT | RDP_SEC_LICENSE_ENCRYPT_SC |
-                                  RDP_SEC_SECURE_CHECKSUM);
+    librdp_status status = LIBRDP_STATUS_OK;
 
-    if ((!input && input_len > 0) || !storage || !output || !output_len)
+    if (!peer || (!input && input_len > 0) || !storage || !output ||
+        !output_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *output = input;
     *output_len = input_len;
-    if (input_len < 4u)
+    if (!rdp_server_uses_standard_security(peer))
         return LIBRDP_STATUS_OK;
-    flags = (uint16_t)((uint16_t)input[0] | ((uint16_t)input[1] << 8));
-    flags_hi = (uint16_t)((uint16_t)input[2] | ((uint16_t)input[3] << 8));
-    if (flags_hi != 0 || (flags & (uint16_t)~allowed) != 0)
-        return LIBRDP_STATUS_OK;
-    if ((flags & RDP_SEC_ENCRYPT) != 0 && (!peer || !peer->standard_security_ready))
-        return LIBRDP_STATUS_PROTOCOL_ERROR;
+    if (!peer->standard_security_ready)
+        return LIBRDP_STATUS_STATE;
     storage->length = 0;
-    if (rdp_security_unwrap_pdu((flags & RDP_SEC_ENCRYPT) != 0 ? &peer->standard_security : NULL,
-                                input,
-                                input_len,
-                                storage,
-                                NULL) != LIBRDP_STATUS_OK)
+    status = rdp_security_unwrap_pdu(&peer->standard_security,
+                                     input,
+                                     input_len,
+                                     storage,
+                                     &flags);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
+    if ((flags & RDP_SEC_ENCRYPT) == 0u)
+    {
+        storage->length = 0u;
         return LIBRDP_STATUS_PROTOCOL_ERROR;
+    }
     *output = storage->data;
     *output_len = storage->length;
     return LIBRDP_STATUS_OK;

@@ -32,6 +32,10 @@ void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_
 
 void rdp_server_static_channels_reset(librdp_server_peer* peer);
 
+void rdp_server_device_redirection_reset(librdp_server_peer* peer);
+
+librdp_status rdp_server_device_redirection_start(librdp_server_peer* peer);
+
 void rdp_server_emit_channel_joined_event(librdp_server_peer* peer, uint16_t channel_id);
 
 librdp_server_extension_family rdp_server_redirected_device_family(uint32_t device_type,

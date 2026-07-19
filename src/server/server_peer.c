@@ -406,16 +406,23 @@ librdp_status librdp_server_peer_enable_extension_provider(librdp_server_peer* p
                                                            int enabled)
 {
     const uint64_t bit = rdp_server_extension_family_bit(family);
+    uint64_t previous = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!peer || bit == 0)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
+    previous = peer->backend_extension_families;
     if (enabled)
         peer->backend_extension_families |= bit;
     else
         peer->backend_extension_families &= ~bit;
-    return LIBRDP_STATUS_OK;
+    if (enabled && peer->state == LIBRDP_SERVER_PEER_ACTIVE)
+        status = rdp_server_device_redirection_start(peer);
+    if (status != LIBRDP_STATUS_OK)
+        peer->backend_extension_families = previous;
+    return status;
 }
 
 librdp_status librdp_server_peer_get_extension_provider_status(const librdp_server_peer* peer,

@@ -41,6 +41,9 @@ static const server_host_provider_mapping server_host_provider_mappings[] = {
 static uint16_t server_host_peer_clipboard_channel(
     const librdp_server_peer* peer,
     uint16_t joined_channel_id);
+static librdp_status server_host_start_peer_clipboard(
+    server_host_peer_slot* slot,
+    librdp_server_peer* peer);
 
 void server_host_config_init(server_host_config* config)
 {
@@ -964,17 +967,9 @@ static void server_host_permission_changed(
                 if (kind == SERVER_PLATFORM_PERMISSION_CLIPBOARD &&
                     host->clipboard)
                 {
-                    uint16_t channel_id =
-                        server_host_peer_clipboard_channel(slot->protocol, 0u);
-
-                    if (channel_id != 0u)
-                    {
-                        (void)server_clipboard_runtime_channel_ready(
-                            host->clipboard,
-                            slot->id,
-                            slot->generation,
-                            channel_id);
-                    }
+                    (void)server_host_start_peer_clipboard(
+                        slot,
+                        slot->protocol);
                 }
                 continue;
             }
@@ -1729,6 +1724,45 @@ static uint16_t server_host_peer_clipboard_channel(
     return 0u;
 }
 
+static librdp_status server_host_start_peer_clipboard(
+    server_host_peer_slot* slot,
+    librdp_server_peer* peer)
+{
+    uint16_t channel_id = 0u;
+    librdp_status status = LIBRDP_STATUS_OK;
+
+    if (!slot || !slot->host || !peer)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if (!slot->host->clipboard ||
+        slot->state != SERVER_HOST_PEER_ACTIVE ||
+        slot->host
+                ->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] !=
+            SERVER_HOST_PROVIDER_READY)
+        return LIBRDP_STATUS_OK;
+    channel_id = server_host_peer_clipboard_channel(peer, 0u);
+    if (channel_id == 0u)
+        return LIBRDP_STATUS_OK;
+    status = server_clipboard_runtime_channel_ready(
+        slot->host->clipboard,
+        slot->id,
+        slot->generation,
+        channel_id);
+    if (status != LIBRDP_STATUS_OK)
+    {
+        (void)librdp_server_peer_enable_extension_provider(
+            peer,
+            LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+            0);
+        server_host_trace_emit(slot->host,
+                               SERVER_HOST_TRACE_CLIPBOARD_EVENT,
+                               slot,
+                               status,
+                               channel_id,
+                               1u);
+    }
+    return status;
+}
+
 static int server_host_event_is_native_input(
     librdp_server_input_type type)
 {
@@ -1835,6 +1869,7 @@ static void server_host_peer_event(librdp_server_peer* peer,
                     SERVER_HOST_INPUT_FIRST_ACTIVE &&
                 slot->host->input_owner_id == 0u)
                 (void)server_host_assign_input_owner(slot->host, slot->id);
+            (void)server_host_start_peer_clipboard(slot, peer);
         }
         else if (event->new_state == LIBRDP_SERVER_PEER_CLOSED)
         {
@@ -1860,40 +1895,6 @@ static void server_host_peer_event(librdp_server_peer* peer,
     else if (event->type == LIBRDP_SERVER_EVENT_ERROR)
     {
         slot->state = SERVER_HOST_PEER_FAILED;
-    }
-    else if (event->type == LIBRDP_SERVER_EVENT_CHANNEL_JOINED &&
-             slot->host->clipboard &&
-             slot->host
-                     ->provider_states[SERVER_PLATFORM_PROVIDER_CLIPBOARD] ==
-                 SERVER_HOST_PROVIDER_READY)
-    {
-        uint16_t channel_id =
-            server_host_peer_clipboard_channel(peer, event->channel_id);
-
-        if (channel_id != 0u)
-        {
-            librdp_status status =
-                server_clipboard_runtime_channel_ready(
-                    slot->host->clipboard,
-                    slot->id,
-                    slot->generation,
-                    channel_id);
-
-            if (status != LIBRDP_STATUS_OK)
-            {
-                (void)librdp_server_peer_enable_extension_provider(
-                    peer,
-                    LIBRDP_SERVER_EXTENSION_CLIPBOARD,
-                    0);
-                server_host_trace_emit(
-                    slot->host,
-                    SERVER_HOST_TRACE_CLIPBOARD_EVENT,
-                    slot,
-                    status,
-                    channel_id,
-                    1u);
-            }
-        }
     }
 }
 
