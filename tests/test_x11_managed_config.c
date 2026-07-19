@@ -35,18 +35,17 @@
         }                                                                       \
     } while (0)
 
-static int test_write_file(const char* path,
-                           const void* data,
-                           size_t length,
-                           mode_t mode)
+static int test_write_descriptor(int descriptor,
+                                 const void* data,
+                                 size_t length)
 {
     const unsigned char* input =
         (const unsigned char*)data;
     size_t offset = 0u;
-    int descriptor =
-        open(path, O_CREAT | O_TRUNC | O_WRONLY, mode);
 
-    if (descriptor < 0)
+    if (descriptor < 0 ||
+        ftruncate(descriptor, 0) != 0 ||
+        lseek(descriptor, 0, SEEK_SET) < 0)
         return 0;
     while (offset < length)
     {
@@ -54,11 +53,26 @@ static int test_write_file(const char* path,
             write(descriptor, input + offset, length - offset);
 
         if (written <= 0)
-        {
-            close(descriptor);
             return 0;
-        }
         offset += (size_t)written;
+    }
+    return 1;
+}
+
+static int test_write_file(const char* path,
+                           const void* data,
+                           size_t length,
+                           mode_t mode)
+{
+    int descriptor =
+        open(path, O_CREAT | O_TRUNC | O_WRONLY, mode);
+
+    if (descriptor < 0)
+        return 0;
+    if (!test_write_descriptor(descriptor, data, length))
+    {
+        close(descriptor);
+        return 0;
     }
     return close(descriptor) == 0;
 }
@@ -176,24 +190,28 @@ static int test_file_guards(const char* root)
         "allow-standard-security=true\n";
     char path[4096];
     char* oversized = NULL;
+    int descriptor = -1;
     x11_managed_policy policy;
     x11_managed_config_error error;
 
     CHECK(test_path(path, sizeof(path), root, "guard.conf"));
     CHECK(test_write_file(
         path, content, sizeof(content) - 1u, 0600));
-    CHECK(chmod(path, 0666) == 0);
+    descriptor = open(path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    CHECK(descriptor >= 0);
+    CHECK(fchmod(descriptor, 0666) == 0);
     x11_managed_policy_init(&policy);
     CHECK(x11_managed_config_load(
               path, &policy, &error) == LIBRDP_STATUS_STATE);
     CHECK(strcmp(error.detail, "unsafe-file-metadata") == 0);
-    CHECK(chmod(path, 0600) == 0);
+    CHECK(fchmod(descriptor, 0600) == 0);
 
     oversized = (char*)malloc(65537u);
     CHECK(oversized != NULL);
     memset(oversized, 'x', 65537u);
-    CHECK(test_write_file(path, oversized, 65537u, 0600));
+    CHECK(test_write_descriptor(descriptor, oversized, 65537u));
     free(oversized);
+    CHECK(close(descriptor) == 0);
     x11_managed_policy_init(&policy);
     CHECK(x11_managed_config_load(
               path, &policy, &error) ==

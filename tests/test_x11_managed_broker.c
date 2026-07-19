@@ -171,6 +171,7 @@ static void test_ready(const x11_managed_ipc_message* session,
 static int test_create_control_listener(const char* path)
 {
     struct sockaddr_un address;
+    mode_t previous_mask = 0;
     int descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
     size_t length = path ? strlen(path) : 0u;
 
@@ -184,14 +185,20 @@ static int test_create_control_listener(const char* path)
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, length + 1u);
+    previous_mask = umask(0177);
     if (bind(descriptor,
              (const struct sockaddr*)&address,
-             sizeof(address)) != 0 ||
-        chmod(path, 0600) != 0 ||
-        listen(descriptor, 4) != 0)
+             sizeof(address)) != 0)
+    {
+        (void)umask(previous_mask);
+        close(descriptor);
+        return -1;
+    }
+    (void)umask(previous_mask);
+    if (listen(descriptor, 4) != 0)
     {
         close(descriptor);
-        unlink(path);
+        (void)unlink(path);
         return -1;
     }
     return descriptor;

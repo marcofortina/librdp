@@ -293,16 +293,15 @@ static librdp_status x11_managed_supervisor_create_listener(
     int* output)
 {
     struct sockaddr_un address;
-    struct stat info;
+    mode_t previous_mask = 0;
     int descriptor = -1;
+    int bind_error = 0;
     size_t length = path ? strlen(path) : 0u;
 
     if (!path || !output || path[0] != '/' ||
         length == 0u || length >= sizeof(address.sun_path))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     *output = -1;
-    if (lstat(path, &info) == 0 || errno != ENOENT)
-        return LIBRDP_STATUS_STATE;
     descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
     if (descriptor < 0 ||
         !x11_managed_supervisor_set_fd_flags(descriptor, 0))
@@ -314,14 +313,23 @@ static librdp_status x11_managed_supervisor_create_listener(
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, length + 1u);
+    previous_mask = umask(0177);
     if (bind(descriptor,
              (const struct sockaddr*)&address,
-             sizeof(address)) != 0 ||
-        chmod(path, 0600) != 0 ||
-        listen(descriptor, 4) != 0)
+             sizeof(address)) != 0)
+    {
+        bind_error = errno;
+        (void)umask(previous_mask);
+        close(descriptor);
+        return bind_error == EADDRINUSE || bind_error == EEXIST
+                   ? LIBRDP_STATUS_STATE
+                   : LIBRDP_STATUS_IO_ERROR;
+    }
+    (void)umask(previous_mask);
+    if (listen(descriptor, 4) != 0)
     {
         close(descriptor);
-        unlink(path);
+        (void)unlink(path);
         return LIBRDP_STATUS_IO_ERROR;
     }
     *output = descriptor;
