@@ -31,6 +31,8 @@
 #define SERVER_HOST_TRACE_EVENT_VERSION 1u
 #define SERVER_HOST_METRICS_VERSION 1u
 #define SERVER_HOST_MAX_PEERS 64u
+#define SERVER_HOST_POLL_FD_LIMIT 512u
+#define SERVER_HOST_WORK_LIMIT 4096u
 
 typedef enum server_host_state
 {

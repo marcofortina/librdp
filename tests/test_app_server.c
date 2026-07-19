@@ -48,6 +48,8 @@ typedef struct mock_platform_context
     unsigned int drive_completions;
     unsigned int permission_requests;
     unsigned int permission_revocations;
+    unsigned int start_attempts;
+    unsigned int fail_start_attempt;
     uint32_t last_cleanup_peer_id;
     uint32_t last_clipboard_generation;
     uint32_t last_clipboard_peer_id;
@@ -61,7 +63,9 @@ typedef struct mock_platform_context
     uint32_t published_format_ids[8];
     size_t published_format_count;
     size_t clipboard_written_bytes;
+    size_t reported_pollfds;
     librdp_status clipboard_written_status;
+    librdp_status fail_start_status;
     uint8_t clipboard_written_data[64];
     server_platform_clipboard_file_request last_file_request;
     int event_read_fd;
@@ -198,10 +202,13 @@ static librdp_status mock_get_pollfds(void* context,
                                       size_t* count)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
-    size_t required = mock && mock->event_read_fd >= 0 ? 1u : 0u;
+    size_t required = 0u;
 
     if (!mock || !count || (capacity > 0u && !fds))
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    required = mock->reported_pollfds > 0u
+                   ? mock->reported_pollfds
+                   : (mock->event_read_fd >= 0 ? 1u : 0u);
     *count = required;
     if (!fds && capacity == 0u)
         return LIBRDP_STATUS_OK;
@@ -209,9 +216,14 @@ static librdp_status mock_get_pollfds(void* context,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (required > 0u)
     {
-        fds[0].fd = mock->event_read_fd;
-        fds[0].events = POLLIN;
-        fds[0].revents = 0;
+        size_t index = 0u;
+
+        for (index = 0u; index < required; index++)
+        {
+            fds[index].fd = mock->event_read_fd;
+            fds[index].events = POLLIN;
+            fds[index].revents = 0;
+        }
     }
     return LIBRDP_STATUS_OK;
 }
@@ -265,15 +277,29 @@ static librdp_status mock_get_timeout(void* context, int* timeout_ms)
     return LIBRDP_STATUS_OK;
 }
 
+static librdp_status mock_start_provider(mock_platform_context* mock)
+{
+    if (!mock)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    mock->start_attempts++;
+    if (mock->fail_start_attempt == mock->start_attempts)
+        return mock->fail_start_status;
+    mock->starts++;
+    return LIBRDP_STATUS_OK;
+}
+
 static librdp_status mock_capture_start(void* context,
                                         const server_platform_capture_sink* sink)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!mock || !sink || !sink->frame || !sink->lost)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = mock_start_provider(mock);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     mock->capture_sink = *sink;
-    mock->starts++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -299,11 +325,14 @@ static librdp_status mock_pointer_start(void* context,
                                         const server_platform_pointer_sink* sink)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!mock || !sink || !sink->update)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = mock_start_provider(mock);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     mock->pointer_sink = *sink;
-    mock->starts++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -331,12 +360,15 @@ static librdp_status mock_clipboard_start(
     const server_platform_clipboard_sink* sink)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!mock || !sink || !sink->formats || !sink->data ||
         !sink->request || !sink->file_request || !sink->cancel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = mock_start_provider(mock);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     mock->clipboard_sink = *sink;
-    mock->starts++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -435,11 +467,14 @@ static librdp_status mock_drive_start(void* context,
                                       const server_platform_drive_sink* sink)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!mock || !sink || !sink->request || !sink->cancel)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = mock_start_provider(mock);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     mock->drive_sink = *sink;
-    mock->starts++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -495,11 +530,14 @@ static librdp_status mock_permission_start(
     const server_platform_permission_sink* sink)
 {
     mock_platform_context* mock = (mock_platform_context*)context;
+    librdp_status status = LIBRDP_STATUS_OK;
 
     if (!mock || !sink || !sink->changed)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
+    status = mock_start_provider(mock);
+    if (status != LIBRDP_STATUS_OK)
+        return status;
     mock->permission_sink = *sink;
-    mock->starts++;
     return LIBRDP_STATUS_OK;
 }
 
@@ -1321,6 +1359,7 @@ static void configure_mock_platform(server_host_config* config,
     mock->event_read_fd = -1;
     mock->event_write_fd = -1;
     mock->timeout_ms = -1;
+    mock->fail_start_status = LIBRDP_STATUS_IO_ERROR;
     for (index = 0; index < 4u; index++)
         mock->permissions[index] = SERVER_PLATFORM_PERMISSION_GRANTED;
     config->platform.capture.vtable = &mock_capture;
@@ -1336,6 +1375,98 @@ static void configure_mock_platform(server_host_config* config,
     config->drive.enabled = 1;
     config->platform.permission.vtable = &mock_permission;
     config->platform.permission.context = mock;
+}
+
+/*
+ * Fail each provider startup boundary in order and verify transactional
+ * rollback. Optional permission denials must keep the listener usable while
+ * suppressing only their extension families. Poll and work limits reject a
+ * provider contract that could otherwise allocate or dispatch without bound.
+ */
+static int test_host_provider_failures(void)
+{
+    server_host_config config;
+    mock_platform_context mock;
+    server_host* host = NULL;
+    unsigned int attempt = 0u;
+    int provider_ready = 0;
+
+    for (attempt = 1u; attempt <= 5u; attempt++)
+    {
+        server_host_config_init(&config);
+        configure_mock_platform(&config, &mock);
+        mock.fail_start_attempt = attempt;
+        host = server_host_new(&config);
+        CHECK(host != NULL);
+        CHECK(server_host_start(host) == LIBRDP_STATUS_IO_ERROR);
+        CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
+        CHECK(server_host_local_port(host) == 0u);
+        CHECK(server_host_peer_count(host) == 0u);
+        CHECK(mock.start_attempts == attempt);
+        CHECK(mock.starts == attempt - 1u);
+        CHECK(mock.stops == attempt - 1u);
+        server_host_free(host);
+        CHECK(mock.stops == attempt - 1u);
+    }
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    mock.permissions[SERVER_PLATFORM_PERMISSION_INPUT - 1u] =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+    mock.permissions[SERVER_PLATFORM_PERMISSION_CLIPBOARD - 1u] =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+    mock.permissions[SERVER_PLATFORM_PERMISSION_DRIVE - 1u] =
+        SERVER_PLATFORM_PERMISSION_DENIED;
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.starts == 3u);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_INPUT) == SERVER_HOST_PROVIDER_DENIED);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_CLIPBOARD) ==
+          SERVER_HOST_PROVIDER_DENIED);
+    CHECK(server_host_get_provider_state(
+              host,
+              SERVER_PLATFORM_PROVIDER_DRIVE) == SERVER_HOST_PROVIDER_DENIED);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_CORE_INPUT,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(!provider_ready);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_CLIPBOARD,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(!provider_ready);
+    CHECK(librdp_server_get_extension_provider_status(
+              host->listener,
+              LIBRDP_SERVER_EXTENSION_FILESYSTEM,
+              &provider_ready) == LIBRDP_STATUS_OK);
+    CHECK(!provider_ready);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.stops == 3u);
+    server_host_free(host);
+
+    server_host_config_init(&config);
+    config.max_work_per_iteration = SERVER_HOST_WORK_LIMIT + 1u;
+    configure_mock_platform(&config, &mock);
+    CHECK(server_host_new(&config) == NULL);
+
+    server_host_config_init(&config);
+    configure_mock_platform(&config, &mock);
+    mock.reported_pollfds = SERVER_HOST_POLL_FD_LIMIT + 1u;
+    host = server_host_new(&config);
+    CHECK(host != NULL);
+    CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
+    CHECK(server_host_run_once(host, 0) == LIBRDP_STATUS_LIMIT_EXCEEDED);
+    CHECK(server_host_get_state(host) == SERVER_HOST_FAILED);
+    CHECK(server_host_stop(host) == LIBRDP_STATUS_OK);
+    CHECK(mock.stops == 5u);
+    server_host_free(host);
+    return 0;
 }
 
 /*
@@ -1678,7 +1809,7 @@ static int test_host_poll_loop(void)
     pthread_t thread;
     uint8_t byte = 1u;
     int event_fds[2] = {-1, -1};
-    int client = -1;
+    int clients[2] = {-1, -1};
 
     server_host_config_init(&config);
     configure_mock_platform(&config, &mock);
@@ -1691,10 +1822,15 @@ static int test_host_poll_loop(void)
     CHECK(host != NULL);
     CHECK(server_host_start(host) == LIBRDP_STATUS_OK);
 
-    client = connect_loopback(server_host_local_port(host));
-    CHECK(client >= 0);
+    clients[0] = connect_loopback(server_host_local_port(host));
+    CHECK(clients[0] >= 0);
     CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
     CHECK(server_host_peer_count(host) == 1u);
+    CHECK(mock.dispatches == 0u);
+    clients[1] = connect_loopback(server_host_local_port(host));
+    CHECK(clients[1] >= 0);
+    CHECK(server_host_run_once(host, 1000) == LIBRDP_STATUS_OK);
+    CHECK(server_host_peer_count(host) == 2u);
     CHECK(mock.dispatches == 0u);
 
     CHECK(write(mock.event_write_fd, &byte, sizeof(byte)) ==
@@ -1714,8 +1850,13 @@ static int test_host_poll_loop(void)
     CHECK(pthread_join(thread, NULL) == 0);
     CHECK(cancel.status == LIBRDP_STATUS_OK);
     CHECK(server_host_get_state(host) == SERVER_HOST_STOPPED);
+    CHECK(server_host_peer_count(host) == 0u);
+    CHECK(mock.clipboard_cancels == 2u);
+    CHECK(mock.drive_peer_removals == 2u);
+    CHECK(mock.stops == 5u);
     server_host_free(host);
-    close(client);
+    close(clients[0]);
+    close(clients[1]);
     close(event_fds[0]);
     close(event_fds[1]);
     return 0;
@@ -2003,6 +2144,8 @@ int main(void)
     if (test_clipboard_runtime() != 0)
         return 1;
     if (test_dirty_scheduler() != 0)
+        return 1;
+    if (test_host_provider_failures() != 0)
         return 1;
     if (test_host_lifecycle() != 0)
         return 1;

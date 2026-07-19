@@ -74,6 +74,7 @@ static int server_host_config_valid(const server_host_config* config)
            config->size >= sizeof(*config) && config->max_peers > 0u &&
            config->max_peers <= SERVER_HOST_MAX_PEERS &&
            config->max_work_per_iteration > 0u &&
+           config->max_work_per_iteration <= SERVER_HOST_WORK_LIMIT &&
            config->input_policy >= SERVER_HOST_INPUT_DISABLED &&
            config->input_policy <= SERVER_HOST_INPUT_EXPLICIT &&
            config->platform.capture.vtable &&

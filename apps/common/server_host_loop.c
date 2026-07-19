@@ -23,7 +23,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define SERVER_HOST_MAX_POLL_FDS 512u
 #define SERVER_HOST_MAX_POLL_GROUPS \
     (SERVER_HOST_MAX_PEERS + SERVER_PLATFORM_PROVIDER_COUNT + 2u)
 
@@ -66,9 +65,9 @@ static librdp_status server_host_reserve_pollfds(server_host* host,
 {
     struct pollfd* resized = NULL;
 
-    if (!host || count > SERVER_HOST_MAX_POLL_FDS ||
+    if (!host || count > SERVER_HOST_POLL_FD_LIMIT ||
         count > SIZE_MAX / sizeof(*host->pollfds))
-        return count > SERVER_HOST_MAX_POLL_FDS
+        return count > SERVER_HOST_POLL_FD_LIMIT
                    ? LIBRDP_STATUS_LIMIT_EXCEEDED
                    : LIBRDP_STATUS_INVALID_ARGUMENT;
     if (count <= host->poll_capacity)
@@ -98,7 +97,7 @@ static librdp_status server_host_append_poll_group(
 
     if (!host || !groups || !group_count || !poll_count ||
         *group_count >= SERVER_HOST_MAX_POLL_GROUPS ||
-        descriptor_count > SERVER_HOST_MAX_POLL_FDS - *poll_count)
+        descriptor_count > SERVER_HOST_POLL_FD_LIMIT - *poll_count)
         return LIBRDP_STATUS_LIMIT_EXCEEDED;
     status = server_host_reserve_pollfds(host,
                                          *poll_count + descriptor_count);
@@ -561,7 +560,10 @@ librdp_status server_host_run_once(server_host* host, int timeout_ms)
                                       &poll_count,
                                       &effective_timeout_ms);
     if (status != LIBRDP_STATUS_OK)
+    {
+        host->state = SERVER_HOST_FAILED;
         return status;
+    }
     do
     {
         ready = poll(host->pollfds, (nfds_t)poll_count, effective_timeout_ms);
