@@ -398,17 +398,39 @@ static librdp_status x11_managed_auth_open_bsd(
     void* cancel_user_data,
     x11_managed_auth_outcome* outcome)
 {
+    char mutable_username[X11_MANAGED_AUTH_NAME_BYTES];
+    char mutable_service[X11_MANAGED_AUTH_NAME_BYTES];
+    char mutable_password[4096];
+    int accepted = 0;
+
     if (x11_managed_auth_cancelled(cancelled, cancel_user_data))
     {
         *outcome = X11_MANAGED_AUTH_CANCELLED;
         return LIBRDP_STATUS_CANCELLED;
     }
-    *outcome = auth_userokay(username,
+    memset(mutable_username, 0, sizeof(mutable_username));
+    memset(mutable_service, 0, sizeof(mutable_service));
+    memset(mutable_password, 0, sizeof(mutable_password));
+    if (!x11_managed_auth_copy(mutable_username,
+                               sizeof(mutable_username),
+                               username) ||
+        !x11_managed_auth_copy(mutable_service,
+                               sizeof(mutable_service),
+                               config->service_name) ||
+        !x11_managed_auth_copy(mutable_password,
+                               sizeof(mutable_password),
+                               password))
+    {
+        OPENSSL_cleanse(mutable_password, sizeof(mutable_password));
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    }
+    accepted = auth_userokay(mutable_username,
                              NULL,
-                             config->service_name,
-                             password)
-                   ? X11_MANAGED_AUTH_AUTHENTICATED
-                   : X11_MANAGED_AUTH_DENIED;
+                             mutable_service,
+                             mutable_password);
+    OPENSSL_cleanse(mutable_password, sizeof(mutable_password));
+    *outcome = accepted ? X11_MANAGED_AUTH_AUTHENTICATED
+                        : X11_MANAGED_AUTH_DENIED;
     return LIBRDP_STATUS_OK;
 }
 #endif
