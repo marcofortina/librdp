@@ -17,7 +17,7 @@
 
 #include "server_managed_ipc.h"
 #include "server_managed_process.h"
-#include "server_runtime.h"
+#include "x11_runtime.h"
 
 #include "server_host.h"
 

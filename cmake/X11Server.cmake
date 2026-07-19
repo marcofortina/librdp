@@ -28,20 +28,21 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
     set(LIBRDP_X11_SERVER_PLATFORM_SOURCES
         apps/common/x11_keymap.c
-        apps/x11/server/server_capture.c
-        apps/x11/server/server_clipboard.c
-        apps/x11/server/server_input.c
-        apps/x11/server/server_permission.c
-        apps/x11/server/server_pointer.c
-        apps/common/server_fuse.c
-        apps/x11/server/server_runtime.c
-        apps/x11/server/server_x11.c
+        apps/server/x11_capture.c
+        apps/server/x11_clipboard.c
+        apps/server/x11_input.c
+        apps/server/x11_permission.c
+        apps/server/x11_pointer.c
+        apps/server/server_fuse.c
+        apps/server/x11_runtime.c
+        apps/server/x11_server.c
     )
 
     function(librdp_configure_x11_server_target target)
         target_include_directories(${target} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -76,6 +77,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
     function(librdp_configure_x11_managed_target target)
         target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -95,8 +97,8 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
     endfunction()
 
     add_executable(librdp-server
-        apps/x11/server/main.c
-        apps/x11/server/server_cli.c
+        apps/server/x11_main.c
+        apps/server/x11_cli.c
         apps/x11/server/server_managed_client.c
         apps/x11/server/server_managed_ipc.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
@@ -105,7 +107,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
     add_executable(librdp-session-agent
         apps/x11/server/session_agent.c
-        apps/x11/server/server_cli.c
+        apps/server/x11_cli.c
         apps/x11/server/server_managed_ipc.c
         apps/x11/server/server_managed_process.c
         ${LIBRDP_X11_SERVER_PLATFORM_SOURCES}
@@ -153,6 +155,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             apps/x11/server/server_managed_ipc.c
         )
         target_include_directories(test_x11_managed PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -174,6 +177,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             apps/x11/server/server_managed_registry.c
         )
         target_include_directories(test_x11_managed_registry PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -196,6 +200,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             apps/x11/server/server_managed_policy.c
         )
         target_include_directories(test_x11_managed_policy PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -222,6 +227,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             apps/x11/server/server_managed_policy.c
         )
         target_include_directories(test_x11_managed_config PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -284,7 +290,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
 
         add_executable(test_x11_managed_client
             tests/test_x11_managed_client.c
-            apps/x11/server/server_cli.c
+            apps/server/x11_cli.c
             apps/x11/server/server_managed_client.c
             apps/x11/server/server_managed_ipc.c
         )
@@ -292,6 +298,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             test_x11_managed_client PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -321,6 +328,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             apps/x11/server/server_managed_auth.c
         )
         target_include_directories(test_x11_managed_auth PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
@@ -344,6 +352,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
                 apps/x11/server/server_managed_process.c
             )
             target_include_directories(test_x11_managed_process PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
@@ -376,6 +385,7 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
                 apps/x11/server/server_managed_supervisor.c
             )
             target_include_directories(test_x11_managed_supervisor PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )
@@ -411,18 +421,19 @@ if(LIBRDP_BUILD_SERVER AND NOT APPLE)
             add_executable(test_x11_server
                 tests/test_x11_server.c
                 apps/common/x11_keymap.c
-                apps/x11/server/server_capture.c
-                apps/x11/server/server_cli.c
-                apps/x11/server/server_clipboard.c
-                apps/x11/server/server_input.c
-                apps/x11/server/server_permission.c
-                apps/x11/server/server_pointer.c
-                apps/common/server_fuse.c
-                apps/x11/server/server_x11.c
+                apps/server/x11_capture.c
+                apps/server/x11_cli.c
+                apps/server/x11_clipboard.c
+                apps/server/x11_input.c
+                apps/server/x11_permission.c
+                apps/server/x11_pointer.c
+                apps/server/server_fuse.c
+                apps/server/x11_server.c
             )
             target_include_directories(test_x11_server PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11
+                ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/apps/x11/server
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
             )

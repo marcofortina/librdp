@@ -16,7 +16,7 @@
 #ifndef LIBRDP_X11_SERVER_CLI_H
 #define LIBRDP_X11_SERVER_CLI_H
 
-#include "server_x11.h"
+#include "x11_server.h"
 
 #include <librdp/librdp.h>
 

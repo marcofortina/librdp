@@ -20,15 +20,15 @@ if(LIBRDP_APP_COMMON_REQUIRED)
         apps/viewer/client_providers.c
         apps/viewer/client_runtime.c
         apps/viewer/client_tls.c
-        apps/common/server_clipboard.c
-        apps/common/server_clipboard_files.c
-        apps/common/server_dirty.c
-        apps/common/server_drive.c
-        apps/common/server_host.c
-        apps/common/server_host_loop.c
-        apps/common/server_host_trace.c
-        apps/common/server_options.c
-        apps/common/server_platform.c
+        apps/server/server_clipboard.c
+        apps/server/server_clipboard_files.c
+        apps/server/server_dirty.c
+        apps/server/server_drive.c
+        apps/server/server_host.c
+        apps/server/server_host_loop.c
+        apps/server/server_host_trace.c
+        apps/server/server_options.c
+        apps/server/server_platform.c
         apps/workspace/workspace_app.c
         apps/workspace/workspace_options.c
     )

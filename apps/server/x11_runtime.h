@@ -17,7 +17,7 @@
 #ifndef LIBRDP_X11_SERVER_RUNTIME_H
 #define LIBRDP_X11_SERVER_RUNTIME_H
 
-#include "server_cli.h"
+#include "x11_cli.h"
 
 typedef struct x11_server_runtime x11_server_runtime;
 

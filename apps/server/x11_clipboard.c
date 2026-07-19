@@ -14,7 +14,7 @@
  * lengths and cumulative allocation are checked before conversion or delivery.
  */
 
-#include "server_x11_internal.h"
+#include "x11_server_internal.h"
 
 #include <X11/Xatom.h>
 
@@ -888,6 +888,12 @@ static int x11_server_clipboard_remote_target(
     return 0;
 }
 
+/*
+ * Serve one X11 selection request from the current remote clipboard
+ * generation. Unsupported targets fail through SelectionNotify, while large
+ * payloads enter the bounded INCR state machine and remain correlated to the
+ * requesting window and property until completion or cancellation.
+ */
 static void x11_server_clipboard_handle_selection_request(
     x11_server_context* context,
     const XSelectionRequestEvent* request)
@@ -1308,6 +1314,12 @@ static librdp_status x11_server_clipboard_request_file(
     return status;
 }
 
+/*
+ * Complete a remote clipboard response only when every peer, generation,
+ * request, stream, and format identifier matches the pending X11 request.
+ * Conversion owns a temporary buffer; all terminal paths notify the requestor
+ * or preserve the active transfer for its explicit failure policy.
+ */
 static librdp_status x11_server_clipboard_write_data(
     void* opaque,
     const server_platform_clipboard_data* data)

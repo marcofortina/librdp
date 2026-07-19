@@ -11,9 +11,9 @@
  * Trust boundary: this module does not read credentials or protocol payloads.
  */
 
-#include "server_cli.h"
+#include "x11_cli.h"
 #include "server_managed_client.h"
-#include "server_runtime.h"
+#include "x11_runtime.h"
 
 #include <stdio.h>
 

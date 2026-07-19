@@ -14,7 +14,7 @@
  * before any native provider is exposed as ready.
  */
 
-#include "server_x11_internal.h"
+#include "x11_server_internal.h"
 
 #include <X11/extensions/Xcomposite.h>
 
@@ -241,6 +241,12 @@ static int x11_server_select_target(x11_server_context* context)
     return x11_server_refresh_geometry(context, 1) == LIBRDP_STATUS_OK;
 }
 
+/*
+ * Purpose: build the complete X11 shadow provider context. Each acquired
+ * display, capture, clipboard, shared-memory, and FUSE resource is
+ * context-owned. Failure policy: any rejected initialization stage unwinds
+ * those resources and returns NULL without exposing a partial provider.
+ */
 x11_server_context* x11_server_context_new(const x11_server_config* config)
 {
     x11_server_context* context = NULL;

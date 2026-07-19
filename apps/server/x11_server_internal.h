@@ -18,7 +18,7 @@
 
 #include "server_clipboard_files.h"
 #include "server_fuse.h"
-#include "server_x11.h"
+#include "x11_server.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>

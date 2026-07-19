@@ -14,9 +14,9 @@
  * never printed; protocol bytes are handled exclusively by public APIs.
  */
 
-#include "server_runtime.h"
+#include "x11_runtime.h"
 
-#include "server_x11.h"
+#include "x11_server.h"
 
 #include "server_host.h"
 #include "server_options.h"

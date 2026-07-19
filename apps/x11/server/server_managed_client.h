@@ -15,7 +15,7 @@
 #ifndef LIBRDP_X11_SERVER_MANAGED_CLIENT_H
 #define LIBRDP_X11_SERVER_MANAGED_CLIENT_H
 
-#include "server_cli.h"
+#include "x11_cli.h"
 
 #include <stdio.h>
 

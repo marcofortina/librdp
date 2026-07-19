@@ -15,10 +15,10 @@
  * windows, pixels, input events and clipboard payloads.
  */
 
-#include "server_cli.h"
+#include "x11_cli.h"
 #include "server_clipboard_files.h"
 #include "server_fuse.h"
-#include "server_x11.h"
+#include "x11_server.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>

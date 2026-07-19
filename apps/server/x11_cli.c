@@ -12,7 +12,7 @@
  * contradictory source selection or unsafe implicit downgrade.
  */
 
-#include "server_cli.h"
+#include "x11_cli.h"
 
 #include "server_host.h"
 #include "server_options.h"
@@ -297,6 +297,12 @@ static int x11_server_validate_options(const x11_server_options* options)
     return 1;
 }
 
+/*
+ * Parse the complete X11 server command line into a single validated policy.
+ * Values remain borrowed from argv; malformed, contradictory, or incomplete
+ * security and managed-session configurations fail before native resources
+ * or privileged helper connections are opened.
+ */
 int x11_server_parse_options(int argc,
                              char** argv,
                              x11_server_options* options)

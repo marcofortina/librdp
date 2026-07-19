@@ -232,7 +232,7 @@ def workspace_source_options() -> set[str]:
 def x11_server_source_options() -> set[str]:
     return set(
         VIEWER_OPTION_RE.findall(
-            read("apps/x11/server/server_cli.c")
+            read("apps/server/x11_cli.c")
         )
     )
 
@@ -240,7 +240,7 @@ def x11_server_source_options() -> set[str]:
 def cocoa_server_source_options() -> set[str]:
     return set(
         VIEWER_OPTION_RE.findall(
-            read("apps/cocoa/server/cocoa_server_cli.c")
+            read("apps/server/cocoa_server_cli.c")
         )
     )
 

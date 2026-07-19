@@ -175,7 +175,7 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_app_server tests/test_app_server.c)
     target_include_directories(test_app_server PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(test_app_server PRIVATE librdp_app_common)
@@ -186,7 +186,7 @@ if(LIBRDP_BUILD_TESTS)
 
     add_executable(test_app_server_drive tests/test_app_server_drive.c)
     target_include_directories(test_app_server_drive PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(test_app_server_drive PRIVATE librdp_app_common)
@@ -200,7 +200,7 @@ if(LIBRDP_BUILD_TESTS)
         tests/test_server_support.c
     )
     target_include_directories(test_app_server_smoke PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/viewer
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )

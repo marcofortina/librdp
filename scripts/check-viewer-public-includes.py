@@ -13,8 +13,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOTS = (
+    ROOT / "apps" / "admin",
     ROOT / "apps" / "common",
-    ROOT / "apps" / "cocoa",
+    ROOT / "apps" / "server",
+    ROOT / "apps" / "viewer",
+    ROOT / "apps" / "workspace",
     ROOT / "apps" / "x11",
 )
 INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]")

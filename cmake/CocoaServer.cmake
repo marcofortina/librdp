@@ -4,11 +4,11 @@
 if(LIBRDP_BUILD_TESTS)
     add_executable(test_cocoa_server_cli
         tests/test_cocoa_server_cli.c
-        apps/cocoa/server/cocoa_server_cli.c
+        apps/server/cocoa_server_cli.c
     )
     target_include_directories(test_cocoa_server_cli PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(test_cocoa_server_cli PRIVATE
@@ -36,19 +36,19 @@ if(LIBRDP_BUILD_SERVER AND APPLE)
     find_library(LIBRDP_COCOA_SERVER_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(LIBRDP_COCOA_SERVER_SCREENCAPTUREKIT_FRAMEWORK ScreenCaptureKit REQUIRED)
     add_executable(librdp-server
-        apps/cocoa/server/main.m
-        apps/cocoa/server/cocoa_capture.m
-        apps/cocoa/server/cocoa_clipboard.m
-        apps/cocoa/server/cocoa_input.m
-        apps/cocoa/server/cocoa_permission.m
-        apps/cocoa/server/cocoa_server.m
-        apps/cocoa/server/cocoa_server_cli.c
-        apps/cocoa/server/cocoa_server_runtime.m
-        apps/common/server_fuse.c
+        apps/server/cocoa_main.m
+        apps/server/cocoa_capture.m
+        apps/server/cocoa_clipboard.m
+        apps/server/cocoa_input.m
+        apps/server/cocoa_permission.m
+        apps/server/cocoa_server.m
+        apps/server/cocoa_server_cli.c
+        apps/server/cocoa_server_runtime.m
+        apps/server/server_fuse.c
     )
     target_include_directories(librdp-server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+        ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(librdp-server PRIVATE
@@ -87,15 +87,15 @@ if(LIBRDP_BUILD_SERVER AND APPLE)
     if(LIBRDP_BUILD_TESTS)
         add_executable(test_cocoa_server_input
             tests/test_cocoa_server_input.m
-            apps/cocoa/server/cocoa_input.m
-            apps/cocoa/server/cocoa_permission.m
+            apps/server/cocoa_input.m
+            apps/server/cocoa_permission.m
         )
         target_compile_definitions(test_cocoa_server_input PRIVATE
             LIBRDP_COCOA_SERVER_TESTING=1
         )
         target_include_directories(test_cocoa_server_input PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_cocoa_server_input PRIVATE
@@ -123,14 +123,14 @@ if(LIBRDP_BUILD_SERVER AND APPLE)
         add_dependencies(librdp_tests test_cocoa_server_input)
         add_executable(test_cocoa_server_capture
             tests/test_cocoa_server_capture.m
-            apps/cocoa/server/cocoa_capture.m
+            apps/server/cocoa_capture.m
         )
         target_compile_definitions(test_cocoa_server_capture PRIVATE
             LIBRDP_COCOA_SERVER_TESTING=1
         )
         target_include_directories(test_cocoa_server_capture PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_cocoa_server_capture PRIVATE
@@ -163,14 +163,14 @@ if(LIBRDP_BUILD_SERVER AND APPLE)
             test_cocoa_server_capture)
         add_executable(test_cocoa_server_permission
             tests/test_cocoa_server_permission.m
-            apps/cocoa/server/cocoa_permission.m
+            apps/server/cocoa_permission.m
         )
         target_compile_definitions(test_cocoa_server_permission PRIVATE
             LIBRDP_COCOA_SERVER_TESTING=1
         )
         target_include_directories(test_cocoa_server_permission PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_cocoa_server_permission PRIVATE
@@ -200,14 +200,14 @@ if(LIBRDP_BUILD_SERVER AND APPLE)
             test_cocoa_server_permission)
         add_executable(test_cocoa_server_clipboard
             tests/test_cocoa_server_clipboard.m
-            apps/cocoa/server/cocoa_clipboard.m
+            apps/server/cocoa_clipboard.m
         )
         target_compile_definitions(test_cocoa_server_clipboard PRIVATE
             LIBRDP_COCOA_SERVER_TESTING=1
         )
         target_include_directories(test_cocoa_server_clipboard PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/apps/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/apps/cocoa/server
+            ${CMAKE_CURRENT_SOURCE_DIR}/apps/server
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(test_cocoa_server_clipboard PRIVATE

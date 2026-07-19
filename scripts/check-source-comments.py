@@ -17,7 +17,7 @@ CHECKED_ROOTS = (
     Path("src"),
     Path("apps/admin"),
     Path("apps/common"),
-    Path("apps/cocoa"),
+    Path("apps/server"),
     Path("apps/viewer"),
     Path("apps/workspace"),
     Path("examples"),

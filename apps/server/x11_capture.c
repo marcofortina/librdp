@@ -13,7 +13,7 @@
  * events are validated before pointer arithmetic or allocation.
  */
 
-#include "server_x11_internal.h"
+#include "x11_server_internal.h"
 
 #include <X11/extensions/Xcomposite.h>
 

@@ -13,7 +13,7 @@
  * and wheel deltas are validated before XTest calls.
  */
 
-#include "server_x11_internal.h"
+#include "x11_server_internal.h"
 
 #include "x11_keymap.h"
 

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKED_ROOTS = (
     Path("apps/admin"),
     Path("apps/common"),
+    Path("apps/server"),
     Path("src"),
     Path("apps/viewer"),
     Path("apps/workspace"),

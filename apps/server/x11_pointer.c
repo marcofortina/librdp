@@ -13,7 +13,7 @@
  * before allocation and conversion.
  */
 
-#include "server_x11_internal.h"
+#include "x11_server_internal.h"
 
 #include <limits.h>
 #include <stdlib.h>
