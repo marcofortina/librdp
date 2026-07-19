@@ -30,6 +30,8 @@ void rdp_server_extension_state_mark_open(librdp_server_peer* peer,
 
 void rdp_server_dynamic_channels_reset(librdp_server_peer* peer, int emit_close_events);
 
+void rdp_server_static_channels_reset(librdp_server_peer* peer);
+
 void rdp_server_emit_channel_joined_event(librdp_server_peer* peer, uint16_t channel_id);
 
 librdp_server_extension_family rdp_server_redirected_device_family(uint32_t device_type,
@@ -58,6 +60,12 @@ librdp_status rdp_server_emit_extension_event(librdp_server_peer* peer,
 int rdp_server_channel_allowed(const librdp_server_peer* peer, uint16_t channel_id);
 
 int rdp_server_static_channel_index(const librdp_server_peer* peer, uint16_t channel_id, uint16_t* index);
+
+librdp_status rdp_server_handle_static_channel_message(librdp_server_peer* peer,
+                                                        uint16_t channel_index,
+                                                        uint16_t channel_id,
+                                                        const uint8_t* data,
+                                                        size_t data_len);
 
 rdp_server_dynamic_channel* rdp_server_find_dynamic_channel(librdp_server_peer* peer, uint32_t channel_id);
 

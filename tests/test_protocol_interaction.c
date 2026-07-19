@@ -252,6 +252,32 @@ int test_protocol_interaction_vectors(void)
     PCHECK(rdp_virtual_channel_write_packet(&channel_packet, dyn_create, sizeof(dyn_create), 3) == LIBRDP_STATUS_OK);
     PCHECK(rdp_virtual_channel_parse_packet(channel_packet.data, channel_packet.length, &vc) == LIBRDP_STATUS_OK);
     PCHECK(vc.length == sizeof(dyn_create) && vc.flags == 3 && memcmp(vc.payload, dyn_create, sizeof(dyn_create)) == 0);
+    channel_packet.length = 0;
+    PCHECK(rdp_virtual_channel_write_fragment(
+               &channel_packet,
+               dyn_create,
+               2,
+               sizeof(dyn_create),
+               RDP_VIRTUAL_CHANNEL_FLAG_FIRST) == LIBRDP_STATUS_OK);
+    PCHECK(rdp_virtual_channel_parse_packet(channel_packet.data,
+                                            channel_packet.length,
+                                            &vc) == LIBRDP_STATUS_OK);
+    PCHECK(vc.length == sizeof(dyn_create) && vc.payload_len == 2 &&
+           (vc.flags & RDP_VIRTUAL_CHANNEL_FLAG_FIRST) != 0);
+    PCHECK(rdp_virtual_channel_write_fragment(
+               NULL,
+               dyn_create,
+               2,
+               sizeof(dyn_create),
+               RDP_VIRTUAL_CHANNEL_FLAG_FIRST) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
+    PCHECK(rdp_virtual_channel_write_fragment(
+               &channel_packet,
+               dyn_create,
+               2,
+               1,
+               RDP_VIRTUAL_CHANNEL_FLAG_LAST) ==
+           LIBRDP_STATUS_INVALID_ARGUMENT);
     PCHECK(rdp_dynamic_channel_parse_header(dyn_caps, sizeof(dyn_caps), &dyn_header) == LIBRDP_STATUS_OK);
     PCHECK(dyn_header.command == RDP_DYNAMIC_CHANNEL_CMD_CAPABILITIES && dyn_header.channel_id_bytes == 1);
     {

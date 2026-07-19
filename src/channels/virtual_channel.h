@@ -38,6 +38,11 @@ typedef struct rdp_virtual_channel_packet
 } rdp_virtual_channel_packet;
 
 librdp_status rdp_virtual_channel_parse_packet(const void* data, size_t length, rdp_virtual_channel_packet* packet);
+librdp_status rdp_virtual_channel_write_fragment(rdp_buffer* buffer,
+                                                 const void* payload,
+                                                 size_t payload_len,
+                                                 size_t total_len,
+                                                 uint32_t flags);
 librdp_status rdp_virtual_channel_write_packet(rdp_buffer* buffer,
                                                const void* payload,
                                                size_t payload_len,

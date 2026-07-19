@@ -46,6 +46,13 @@ typedef struct rdp_server_dynamic_channel
     uint32_t fragment_expected;
 } rdp_server_dynamic_channel;
 
+typedef struct rdp_server_static_channel
+{
+    rdp_buffer fragment;
+    uint32_t fragment_expected;
+    uint8_t fragmenting;
+} rdp_server_static_channel;
+
 typedef struct rdp_server_redirected_device
 {
     uint8_t present;
@@ -155,6 +162,7 @@ struct librdp_server_peer
     rdp_gcc_channel_definition advertised_channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint16_t advertised_channel_ids[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t advertised_channel_joined[RDP_GCC_MAX_SERVER_CHANNELS];
+    rdp_server_static_channel static_channels[RDP_GCC_MAX_SERVER_CHANNELS];
     uint8_t dynamic_channels_ready;
     uint8_t multitransport_negotiated;
     uint8_t multitransport_udp_active;

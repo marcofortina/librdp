@@ -14,6 +14,7 @@
 #include "test_server_support.h"
 #include "test_server_suites.h"
 #include "channels/filesystem_redirection.h"
+#include "channels/virtual_channel.h"
 #include "server/server_channels.h"
 
 #include <string.h>
@@ -478,6 +479,7 @@ int test_server_channels_focused(void)
     test_server_peer_fixture fixture;
     test_server_clipboard_context clipboard;
     test_server_drive_context drive;
+    test_server_runtime_context channel;
     librdp_server_dynamic_channel_info channel_info;
     librdp_server_clipboard_event initialized_event;
     librdp_server_drive_event initialized_drive_event;
@@ -518,6 +520,7 @@ int test_server_channels_focused(void)
     clipboard.valid = 1;
     memset(&drive, 0, sizeof(drive));
     drive.valid = 1;
+    memset(&channel, 0, sizeof(channel));
     memset(&device_announce, 0, sizeof(device_announce));
     memset(&stale_drive_file, 0, sizeof(stale_drive_file));
     rdp_buffer_init(&packet);
@@ -558,7 +561,7 @@ int test_server_channels_focused(void)
                fixture.peer,
                test_server_drive_callback,
                &drive) == LIBRDP_STATUS_OK);
-    SCHECK(librdp_server_peer_set_channel_callback(fixture.peer, test_server_channel_callback, NULL) ==
+    SCHECK(librdp_server_peer_set_channel_callback(fixture.peer, test_server_channel_callback, &channel) ==
            LIBRDP_STATUS_OK);
     SCHECK(librdp_server_peer_set_dynamic_channel_accept_callback(
                fixture.peer, test_server_dynamic_channel_accept_callback, NULL) == LIBRDP_STATUS_OK);
@@ -580,12 +583,84 @@ int test_server_channels_focused(void)
                fixture.peer, LIBRDP_SERVER_EXTENSION_CLIPBOARD, &provider_enabled) == LIBRDP_STATUS_OK);
     SCHECK(provider_enabled == 0);
 
+    fixture.peer->advertised_channel_count = 1u;
+    memcpy(fixture.peer->advertised_channels[0].name, "testvc", 7u);
+    fixture.peer->advertised_channel_ids[0] = device_channel_id;
+    fixture.peer->advertised_channel_joined[0] = 1u;
+    packet.length = 0u;
+    SCHECK(rdp_virtual_channel_write_fragment(
+               &packet,
+               "frag",
+               4u,
+               10u,
+               RDP_VIRTUAL_CHANNEL_FLAG_FIRST) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_handle_static_channel_message(fixture.peer,
+                                                    0u,
+                                                    device_channel_id,
+                                                    packet.data,
+                                                    packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(channel.channel_count == 0u);
+    packet.length = 0u;
+    SCHECK(rdp_virtual_channel_write_fragment(
+               &packet,
+               "mented",
+               6u,
+               10u,
+               RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_handle_static_channel_message(fixture.peer,
+                                                    0u,
+                                                    device_channel_id,
+                                                    packet.data,
+                                                    packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(channel.channel_count == 1u &&
+           channel.channel_payload_len == 10u &&
+           memcmp(channel.channel_payload, "fragmented", 10u) == 0);
+    packet.length = 0u;
+    SCHECK(rdp_virtual_channel_write_fragment(
+               &packet,
+               "late",
+               4u,
+               8u,
+               RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_handle_static_channel_message(fixture.peer,
+                                                    0u,
+                                                    device_channel_id,
+                                                    packet.data,
+                                                    packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    packet.length = 0u;
+    SCHECK(rdp_virtual_channel_write_fragment(
+               &packet,
+               "du",
+               2u,
+               4u,
+               RDP_VIRTUAL_CHANNEL_FLAG_FIRST) == LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_handle_static_channel_message(fixture.peer,
+                                                    0u,
+                                                    device_channel_id,
+                                                    packet.data,
+                                                    packet.length) ==
+           LIBRDP_STATUS_OK);
+    SCHECK(rdp_server_handle_static_channel_message(fixture.peer,
+                                                    0u,
+                                                    device_channel_id,
+                                                    packet.data,
+                                                    packet.length) ==
+           LIBRDP_STATUS_PROTOCOL_ERROR);
+    rdp_server_static_channels_reset(fixture.peer);
+    fixture.peer->advertised_channel_count = 0u;
+    fixture.peer->advertised_channel_joined[0] = 0u;
+    memset(fixture.peer->advertised_channels[0].name, 0, 8u);
+
     device_announce.device_type =
         RDP_DEVICE_REDIRECTION_TYPE_FILESYSTEM;
     device_announce.device_id = 0x44525631u;
     memcpy(device_announce.preferred_dos_name, "DRIVE", 5u);
     device_announce.data = drive_name;
     device_announce.data_len = (uint32_t)sizeof(drive_name);
+    packet.length = 0u;
     SCHECK(rdp_device_redirection_write_device_list_announce(
                &packet,
                &device_announce,

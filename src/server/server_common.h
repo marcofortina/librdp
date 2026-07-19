@@ -39,6 +39,7 @@
 #include "channels/video_capture.h"
 #include "channels/video_optimized.h"
 #include "channels/video_redirection.h"
+#include "channels/virtual_channel.h"
 #include "channels/webauthn_channel.h"
 #include "clipboard/clipboard.h"
 #include "graphics/bitmap.h"
@@ -73,6 +74,8 @@
 #define RDP_SERVER_NTLM_AV_TIMESTAMP 0x0007u
 #define RDP_SERVER_STANDARD_ENCRYPTION_LEVEL 3u
 #define RDP_SERVER_DYNAMIC_MESSAGE_MAX (64u * 1024u * 1024u)
+#define RDP_SERVER_STATIC_MESSAGE_MAX (64u * 1024u * 1024u)
+#define RDP_SERVER_STATIC_CHANNEL_CHUNK_SIZE 1600u
 #define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_DEFAULT 4u
 #define RDP_SERVER_GRAPHICS_FRAME_QUEUE_LIMIT_MAX 1024u
 #define RDP_SERVER_MAX_CLIPBOARD_FORMATS 4096u

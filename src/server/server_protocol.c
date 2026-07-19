@@ -643,45 +643,13 @@ librdp_status rdp_server_handle_runtime_data(librdp_server_peer* peer, const rdp
         if (!rdp_server_static_channel_index(peer, request.channel_id, &channel_index) ||
             !peer->advertised_channel_joined[channel_index])
             status = LIBRDP_STATUS_PROTOCOL_ERROR;
-        else if (channel_index == peer->dynamic_channel_static_index)
-            status = rdp_server_handle_dynamic_channel_message(peer, runtime_payload, runtime_payload_len);
         else
-        {
-            char name[LIBRDP_SERVER_STATIC_CHANNEL_NAME_CAPACITY];
-
-            rdp_server_copy_channel_name(name, peer->advertised_channels[channel_index].name);
-            status = rdp_server_emit_extension_event(peer,
-                                                     name,
-                                                     strlen(name),
-                                                     request.channel_id,
-                                                     0,
-                                                     0,
-                                                     runtime_payload,
-                                                     runtime_payload_len);
-            if (status != LIBRDP_STATUS_OK)
-            {
-                rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
-                rdp_buffer_free(&security_payload);
-                return status;
-            }
-            rdp_server_metric_add(&peer->metrics.static_channel_in, 1u);
-            rdp_server_metric_add(&peer->metrics.static_channel_bytes_in, (uint64_t)runtime_payload_len);
-            if (peer->channel_callback)
-            {
-                librdp_server_channel_event event;
-
-                memset(&event, 0, sizeof(event));
-                event.version = LIBRDP_SERVER_CHANNEL_EVENT_VERSION;
-                event.size = (uint32_t)sizeof(event);
-                event.type = LIBRDP_SERVER_CHANNEL_EVENT_STATIC_DATA;
-                event.channel_id = request.channel_id;
-                event.name = name;
-                event.name_len = strlen(name);
-                event.data = runtime_payload;
-                event.data_len = runtime_payload_len;
-                peer->channel_callback(peer, &event, peer->channel_callback_user_data);
-            }
-        }
+            status = rdp_server_handle_static_channel_message(
+                peer,
+                channel_index,
+                request.channel_id,
+                runtime_payload,
+                runtime_payload_len);
         if (status != LIBRDP_STATUS_OK)
             rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_FAILED);
         rdp_buffer_free(&security_payload);

@@ -220,6 +220,7 @@ librdp_status librdp_server_accept(librdp_server* server, int timeout_ms, librdp
     rdp_server_drive_state_reset(accepted, 0);
     rdp_server_extension_states_reset(accepted, 0);
     rdp_server_dynamic_channels_reset(accepted, 0);
+    rdp_server_static_channels_reset(accepted);
     if (server->server_name)
     {
         accepted->server_name = rdp_server_strdup_bounded(server->server_name);
@@ -468,15 +469,36 @@ librdp_status librdp_server_peer_notify_poll(librdp_server_peer* peer, const str
     return matched ? LIBRDP_STATUS_OK : LIBRDP_STATUS_INVALID_ARGUMENT;
 }
 
+static int rdp_server_peer_has_complete_tpkt(const librdp_server_peer* peer)
+{
+    size_t total = 0u;
+
+    if (!peer || peer->input.length < 4u ||
+        peer->input.data[0] != 3u)
+        return 0;
+    total = ((size_t)peer->input.data[2] << 8) |
+            (size_t)peer->input.data[3];
+    return total >= 4u && total <= peer->input.length;
+}
+
 librdp_status librdp_server_peer_dispatch_pending(librdp_server_peer* peer)
 {
+    librdp_status status = LIBRDP_STATUS_OK;
+
     if (!peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (peer->fd < 0 || peer->state == LIBRDP_SERVER_PEER_CLOSED)
         return LIBRDP_STATUS_STATE;
-    if (peer->pending_revents == 0)
+    if (peer->pending_revents == 0 &&
+        !rdp_server_peer_has_complete_tpkt(peer))
         return LIBRDP_STATUS_OK;
-    return librdp_server_peer_run_once(peer, 0);
+    do
+    {
+        status = librdp_server_peer_run_once(peer, 0);
+    } while (status == LIBRDP_STATUS_OK &&
+             (peer->pending_revents != 0 ||
+              rdp_server_peer_has_complete_tpkt(peer)));
+    return status == LIBRDP_STATUS_TIMEOUT ? LIBRDP_STATUS_OK : status;
 }
 
 /*
@@ -588,6 +610,7 @@ librdp_status librdp_server_peer_close(librdp_server_peer* peer)
     if (!peer)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     rdp_server_dynamic_channels_reset(peer, 1);
+    rdp_server_static_channels_reset(peer);
     rdp_server_drive_state_reset(peer, 1);
     rdp_server_close_peer(peer, LIBRDP_SERVER_PEER_CLOSED);
     return LIBRDP_STATUS_OK;
@@ -608,6 +631,7 @@ void librdp_server_peer_free(librdp_server_peer* peer)
     EVP_PKEY_free(peer->standard_private_key);
     rdp_security_standard_clear(&peer->standard_security);
     rdp_server_dynamic_channels_reset(peer, 0);
+    rdp_server_static_channels_reset(peer);
     rdp_server_drive_state_reset(peer, 0);
     if (peer->credssp_security_ready)
     {

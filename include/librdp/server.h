@@ -1726,7 +1726,8 @@ LIBRDP_API librdp_status librdp_server_peer_notify_poll(librdp_server_peer* peer
  * @brief Dispatch peer work made ready by librdp_server_peer_notify_poll().
  *
  * If no readiness is pending, this function returns immediately. Otherwise it
- * processes the same packet path as librdp_server_peer_run_once() without
+ * processes the same packet path as librdp_server_peer_run_once() and drains
+ * complete TPKTs already obtained by the notified transport read without
  * performing another blocking poll.
  *
  * @param[in,out] peer Peer to drive; must not be NULL.

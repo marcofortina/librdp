@@ -44,20 +44,40 @@ librdp_status rdp_virtual_channel_parse_packet(const void* data, size_t length, 
     return rdp_stream_read_bytes(&stream, &packet->payload, packet->payload_len);
 }
 
-librdp_status rdp_virtual_channel_write_packet(rdp_buffer* buffer,
-                                               const void* payload,
-                                               size_t payload_len,
-                                               uint32_t flags)
+librdp_status rdp_virtual_channel_write_fragment(rdp_buffer* buffer,
+                                                 const void* payload,
+                                                 size_t payload_len,
+                                                 size_t total_len,
+                                                 uint32_t flags)
 {
     librdp_status status = LIBRDP_STATUS_OK;
 
-    if (!buffer || (!payload && payload_len > 0) || payload_len > 0xffffffffu)
+    if (!buffer || (!payload && payload_len > 0) ||
+        total_len > UINT32_MAX || payload_len > total_len)
+        return LIBRDP_STATUS_INVALID_ARGUMENT;
+    if ((flags & (RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+                  RDP_VIRTUAL_CHANNEL_FLAG_LAST)) ==
+            (RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+             RDP_VIRTUAL_CHANNEL_FLAG_LAST) &&
+        payload_len != total_len)
         return LIBRDP_STATUS_INVALID_ARGUMENT;
 
-    status = rdp_buffer_append_u32_le(buffer, (uint32_t)payload_len);
+    status = rdp_buffer_append_u32_le(buffer, (uint32_t)total_len);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append_u32_le(buffer, flags);
     if (status == LIBRDP_STATUS_OK)
         status = rdp_buffer_append(buffer, payload, payload_len);
     return status;
+}
+
+librdp_status rdp_virtual_channel_write_packet(rdp_buffer* buffer,
+                                               const void* payload,
+                                               size_t payload_len,
+                                               uint32_t flags)
+{
+    return rdp_virtual_channel_write_fragment(buffer,
+                                              payload,
+                                              payload_len,
+                                              payload_len,
+                                              flags);
 }

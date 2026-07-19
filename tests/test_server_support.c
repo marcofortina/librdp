@@ -11,6 +11,8 @@
 
 #include "test_server_support.h"
 
+#include "channels/virtual_channel.h"
+
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
@@ -787,19 +789,27 @@ int test_server_send_encrypted_channel_payload(int fd,
                                                       rdp_standard_security_context* security,
                                                       const rdp_buffer* payload)
 {
+    rdp_buffer channel_packet;
     rdp_buffer security_payload;
     rdp_buffer send_data;
     int ok = 0;
 
     if (!security || !payload)
         return 0;
+    rdp_buffer_init(&channel_packet);
     rdp_buffer_init(&security_payload);
     rdp_buffer_init(&send_data);
-    if (rdp_security_write_encrypted_pdu(&security_payload,
+    if (rdp_virtual_channel_write_packet(
+            &channel_packet,
+            payload->data,
+            payload->length,
+            RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+                RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK &&
+        rdp_security_write_encrypted_pdu(&security_payload,
                                          security,
                                          0,
-                                         payload->data,
-                                         payload->length) == LIBRDP_STATUS_OK &&
+                                         channel_packet.data,
+                                         channel_packet.length) == LIBRDP_STATUS_OK &&
         rdp_security_write_send_data_request(&send_data,
                                              user_id,
                                              channel_id,
@@ -808,6 +818,7 @@ int test_server_send_encrypted_channel_payload(int fd,
         ok = test_server_send_mcs_pdu(fd, &send_data);
     rdp_buffer_free(&send_data);
     rdp_buffer_free(&security_payload);
+    rdp_buffer_free(&channel_packet);
     return ok;
 }
 
@@ -896,32 +907,54 @@ int test_server_send_sync_input(int fd, uint32_t share_id, uint16_t user_id)
 int test_server_send_static_channel_data(int fd, uint16_t user_id, uint16_t channel_id)
 {
     static const uint8_t payload[] = {1, 2, 3, 4};
+    rdp_buffer channel_packet;
     rdp_buffer send_data;
     int ok = 0;
 
+    rdp_buffer_init(&channel_packet);
     rdp_buffer_init(&send_data);
-    if (rdp_security_write_send_data_request(&send_data, user_id, channel_id, payload, sizeof(payload)) ==
-        LIBRDP_STATUS_OK)
+    if (rdp_virtual_channel_write_packet(
+            &channel_packet,
+            payload,
+            sizeof(payload),
+            RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+                RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK &&
+        rdp_security_write_send_data_request(&send_data,
+                                             user_id,
+                                             channel_id,
+                                             channel_packet.data,
+                                             channel_packet.length) ==
+            LIBRDP_STATUS_OK)
         ok = test_server_send_mcs_pdu(fd, &send_data);
     rdp_buffer_free(&send_data);
+    rdp_buffer_free(&channel_packet);
     return ok;
 }
 
 int test_server_send_channel_payload(int fd, uint16_t user_id, uint16_t channel_id, const rdp_buffer* payload)
 {
+    rdp_buffer channel_packet;
     rdp_buffer send_data;
     int ok = 0;
 
     if (!payload)
         return 0;
+    rdp_buffer_init(&channel_packet);
     rdp_buffer_init(&send_data);
-    if (rdp_security_write_send_data_request(&send_data,
+    if (rdp_virtual_channel_write_packet(
+            &channel_packet,
+            payload->data,
+            payload->length,
+            RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+                RDP_VIRTUAL_CHANNEL_FLAG_LAST) == LIBRDP_STATUS_OK &&
+        rdp_security_write_send_data_request(&send_data,
                                              user_id,
                                              channel_id,
-                                             payload->data,
-                                             payload->length) == LIBRDP_STATUS_OK)
+                                             channel_packet.data,
+                                             channel_packet.length) == LIBRDP_STATUS_OK)
         ok = test_server_send_mcs_pdu(fd, &send_data);
     rdp_buffer_free(&send_data);
+    rdp_buffer_free(&channel_packet);
     return ok;
 }
 
@@ -1017,6 +1050,7 @@ int test_server_read_encrypted_static_channel_data(int fd,
 {
     rdp_tpkt tpkt;
     rdp_mcs_send_data_indication indication;
+    rdp_virtual_channel_packet channel_packet;
     const uint8_t* x224_data = NULL;
     size_t x224_data_len = 0;
     uint16_t flags = 0;
@@ -1033,11 +1067,18 @@ int test_server_read_encrypted_static_channel_data(int fd,
                                 indication.payload_len,
                                 plaintext,
                                 &flags) != LIBRDP_STATUS_OK ||
-        (flags & RDP_SEC_ENCRYPT) == 0)
+        (flags & RDP_SEC_ENCRYPT) == 0 ||
+        rdp_virtual_channel_parse_packet(plaintext->data,
+                                         plaintext->length,
+                                         &channel_packet) != LIBRDP_STATUS_OK ||
+        channel_packet.flags !=
+            (RDP_VIRTUAL_CHANNEL_FLAG_FIRST |
+             RDP_VIRTUAL_CHANNEL_FLAG_LAST) ||
+        channel_packet.payload_len + 8u != plaintext->length)
         return 0;
     *channel_id = indication.channel_id;
-    *data = plaintext->data;
-    *data_len = plaintext->length;
+    *data = channel_packet.payload;
+    *data_len = channel_packet.payload_len;
     return 1;
 }
 
@@ -1068,7 +1109,11 @@ int test_server_open_client_dynamic_channel(int fd,
                                                  priority,
                                                  name,
                                                  strlen(name)) == LIBRDP_STATUS_OK &&
-        test_server_send_channel_payload(fd, user_id, static_channel_id, &dvc_packet) &&
+        test_server_send_encrypted_channel_payload(fd,
+                                                   user_id,
+                                                   static_channel_id,
+                                                   security,
+                                                   &dvc_packet) &&
         librdp_server_peer_run_once(peer, 1000) == LIBRDP_STATUS_OK &&
         test_server_read_encrypted_static_channel_data(fd,
                                                        response,
