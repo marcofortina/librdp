@@ -49,6 +49,18 @@
 #define SERVER_FUSE_UNIX_EPOCH_FILETIME 116444736000000000ull
 #define SERVER_FUSE_FILETIME_UNITS_PER_SECOND 10000000ull
 
+#if defined(__FreeBSD__)
+/*
+ * mount_fusefs rejects nodev; this read-only backend exposes no mknod
+ * operation.
+ */
+#define SERVER_FUSE_MOUNT_OPTIONS                                           \
+    "ro,default_permissions,nosuid,noexec,fsname=librdp-client-drives"
+#else
+#define SERVER_FUSE_MOUNT_OPTIONS                                           \
+    "ro,default_permissions,nosuid,nodev,noexec,fsname=librdp-client-drives"
+#endif
+
 typedef enum server_fuse_node_kind
 {
     SERVER_FUSE_NODE_ROOT = 1,
@@ -2062,9 +2074,7 @@ static librdp_status server_fuse_start(void* opaque,
         return LIBRDP_STATUS_INVALID_ARGUMENT;
     if (fuse_opt_add_arg(&arguments, "librdp-server-drive") != 0 ||
         fuse_opt_add_arg(&arguments, "-o") != 0 ||
-        fuse_opt_add_arg(&arguments,
-                         "ro,default_permissions,nosuid,nodev,noexec,"
-                         "fsname=librdp-client-drives") != 0)
+        fuse_opt_add_arg(&arguments, SERVER_FUSE_MOUNT_OPTIONS) != 0)
         created = 0;
     if (created)
     {
